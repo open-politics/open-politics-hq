@@ -1,6 +1,6 @@
 # The Open Politics Project – License
 
-Version 2.0 – Effective 18.02.2025
+Version 2.0 – Effective 30.03.2025
 
 > ! TLDR: You are free to use, modify & monetise with this software as you please - as long as your stay open source.
 
