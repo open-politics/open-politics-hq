@@ -108,10 +108,12 @@ class Settings(BaseSettings):
 
     # MinIO Configuration
     MINIO_ENDPOINT: str = os.environ.get("MINIO_ENDPOINT", "minio:9000")
+    MINIO_HOST: str = os.environ.get("MINIO_HOST", "minio")
+    MINIO_PORT: str = os.environ.get("MINIO_PORT", "9000")
     MINIO_ROOT_USER: str = os.environ.get("MINIO_ROOT_USER", "app_user")
     MINIO_ROOT_PASSWORD: str = os.environ.get("MINIO_ROOT_PASSWORD", "app_user_password")
     MINIO_BUCKET_NAME: str = os.environ.get("MINIO_BUCKET_NAME", "webapp-dev-user-documents")
-    MINIO_SECURE: bool = os.environ.get("MINIO_SECURE", "False").lower() == "true"
+    MINIO_SECURE: str = os.environ.get("MINIO_SECURE", "False")
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

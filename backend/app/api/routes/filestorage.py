@@ -2,6 +2,7 @@ import logging
 import os
 from os import fstat, remove, makedirs, path
 from typing import List, Annotated
+import urllib3
 
 from bson import ObjectId
 from fastapi import (
@@ -89,11 +90,18 @@ def remove_file(filename: str, user_id: int | str) -> None:
 # ------------------------------------------------------------------------------
 class MinioClient:
     def __init__(self, endpoint: str, access_key: str, secret_key: str, bucket_name: str):
+        # For HTTPS endpoints, we don't need to append the port
+        if os.environ.get("MINIO_SECURE", "False") == "True":
+            endpoint = endpoint.replace(":443", "") 
+            endpoint = endpoint.replace(":80", "")  
+
+        logging.info(f"Connecting to MinIO/S3 at {endpoint}")
+
         self.client = Minio(
             endpoint=endpoint,
             access_key=access_key,
             secret_key=secret_key,
-            secure=settings.MINIO_SECURE,
+            secure=os.environ.get("MINIO_SECURE", "False") == "True"
         )
         self.bucket_name = bucket_name
         self._ensure_bucket_exists()
@@ -108,7 +116,7 @@ class MinioClient:
             raise FileStorageError(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create bucket."
-            )
+            ) 
 
     async def upload_file(self, file: UploadFile):
         try:
@@ -172,6 +180,7 @@ class MinioClient:
             )
 
 def get_minio_client():
+    logging.info(f"Connecting to MinIO at {settings.MINIO_ENDPOINT}")
     return MinioClient(
         endpoint=settings.MINIO_ENDPOINT,
         access_key=settings.MINIO_ROOT_USER,

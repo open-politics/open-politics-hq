@@ -22,7 +22,7 @@ sdmx1
 tavily-python
 sentinelsat
 sentinelhub
-opol
+opol >= 0.1.60
 aiohttp
 google-generativeai
 instructor
