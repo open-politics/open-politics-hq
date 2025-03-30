@@ -24,7 +24,7 @@ By default, all code here is licensed under the AGPLv3. In essence:
 - If you publicly deploy the software (e.g., a hosted service accessible over a network), you must open-source your modifications under the same AGPLv3.
 - This ensures that all public-facing derivatives remain open-source.
 
-The complete AGPLv3 text is provided in AGPLv3.txt (or a similarly named file) within this repository.
+The complete AGPLv3 text is provided in LICENSE.md within this repository.
 
 ## 3. Enterprise Self-Hosting License (Optional)
 
@@ -43,8 +43,6 @@ We also operate an official hosted version of the Open Politics Webapp:
 - Free for public-interest users (e.g., NGOs, journalists, students, civic organizations, citizens). 
 - Voluntary Paid Contribution for commercial users like consultancies or private think tanks. This is encouraged but not enforced.
 
-Note: Regardless of hosted or self-hosted usage, you bring your own AI API keys (e.g., OpenAI or Anthropic) if you wish to enable any LLM-powered features.
-
 ## 5. Disclaimer & Limitation of Liability
 
 THE SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. THE OPEN POLITICS PROJECT AND ITS CONTRIBUTORS SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM USE OF THE SOFTWARE OR ANY ASSOCIATED HOSTED SERVICE.
@@ -55,5 +53,3 @@ By using, modifying, or distributing the code in this repository, you acknowledg
 
 - The terms of the AGPLv3 for all public deployments.
 - The optional terms of the Enterprise Self-Hosting License if you choose to purchase it.
-
-
