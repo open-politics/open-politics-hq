@@ -24,7 +24,7 @@ By default, all code here is licensed under the AGPLv3. In essence:
 - If you publicly deploy the software (e.g., a hosted service accessible over a network), you must open-source your modifications under the same AGPLv3.
 - This ensures that all public-facing derivatives remain open-source.
 
-The complete AGPLv3 text is provided in LICENSE.md within this repository.
+A complete copy of the AGPLv3 license can be found [here](https://www.gnu.org/licenses/agpl-3.0.html).
 
 ## 3. Enterprise Self-Hosting License (Optional)
 
