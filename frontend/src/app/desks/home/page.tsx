@@ -77,8 +77,8 @@ export default function DesksPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/globe" className="h-full block">
-              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full">
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-500 blur-xl opacity-10 rounded-full -z-10 animate-pulse [animation-duration:3s]"></div>
+              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--tool-globe-from)] to-[var(--tool-globe-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Globe className="w-5 h-5" />
@@ -111,8 +111,8 @@ export default function DesksPage() {
 
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/workspaces/classification-runner" className="h-full block">
-              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full">
-                <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 blur-xl opacity-10 rounded-full -z-10 animate-pulse [animation-duration:3s]"></div>
+              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--tool-analyser-from)] to-[var(--tool-analyser-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <SquareTerminal className="w-5 h-5" />
@@ -134,7 +134,8 @@ export default function DesksPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/workspaces/classification-schemes" className="h-full block">
-              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full">
+              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--store-schemes-from)] to-[var(--store-schemes-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Microscope className="w-5 h-5" />
@@ -150,7 +151,8 @@ export default function DesksPage() {
 
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/workspaces/document-manager" className="h-full block">
-              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full">
+              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--store-documents-from)] to-[var(--store-documents-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <FileText className="w-5 h-5" />
@@ -172,8 +174,8 @@ export default function DesksPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* AI Model Configuration Card */}
           <div className="relative transition-all duration-200 h-full">
-            <Card className="transition-all duration-200 relative h-full">
-              <div className="absolute inset-2 bg-gradient-to-r from-yellow-500 to-orange-500 blur-xl opacity-10 rounded-full -z-10"></div>
+            <Card className="transition-all duration-200 relative h-full overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-[var(--settings-ai-from)] to-[var(--settings-ai-to)] rounded-lg"></div>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Brain className="w-5 h-5" />
@@ -224,7 +226,8 @@ export default function DesksPage() {
 
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/workspaces/workspace-manager" className="h-full block">
-              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full">
+              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--settings-workspace-from)] to-[var(--settings-workspace-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <FolderCog className="w-5 h-5" />

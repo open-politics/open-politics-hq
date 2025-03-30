@@ -17,7 +17,6 @@ import {
   SidebarHeader,
   SidebarFooter,
   SidebarMenu,
-  SidebarProvider,
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarTrigger
@@ -31,20 +30,17 @@ const Header = () => {
   const { logout, user, isLoggedIn } = useAuth();
   const [mounted, setMounted] = useState(false);
 
-  // Simplified mount handling
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Memoize the current theme
   const currentTheme = useMemo(() => {
     if (!mounted) return null;
     return theme === 'system' ? systemTheme : theme;
   }, [theme, systemTheme, mounted]);
 
-  // Early return for SSR
   if (!mounted) {
-    return <nav className="h-16" />; // Placeholder to prevent layout shift
+    return <nav className="h-16" />; // Prevent layout shift during SSR
   }
 
   return (
@@ -52,9 +48,28 @@ const Header = () => {
       <div className="w-full mx-auto px-2">
         <div className="flex h-14 items-center justify-between mx-auto">
           {/* Logo */}
-          <Link href="/" className="flex items-center space-x-1">
-            <Image src="/logos/zen45.png" alt="Open Politics Project" width={50} height={50} />
-            <span className="text-lg font-semibold text-primary">Open Politics Project</span>
+          <Link href="/" className="flex items-center space-x-1 relative">
+            {/* <div className="absolute left-0 -z-10">
+              <Image 
+                src={currentTheme === 'dark' ? "/logos/logo-white.svg" : "/logos/logo-black.svg"} 
+                alt="Open Politics Project" 
+                width={15} 
+                height={15} 
+                className={`opacity-90 ${
+                  currentTheme === 'dark' 
+                    ? 'drop-shadow-[0_0_3px_rgba(255,255,255,0.3)]' 
+                    : 'drop-shadow-[0_0_3px_rgba(10,61,145,0.3)]'
+                }`}
+              />
+            </div> */}
+            <div className="w-5" />
+            <div className="logo-text-container">
+              <span className="text-lg font-semibold text-primary relative">
+                {/* <div className="animated-line" />
+                <div className="text-highlight mb-2" /> */}
+                <span className="text-lg font-semibold text-primary relative">Open Politics Project</span>
+              </span>
+            </div>
           </Link>
 
           {/* Navigation Links and Icons */}
