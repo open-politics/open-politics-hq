@@ -1,4 +1,4 @@
-# The Open Politics Project – License & Service Terms
+# The Open Politics Project – License
 
 Version 2.0 – Effective 18.02.2025
 
@@ -55,3 +55,5 @@ By using, modifying, or distributing the code in this repository, you acknowledg
 
 - The terms of the AGPLv3 for all public deployments.
 - The optional terms of the Enterprise Self-Hosting License if you choose to purchase it.
+
+
