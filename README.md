@@ -3,13 +3,13 @@
 > "Open Source Political Intelligence" - What is that and why do we need it?  
 > 🎬 [Watch Presentation](https://media.ccc.de/v/dg-111)
 
-## About, us tring to help with
+## About & how we are aiming to help with
 
 ![Exactly](.github/assets/images/exactly.png)
 
 We're building a comprehensive open-source platform where civic research meets data science. We're democratising political analysis capabilities through accessible tools that help citizens navigate an increasingly complex information landscape.
 
-Our integrated stack of data science tools gather, analyze, and visualize political data with clarity and depth. We combine the natural language capabilities of modern AI with structured analytical methods to make sense of the vast political information landscape.
+Our integrated stack of data science tools gather, analyse, and visualise political data with clarity and depth. We combine the natural language capabilities of modern AI with structured analytical methods to make sense of the vast political information landscape.
 
 ## Our Approach
 
@@ -19,11 +19,11 @@ We're building tools that support:
 
 **Community transparency** - Developing in the open so everyone can contribute, inspect, and improve our methods
 
-**Universal accessibility** - Creating multiple ways to interact with political data, from interactive visualizations to text-based interfaces
+**Universal accessibility** - Creating multiple ways to interact with political data, from interactive visualisations to text-based interfaces
 
 **Methodical research** - Combining technical innovation with structured analytical approaches to political information
 
-Whether you're analyzing news coverage, tracking political advocacy efforts, generating visual reports, exploring geospatial data, or mapping structured arguments from coalition talks, we build tools that help make sense of today's information environment.
+Whether you're analysing news coverage, tracking political advocacy efforts, generating visual reports, exploring geospatial data, or mapping structured arguments from coalition talks, we build tools that help make sense of today's information environment.
 
 #### Status
 - 📝 **Development**: In late Beta
@@ -54,13 +54,13 @@ Here's a glimpse of what we're building:
 
 ![Open Politics Vision](.github/assets/images/opol-data-on-globe.png)
 
-[Opol](https://github.com/open-politics/opol) serves the data for the interactive globe visualization of this webapp, displaying news articles processed through LLM classification, entity extraction, and geocoding for spatial representation.
+[Opol](https://github.com/open-politics/opol) serves the data for the interactive globe visualisation of this webapp, displaying news articles processed through LLM classification, entity extraction, and geocoding for spatial representation.
 
 ## Why Open Politics Exists
 
 Politics, news, conflicts, and legislative procedures are increasingly difficult to track and understand. Few have the time to read through the mountains of documents and news articles necessary to form a comprehensive understanding of political situations.
 
-Technology offers tremendous possibilities to make political information more accessible. The advent of Large Language Models has expanded our capabilities for textual analysis and understanding. The ability to formulate research tasks in natural language opens new possibilities for analyzing text data, potentially revolutionizing how qualitative and quantitative research methods can be combined.
+Technology offers tremendous possibilities to make political information more accessible. The advent of Large Language Models has expanded our capabilities for textual analysis and understanding. The ability to formulate research tasks in natural language opens new possibilities for analysing text data, potentially revolutionising how qualitative and quantitative research methods can be combined.
 
 This project aims to bring together natural language LLM interfaces with classical data science methods to build tools that provide a comprehensive overview of political topics, including:
 - Summaries of news articles
