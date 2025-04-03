@@ -33,7 +33,7 @@ def init_db(session: Session) -> None:
     # But if you don't want to use migrations, create
     # the tables un-commenting the next lines
 
-    SQLModel.metadata.create_all(engine)
+    # SQLModel.metadata.create_all(engine)
 
     if os.environ.get("WIPE_DB") == "True":
         logger.info("Wiping DB")
