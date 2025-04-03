@@ -1,4 +1,4 @@
-# 🌐 Open Politics: /a big cluster(-fuck)
+# 🌐 Open Politics HQ
 
 > "Open Source Political Intelligence" - What is that and why do we need it?  
 > 🎬 [Watch Presentation](https://media.ccc.de/v/dg-111)
