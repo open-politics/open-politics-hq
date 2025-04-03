@@ -38,7 +38,7 @@ Whether you're analysing news coverage, tracking political advocacy efforts, gen
 
 - **[User Documentation](https://docs.open-politics.org)** for user guides & tutorials
 - **Technical Docs**: 
-  - Documentation for this TypeScript NextJS (OP-APP) repository will be updated soon
+  - Documentation for this TypeScript NextJS (/open-politics-hq) repository will be updated soon
   - Technical documentation for opol is in the [opol repository](https://github.com/open-politics/opol)
 
 ## Table of Contents
