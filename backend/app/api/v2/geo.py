@@ -20,13 +20,13 @@ async def geojson_events_view(
     limit: int = Query(100, description="Maximum number of locations to return")
 ):
     # Validate date formats
-    if start_date:
+    if start_date and start_date is not None:
         try:
             datetime.fromisoformat(start_date.replace('Z', '+00:00'))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid start_date format")
     
-    if end_date:
+    if end_date and end_date is not None:
         try:
             datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError:
@@ -35,7 +35,7 @@ async def geojson_events_view(
     try:
         logger.info(f"Fetching GeoJSON data for event_type: {event_type}, start_date: {start_date}, end_date: {end_date}, limit: {limit}")
         
-        geojson_data = opol.geo.json_by_event(
+        events_geojson_data = opol.geo.json_by_event(
             event_type=event_type,
             start_date=start_date,
             end_date=end_date,
@@ -43,8 +43,8 @@ async def geojson_events_view(
         )
 
         # Log all dates of all articles retrieved
-        if geojson_data and 'features' in geojson_data:
-            for feature in geojson_data['features']:
+        if events_geojson_data and 'features' in events_geojson_data:
+            for feature in events_geojson_data['features']:
                 if 'properties' in feature and 'contents' in feature['properties']:
                     contents = feature['properties']['contents']
                     if isinstance(contents, str):
@@ -60,12 +60,13 @@ async def geojson_events_view(
                             if 'insertion_date' in article:
                                 logger.info(f"Article date: {article['insertion_date']} - Title: {article.get('title', 'No title')}")
 
-        if not geojson_data:
+        if not events_geojson_data:
             logger.warning(f"No GeoJSON data returned for event_type: {event_type} in specified date range")
             raise HTTPException(status_code=404, detail="No GeoJSON data found for the specified parameters.")
         
         # Optionally, validate the GeoJSON structure here
-        return geojson_data
+        logger.info(events_geojson_data)
+        return events_geojson_data
     except Exception as e:
         logger.error(f"Error fetching GeoJSON data for event type '{event_type}' with date range: {e}")
         raise HTTPException(status_code=500, detail="Internal server error while fetching GeoJSON data.")
