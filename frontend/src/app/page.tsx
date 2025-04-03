@@ -73,9 +73,9 @@ const HomePage: React.FC<HiProps> = () => {
 
   return (
     <LandingLayout>
-      <div className="flex flex-col mt-36 md:mt-0 md:min-h-screen justify-between">
+      <div className="flex flex-col md:mt-0 md:min-h-screen justify-between">
         {/* Main Content Section */}
-        <section className="flex flex-col items-center justify-end flex-grow p-8">
+        <section className="flex flex-col items-center justify-center flex-grow p-8">
           <div className="text-center mb-8">
             <h1 className="text-4xl md:text-6xl font-bold leading-none dark:text-white">
               <div className="flex flex-col items-center">
@@ -134,7 +134,7 @@ const HomePage: React.FC<HiProps> = () => {
         </section>
 
         {/* Announcements Section */}
-        <section className="p-8 bg-transparent max-w-screen-md mx-auto">
+        {/* <section className="p-8 bg-transparent max-w-screen-md mx-auto">
             <span className="text-xl font-bold mb-4 block">What's new?</span>
             <div className="grid grid-cols-1 gap-4">
               <div className=" rounded-lg shadow-md bg-secondary/80 hover:bg-secondary/60 transition-all duration-300 hover:cursor-pointer hover:shadow-md">
@@ -162,8 +162,8 @@ const HomePage: React.FC<HiProps> = () => {
                   ]}
                 />
               </div> */}
-            </div>
-        </section>
+            {/* </div> */}
+        {/* </section> */}
       </div>
 
       <style jsx>{`

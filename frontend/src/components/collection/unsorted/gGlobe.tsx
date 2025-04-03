@@ -192,11 +192,9 @@ const Globe = forwardRef<any, GlobeProps>(
 
     // Visible layers state (checkbox toggles)
     const [visibleLayers, setVisibleLayers] = useState<Record<string, boolean>>(() => {
-      // By default, maybe War & Politics are visible; the rest are off
       const initialLayers: Record<string, boolean> = {};
       for (const et of eventTypes) {
-        // example defaults
-        initialLayers[et.type] = et.type === "War" || et.type === "Politics";
+        initialLayers[et.type] = true;
       }
       return initialLayers;
     });

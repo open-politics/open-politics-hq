@@ -8,7 +8,8 @@ import { NewspaperIcon, Globe2, ZoomIn } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Code, Database } from "lucide-react"; 
+import { Code, Database } from "lucide-react";
+import { Mail, MessageSquare } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { ModeSwitcher } from "@/components/ui/mode-switcher";
 import {
@@ -82,9 +83,27 @@ const Header = () => {
               <Button variant="ghost" asChild>
                 <Link href="https://docs.open-politics.org">Documentation</Link>
               </Button>
-              <Button variant="ghost" asChild>
-                <a href="mailto:engage@open-politics.org">Contact</a>
-              </Button>
+              {/* <Button variant="ghost" asChild>
+                <Link href="/accounts/pricing">Pricing</Link>
+              </Button> */}
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost">Contact</Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-48 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
+                  <div className="flex flex-col space-y-0.5">
+                    <a href="https://discord.gg/AhqmEUr99T" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
+                      <MessageSquare className="h-4 w-4" />
+                      <span>Discord</span>
+                    </a>
+                    <a href="mailto:engage@open-politics.org" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
+                      <Mail className="h-4 w-4" />
+                      <span>Email</span>
+                    </a>
+                  </div>
+                </PopoverContent>
+              </Popover>
               
               {/* GitHub Links */}
               <Popover>
@@ -93,14 +112,14 @@ const Header = () => {
                     <FaGithub />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="p-2 w-40 border-none">
+                <PopoverContent className="w-48 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
                   <div className="flex flex-col space-y-0.5">
-                    <a href="https://github.com/open-politics/open-politics" className="flex items-center space-x-1 py-1 hover:bg-secondary/70 rounded-md">
-                      <Code />
+                    <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
+                      <Code className="h-4 w-4" />
                       <span>Webapp</span>
                     </a>
-                    <a href="https://github.com/open-politics/opol" className="flex items-center space-x-1 py-1 hover:bg-secondary/70 rounded-md">
-                      <Database />
+                    <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
+                      <Database className="h-4 w-4" />
                       <span>Data Engine</span>
                     </a>
                   </div>
@@ -162,6 +181,13 @@ const Header = () => {
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
+                      {/* <SidebarMenuItem>
+                        <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
+                          <Link href="/accounts/pricing">
+                            <span>Pricing</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem> */}
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
                           <Link href="https://docs.open-politics.org">
@@ -169,19 +195,53 @@ const Header = () => {
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
+
+                      <div className="my-2 border-t border-border"></div> 
+
+                      <SidebarMenuItem>
+                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
+                              <a href="https://discord.gg/AhqmEUr99T" target="_blank" rel="noopener noreferrer">
+                                  <MessageSquare className="h-4 w-4 mr-2" />
+                                  <span>Discord</span>
+                              </a>
+                          </SidebarMenuButton>
+                      </SidebarMenuItem>
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
                           <a href="mailto:engage@open-politics.org">
-                            <span>Contact</span>
+                            <Mail className="h-4 w-4 mr-2" />
+                            <span>Email Contact</span>
                           </a>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
-                      
+
+                      <SidebarMenuItem>
+                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
+                              <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer">
+                                  <Code className="h-4 w-4 mr-2" />
+                                  <span>GitHub (Webapp)</span>
+                              </a>
+                          </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      <SidebarMenuItem>
+                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
+                              <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer">
+                                  <Database className="h-4 w-4 mr-2" />
+                                  <span>GitHub (Data Engine)</span>
+                              </a>
+                          </SidebarMenuButton>
+                      </SidebarMenuItem>
+
+                      <div className="my-2 border-t border-border"></div>
+
                       {isLoggedIn ? (
                         <>
                           <SidebarMenuItem>
                             <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
                               <Link href="/desks/home">
+                                <NewspaperIcon className="h-4 w-4 mr-1" />
+                                <Globe2 className="h-4 w-4 mr-1" />
+                                <ZoomIn className="h-4 w-4 mr-2" />
                                 <span>Desk</span>
                               </Link>
                             </SidebarMenuButton>
@@ -196,7 +256,7 @@ const Header = () => {
                             </SidebarMenuItem>
                           )}
                           <SidebarMenuItem>
-                            <SidebarMenuButton onClick={logout} className="w-full">
+                            <SidebarMenuButton onClick={logout} className="w-full justify-start">
                               Logout
                             </SidebarMenuButton>
                           </SidebarMenuItem>
@@ -211,7 +271,9 @@ const Header = () => {
                         </SidebarMenuItem>
                       )}
                       
-                      <div className="flex items-center justify-between py-4 border-t">
+                      <div className="my-2 border-t border-border"></div>
+
+                      <div className="flex items-center justify-between py-2">
                         <span>Dark Mode</span>
                         <Switch
                           checked={theme === 'dark'}

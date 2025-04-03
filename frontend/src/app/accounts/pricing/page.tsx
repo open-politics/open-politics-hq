@@ -39,9 +39,8 @@ const tiers = [
     price: "Free",
     icon: Users,
     features: [
-      { name: "Acess to our hosted webapp, data and tools", included: true },
+      { name: "Full acess to our hosted webapp, data and tools", included: true },
       { name: "Community-based support channels", included: true },
-      { name: "Right to modify, commercialise and self-host under AGPLv3", included: true },
     ],
     apiKeys: "Bring your own AI/LLM API keys",
     cta: "Get Started",
@@ -66,6 +65,7 @@ const tiers = [
       { name: "Priority support", included: true },
       { name: "Custom training & onboarding", included: true },
       { name: "Infrastructure support (optional)", included: true },
+      { name: "Enhanced security features", included: true}
     ],
     apiKeys: "Bring your own AI/LLM API keys or talk to us about our managed options",
     cta: "Contact Us",
@@ -75,12 +75,12 @@ const tiers = [
     description: "For members of commercially active/ non-public-interest organizations",
     subDescription: {
       who: "",
-      contribution: "Voluntary €20/seat/month contribution to support the project",
+      contribution: "Voluntary €20/user/month contribution to support the project",
       policy: "Based on goodwill - not strictly enforced",
       principle: "Those who benefit commercially help sustain the tools"
     },
     price: "€20",
-    period: "/seat/month",
+    period: "/user/month",
     annualPrice: "€200",
     icon: Briefcase,
     features: [
@@ -153,7 +153,7 @@ const faqData = [
   {
     question: "What about commercial users?",
     answer:
-      "Commercially active organizations (e.g., agencies, private think tanks, consulting firms) are encouraged (but not strictly required) to pay a voluntary €20/seat/month contribution to support the project. We do not enforce this; we rely on goodwill and the principle that those who benefit commercially from these tools help sustain them.",
+      "Commercially active organizations (e.g., agencies, private think tanks, consulting firms) are encouraged (but not strictly required) to pay a voluntary €20/user/month contribution to support the project. We do not enforce this; we rely on goodwill and the principle that those who benefit commercially from these tools help sustain them.",
   },
   {
     question: "Can I self-host?",
@@ -231,7 +231,7 @@ const FAQSection = () => {
           size="lg"
           className=""
         >
-          Contact Support
+          Contact Support at engage@open-politics.org
         </Button>
       </motion.div>
     </div>
@@ -246,7 +246,7 @@ export default function PricingPage() {
     return {
       ...baseTier,
       price: billingPeriod === "monthly" ? "€20" : "€200",
-      period: billingPeriod === "monthly" ? "/seat/month" : "/seat/year",
+      period: billingPeriod === "monthly" ? "/user/month" : "/user/year",
     };
   };
 
@@ -311,7 +311,7 @@ export default function PricingPage() {
                         colors={['#7AEFFF', '#7CFF7A', '#FEEC90']}
                         fullWidth
                         radialOverlay
-                        blurAmount="15px"
+                        blurAmount="5px"
                       >
                         <div className="w-full h-full after:content-[''] after:absolute after:inset-0 after:bg-[url('/noise.png')] after:opacity-20 after:mix-blend-overlay" />
                       </GradientFlow>
@@ -362,11 +362,11 @@ export default function PricingPage() {
                     </GlowingCard>
                   </div>
                 ) : (
-                  <div className="relative h-full group">
+                  <div className="relative h-full">
                     <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900">
-                      <div className="absolute inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-overlay" />
+                      <div className="absolute inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-overlay pointer-events-none" />
                     </div>
-                    <Card className="h-full transition-all duration-300 bg-opacity-80 backdrop-blur-sm border border-zinc-200/30 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600">
+                    <Card className="h-full transition-[border-color] duration-200 border border-zinc-200/30 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600">
                       <div className="flex flex-col h-full">
                         <CardHeader>
                           <div className="flex items-center justify-between mb-4">
@@ -476,11 +476,11 @@ export default function PricingPage() {
                     </GlowingCard>
                   </div>
                 ) : (
-                  <div className="relative h-full group">
-                    <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden bg-gradient-to-br from-zinc-50 via-zinc-200 to-zinc-100 dark:from-zinc-900 dark:via-zinc-800 dark:to-zinc-900">
-                      <div className="absolute inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-overlay" />
+                  <div className="relative h-full">
+                    <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900">
+                      <div className="absolute inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-overlay pointer-events-none" />
                     </div>
-                    <Card className="h-full transition-all duration-300 bg-opacity-80 backdrop-blur-sm border border-zinc-200/30 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600">
+                    <Card className="h-full transition-[border-color] duration-200 border border-zinc-200/30 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600">
                       <div className="flex flex-col h-full">
                         <CardHeader>
                           <div className="flex items-center justify-between mb-4">
@@ -535,7 +535,9 @@ export default function PricingPage() {
             size="lg"
             className=""
           >
+            <a href="https://docs.open-politics.org/pages/project/manifest">
             Learn More About Our Mission
+            </a>
           </Button>
         </motion.div>
         <FAQSection />
