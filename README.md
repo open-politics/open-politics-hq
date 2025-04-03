@@ -7,7 +7,7 @@
 
 ![Exactly](.github/assets/images/exactly.png)
 
-We're building a comprehensive open-source platform where civic research meets data science. We're democratizing political analysis capabilities through accessible tools that help citizens navigate an increasingly complex information landscape.
+We're building a comprehensive open-source platform where civic research meets data science. We're democratising political analysis capabilities through accessible tools that help citizens navigate an increasingly complex information landscape.
 
 Our integrated stack of data science tools gather, analyze, and visualize political data with clarity and depth. We combine the natural language capabilities of modern AI with structured analytical methods to make sense of the vast political information landscape.
 
