@@ -1,5 +1,5 @@
 import { ClassificationSchemeRead, DictKeyDefinition as ClientDictKeyDefinition } from "@/client/models";
-import { ResultFilter } from "@/components/collection/workspaces/classifications/ResultFilters"; 
+import { ResultFilter } from "@/components/collection/workspaces/classifications/ClassificationResultFilters"; 
 import { FieldType, DictKeyDefinition, FormattedClassificationResult, ClassifiableDocument } from "./types"; 
 import { ClassificationResultRead } from "@/client/models";
 import { ClassificationService } from "./service";
@@ -54,6 +54,25 @@ export const getTargetFieldDefinition = (
     return { type: null, definition: null }; // Fallback
 };
 
+// Helper to get possible target keys for a scheme (Moved from ClassificationResultFilters)
+export const getTargetKeysForScheme = (schemeId: number, schemes: ClassificationSchemeRead[]): { key: string, name: string, type: string }[] => {
+    const scheme = schemes.find(s => s.id === schemeId);
+    if (!scheme || !scheme.fields || scheme.fields.length === 0) return [];
+
+    // Case 1: List[Dict] with dict_keys defined
+    if (scheme.fields[0].type === 'List[Dict[str, any]]' && scheme.fields[0].dict_keys && scheme.fields[0].dict_keys.length > 0) {
+        const mapType = (clientType: string): string => {
+            const validTypes = ["str", "int", "float", "bool"];
+            return validTypes.includes(clientType) ? clientType : "unknown";
+        };
+        // Use field name as the key for selection, but display name might differ
+        return scheme.fields[0].dict_keys.map(dk => ({ key: dk.name, name: dk.name, type: mapType(dk.type) }));
+    }
+
+    // Case 2: Multiple fields per scheme or single field
+    // Use field name as the key
+    return scheme.fields.map(f => ({ key: f.name, name: f.name, type: f.type }));
+};
 
 // --- compareValues (from ClassificationResultsChart.tsx / ClassificationRunner.tsx) ---
 export const compareValues = (actual: any, filterVal: any, operator: ResultFilter['operator'], fieldType: FieldType | 'bool' | 'float' | null): boolean => {
@@ -130,13 +149,17 @@ export const compareValues = (actual: any, filterVal: any, operator: ResultFilte
 
 // --- checkFilterMatch (from ClassificationResultsChart.tsx / ClassificationRunner.tsx) ---
 // Needs ClassificationResultRead type, might need to import or define locally if not shared
-import { ClassificationResultRead } from "@/client/models";
 
 export const checkFilterMatch = (
     filter: ResultFilter,
     docResults: (ClassificationResultRead | FormattedClassificationResult)[],
     allSchemes: ClassificationSchemeRead[]
 ): boolean => {
+    // If the filter is not active, it should always match (effectively skipping it)
+    if (!filter.isActive) {
+        return true;
+    }
+
     const targetSchemeResult = docResults.find(r => r.scheme_id === filter.schemeId);
 
     // Handle case where document lacks results for the filtered scheme
@@ -306,7 +329,7 @@ export const formatDisplayValue = (value: any, scheme: ClassificationSchemeRead)
     };
 
     // Use the service's formatting function
-    return ClassificationService.getFormattedValue(tempResult, adaptedScheme);
+    return ClassificationService.getFormattedValue(tempResult, adaptedScheme) as string | number | null;
 
   } catch (error) {
     console.error('Error formatting value:', error);

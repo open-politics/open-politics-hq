@@ -22,7 +22,7 @@ import { FormattedClassificationResult, ClassificationScheme } from '@/lib/class
 import ClassificationResultsChart from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import { format } from 'date-fns';
+import { format, formatDate } from 'date-fns';
 import { getTargetFieldDefinition, ResultFilters } from './ClassificationResultFilters';
 import { ClassificationService } from '@/lib/classification/service';
 import { schemesToSchemeReads, resultsToResultReads, resultReadToResult, resultToResultRead, schemeToSchemeRead, documentToDocumentRead } from '@/lib/classification/adapters';
@@ -326,7 +326,7 @@ function RunHistoryDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden py-4">
           {isLoading ? (
             <div className="flex items-center justify-center h-full">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -359,18 +359,9 @@ function RunHistoryDialog({
               }
             }}
             disabled={isLoading}
+            className="mr-auto" // Push to the left
           >
-            {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Refreshing...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh Runs
-              </>
-            )}
+            {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Refreshing...</> : <><RefreshCw className="mr-2 h-4 w-4" />Refresh Runs</>}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -387,54 +378,61 @@ const RunHistoryTimeline: React.FC<{
 }> = ({ runs, activeRunId, onSelectRun, maxItems = 5 }) => {
   const displayRuns = runs.slice(0, maxItems);
 
-  return (
-    <div className="relative w-full h-24 my-4">
-      {/* Timeline track */}
-      <div className="absolute top-1/2 left-0 right-0 h-1 bg-muted/50 rounded-full transform -translate-y-1/2"></div>
+  if (runs.length === 0) return null; // Don't render if no runs
 
-      {/* Run markers */}
-      <div className="relative h-full">
+  return (
+    // Use margin from parent, remove positioning/height here
+    <div className="mb-6">
+      {/* Title */}
+      <p className="text-sm text-muted-foreground mb-3 text-center"> Timeline (latest {maxItems} runs) </p>
+
+      {/* Container for bar and markers */}
+      <div className="relative w-full h-12"> {/* Adjusted height */}
+        {/* Timeline track (positioned relative to this container) */}
+        <div className="absolute top-1/2 left-4 right-4 h-1 bg-muted rounded-full transform -translate-y-1/2 z-0"></div>
+
+        {/* Run markers container (also relative to this container) */}
+        {/* Note: Removed the extra wrapping div, markers directly positioned */}
         {displayRuns.map((run, index) => {
           // Calculate position along the timeline
           const positionPercent = maxItems > 1 ? (index / (maxItems - 1)) * 100 : 50;
-          const position = `${positionPercent}%`;
+          // Clamp position slightly to avoid markers going off edge
+          const clampedPercent = Math.max(2, Math.min(98, positionPercent)); // Adjust padding % based on marker size/padding
+          const position = `${clampedPercent}%`;
           const isActive = run.id === activeRunId;
 
           return (
             <div
               key={run.id}
-              className="absolute top-1/2 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-300"
+              className="absolute top-1/2 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-300 z-10" // Added z-10
               style={{ left: position }}
             >
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
-                    <TooltipTrigger asChild>
-                        <div
-                          className={cn(
-                            "flex flex-col items-center cursor-pointer group",
-                            isActive && "scale-110 z-10"
-                          )}
-                          onClick={() => onSelectRun(run.id, run.name, run.description)}
-                        >
-                          <div
-                            className={cn(
-                              "w-8 h-8 rounded-full flex items-center justify-center mb-1 transition-all duration-300",
-                              isActive
-                                ? "bg-primary text-primary-foreground shadow-lg"
-                                : "bg-muted hover:bg-muted/80"
-                            )}
-                          >
-                             {/* Display index relative to the full list, not just displayed items */}
-                            <span className="text-xs font-medium">{runs.length - runs.findIndex(r => r.id === run.id)}</span>
-                          </div>
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        <div className="font-medium truncate max-w-[150px]">{run.name}</div>
-                        <div className="text-muted-foreground text-[10px] mt-1">{run.timestamp}</div>
-                    </TooltipContent>
+                  <TooltipTrigger asChild>
+                    {/* Removed outer flex div, directly style the trigger area */}
+                    <div
+                      className={cn(
+                        "w-6 h-6 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300", // Smaller dot
+                        isActive
+                          ? "bg-primary text-primary-foreground shadow-md scale-110 ring-2 ring-primary/50" // Enhanced active state
+                          : "bg-muted hover:bg-primary/20 hover:scale-105" // Hover effect
+                      )}
+                      onClick={() => onSelectRun(run.id, run.name, run.description)}
+                    >
+                      {/* Keep index for identification */}
+                       <span className={cn(
+                          "text-xs font-medium",
+                          isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary" // Adjust text color
+                       )}>{runs.length - runs.findIndex(r => r.id === run.id)}</span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <div className="font-medium truncate max-w-[150px]">{run.name}</div>
+                    <div className="text-muted-foreground text-[10px] mt-1">{run.timestamp}</div>
+                  </TooltipContent>
                 </Tooltip>
-             </TooltipProvider>
+              </TooltipProvider>
             </div>
           );
         })}
@@ -1253,248 +1251,378 @@ export default function ClassificationRunner() {
             <FavoriteRunsDisplay runs={currentFavoriteRuns} activeRunId={currentRunId} onSelectRun={handleLoadFromRun}/>
             <RunHistoryTimeline runs={runHistory} activeRunId={currentRunId} onSelectRun={handleLoadFromRun} maxItems={7} />
 
-            <Card className="mb-4">
+            {/* === NEW: Setup Card === */}
+            <Card className="mb-6">
               <CardHeader>
-                <CardTitle>Configuration</CardTitle>
-                <CardDescription>Select model provider, documents, and schemes for the classification run.</CardDescription>
+                <CardTitle>Setup</CardTitle>
+                <CardDescription>Configure the model provider, documents, schemes, and run actions.</CardDescription>
               </CardHeader>
-              <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-                <div className="space-y-2 md:col-span-1">
-                  <h3 className="text-sm font-medium">Model Provider</h3>
-                  <ProviderSelector className="w-full" />
-                </div>
-                <div className="space-y-2 md:col-span-1">
-                  <h3 className="text-sm font-medium">Run Actions</h3>
-                  <div className="grid grid-cols-1 gap-2">
-                    <Button variant="default" onClick={handleRunClassification} disabled={isCreatingRun || selectedDocs.length === 0 || selectedSchemes.length === 0}>
-                      {isCreatingRun ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />} Run New Classification
-                    </Button>
-                    <Button variant="outline" onClick={handleClearRun} disabled={!currentRunId}>
-                      <XCircle className="h-4 w-4 mr-2" /> Clear Current Run
-                    </Button>
+              <CardContent className="space-y-6">
+                {/* Row 1: Provider and Actions */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                  <div className="space-y-2 md:col-span-1">
+                    <h3 className="text-sm font-medium">Model Provider</h3>
+                    <ProviderSelector className="w-full" />
+                  </div>
+                  <div className="space-y-2 md:col-span-1">
+                    <h3 className="text-sm font-medium">Run History</h3>
+                    <div className="grid grid-cols-1 gap-2">
+                      <Button variant="default" onClick={handleRunClassification} disabled={isCreatingRun || selectedDocs.length === 0 || selectedSchemes.length === 0}>
+                        {isCreatingRun ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />} Run New Classification
+                      </Button>
+                      {/* Moved Clear Run to Results Card Header? Or keep here? Let's keep Load here for now. */}
+                    </div>
+                  </div>
+                  <div className="space-y-2 md:col-span-1">
+                    <h3 className="text-sm font-medium">Load Previous Run</h3>
+                    <Button variant="outline" onClick={() => setIsHistoryDialogOpen(true)} className="w-full"><History className="h-4 w-4 mr-2" /> Load Previous Run</Button>
                   </div>
                 </div>
-                <div className="space-y-2 md:col-span-1">
-                  <h3 className="text-sm font-medium">History</h3>
-                  <div className="grid grid-cols-1 gap-2">
-                    <Button variant="outline" onClick={() => setIsHistoryDialogOpen(true)}><History className="h-4 w-4 mr-2" /> Load Previous Run</Button>
-                  </div>
+
+                {/* Row 2: Documents and Schemes */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Document Selection */}
+                  <Card className="flex flex-col h-full border-none shadow-none p-0"> {/* Adjusted styling */}
+                    <CardHeader className="pb-2 px-1">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg">Documents ({allDocuments.length})</CardTitle>
+                        <div className="flex items-center gap-1">
+                          <TooltipProvider delayDuration={100}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Checkbox
+                                  id="select-all-docs"
+                                  checked={areAllDocsSelected}
+                                  onCheckedChange={(checked) => handleSelectAllDocs(!!checked)}
+                                  disabled={isLoadingDocuments}
+                                />
+                              </TooltipTrigger>
+                              <TooltipContent><p>Select All</p></TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" onClick={() => setIsDocumentManagerOpen(true)}><List className="h-4 w-4" /></Button>
+                              </TooltipTrigger>
+                              <TooltipContent><p>Manage Documents</p></TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                      </div>
+                      <CardDescription className="px-1">Select documents to include in the run.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex-1 flex flex-col px-1">
+                      {isLoadingDocuments ? (
+                        <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground"/></div>
+                      ) : allDocuments.length > 0 ? (
+                        <ScrollArea className="max-h-60 flex-1 border rounded-md p-2">
+                          <div className="space-y-2">
+                            {allDocuments.map(doc => (
+                              <div key={doc.id} className="flex items-center space-x-2 p-1 rounded hover:bg-muted/50">
+                                <Checkbox
+                                  id={`doc-${doc.id}`}
+                                  checked={selectedDocs.includes(doc.id)}
+                                  onCheckedChange={(checked) => handleDocSelect(doc.id, !!checked)}
+                                />
+                                <label
+                                  htmlFor={`doc-${doc.id}`}
+                                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
+                                  title={doc.title}
+                                >
+                                  {doc.title || `Document ${doc.id}`}
+                                </label>
+                                <div className="text-xs text-muted-foreground">{doc.insertion_date ? format(new Date(doc.insertion_date), 'PP') : '-'}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      ) : (
+                        <div className="flex-1 flex items-center justify-center text-muted-foreground italic">No documents found.</div>
+                      )}
+                      <div className="mt-1 text-xs text-muted-foreground pt-1">{selectedDocs.length} selected</div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Scheme Selection */}
+                  <Card className="flex flex-col h-full border-none shadow-none p-0"> {/* Adjusted styling */}
+                    <CardHeader className="pb-2 px-1">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg">Schemes ({allSchemes.length})</CardTitle>
+                        <div className="flex items-center gap-1">
+                           <TooltipProvider delayDuration={100}>
+                              <Tooltip>
+                                 <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="sm" onClick={() => setIsCreateSchemeEditorOpen(true)}><Plus className="h-4 w-4" /></Button>
+                                 </TooltipTrigger>
+                                 <TooltipContent><p>Create New Scheme</p></TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                 <TooltipTrigger asChild>
+                                    <Checkbox
+                                       id="select-all-schemes"
+                                       checked={areAllSchemesSelected}
+                                       onCheckedChange={(checked) => handleSelectAllSchemes(!!checked)}
+                                       disabled={isLoadingSchemes}
+                                    />
+                                 </TooltipTrigger>
+                                 <TooltipContent><p>Select All</p></TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                   <Button variant="ghost" size="sm" onClick={() => setIsSchemeManagerOpen(true)}><ListChecks className="h-4 w-4" /></Button>
+                                </TooltipTrigger>
+                                <TooltipContent><p>Manage Schemes</p></TooltipContent>
+                              </Tooltip>
+                           </TooltipProvider>
+                        </div>
+                      </div>
+                      <CardDescription className="px-1">Select schemes to apply in the run.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex-1 flex flex-col px-1">
+                      {isLoadingSchemes ? (
+                        <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground"/></div>
+                      ) : allSchemes.length > 0 ? (
+                        <ScrollArea className="max-h-60 flex-1 border rounded-md p-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {allSchemes.map(scheme => (
+                              <div key={scheme.id} className="flex items-center space-x-2 p-1 rounded hover:bg-muted/50">
+                                <Checkbox
+                                  id={`scheme-${scheme.id}`}
+                                  checked={selectedSchemes.includes(scheme.id)}
+                                  onCheckedChange={(checked) => handleSchemeSelect(scheme.id, !!checked)}
+                                />
+                                <label
+                                  htmlFor={`scheme-${scheme.id}`}
+                                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
+                                  title={scheme.name}
+                                >
+                                  {scheme.name}
+                                </label>
+                                <div className="text-xs text-muted-foreground">{scheme.created_at ? format(new Date(scheme.created_at), 'PP') : '-'}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      ) : (
+                        <div className="flex-1 flex items-center justify-center text-muted-foreground italic">No schemes found.</div>
+                      )}
+                      <div className="mt-1 text-xs text-muted-foreground pt-1">{selectedSchemes.length} selected</div>
+                    </CardContent>
+                  </Card>
                 </div>
               </CardContent>
             </Card>
+            {/* === END: Setup Card === */}
 
-            <div className="flex flex-col space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card className="flex flex-col h-full">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">Documents ({allDocuments.length})</CardTitle>
-                      <div className="flex items-center gap-1">
-                        <TooltipProvider delayDuration={100}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Checkbox
-                                id="select-all-docs"
-                                checked={areAllDocsSelected}
-                                onCheckedChange={(checked) => handleSelectAllDocs(!!checked)}
-                                disabled={isLoadingDocuments}
-                              />
-                            </TooltipTrigger>
-                            <TooltipContent><p>Select All</p></TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="ghost" size="sm" onClick={() => setIsDocumentManagerOpen(true)}><List className="h-4 w-4" /></Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p>Manage Documents</p></TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                    </div>
-                    <CardDescription>Select documents to include in the run.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex-1 flex flex-col">
-                    {isLoadingDocuments ? (
-                      <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground"/></div>
-                    ) : allDocuments.length > 0 ? (
-                      <ScrollArea className="max-h-60 flex-1 border rounded-md p-2">
-                        <div className="space-y-2">
-                          {allDocuments.map(doc => (
-                            <div key={doc.id} className="flex items-center space-x-2 p-1 rounded hover:bg-muted/50">
-                              <Checkbox
-                                id={`doc-${doc.id}`}
-                                checked={selectedDocs.includes(doc.id)}
-                                onCheckedChange={(checked) => handleDocSelect(doc.id, !!checked)}
-                              />
-                              <label
-                                htmlFor={`doc-${doc.id}`}
-                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
-                                title={doc.title}
-                              >
-                                {doc.title || `Document ${doc.id}`}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center text-muted-foreground italic">No documents found.</div>
-                    )}
-                    <div className="mt-1 text-xs text-muted-foreground pt-1">{selectedDocs.length} selected</div>
-                  </CardContent>
-                </Card>
-
-                <Card className="flex flex-col h-full">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">Schemes ({allSchemes.length})</CardTitle>
-                      <div className="flex items-center gap-1">
-                        <TooltipProvider delayDuration={100}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="ghost" size="sm" onClick={() => setIsCreateSchemeEditorOpen(true)}><Plus className="h-4 w-4" /></Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p>Create New Scheme</p></TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        <TooltipProvider delayDuration={100}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Checkbox
-                                id="select-all-schemes"
-                                checked={areAllSchemesSelected}
-                                onCheckedChange={(checked) => handleSelectAllSchemes(!!checked)}
-                                disabled={isLoadingSchemes}
-                              />
-                            </TooltipTrigger>
-                            <TooltipContent><p>Select All</p></TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="ghost" size="sm" onClick={() => setIsSchemeManagerOpen(true)}><ListChecks className="h-4 w-4" /></Button>
-                          </TooltipTrigger>
-                          <TooltipContent><p>Manage Schemes</p></TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </div>
-                    <CardDescription>Select schemes to apply in the run.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex-1 flex flex-col">
-                    {isLoadingSchemes ? (
-                      <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground"/></div>
-                    ) : allSchemes.length > 0 ? (
-                      <ScrollArea className="max-h-60 flex-1 border rounded-md p-2">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {allSchemes.map(scheme => (
-                            <div key={scheme.id} className="flex items-center space-x-2 p-1 rounded hover:bg-muted/50">
-                              <Checkbox
-                                id={`scheme-${scheme.id}`}
-                                checked={selectedSchemes.includes(scheme.id)}
-                                onCheckedChange={(checked) => handleSchemeSelect(scheme.id, !!checked)}
-                              />
-                              <label
-                                htmlFor={`scheme-${scheme.id}`}
-                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
-                                title={scheme.name}
-                              >
-                                {scheme.name}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center text-muted-foreground italic">No schemes found.</div>
-                    )}
-                    <div className="mt-1 text-xs text-muted-foreground pt-1">{selectedSchemes.length} selected</div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card className="mt-4">
+            {/* === Results Card (Remains, but filters move inside) === */}
+            <Card className="mt-4">
                  <CardHeader>
                       <div className="flex items-center justify-between">
-                          <CardTitle>Run Results</CardTitle>
+                          <div className="flex flex-col"> {/* Group title and description */}
+                              <CardTitle>Run Results</CardTitle>
+                              <CardDescription className="flex items-center gap-1 mt-1">
+                                 {currentRunId ? (
+                                    <>
+                                        <span
+                                            id="run-description-editable"
+                                            className={`px-1 ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
+                                            contentEditable={isEditingDescription ? 'true' : 'false'}
+                                            suppressContentEditableWarning={true}
+                                            onBlur={(e) => handleBlur(e, 'description')}
+                                            onKeyDown={(e) => handleKeyDown(e, 'description')}
+                                            onClick={() => !isEditingDescription && handleEditClick('description')}
+                                        >
+                                            {currentRunDescription || 'Add a description...'}
+                                        </span>
+                                        <TooltipProvider delayDuration={100}>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent><p>Edit Description</p></TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
+                                    </>
+                                 ) : "Load a run from history or create a new one to see results."
+                                 }
+                              </CardDescription>
+                          </div>
                           {currentRunId && (
-                              <div className="flex items-center gap-1">
-                                  <span
-                                      id="run-name-editable"
-                                      className={`font-medium text-lg px-1 ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
-                                      contentEditable={isEditingName ? 'true' : 'false'}
-                                      suppressContentEditableWarning={true}
-                                      onBlur={(e) => handleBlur(e, 'name')}
-                                      onKeyDown={(e) => handleKeyDown(e, 'name')}
-                                      onClick={() => !isEditingName && handleEditClick('name')}
-                                  >
-                                      {currentRunName || 'Unnamed Run'}
-                                  </span>
-                                  <TooltipProvider delayDuration={100}>
-                                     <Tooltip>
-                                         <TooltipTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
-                                         </TooltipTrigger>
-                                         <TooltipContent><p>Edit Run Name</p></TooltipContent>
-                                     </Tooltip>
-                                 </TooltipProvider>
+                              <div className="flex items-center gap-2"> {/* Group name edit and clear button */}
+                                  <div className="flex items-center gap-1">
+                                      <span
+                                          id="run-name-editable"
+                                          className={`font-medium text-lg px-1 ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
+                                          contentEditable={isEditingName ? 'true' : 'false'}
+                                          suppressContentEditableWarning={true}
+                                          onBlur={(e) => handleBlur(e, 'name')}
+                                          onKeyDown={(e) => handleKeyDown(e, 'name')}
+                                          onClick={() => !isEditingName && handleEditClick('name')}
+                                      >
+                                          {currentRunName || 'Unnamed Run'}
+                                      </span>
+                                      <TooltipProvider delayDuration={100}>
+                                         <Tooltip>
+                                             <TooltipTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
+                                             </TooltipTrigger>
+                                             <TooltipContent><p>Edit Run Name</p></TooltipContent>
+                                         </Tooltip>
+                                     </TooltipProvider>
+                                  </div>
+                                  {/* Moved Clear Run Button Here */}
+                                  <Button variant="outline" size="sm" onClick={handleClearRun} disabled={!currentRunId}>
+                                      <XCircle className="h-4 w-4 mr-1" /> Clear
+                                  </Button>
                               </div>
                           )}
                       </div>
-                      <CardDescription className="flex items-center gap-1">
-                         {currentRunId ? (
-                            <span
-                                id="run-description-editable"
-                                className={`px-1 ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
-                                contentEditable={isEditingDescription ? 'true' : 'false'}
-                                suppressContentEditableWarning={true}
-                                onBlur={(e) => handleBlur(e, 'description')}
-                                onKeyDown={(e) => handleKeyDown(e, 'description')}
-                                onClick={() => !isEditingDescription && handleEditClick('description')}
-                            >
-                                {currentRunDescription || 'Add a description...'}
-                            </span>
-                         ) : "Load a run from history or create a new one to see results."
-                         }
-                         {currentRunId && (
-                            <TooltipProvider delayDuration={100}>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent><p>Edit Description</p></TooltipContent>
-                                </Tooltip>
-                            </TooltipProvider>
-                         )}
-                      </CardDescription>
+                      {/* REMOVED Description from here, moved above */}
                  </CardHeader>
                  <CardContent>
-                     {currentRunId && !isLoadingRunDetails && (
+                     {/* Check if we should show filters and results */}
+                     {(currentRunId && !isLoadingRunDetails) || isLoadingRunDetails ? (
                         <>
-                            <ResultFilters
-                                filters={activeFilters}
-                                schemes={runSchemes}
-                                onChange={setActiveFilters}
-                            />
-                            {renderResultsTabs()}
+                            {/* --- MOVED FILTERS HERE --- */}
+                            {currentRunId && !isLoadingRunDetails && (
+                                <div className="mb-4 p-4 border rounded-md bg-muted/10"> {/* Optional wrapper for filters */}
+                                    <ResultFilters
+                                        filters={activeFilters}
+                                        schemes={runSchemes}
+                                        onChange={setActiveFilters}
+                                    />
+                                </div>
+                            )}
+                            {/* --- END MOVED FILTERS --- */}
+
+                            {/* Loading state for results */}
+                            {isLoadingRunDetails && (
+                                <div className="flex justify-center items-center h-60">
+                                    <Loader2 className="h-8 w-8 animate-spin text-primary"/>
+                                    <span className="ml-2">Loading results...</span>
+                                </div>
+                            )}
+
+                            {/* Render tabs only when not loading and run is selected */}
+                            {currentRunId && !isLoadingRunDetails && renderResultsTabs()}
                         </>
-                     )}
-                     {isLoadingRunDetails && (
-                        <div className="flex justify-center items-center h-60">
-                            <Loader2 className="h-8 w-8 animate-spin text-primary"/>
-                        </div>
-                     )}
-                     {!currentRunId && !isLoadingRunDetails && (
+                     ) : (
+                         // Message when no run is loaded and not loading
                          <div className="text-center p-8 text-muted-foreground border rounded-lg">
                             Load a run from history or create a new one to view results.
                          </div>
                      )}
                  </CardContent>
               </Card>
-            </div>
           </div>
 
           {/* Dialogs */}
           <RunHistoryDialog isOpen={isHistoryDialogOpen} onClose={() => setIsHistoryDialogOpen(false)} activeRunId={currentRunId} onSelectRun={handleLoadFromRun} />
+          <Dialog open={isDocumentManagerOpen} onOpenChange={setIsDocumentManagerOpen}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Document Manager</DialogTitle>
+                <DialogDescription>Manage documents for the current workspace.</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col space-y-4">
+                {isLoadingDocuments ? (
+                  <div className="flex justify-center items-center h-20"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
+                ) : allDocuments.length > 0 ? (
+                  <ScrollArea className="max-h-[400px]">
+                    <div className="space-y-2">
+                      {allDocuments.map(doc => (
+                        <div key={doc.id} className="flex items-center space-x-2 p-2 rounded hover:bg-muted/50">
+                          <Checkbox
+                            id={`doc-${doc.id}`}
+                            checked={selectedDocs.includes(doc.id)}
+                            onCheckedChange={(checked) => handleDocSelect(doc.id, !!checked)}
+                          />
+                          <label
+                            htmlFor={`doc-${doc.id}`}
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
+                            title={doc.title}
+                          >
+                            {doc.title || `Document ${doc.id}`}
+                          </label>
+                          <div className="text-xs text-muted-foreground">{doc.insertion_date ? format(new Date(doc.insertion_date), 'PP') : '-'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center text-muted-foreground italic">No documents found.</div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsDocumentManagerOpen(false)}>
+                  <X className="h-4 w-4 mr-2" /> Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isSchemeManagerOpen} onOpenChange={setIsSchemeManagerOpen}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Scheme Manager</DialogTitle>
+                <DialogDescription>Manage classification schemes for the current workspace.</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col space-y-4">
+                {isLoadingSchemes ? (
+                  <div className="flex justify-center items-center h-20"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
+                ) : allSchemes.length > 0 ? (
+                  <ScrollArea className="max-h-[400px]">
+                    <div className="space-y-2">
+                      {allSchemes.map(scheme => (
+                        <div key={scheme.id} className="flex items-center space-x-2 p-2 rounded hover:bg-muted/50">
+                          <Checkbox
+                            id={`scheme-${scheme.id}`}
+                            checked={selectedSchemes.includes(scheme.id)}
+                            onCheckedChange={(checked) => handleSchemeSelect(scheme.id, !!checked)}
+                          />
+                          <label
+                            htmlFor={`scheme-${scheme.id}`}
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
+                            title={scheme.name}
+                          >
+                            {scheme.name}
+                          </label>
+                          <div className="text-xs text-muted-foreground">{scheme.created_at ? format(new Date(scheme.created_at), 'PP') : '-'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center text-muted-foreground italic">No schemes found.</div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsSchemeManagerOpen(false)}>
+                  <X className="h-4 w-4 mr-2" /> Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isCreateSchemeEditorOpen} onOpenChange={setIsCreateSchemeEditorOpen}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Create New Scheme</DialogTitle>
+                <DialogDescription>Define a new classification scheme for the current workspace.</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col space-y-4">
+                {/* Scheme Editor Component */}
+                <ClassificationSchemeEditor
+                  show={isCreateSchemeEditorOpen}
+                  onClose={() => {
+                    setIsCreateSchemeEditorOpen(false);
+                    loadSchemes(); // Reload schemes after potentially creating one
+                  }}
+                  mode="create"
+                />
+              </div>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
@@ -1505,6 +1633,7 @@ export default function ClassificationRunner() {
               </DialogHeader>
               <ScrollArea className="max-h-[60vh] p-4">
                   {selectedDocumentId && (() => {
+                     // This logic correctly renders the details without a separate ResultDetails component
                      const doc = currentRunDocuments.find(d => d.id === selectedDocumentId);
                      const resultsForDoc = currentRunResults.filter(r => r.document_id === selectedDocumentId);
                      const schemesForDoc = resultsForDoc
@@ -1541,7 +1670,7 @@ export default function ClassificationRunner() {
             show={isCreateSchemeEditorOpen}
             onClose={() => {
               setIsCreateSchemeEditorOpen(false);
-              loadSchemes();
+              loadSchemes(); // Reload schemes after potentially creating one
             }}
             mode="create"
           />

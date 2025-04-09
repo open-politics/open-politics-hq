@@ -101,7 +101,7 @@ interface DocumentManagerProps {
 }
 
 export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerProps) {
-  const { documents, fetchDocuments } = useDocumentStore();
+  const { documents, fetchDocuments, documentIdToSelect, setDocumentIdToSelect } = useDocumentStore();
   const { activeWorkspace } = useWorkspaceStore();
   const { schemes, loadSchemes } = useClassificationSystem({
     autoLoadSchemes: true
@@ -117,7 +117,6 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [documentToEdit, setDocumentToEdit] = useState<DocumentRead | null>(null);
 
-  // Use a ref to prevent multiple fetches
   const fetchingRef = useRef(false);
 
   const handleDocumentSelect = (documentId: number) => {
@@ -134,6 +133,20 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
     setIsCreateDocumentOpen(true);
   };
 
+  useEffect(() => {
+    console.log('[DocumentManager] useEffect for selection triggered. documentIdToSelect:', documentIdToSelect);
+    if (documentIdToSelect !== null) {
+      console.log('[DocumentManager] Checking if document exists in list:', documents.map(d => d.id));
+      if (documents.some(doc => doc.id === documentIdToSelect)) {
+          console.log('[DocumentManager] Document found! Selecting ID:', documentIdToSelect);
+          setSelectedDocumentId(documentIdToSelect);
+          setDocumentIdToSelect(null); 
+      } else {
+          console.log('[DocumentManager] Document ID', documentIdToSelect, 'not found in current documents list.');
+      }
+    }
+  }, [documentIdToSelect, setDocumentIdToSelect, documents]);
+
   const memoizedDocumentToEditProps = useMemo(() => ({
     open: isEditOpen,
     onClose: () => setIsEditOpen(false),
@@ -148,13 +161,21 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
   }), [isEditOpen, documentToEdit]);
 
   useEffect(() => {
+    // Fetch data when workspace changes
     if (activeWorkspace && !fetchingRef.current) {
+      console.log("[DocumentManager] Workspace changed, fetching data for:", activeWorkspace.uid);
       fetchingRef.current = true;
-      setSelectedDocumentId(null);
+      setSelectedDocumentId(null); // Reset local selection on workspace change
       fetchDocuments();
       loadSchemes();
     }
-  }, [activeWorkspace?.uid]); // Only depend on the ID
+    // Reset fetchingRef if workspace changes or component unmounts
+    return () => { 
+      console.log("[DocumentManager] Cleanup effect for workspace change.");
+      fetchingRef.current = false; 
+    };
+    // Only depend on the workspace UID. fetchDocuments/loadSchemes implicitly use it.
+  }, [activeWorkspace?.uid]);
 
   if (!activeWorkspace) {
     return (
@@ -169,7 +190,6 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
       <DocumentDetailWrapper onLoadIntoRunner={onLoadIntoRunner}>
         <TooltipProvider delayDuration={0}>
           <div className="flex flex-col h-full w-full max-w-screen-2xl max-h-[80%] mx-auto px-2 sm:px-4">
-            {/* Header Section - Made more compact on mobile */}
             <div className="flex-none p-2 sm:p-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-wrap gap-2">
@@ -190,16 +210,15 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
               <Separator className="my-2" />
             </div>
 
-            {/* Main Content Area - Adjusted for responsive layout */}
             <div className="flex-1 min-h-0 flex flex-col">
               <ResizablePanelGroup
                 direction="horizontal"
-                className="h-full w-full border rounded-lg overflow-hidden"
+                className="h-full w-full border rounded-lg"
               >
                 <ResizablePanel 
                   defaultSize={50} 
                   minSize={30}
-                  className="min-w-[300px] bg-background border-2 border-documents"
+                  className="min-w-[300px] bg-background  "
                 >
                   <div className="flex flex-col h-full">
                     <div className="flex-none p-2 sm:p-4">
@@ -220,7 +239,6 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
                       </div>
                     </div>
 
-                    {/* Document List - Adjusted grid for mobile */}
                     <div className="flex-1 min-h-0 overflow-hidden">
                       <Tabs defaultValue="all" className="h-full">
                         <TabsContent value="all" className="h-full m-0">
@@ -232,7 +250,9 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
                             />
                           ) : (
                             <div className="h-full overflow-x-auto">
-                              <DocumentsTable onDocumentSelect={handleDocumentSelect} />
+                              <DocumentsTable 
+                                onDocumentSelect={handleDocumentSelect} 
+                              />
                             </div>
                           )}
                         </TabsContent>
@@ -246,7 +266,7 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
                 <ResizablePanel 
                   defaultSize={50} 
                   minSize={30}
-                  className="min-w-[300px] bg-background border-l border-2 border-documents"
+                  className="min-w-[300px] bg-background border-l  "
                 >
                   <div className="h-full overflow-hidden">
                     <DocumentDetailView 
@@ -262,7 +282,6 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
               </ResizablePanelGroup>
             </div>
 
-            {/* Modals */}
             <CreateDocumentDialog
               open={isCreateDocumentOpen}
               onClose={() => setIsCreateDocumentOpen(false)}

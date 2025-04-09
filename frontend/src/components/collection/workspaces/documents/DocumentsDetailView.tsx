@@ -417,7 +417,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
     
     if (documentRuns.length === 0) {
       return (
-        <div className="mb-4 p-3 bg-muted/20 rounded-lg border border-2 border-metadata">
+        <div className="mb-4 p-3 bg-muted/20 rounded-lg border  ">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium">Available Runs</h4>
           </div>
@@ -429,7 +429,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
     }
     
     return (
-      <div className="mb-4 p-3 bg-muted/20 rounded-lg border border-2 border-metadata">
+      <div className="mb-4 p-3 bg-muted/20 rounded-lg border  ">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium">Available Runs</h4>
           {isLoadingRunsFromStore && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -475,7 +475,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   };
 
   const renderClassificationSection = () => (
-    <div className="p-6 w-full backdrop-blur-md bg-secondary/70 rounded-lg shadow-md relative overflow-hidden border-2 border-results">
+    <div className="p-6 w-full backdrop-blur-md bg-secondary/70 rounded-lg shadow-md relative overflow-hidden  border-results">
       {/* Run Selector */}
       {renderRunSelector()}
       
@@ -486,56 +486,66 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
             No classification results available
           </div>
         ) : (
-          classificationResults.map((result) => {
-            const scheme = schemes.find(s => s.id === result.scheme_id);
-            return (
-              <div 
-                key={result.id} 
-                className="p-4 bg-card rounded-lg shadow-sm hover:shadow-md hover:scale-105 transition-all duration-200 cursor-pointer"
-                onClick={() => {
-                  setSelectedResult(result);
-                  setIsResultDialogOpen(true);
-                }}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="space-y-2 flex-1">
-                    <div className="flex items-center gap-3">
-                      <span className="font-medium text-sm">{scheme?.name}</span>
-                      {result.run_name && (
-                        <Badge variant="outline" className="text-xs">
-                          {result.run_name}
-                        </Badge>
+          classificationResults
+            .filter(result => 
+              !selectedRun ||
+              result.run_id?.toString() === selectedRun
+            )
+            .map((result) => {
+              const scheme = schemes.find(s => s.id === result.scheme_id);
+              if (!scheme) {
+                console.warn(`Scheme not found for result ID ${result.id} with scheme ID ${result.scheme_id}`);
+                return null;
+              }
+              return (
+                <div 
+                  key={result.id} 
+                  className="p-4 bg-card rounded-lg shadow-sm hover:shadow-md hover:scale-105 transition-all duration-200 cursor-pointer"
+                  onClick={() => {
+                    setSelectedResult(result);
+                    setIsResultDialogOpen(true);
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-2 flex-1">
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-sm">{scheme.name}</span>
+                        {result.run_name && (
+                          <Badge variant="outline" className="text-xs">
+                            {result.run_name}
+                          </Badge>
+                        )}
+                      </div>
+                      <ClassificationResultDisplay 
+                        result={result}
+                        scheme={scheme}
+                        compact={true}
+                      />
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="text-xs text-muted-foreground">
+                        {result.timestamp && format(new Date(result.timestamp), "PP · p")}
+                      </div>
+                      {result.run_id && onLoadIntoRunner && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="text-xs hover:bg-primary hover:text-primary-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLoadIntoRunner(result);
+                          }}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          Load in Runner
+                        </Button>
                       )}
                     </div>
-                    <ClassificationResultDisplay 
-                      result={result}
-                      scheme={scheme!}
-                      compact={true}
-                    />
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <div className="text-xs text-muted-foreground">
-                      {result.timestamp && format(new Date(result.timestamp), "PP · p")}
-                    </div>
-                    {result.run_id && onLoadIntoRunner && (
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="text-xs hover:bg-primary hover:text-primary-foreground"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleLoadIntoRunner(result);
-                        }}
-                      >
-                        <ExternalLink className="h-3 w-3 mr-1" />
-                        Load in Runner
-                      </Button>
-                    )}
                   </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })
+            .filter(Boolean)
         )}
       </div>
     </div>
@@ -576,9 +586,9 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
           {document ? (
             <div className={cn(
               "space-y-2",
-              isNewDocument && "border-2 border-green-500"
+              isNewDocument && " border-green-500"
             )}>
-              <div className="flex items-start p-4 border-b border-2 border-documents rounded-t-lg">
+              <div className="flex items-start p-4 border-b   rounded-t-lg">
                 <div className="flex items-start gap-4 text-sm">
                   <Avatar>
                     <AvatarImage alt={document.title} />
@@ -604,7 +614,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
                 )}
               </div>
               {document.files && document.files.length > 0 && (
-                <div className="p-4 border-t border-2 border-documents">
+                <div className="p-4 border-t  ">
                   <h4 className="text-sm font-medium mb-2">Files</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {(document?.files || []).map((file) => (
@@ -656,7 +666,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
               {document.top_image && (
                 <>
               <Separator />
-              <div className="p-4 relative overflow-hidden border-t border-2 border-documents">
+              <div className="p-4 relative overflow-hidden border-t  ">
                 {document.top_image && (
                   <>
                     <div className="absolute inset-6 cursor-pointer hover:scale-110 transition-transform duration-200" onClick={() => setIsImageOpen(true)}>
@@ -694,7 +704,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
               
 
               <Separator />
-              <div className="p-4 border-t border-2 border-documents rounded-b-lg">
+              <div className="p-4 border-t   rounded-b-lg">
                 <div className="flex items-center justify-start mb-2">
                   <h4 className="text-sm font-medium">Document Content</h4>
                   

@@ -28,8 +28,10 @@ import DocumentLink from '../documents/DocumentLink';
 import { ClassificationService } from '@/lib/classification/service';
 import { Info } from 'lucide-react';
 import { ClassificationScheme, SchemeField, DictKeyDefinition, FieldType } from '@/lib/classification/types';
-import { ResultFilter, getTargetFieldDefinition } from './ClassificationResultFilters';
-import { checkFilterMatch, compareValues } from '@/lib/classification/utils';
+import { ResultFilter } from './ClassificationResultFilters';
+import { getTargetFieldDefinition, getTargetKeysForScheme, formatDisplayValue, checkFilterMatch, compareValues } from '@/lib/classification/utils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 // Define gradient colors for bars
 const gradientColors = [
@@ -342,6 +344,30 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
+  // --- State for Grouping Selection ---
+  const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(schemes[0]?.id ?? null);
+  const [groupingFieldKey, setGroupingFieldKey] = useState<string | null>(() => {
+      if (schemes.length > 0 && groupingSchemeId !== null) {
+        const initialKeys = getTargetKeysForScheme(groupingSchemeId, schemes);
+        return initialKeys.length > 0 ? initialKeys[0].key : null;
+      }
+      return null;
+  });
+
+  // Update field key when scheme changes
+  useEffect(() => {
+    if (groupingSchemeId !== null) {
+        const keys = getTargetKeysForScheme(groupingSchemeId, schemes);
+        const currentKeyIsValid = keys.some(k => k.key === groupingFieldKey);
+        // Reset to the first key if the current one is invalid or null for the new scheme
+        if (!currentKeyIsValid) {
+            setGroupingFieldKey(keys.length > 0 ? keys[0].key : null);
+        }
+    } else {
+        setGroupingFieldKey(null); // No scheme selected
+    }
+  }, [groupingSchemeId, schemes, groupingFieldKey]); // Added groupingFieldKey dependency
+
   // Data processing for the chart
   const { chartData, groupedData, maxGroupCount } = useMemo(() => {
     if (!results || results.length === 0) {
@@ -578,33 +604,79 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
 
     // --- Data Processing for Bar Chart (isGrouped = true) ---
     const processGroupedChartData = () => {
-      console.log('[Grouped Chart] Processing filtered results:', filteredResults.length);
+      console.log('[Grouped Chart] Processing filtered results:', filteredResults.length, 'Group By:', groupingSchemeId, groupingFieldKey);
       const valueCountsMap = new Map<string, { count: number; documents: number[]; schemeName: string; valueKey: string }>();
       let calculatedMaxCount = 0;
 
-      filteredResults.forEach(result => {
-        const scheme = schemes.find(s => s.id === result.scheme_id);
-        if (!scheme) return; // Skip if scheme not found
+      // Filter results based on selected grouping scheme
+      const resultsForGroupingScheme = filteredResults.filter(r => r.scheme_id === groupingSchemeId);
+      if (resultsForGroupingScheme.length === 0 || groupingSchemeId === null) {
+          console.log('[Grouped Chart] No results for selected scheme or no scheme selected.');
+          return { data: [], maxCount: 0 };
+      }
 
+      const selectedScheme = schemes.find(s => s.id === groupingSchemeId);
+      if (!selectedScheme) {
+         console.error('[Grouped Chart] Selected scheme not found.');
+         return { data: [], maxCount: 0 };
+      }
+
+      resultsForGroupingScheme.forEach(result => {
         try {
           let actualValue: any;
-          // Extract the actual value based on structure
-          if (!result.value || (typeof result.value === 'object' && Object.keys(result.value).length === 0)) {
-            actualValue = 'N/A';
-          } else if (scheme.fields?.[0]?.type === 'List[Dict[str, any]]') {
-            // Simplified key for complex types in grouped view
-            actualValue = 'Complex Data';
-          } else if (typeof result.value === 'object' && !Array.isArray(result.value)) {
-            const fieldName = scheme.fields?.[0]?.name;
-            actualValue = fieldName && result.value[fieldName] !== undefined ? result.value[fieldName] : Object.values(result.value)[0];
+          // --- MODIFIED: Extract value based on groupingFieldKey ---
+          const mockFilter: ResultFilter = {
+             schemeId: groupingSchemeId,
+             // Use nullish coalescing to provide undefined if groupingFieldKey is null
+             fieldKey: groupingFieldKey ?? undefined,
+             operator: 'equals', // Operator doesn't matter for extraction
+             value: '', // Value doesn't matter for extraction
+             isActive: true
+          };
+          const { definition: targetDefinition } = getTargetFieldDefinition(mockFilter, schemes);
+
+          if (!targetDefinition) {
+             console.warn("Could not find definition for grouping key:", groupingFieldKey, "in scheme:", selectedScheme.name);
+             actualValue = 'Error: Field Not Found';
           } else {
-            actualValue = result.value;
+              // Logic to extract the specific value based on the targetDefinition and groupingFieldKey
+              if ('dict_keys' in targetDefinition && targetDefinition.type === 'List[Dict[str, any]]' && groupingFieldKey) {
+                  // List[Dict] - need to decide *how* to group. Group by presence? Count? First value?
+                  // Let's group by the *values* found for the specified key across all dicts in the list.
+                  // This might create many bars. For now, let's just say "Complex Data" as a placeholder.
+                  // A more robust approach would be needed here based on desired behavior.
+                  if (Array.isArray(result.value)) {
+                     // Collect all unique values for the key from the list of dicts
+                     const valuesInList = result.value
+                         .map(item => (typeof item === 'object' && item !== null && groupingFieldKey in item) ? item[groupingFieldKey] : undefined)
+                         .filter(v => v !== undefined);
+                     // Use the *first* value found for simplicity, or a summary string
+                     actualValue = valuesInList.length > 0 ? valuesInList[0] : 'N/A'; // Simplified: use first value
+                     // TODO: Or maybe count occurrences of the key? Needs clearer spec.
+                  } else {
+                      actualValue = 'Invalid Data Structure';
+                  }
+              } else if ('name' in targetDefinition) {
+                   // Top-level field or simple type
+                   const fieldValue = (typeof result.value === 'object' && result.value !== null && !Array.isArray(result.value))
+                      ? result.value[targetDefinition.name]
+                      : result.value;
+                   actualValue = fieldValue;
+              } else {
+                   actualValue = 'Unknown Field Structure';
+              }
           }
+          // --- End MODIFIED value extraction ---
 
-          const valueKey = String(actualValue ?? 'N/A');
-          const mapKey = `${scheme.name}_${valueKey}`; // Unique key per scheme-value pair
+          // Format the extracted value for consistent key generation
+          // Use the formatDisplayValue helper for consistency, converting result to string for map key
+          const formattedValue = formatDisplayValue(actualValue, selectedScheme);
+          const valueKey = String(formattedValue ?? 'N/A'); // Ensure valueKey is a string
 
-          const currentEntry = valueCountsMap.get(mapKey) || { count: 0, documents: [], schemeName: scheme.name, valueKey: valueKey };
+          // Use selectedScheme.name which is guaranteed to exist here
+          const mapKey = `${selectedScheme.name}_${valueKey}`;
+
+          const currentEntry = valueCountsMap.get(mapKey) || { count: 0, documents: [], schemeName: selectedScheme.name, valueKey: valueKey };
           currentEntry.count += 1;
           if (!currentEntry.documents.includes(result.document_id)) {
             currentEntry.documents.push(result.document_id);
@@ -622,9 +694,9 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
       });
 
       // Convert map to array format suitable for recharts bar chart
-      // X-axis = valueString, Y-axis = count
+      // X-axis = valueString (now simplified to just the valueKey), Y-axis = count
       const finalGroupedData = Array.from(valueCountsMap.values()).map(entry => ({
-        valueString: `${entry.schemeName}: ${entry.valueKey}`, // Combine scheme and value for X-axis label
+        valueString: entry.valueKey, // Simplified X-axis label
         count: entry.count,
         documents: entry.documents,
         schemeName: entry.schemeName,
@@ -634,15 +706,13 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
       console.log('[Grouped Chart] Final grouped data:', finalGroupedData, 'Max Count:', calculatedMaxCount);
       // Sort grouped data alphabetically by valueString for consistent bar order
       finalGroupedData.sort((a, b) => a.valueString.localeCompare(b.valueString));
-      return { data: finalGroupedData, maxCount: calculatedMaxCount + 1 };
+      return { data: finalGroupedData, maxCount: calculatedMaxCount };
     };
 
     // Return processed data based on the isGrouped state
     if (isGrouped) {
       const groupedResult = processGroupedChartData();
-      // Add 1 to maxCount for buffer only if maxCount > 0, ensure it's at least 1
-      const yAxisMax = Math.max(1, groupedResult.maxCount > 0 ? groupedResult.maxCount + 1 : 1); 
-      return { chartData: [], groupedData: groupedResult.data, maxGroupCount: yAxisMax };
+      return { chartData: [], groupedData: groupedResult.data, maxGroupCount: groupedResult.maxCount };
     } else {
       const lineData = processLineChartData();
       return { chartData: lineData, groupedData: [], maxGroupCount: 'auto' }; // 'auto' for line chart Y-axis
@@ -674,21 +744,86 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
     return <circle key={key} cx={cx} cy={cy} r={r ? r + 2 : 4} fill="rgba(136, 132, 216, 0.8)" stroke="#fff" strokeWidth={1} />;
   }, []);
 
+  // --- Get target keys for the selected grouping scheme ---
+  const currentGroupingKeys = useMemo(() => {
+      if (groupingSchemeId !== null) {
+          return getTargetKeysForScheme(groupingSchemeId, schemes);
+      }
+      return [];
+  }, [groupingSchemeId, schemes]);
+
   return (
     <div>
-      <div className="flex items-center gap-2 mb-4">
+      {/* --- Grouping Controls --- */}
+      <div className="flex flex-wrap items-center gap-4 mb-4 p-3 border rounded-md bg-muted/10">
+        {/* Group Toggle */}
         <Switch
           checked={isGrouped}
           onCheckedChange={setIsGrouped}
           id="group-switch"
         />
         <label htmlFor="group-switch">Group by value</label>
+        {/* Scheme Selector (only show when grouping) */}
+        {isGrouped && (
+          <div className="flex items-center gap-2">
+            <Label htmlFor="group-scheme-select" className="text-sm">Scheme:</Label>
+            <Select
+              value={groupingSchemeId?.toString() ?? ''}
+              onValueChange={(value) => setGroupingSchemeId(value ? parseInt(value) : null)}
+              disabled={!isGrouped}
+            >
+              <SelectTrigger id="group-scheme-select" className="w-[200px]">
+                <SelectValue placeholder="Select scheme to group by" />
+              </SelectTrigger>
+              <SelectContent>
+                {schemes.map(scheme => (
+                  <SelectItem key={scheme.id} value={scheme.id.toString()}>
+                    {scheme.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Field/Key Selector (only show when grouping AND multiple keys exist) */}
+        {isGrouped && groupingSchemeId !== null && currentGroupingKeys.length > 1 && (
+           <div className="flex items-center gap-2">
+               <Label htmlFor="group-key-select" className="text-sm">Field/Key:</Label>
+               <Select
+                 value={groupingFieldKey ?? ''}
+                 onValueChange={(value) => setGroupingFieldKey(value || null)}
+                 disabled={!isGrouped || groupingSchemeId === null}
+               >
+                 <SelectTrigger id="group-key-select" className="w-[180px]">
+                   <SelectValue placeholder="Select field/key" />
+                 </SelectTrigger>
+                 <SelectContent>
+                   {currentGroupingKeys.map(tk => (
+                     <SelectItem key={tk.key} value={tk.key}>
+                       {tk.name} ({tk.type})
+                     </SelectItem>
+                   ))}
+                 </SelectContent>
+               </Select>
+            </div>
+        )}
+        {/* Show single field name if only one option */}
+        {isGrouped && groupingSchemeId !== null && currentGroupingKeys.length === 1 && (
+            <div className="flex items-center gap-2">
+                <Label className="text-sm">Field/Key:</Label>
+                <span className="text-sm px-3 py-1.5 bg-muted rounded">{currentGroupingKeys[0].name}</span>
+            </div>
+        )}
+
       </div>
 
-      {results.length === 0 ? (
+      {/* --- Chart Area --- */}
+      {(results.length === 0 || (isGrouped && groupedData.length === 0)) ? (
         <div className="flex flex-col items-center justify-center p-8 text-center border border-dashed rounded-lg">
           <Info className="h-10 w-10 text-muted-foreground mb-2" />
           <p className="text-muted-foreground">No results to display. Try adjusting your filters.</p>
+          {isGrouped && results.length > 0 && <p className="text-xs text-muted-foreground">(Or select a different scheme/field for grouping)</p>}
         </div>
       ) : (
         <div style={{ width: '100%', height: 400 }}>
@@ -822,99 +957,76 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
   
   return (
     <div className="custom-tooltip bg-secondary/75 p-3 border border-gray-300 rounded-lg shadow-lg max-w-md">
-      {/* For grouped data, show the value counts */}
-      {isGrouped ? (
-        payload.map((entry: any, index: number) => {
-          let displayValue = entry.value;
-          let displayName = entry.name;
-          
-          // For grouped data, extract the value from the dataKey
-          const entryDataKey = typeof entry.dataKey === 'string' ? entry.dataKey : String(entry.dataKey || '');
-          
-          if (entryDataKey.includes('_')) {
-            const parts = entryDataKey.split('_');
-            if (parts.length > 1) {
-              displayName = parts.slice(1).join('_');
-              displayValue = entry.value; // This is the count
-            }
-          }
-          
-          return (
-            <p key={`item-${index}`} className="text-sm">
-              {`${displayName}: ${displayValue} documents`}
-            </p>
-          );
-        })
-      ) : (
-        // For non-grouped data, show all schemes for the first few documents
-        <div className="mt-2">
-          {/* Show Date for Line Chart or Value Group for Bar Chart */}     
-          <p className="text-xs text-muted-foreground mt-1">
-            {isGrouped ? `Value: ${('valueKey' in dataPoint) ? dataPoint.valueKey : label}` : `Date: ${label}`}
-          </p>
-          {docsToShow.slice(0, 3).map((doc, docIndex) => {
-            // Get the pre-calculated scheme values for this specific document from the dataPoint
-            const docValues = ('docSchemeValues' in dataPoint) ? dataPoint.docSchemeValues?.[doc.id] : undefined;
-            if (!docValues) return null; // Skip if no values found for this doc in the data point
-            
-            // Identify which schemes actually have values recorded for this document
+      {/* --- MODIFIED: Show Group Info OR Date Info --- */}
+      <p className="text-xs text-muted-foreground mb-2">
+        {isGrouped && 'valueString' in dataPoint
+          ? `Group: ${dataPoint.schemeName} - ${dataPoint.valueKey}`
+          : `Date: ${label}`}
+      </p>
+
+      {/* --- MODIFIED: Always show document list if available --- */}
+      {docsToShow.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-gray-200">
+          <p className="text-xs font-medium mb-1">Documents ({docsToShow.length}):</p>
+          {docsToShow.slice(0, 3).map((doc) => (
+            <div key={doc.id} className="text-xs truncate">
+              <DocumentLink documentId={doc.id}>{doc.title || `Document ${doc.id}`}</DocumentLink>
+            </div>
+          ))}
+          {docsToShow.length > 3 && (
+            <div className="text-xs text-gray-500 italic mt-1">
+              ...and {docsToShow.length - 3} more document(s)
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* --- MODIFIED: Show Scheme Values ONLY for Line Chart --- */}
+      {!isGrouped && 'docSchemeValues' in dataPoint && (
+        <div className="mt-2 pt-2 border-t border-gray-200">
+          {docsToShow.slice(0, 3).map((doc) => {
+            const docValues = dataPoint.docSchemeValues?.[doc.id];
+            if (!docValues) return null;
+
             const docSchemesWithValue = Object.keys(docValues)
               .map(schemeName => schemes.find(s => s.name === schemeName))
               .filter((s): s is ClassificationSchemeRead => !!s);
-              
-              return (
-                <div key={doc.id} className="mb-2 pb-2 border-b border-gray-200 last:border-b-0">
-                
+
+            if (docSchemesWithValue.length === 0) return null; // Skip if no relevant schemes found for this doc in the point
+
+            return (
+              <div key={doc.id} className="mb-2 pb-2 border-b border-gray-200 last:border-b-0">
                 <p className="text-xs font-medium">{doc.title || `Document ${doc.id}`}</p>
                 <div className="grid grid-cols-1 gap-1 mt-1">
                   {docSchemesWithValue.map(s => {
-                    // Retrieve the original classification value stored in docSchemeValues
                     const originalValue = docValues[s.name];
-                    // Create a minimal object structure expected by the formatting function
-                    const pseudoResult = { value: originalValue }; 
-                    
-                    // Special handling for entity statements
+                    const pseudoResult = { value: originalValue };
+
+                    // Handle complex entity statements separately for detailed view
                     if (s.fields?.[0]?.type === 'List[Dict[str, any]]') {
-                      const formattedItems = ClassificationService.formatEntityStatements(originalValue, {
-                        compact: false,
-                        maxItems: 3
-                      });
-                      
-                      return (
-                        <div key={s.id} className="text-xs p-1 bg-muted/10 rounded">
-                          <span className="font-medium">{s.name}: </span>
-                          <div className="mt-1 space-y-1">
-                            {Array.isArray(formattedItems) && formattedItems.map((item: any, idx: number) => {
-                              if (typeof item === 'string') {
-                                return (
-                                  <div key={idx} className="pl-2 border-l-2 border-primary/30">
-                                    <span>{item}</span>
-                                  </div>
-                                );
-                              }
-                              
-                              return (
-                                <div key={idx} className="pl-2 border-l-2 border-primary/30">
-                                  {item.entity && <span className="font-medium">{String(item.entity)}: </span>}
-                                  {item.statement && <span>{String(item.statement)}</span>}
-                                  {item.raw && <span>{item.raw}</span>}
-                                  {item.summary && <span className="text-muted-foreground">{item.summary}</span>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    }
-                    
-                    // Extract the value
-                    let displayValue: any = 'N/A';
-                    
-                    if (originalValue) {
-                      // Use our local helper function instead
-                      displayValue = getFormattedClassificationValue(pseudoResult, s);
-                    }
-                    
+                       const formattedItems = ClassificationService.formatEntityStatements(originalValue, { compact: false, maxItems: 3 });
+                       return (
+                         <div key={s.id} className="text-xs p-1 bg-muted/10 rounded">
+                           <span className="font-medium">{s.name}: </span>
+                           <div className="mt-1 space-y-1">
+                             {Array.isArray(formattedItems) && formattedItems.map((item: any, idx: number) => {
+                               if (typeof item === 'string') return <div key={idx} className="pl-2 border-l-2 border-primary/30"><span>{item}</span></div>;
+                               return (
+                                 <div key={idx} className="pl-2 border-l-2 border-primary/30">
+                                   {item.entity && <span className="font-medium">{String(item.entity)}: </span>}
+                                   {item.statement && <span>{String(item.statement)}</span>}
+                                   {item.raw && <span>{item.raw}</span>}
+                                   {item.summary && <span className="text-muted-foreground">{item.summary}</span>}
+                                 </div>
+                               );
+                             })}
+                           </div>
+                         </div>
+                       );
+                     }
+
+                    // Format other types
+                    const displayValue = getFormattedClassificationValue(pseudoResult, s);
                     return (
                       <div key={s.id} className="text-xs">
                         <span className="font-medium">{s.name}: </span>
@@ -926,19 +1038,14 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
               </div>
             );
           })}
+          {docsToShow.length > 3 && !isGrouped && ( // Show this only if not grouped and truncated
+             <div className="text-xs text-gray-500 italic">
+                 Showing details for 3 of {docsToShow.length} documents on this date.
+             </div>
+           )}
         </div>
       )}
-      
-      {/* Show document count */}
-      <div className="mt-2 pt-2 border-t border-gray-200">
-        <p className="text-xs font-medium mb-1">Documents ({docsToShow.length}):</p>
-        {docsToShow.length > 3 && (
-          <div className="text-xs text-gray-500 italic">
-            Showing 3 of {docsToShow.length} documents
-          </div>
-        )}
-      </div>
-      
+
     </div>
   );
 };

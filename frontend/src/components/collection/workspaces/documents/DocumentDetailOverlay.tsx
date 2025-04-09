@@ -7,34 +7,39 @@ import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import DocumentDetailView from './DocumentsDetailView';
 import { Button } from '@/components/ui/button';
-import { X, Maximize } from 'lucide-react';
+import { Maximize, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { schemesToSchemeReads } from '@/lib/classification/adapters';
+import EditDocumentOverlay from './EditDocumentOverlay';
+import { DocumentRead } from '@/client';
 
 interface DocumentDetailOverlayProps {
   open: boolean;
   onClose: () => void;
   documentId: number | null;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
+  onOpenManagerRequest?: () => void;
 }
 
 export default function DocumentDetailOverlay({
   open,
   onClose,
   documentId,
-  onLoadIntoRunner
+  onLoadIntoRunner,
+  onOpenManagerRequest
 }: DocumentDetailOverlayProps) {
-  const { documents, fetchDocuments } = useDocumentStore();
+  const { documents, fetchDocuments, setDocumentIdToSelect } = useDocumentStore();
   const { schemes, loadSchemes } = useClassificationSystem({
-    autoLoadSchemes: true
+    autoLoadSchemes: false
   });
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const { activeWorkspace } = useWorkspaceStore();
   const [dataFetched, setDataFetched] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [documentToEdit, setDocumentToEdit] = useState<DocumentRead | null>(null);
 
-  // Memoize the fetch function to prevent unnecessary re-renders
   const fetchData = useCallback(async () => {
     if (!activeWorkspace) return;
     
@@ -47,36 +52,41 @@ export default function DocumentDetailOverlay({
       setDataFetched(true);
     } catch (error) {
       console.error('Error fetching document data:', error);
+      toast.error('Failed to load document details.');
     } finally {
       setIsLoading(false);
     }
   }, [fetchDocuments, loadSchemes, activeWorkspace]);
 
-  // Only fetch data when the overlay is opened and data hasn't been fetched yet
   useEffect(() => {
     if (open && documentId && activeWorkspace && !dataFetched) {
       fetchData();
     }
+    if (open) {
+        setIsEditOpen(false);
+        setDocumentToEdit(null);
+    }
   }, [open, documentId, activeWorkspace, dataFetched, fetchData]);
 
-  // Reset dataFetched when the overlay is closed
   useEffect(() => {
     if (!open) {
       setDataFetched(false);
+      setIsEditOpen(false);
+      setDocumentToEdit(null);
     }
   }, [open]);
 
-  const handleViewFullPage = () => {
+  const handleOpenInManager = () => {
     if (documentId) {
-      // Navigate to the document detail page
-      router.push(`/documents/${documentId}`);
+      setDocumentIdToSelect(documentId);
+      onOpenManagerRequest?.();
       onClose();
     }
   };
 
-  const handleEdit = (document: any) => {
-    // This is a placeholder for the edit functionality
-    console.log('Edit document:', document);
+  const handleEdit = (document: DocumentRead) => {
+    setDocumentToEdit(document);
+    setIsEditOpen(true);
   };
 
   const handleLoadIntoRunner = (runId: number, runName: string) => {
@@ -87,51 +97,67 @@ export default function DocumentDetailOverlay({
       });
       
       onLoadIntoRunner(runId, runName);
-      onClose(); // Close the overlay after loading into runner
+      onClose();
     }
   };
 
+  const currentDocument = documentId ? documents.find(doc => doc.id === documentId) : null;
+
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader className="flex flex-row items-center justify-between">
-          <DialogTitle>Document Details</DialogTitle>
-          <div className="flex items-center gap-2">
+    <>
+      <Dialog open={open && !isEditOpen} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0">
+          <DialogHeader className="flex flex-row items-center justify-between p-4 border-b">
+            <DialogTitle>Document Details</DialogTitle>
             <Button
               variant="outline"
               size="icon"
-              onClick={handleViewFullPage}
-              title="View full page"
+              onClick={handleOpenInManager}
+              title="Open in Document Manager"
+              className="h-8 w-8"
+              disabled={!documentId}
             >
               <Maximize className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              title="Close"
-            >
-              <X className="h-4 w-4" />
-            </Button>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto p-4">
+            {isLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                <p>Loading document details...</p>
+              </div>
+            ) : documentId ? (
+              <DocumentDetailView
+                documents={documents}
+                newlyInsertedDocumentIds={[]}
+                onEdit={handleEdit}
+                schemes={schemesToSchemeReads(schemes)}
+                selectedDocumentId={documentId}
+                onLoadIntoRunner={handleLoadIntoRunner}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                 <p>No document selected.</p>
+              </div>
+            )}
           </div>
-        </DialogHeader>
-        <div className="flex-1 overflow-hidden">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <p>Loading document details...</p>
-            </div>
-          ) : (
-            <DocumentDetailView
-              documents={documents}
-              newlyInsertedDocumentIds={[]}
-              onEdit={handleEdit}
-              schemes={schemesToSchemeReads(schemes)}
-              selectedDocumentId={documentId}
-              onLoadIntoRunner={handleLoadIntoRunner}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      {currentDocument && (
+        <EditDocumentOverlay
+          open={isEditOpen}
+          onClose={() => setIsEditOpen(false)}
+          documentId={currentDocument.id}
+          defaultTitle={currentDocument.title}
+          defaultTopImage={currentDocument.top_image}
+          defaultContentType={currentDocument.content_type || 'article'}
+          defaultSource={currentDocument.source ?? ''}
+          defaultTextContent={currentDocument.text_content}
+          defaultSummary={currentDocument.summary ?? ''}
+          defaultInsertionDate={currentDocument.insertion_date || new Date().toISOString()}
+        />
+      )}
+    </>
   );
 } 

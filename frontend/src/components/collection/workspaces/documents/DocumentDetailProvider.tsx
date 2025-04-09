@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import DocumentDetailOverlay from './DocumentDetailOverlay';
+import DocumentManagerOverlay from './DocumentManagerOverlay';
 
 interface DocumentDetailProviderProps {
   children: React.ReactNode;
@@ -14,12 +15,22 @@ export default function DocumentDetailProvider({
   onLoadIntoRunner
 }: DocumentDetailProviderProps) {
   const { isDetailOpen, selectedDocumentId, closeDocumentDetail } = useDocumentStore();
+  const [isManagerOpen, setIsManagerOpen] = useState(false);
 
   const handleLoadIntoRunner = (runId: number, runName: string) => {
     if (onLoadIntoRunner) {
       onLoadIntoRunner(runId, runName);
-      closeDocumentDetail(); // Close the document detail after loading into runner
+      closeDocumentDetail();
+      setIsManagerOpen(false);
     }
+  };
+
+  const handleOpenManagerRequest = () => {
+    setIsManagerOpen(true);
+  };
+
+  const handleCloseManager = () => {
+    setIsManagerOpen(false);
   };
 
   return (
@@ -29,6 +40,12 @@ export default function DocumentDetailProvider({
         open={isDetailOpen}
         onClose={closeDocumentDetail}
         documentId={selectedDocumentId}
+        onLoadIntoRunner={handleLoadIntoRunner}
+        onOpenManagerRequest={handleOpenManagerRequest}
+      />
+      <DocumentManagerOverlay
+        isOpen={isManagerOpen}
+        onClose={handleCloseManager}
         onLoadIntoRunner={handleLoadIntoRunner}
       />
     </>

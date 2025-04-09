@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { X, Maximize } from 'lucide-react';
+import { X, Maximize, Loader2 } from 'lucide-react';
 import DocumentManager from './DocumentManager';
 import DocumentDetailProvider from './DocumentDetailProvider';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
@@ -24,13 +24,15 @@ export default function DocumentManagerOverlay({
   const { activeWorkspace } = useWorkspaceStore();
   const { fetchDocuments } = useDocumentStore();
   const { loadSchemes } = useClassificationSystem({
-    autoLoadSchemes: true
+    autoLoadSchemes: false
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
-    if (isOpen && activeWorkspace) {
+    if (isOpen && activeWorkspace && !dataLoaded) {
       setIsLoading(true);
+      setDataLoaded(true);
       Promise.all([
         fetchDocuments(),
         loadSchemes()
@@ -38,34 +40,37 @@ export default function DocumentManagerOverlay({
         setIsLoading(false);
       });
     }
-  }, [isOpen, activeWorkspace, fetchDocuments, loadSchemes]);
+    if (!isOpen) {
+      setDataLoaded(false);
+    }
+  }, [isOpen, activeWorkspace, fetchDocuments, loadSchemes, dataLoaded]);
 
   return (
-    <DocumentDetailProvider>
-      <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="max-w-6xl max-h-[90vh] w-[90vw] overflow-hidden flex flex-col">
-          <DialogHeader className="flex flex-row items-center justify-between">
-            <DialogTitle>Document Manager</DialogTitle>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              title="Close"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </DialogHeader>
-          <div className="flex-1 overflow-hidden">
-            {isLoading ? (
-              <div className="flex items-center justify-center h-full">
-                <p>Loading documents...</p>
-              </div>
-            ) : (
-              <DocumentManager onLoadIntoRunner={onLoadIntoRunner} />
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </DocumentDetailProvider>
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-6xl max-h-[90vh] w-[90vw] overflow-hidden flex flex-col p-0">
+        <DialogHeader className="flex flex-row items-center justify-between p-4 border-b">
+          <DialogTitle>Document Manager</DialogTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            title="Close"
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </DialogHeader>
+        <div className="flex-1 overflow-hidden p-4">
+          {isLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="h-6 w-6 animate-spin mr-2" />
+              <p>Loading documents...</p>
+            </div>
+          ) : (
+            <DocumentManager onLoadIntoRunner={onLoadIntoRunner} />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 } 

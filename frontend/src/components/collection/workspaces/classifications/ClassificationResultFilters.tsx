@@ -1,11 +1,14 @@
-import { ClassificationSchemeRead, DictKeyDefinition as ClientDictKeyDefinition } from "@/client/models";
+import { ClassificationSchemeRead } from "@/client/models";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { X, Plus, Info, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
-import { DictKeyDefinition, FieldType } from "@/lib/classification/types";
+import { FieldType } from "@/lib/classification/types";
+import { Switch } from "@/components/ui/switch"; // Import Switch component
+import { Label } from "@/components/ui/label";   // Import Label component
+import { cn } from "@/lib/utils"; // Import cn utility
 
 // Define the filter interface more formally
 export interface ResultFilter {
@@ -13,6 +16,7 @@ export interface ResultFilter {
   fieldKey?: string; // Optional: Name of the field or dict_key to filter on
   operator: 'equals' | 'contains' | 'range' | 'greater_than' | 'less_than'; // Added comparison operators
   value: any; // Can be string, number, boolean, or [number | null, number | null] for range
+  isActive: boolean; // Add isActive property
 }
 
 interface ResultFiltersProps {
@@ -21,54 +25,69 @@ interface ResultFiltersProps {
   onChange: (filters: ResultFilter[]) => void;
 }
 
+// Define an alias for the DictKeyDefinition structure derived from the API model for clarity in the return type
+type ClientDictKeyDefinition = NonNullable<ClassificationSchemeRead['fields'][number]['dict_keys']>[number];
+
 // Helper to find the specific field or dict_key definition based on the filter
 export const getTargetFieldDefinition = (
   filter: ResultFilter,
   schemes: ClassificationSchemeRead[]
 ): {
-  type: FieldType | "bool" | "float" | null;
-  definition: ClassificationSchemeRead['fields'][number] | ClientDictKeyDefinition | null;
+  // Internal type representation (can include derived types like 'bool')
+  type: FieldType | "bool" | "float" | null; 
+  // Definition uses types derived from the API model ClassificationSchemeRead
+  definition: ClassificationSchemeRead['fields'][number] | ClientDictKeyDefinition | null; 
 } => {
     const scheme = schemes.find(s => s.id === filter.schemeId);
     if (!scheme || !scheme.fields || scheme.fields.length === 0) {
         return { type: null, definition: null };
     }
 
-    // Target the specific field/key if specified
+    // Target the specific field/key if specified, default to the first field's name
     const targetKeyName = filter.fieldKey ?? scheme.fields[0]?.name;
     if (!targetKeyName) {
          return { type: null, definition: null }; // No field found
     }
 
     // Check if it's a dict_key within List[Dict]
+    // The definition comes from scheme.fields[0].dict_keys (API type)
     if (scheme.fields[0].type === 'List[Dict[str, any]]' && scheme.fields[0].dict_keys) {
         const dictKeyDef = scheme.fields[0].dict_keys.find(dk => dk.name === targetKeyName);
         if (dictKeyDef) {
+            // Map API dict_key type to internal filter type
+            // Allowed API types: "str", "int", "float", "bool" (assuming based on previous code)
             const validTypes = ["str", "int", "float", "bool"];
             const refinedType = validTypes.includes(dictKeyDef.type)
                 ? dictKeyDef.type as "str" | "int" | "float" | "bool"
                 : null;
+            // dictKeyDef is ClientDictKeyDefinition (derived from API)
             return { type: refinedType, definition: dictKeyDef };
         }
-        // If filter.fieldKey was set but not found in dict_keys, it's an invalid filter for this type
+        // If filter.fieldKey was set but not found in dict_keys, it's an invalid filter
         if (filter.fieldKey) return { type: null, definition: null };
     }
 
-    // Check if it's one of potentially multiple top-level fields
+    // Check if it's a top-level field
+    // The definition comes from scheme.fields (API type)
     const fieldDef = scheme.fields.find(f => f.name === targetKeyName);
     if (fieldDef) {
+        // Map API field type to internal filter type
+        // Allowed API types: "int", "str", "List[str]", "List[Dict[str, any]]"
         const validFieldTypes: FieldType[] = ["int", "str", "List[str]", "List[Dict[str, any]]"];
         // Special case: Interpret int fields with 0/1 scale as boolean for filtering
         if (fieldDef.type === 'int' && fieldDef.scale_min === 0 && fieldDef.scale_max === 1) {
+            // fieldDef is ClassificationSchemeRead['fields'][number] (API type)
             return { type: 'bool', definition: fieldDef };
         }
+        // Map API type to internal FieldType
         const refinedType = validFieldTypes.includes(fieldDef.type as FieldType)
             ? fieldDef.type as FieldType
             : null;
+         // fieldDef is ClassificationSchemeRead['fields'][number] (API type)
         return { type: refinedType, definition: fieldDef };
     }
 
-    return { type: null, definition: null }; // Fallback
+    return { type: null, definition: null }; // Fallback if no matching field or key found
 };
 
 // Helper to get possible target keys for a scheme
@@ -98,7 +117,7 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
     const targetKeys = getTargetKeysForScheme(defaultScheme.id, schemes);
     const initialFieldKey = targetKeys.length > 0 ? targetKeys[0].key : undefined;
     // Pass the potential initialFieldKey to getTargetFieldDefinition
-    const { type: initialType } = getTargetFieldDefinition({ schemeId: defaultScheme.id, fieldKey: initialFieldKey, operator: 'equals', value: '' }, schemes);
+    const { type: initialType } = getTargetFieldDefinition({ schemeId: defaultScheme.id, fieldKey: initialFieldKey, operator: 'equals', value: '', isActive: true }, schemes);
     const initialOperators = getOperatorsForType(initialType);
     const initialOperator = initialOperators[0];
 
@@ -106,7 +125,8 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
         schemeId: defaultScheme.id,
         fieldKey: initialFieldKey,
         operator: initialOperator,
-        value: initialOperator === 'range' ? [null, null] : initialType === 'bool' ? 'False' : '' // Default bool to False or empty string
+        value: initialOperator === 'range' ? [null, null] : initialType === 'bool' ? 'False' : '', // Default bool to False or empty string
+        isActive: true // Initialize isActive to true
     }]);
   };
 
@@ -114,6 +134,13 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
     const newFilters = [...filters];
     const currentFilter = newFilters[index];
     const mergedFilter = { ...currentFilter, ...updatedFilterData };
+
+    // If only isActive changed, update and return early
+    if (Object.keys(updatedFilterData).length === 1 && 'isActive' in updatedFilterData) {
+        newFilters[index] = mergedFilter;
+        onChange(newFilters);
+        return;
+    }
 
     let needsValueReset = false;
 
@@ -283,9 +310,36 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
         const fieldKeyDisplayName = selectedKeyInfo?.name ?? filter.fieldKey ?? 'Select Field/Key';
 
         return (
-          <div key={index} className="flex flex-col gap-2 p-3 border rounded-md bg-muted/20">
-            {/* Row 1: Scheme, Field Key (optional), Type, Remove Button */}
+          <div
+             key={index}
+             className={cn(
+               "flex flex-col gap-2 p-3 border rounded-md bg-muted/20 transition-opacity",
+               !filter.isActive && "opacity-60" // Dim if inactive
+             )}
+          >
+            {/* Row 1: Activation Switch, Scheme, Field Key (optional), Type, Remove Button */}
             <div className="flex gap-2 items-center w-full">
+              {/* Activation Switch */}
+              <div className="flex items-center space-x-2 shrink-0 pr-2 border-r mr-2">
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Switch
+                        id={`filter-active-${index}`}
+                        checked={filter.isActive}
+                        onCheckedChange={(checked) => updateFilter(index, { isActive: checked })}
+                        className={filter.isActive ? "bg-green-500" : "bg-red-500"}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Toggle filter activity</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                 {/* Optional Label (uncomment if needed) */}
+                 {/* <Label htmlFor={`filter-active-${index}`} className="text-xs text-muted-foreground cursor-pointer">Active</Label> */}
+              </div>
+
               {/* Scheme Selector */}
               <Select
                 value={filter.schemeId.toString()}
@@ -353,7 +407,7 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
             </div>
 
             {/* Row 2: Operator, Value Input */}
-            <div className="flex gap-2 items-center w-full">
+            <div className="flex gap-2 items-center w-full pl-10"> {/* Added padding-left to align with inputs after switch */}
               {/* Operator Selector */}
               <Select
                 value={filter.operator}
@@ -442,9 +496,8 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
         );
       })}
 
-      <Button onClick={addFilter} variant="outline" size="sm">
-        <Plus className="h-4 w-4 mr-2" />
-        Add Filter
+      <Button onClick={addFilter} variant="outline" size="sm" className="mt-2">
+        <Plus className="h-4 w-4 mr-2" /> Add Filter
       </Button>
     </div>
   );
