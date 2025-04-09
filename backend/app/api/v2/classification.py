@@ -159,7 +159,7 @@ async def classify_document(
     current_user: CurrentUser,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
     provider: str | None = Query("Google"),
-    model: str | None = Query("gemini-2.0-flash-exp"),
+    model: str | None = Query("gemini-2.0-flash"),
     run_id: int | None = None,
     run_name: str | None = None,
     run_description: str | None = None

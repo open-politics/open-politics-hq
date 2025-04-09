@@ -126,6 +126,10 @@ def create_classification_result(
         # Set the fields on the scheme
         scheme.fields = fields
     
+    # Before checking existing results
+    if result_in.run_id and result_in.run_id > 2147483647:
+        result_in.run_id = None  # Treat as unique classification
+    
     # Check for existing result with same run_id
     if result_in.run_id:
         try:

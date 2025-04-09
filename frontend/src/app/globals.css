@@ -33,6 +33,20 @@
   --settings-ai-to: rgba(249, 115, 22, 0.1);       /* orange-500/10 */
   --settings-workspace-from: rgba(16, 185, 129, 0.1); /* emerald-500/10 */
   --settings-workspace-to: rgba(34, 197, 94, 0.1);    /* green-500/10 */
+
+  /* Add semantic border colors */
+  --documents-border-color: theme(colors.cyan.500);
+  --schemes-border-color: theme(colors.yellow.500);
+  --results-border-color: theme(colors.green.500);
+  --metadata-border-color: theme(colors.blue.500);
+}
+
+.dark {
+  /* You might want different border shades for dark mode */
+  --documents-border-color: theme(colors.cyan.400);   /* e.g., #22d3ee */
+  --schemes-border-color: theme(colors.yellow.400);   /* e.g., #facc15 */
+  --results-border-color: theme(colors.green.400);    /* e.g., #4ade80 */
+  --metadata-border-color: theme(colors.blue.400);    /* e.g., #60a5fa */
 }
 
 @layer base {
@@ -101,6 +115,12 @@
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
     --highlighted-bg: 210 30% 20%;
+
+    /* Dark mode semantic border colors */
+    --documents-border-color: theme(colors.cyan.400);
+    --schemes-border-color: theme(colors.yellow.400);
+    --results-border-color: theme(colors.green.400);
+    --metadata-border-color: theme(colors.blue.400);
   }
 
   .hide-footer .footer {
@@ -136,6 +156,19 @@
 @layer utilities {
   .bg-highlighted {
     background-color: hsl(var(--highlighted-bg));
+  }
+  /* Add border color utilities */
+  .border-documents {
+    border-color: var(--documents-border-color);
+  }
+  .border-schemes {
+    border-color: var(--schemes-border-color);
+  }
+  .border-results {
+    border-color: var(--results-border-color);
+  }
+  .border-metadata {
+    border-color: var(--metadata-border-color);
   }
 }
 

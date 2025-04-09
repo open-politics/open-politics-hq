@@ -339,7 +339,7 @@ class WorkspacesOut(SQLModel):
 
 
 class ClassificationResultBase(SQLModel):
-    run_id: int
+    run_id: Optional[int] = None
     document_id: int = Field(foreign_key="document.id")
     scheme_id: int = Field(foreign_key="classificationscheme.id")
     value: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))

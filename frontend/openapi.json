@@ -5793,7 +5793,7 @@
                   "type": "null"
                 }
               ],
-              "default": "gemini-2.0-flash-exp",
+              "default": "gemini-2.0-flash",
               "title": "Model"
             }
           },

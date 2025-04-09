@@ -15,7 +15,7 @@ router = APIRouter()
 opol = OPOL(mode="remote", api_key=os.environ["OPOL_API_KEY"])
 
 fastclass = opol.classification(provider="Google", 
-                                model_name="gemini-2.0-flash-exp", 
+                                model_name="gemini-2.0-flash", 
                                 llm_api_key=os.environ["GOOGLE_API_KEY"]
                                 )
 

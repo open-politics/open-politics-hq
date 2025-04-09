@@ -15,14 +15,14 @@ if OPOL:
 available_providers = [
     {
         "name": "Google",
-        "models": ["gemini-2.0-flash-exp"],
+        "models": ["gemini-2.0-flash"],
     }
 ]
 
 
 def get_fastclass(
     provider: str = "Google",
-    model_name: str = "gemini-2.0-flash-exp",
+    model_name: str = "gemini-2.0-flash",
     api_key: str | None = None,
 ):
     """
@@ -30,7 +30,7 @@ def get_fastclass(
 
     Args:
         provider: The AI provider to use (default: "Google").
-        model_name: The model name to use (default: "gemini-2.0-flash-exp").
+        model_name: The model name to use (default: "gemini-2.0-flash").
         api_key: Optional API key to use instead of the default.
 
     Returns:
@@ -46,7 +46,7 @@ def get_fastclass(
 
     # Validate model name (although currently not used)
     if not model_name:
-        model_name = "gemini-2.0-flash-exp"
+        model_name = "gemini-2.0-flash"
 
     if opol is None:
         raise ValueError("OPOL is not initialized.")

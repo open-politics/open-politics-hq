@@ -321,7 +321,7 @@ def classify_document(
     # Run classification
     fastclass = opol.classification(
         provider="Google",
-        model_name="gemini-2.0-flash-exp",
+        model_name="gemini-2.0-flash",
         llm_api_key=os.getenv("GOOGLE_API_KEY")
     )
     
