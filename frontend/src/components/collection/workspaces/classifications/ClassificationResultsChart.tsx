@@ -516,8 +516,7 @@ const processLineChartData = (
             }
             
             // --- MODIFIED: Use formatDisplayValue from utils for consistent key generation ---
-            const adaptedScheme = adaptSchemeReadToScheme(scheme); // Adapt the scheme
-            const displayValue = formatDisplayValue(result.value, adaptedScheme); // Use utility function
+            const displayValue = formatDisplayValue(result.value, scheme); // Pass the original scheme (ClassificationSchemeRead)
             let categoryKey = String(displayValue ?? 'N/A'); // Convert result to string key
             // --- END MODIFICATION ---
             
