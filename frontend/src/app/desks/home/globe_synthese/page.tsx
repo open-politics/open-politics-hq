@@ -9,27 +9,23 @@ import Search from '@/components/collection/unsorted/Search';
 import LocationDetailPanel from '@/components/collection/unsorted/LocationDetailPanel';
 import { useLayoutStore } from '@/zustand_stores/storeLayout';
 import { useArticleTabNameStore } from '@/hooks/useArticleTabNameStore';
-import { useFocusStore } from '@/zustand_stores/storeFocus';
+import { useGeoDataStore } from '@/zustand_stores/storeGeodata';
 
 const GlobePage = () => {
   const [results, setResults] = useState(null);
   const [summary, setSummary] = useState<string>('');
-  const [location, setLocation] = useState<string | null>(null);
   const [hasClicked, setHasClicked] = useState(false);
   const globeRef = useRef<any>(null);
   const [isVisible, setIsVisible] = useState(false);
   const { toast } = useToast();
   const { setActiveTab: layoutSetActiveTab } = useLayoutStore();
   const { setActiveTab: articleSetActiveTab } = useArticleTabNameStore();
-  const { setFocus } = useFocusStore();
+  const { selectedLocation, setSelectedLocation } = useGeoDataStore();
 
   const handleLocationClick = (locationName: string) => {
-    setLocation(locationName);
+    setSelectedLocation(locationName);
     setIsVisible(true);
     setHasClicked(true);
-
-    // Update focus store
-    setFocus('country', { name: locationName });
 
     // Switch to articles tab
     layoutSetActiveTab('articles');
@@ -54,7 +50,7 @@ const GlobePage = () => {
   const toggleVisibility = () => {
     setIsVisible(false);
     setHasClicked(false);
-    setLocation(null);
+    setSelectedLocation(null);
     layoutSetActiveTab('');
     setResults(null);
   };
@@ -96,7 +92,7 @@ const GlobePage = () => {
               >
                 <div className="overflow-y-auto h-full">
                   <LocationDetailPanel
-                    location={location}
+                    location={selectedLocation}
                     isVisible={isVisible}
                     toggleVisibility={toggleVisibility}
                     results={results}

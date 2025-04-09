@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FaGithub } from "react-icons/fa6";
 import { Switch } from "@/components/ui/switch";
-import { NewspaperIcon, Globe2, ZoomIn } from "lucide-react";
+import { NewspaperIcon, Globe2, ZoomIn, Menu, X, ChevronRight } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -158,7 +158,10 @@ const Header = () => {
 
             {/* Mobile Navigation */}
             <div className="md:hidden">
-                <SidebarTrigger/>
+                <SidebarTrigger
+                  expandedIcon={<ChevronRight className="size-6" />}
+                  collapsedIcon={<Menu className="size-6" />}
+                />
                 <Sidebar collapsible="icon" side="right" variant="floating" className='md:hidden' >
                   <SidebarHeader className="h-16 flex items-center px-4 border-b">
                     <SidebarMenu>

@@ -31,7 +31,7 @@ import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import EditDocumentOverlay from './EditDocumentOverlay';
 import { DocumentRead, WorkspaceRead } from '@/client/models';
-import { useSchemes } from '@/hooks/useSchemes';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import DocumentDetailProvider from './DocumentDetailProvider';
 import DocumentDetailWrapper from './DocumentDetailWrapper';
 import { schemesToSchemeReads } from '@/lib/classification/adapters';
@@ -103,7 +103,9 @@ interface DocumentManagerProps {
 export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerProps) {
   const { documents, fetchDocuments } = useDocumentStore();
   const { activeWorkspace } = useWorkspaceStore();
-  const { schemes, loadSchemes } = useSchemes();
+  const { schemes, loadSchemes } = useClassificationSystem({
+    autoLoadSchemes: true
+  });
 
   const { isLoggedIn } = useAuth();
 
@@ -150,7 +152,7 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
       fetchingRef.current = true;
       setSelectedDocumentId(null);
       fetchDocuments();
-      loadSchemes(activeWorkspace.uid);
+      loadSchemes();
     }
   }, [activeWorkspace?.uid]); // Only depend on the ID
 
@@ -197,7 +199,7 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
                 <ResizablePanel 
                   defaultSize={50} 
                   minSize={30}
-                  className="min-w-[300px] bg-background"
+                  className="min-w-[300px] bg-background border-2 border-documents"
                 >
                   <div className="flex flex-col h-full">
                     <div className="flex-none p-2 sm:p-4">
@@ -244,7 +246,7 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
                 <ResizablePanel 
                   defaultSize={50} 
                   minSize={30}
-                  className="min-w-[300px] bg-background border-l"
+                  className="min-w-[300px] bg-background border-l border-2 border-documents"
                 >
                   <div className="h-full overflow-hidden">
                     <DocumentDetailView 

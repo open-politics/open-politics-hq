@@ -8,7 +8,7 @@ import DocumentManager from './DocumentManager';
 import DocumentDetailProvider from './DocumentDetailProvider';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
-import { useSchemes } from '@/hooks/useSchemes';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 
 interface DocumentManagerOverlayProps {
   isOpen: boolean;
@@ -23,7 +23,9 @@ export default function DocumentManagerOverlay({
 }: DocumentManagerOverlayProps) {
   const { activeWorkspace } = useWorkspaceStore();
   const { fetchDocuments } = useDocumentStore();
-  const { loadSchemes } = useSchemes();
+  const { loadSchemes } = useClassificationSystem({
+    autoLoadSchemes: true
+  });
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export default function DocumentManagerOverlay({
       setIsLoading(true);
       Promise.all([
         fetchDocuments(),
-        loadSchemes(activeWorkspace.uid)
+        loadSchemes()
       ]).finally(() => {
         setIsLoading(false);
       });

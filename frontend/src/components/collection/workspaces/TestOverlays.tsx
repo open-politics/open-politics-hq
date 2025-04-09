@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import DocumentManagerOverlay from './documents/DocumentManagerOverlay';
-import SchemeManagerOverlay from './classifications/SchemeManagerOverlay';
+import SchemeManagerOverlay from './classifications/ClassificationSchemeManagerOverlay';
 import { toast } from 'sonner';
 
 export default function TestOverlays() {

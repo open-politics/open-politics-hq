@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import ClassificationSchemeManager from './ClassificationSchemeManager';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import { useSchemes } from '@/hooks/useSchemes';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 
 interface SchemeManagerOverlayProps {
   isOpen: boolean;
@@ -18,13 +18,15 @@ export default function SchemeManagerOverlay({
   onClose
 }: SchemeManagerOverlayProps) {
   const { activeWorkspace } = useWorkspaceStore();
-  const { schemes, loadSchemes } = useSchemes();
+  const { schemes, loadSchemes } = useClassificationSystem({
+    autoLoadSchemes: true
+  });
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen && activeWorkspace) {
       setIsLoading(true);
-      loadSchemes(activeWorkspace.uid)
+      loadSchemes()
         .finally(() => {
           setIsLoading(false);
         });

@@ -6,15 +6,16 @@ import { ClassificationSchemeRead, ClassificationResultRead } from "@/client/mod
 import { Eye, Pencil, Trash, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { formatClassificationValue } from '@/lib/utils';
 
 interface ColumnProps {
   onView?: (scheme: ClassificationSchemeRead) => void;
   onEdit?: (scheme: ClassificationSchemeRead) => void;
   onDelete?: (scheme: ClassificationSchemeRead) => void;
+  onViewDocuments?: (scheme: ClassificationSchemeRead) => void;
+  onViewRuns?: (scheme: ClassificationSchemeRead) => void;
 }
 
-export const columns = ({ onView, onEdit, onDelete }: ColumnProps): ColumnDef<ClassificationSchemeRead>[] => [
+export const columns = ({ onView, onEdit, onDelete, onViewDocuments, onViewRuns }: ColumnProps): ColumnDef<ClassificationSchemeRead>[] => [
   {
     accessorKey: 'name',
     header: 'Name',
@@ -44,12 +45,14 @@ export const columns = ({ onView, onEdit, onDelete }: ColumnProps): ColumnDef<Cl
     header: "Classifications",
     cell: ({ row }) => {
       const count = row.original.classification_count || 0;
+      const scheme = row.original;
       return (
         <Button 
           variant="ghost" 
           className="hover:bg-accent"
-          onClick={() => {
-            // Show classifications dialog
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewRuns?.(scheme);
           }}
         >
           {count} runs
@@ -62,10 +65,15 @@ export const columns = ({ onView, onEdit, onDelete }: ColumnProps): ColumnDef<Cl
     header: "Documents",
     cell: ({ row }) => {
       const count = row.original.document_count || 0;
+      const scheme = row.original;
       return (
         <Button 
           variant="ghost" 
           className="hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewDocuments?.(scheme);
+          }}
         >
           {count} docs
         </Button>
@@ -92,6 +100,7 @@ export const columns = ({ onView, onEdit, onDelete }: ColumnProps): ColumnDef<Cl
           <Button
             variant="ghost"
             size="sm"
+            className="text-red-500 hover:text-red-700"
             onClick={(e) => {
               e.stopPropagation();
               onDelete?.(scheme);

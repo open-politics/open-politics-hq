@@ -39,7 +39,9 @@ export function schemeToSchemeRead(scheme: ClassificationScheme): Classification
     model_instructions: scheme.model_instructions || '',
     validation_rules: scheme.validation_rules || {},
     created_at: scheme.created_at || new Date().toISOString(),
-    updated_at: scheme.updated_at || new Date().toISOString()
+    updated_at: scheme.updated_at || new Date().toISOString(),
+    classification_count: scheme.classification_count || 0,
+    document_count: scheme.document_count || 0
   } as ClassificationSchemeRead;
 }
 

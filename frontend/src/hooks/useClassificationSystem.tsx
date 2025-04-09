@@ -57,6 +57,7 @@ interface UseClassificationSystemResult {
   loadResults: (contentId?: number, runId?: number) => Promise<void>;
   loadResultsByRun: (runId: number, workspaceId?: number) => Promise<FormattedClassificationResult[]>;
   clearResultsCache: (contentId: number, runId?: number) => void;
+  loadResultsByScheme: (schemeId: number) => Promise<FormattedClassificationResult[]>;
   
   // Classification
   isClassifying: boolean;
@@ -389,6 +390,24 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setIsClassifying(true);
     setError(null);
     
+    // Add optimistic update - ensure it conforms to FormattedClassificationResult
+    const tempId = Date.now(); // Use a temporary ID for the optimistic result
+    const tempResult: FormattedClassificationResult = {
+      id: tempId, 
+      document_id: content.id || 0, // Use content id or 0
+      scheme_id: schemeId,
+      timestamp: new Date().toISOString(),
+      run_id: runId || 0, // Use provided runId or 0
+      run_name: runName || 'Optimistic Classification',
+      value: null, // Placeholder value
+      scheme: schemes.find(s => s.id === schemeId),
+      displayValue: 'Classifying...', // Indicate loading state
+      isOptimistic: true
+    };
+    
+    // Add the optimistic result to the state
+    setResults(prev => [tempResult, ...prev.filter(r => !r.isOptimistic)]);
+
     try {
       const workspaceId = getWorkspaceId();
       
@@ -437,10 +456,13 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
         }
       }
       
-      // Format the result
+      // Remove optimistic result after completion (success or failure)
+      setResults(prev => prev.filter(r => r.id !== tempId));
+
+      // Format the actual result
       const formattedResult = ClassificationService.formatResult(result, scheme);
       
-      // Update results list
+      // Update results list with the actual result
       setResults(prev => [formattedResult, ...prev]);
       
       toast({
@@ -457,9 +479,13 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
         description: err.message,
         variant: 'destructive',
       });
+      // Ensure optimistic result is removed on error
+      setResults(prev => prev.filter(r => r.id !== tempId));
       return null;
     } finally {
       setIsClassifying(false);
+      // This filter might be redundant now as it's handled in try/catch, but keep for safety
+      // setResults(prev => prev.filter(r => r.id !== tempId)); 
     }
   }, [activeWorkspace?.uid, getWorkspaceId, schemes, toast, selectedProvider, selectedModel, apiKeys]);
   
@@ -868,6 +894,74 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     }
   }, [activeWorkspace, schemes]);
   
+  // Add a function to load results filtered by scheme ID
+  const loadResultsByScheme = useCallback(async (schemeId: number) => {
+    if (!activeWorkspace?.uid) {
+      toast({
+        title: 'Error',
+        description: 'No active workspace',
+        variant: 'destructive',
+      });
+      return [];
+    }
+
+    setIsLoadingResults(true); // Use the existing loading state for simplicity
+    setError(null);
+
+    try {
+      const workspaceId = getWorkspaceId();
+      
+      // Get results using our service, filtered by schemeId
+      const apiResults = await ClassificationService.getResults(workspaceId, {
+        schemeId,
+        limit: 50 // Add a limit to avoid loading too many results initially
+      });
+
+      // Fetch the specific scheme details (needed for formatting)
+      let scheme = schemes.find(s => s.id === schemeId);
+      if (!scheme) {
+        scheme = await ClassificationService.getScheme(workspaceId, schemeId);
+        // Add the fetched scheme to the state if it wasn't there
+        if (scheme) {
+          setSchemes(prev => {
+            // Ensure scheme exists and isn't already in the state before adding
+            if (scheme && !prev.some(s => s.id === schemeId)) {
+              return [...prev, scheme]; 
+            }
+            return prev;
+          });
+        }
+      }
+      
+      if (!scheme) {
+         throw new Error(`Scheme with ID ${schemeId} not found`);
+      }
+
+      // Format results
+      const formattedResults = apiResults
+        .map(result => ClassificationService.formatResult(result, scheme!))
+        .filter(Boolean) as FormattedClassificationResult[];
+        
+      // Unlike loadResults, we don't automatically set the main `results` state here,
+      // as this is specific to the scheme being viewed in the table context.
+      // We return the results for the calling component to manage.
+      
+      return formattedResults;
+
+    } catch (err: any) {
+      console.error('Error loading results by scheme:', err);
+      setError(`Failed to load results for scheme ${schemeId}`);
+      toast({
+        title: 'Error',
+        description: `Failed to load results for scheme: ${err.message}`,
+        variant: 'destructive',
+      });
+      return []; // Return empty array on error
+    } finally {
+      setIsLoadingResults(false);
+    }
+  }, [activeWorkspace?.uid, getWorkspaceId, schemes, toast]); // Added schemes to dependencies
+  
   // Load initial data based on options
   useEffect(() => {
     if (activeWorkspace?.uid) {
@@ -950,7 +1044,8 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     error,
     setError,
     
-    // Add the new function
-    loadResultsByRun
+    // Add the new functions
+    loadResultsByRun,
+    loadResultsByScheme
   };
 } 

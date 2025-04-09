@@ -26,7 +26,11 @@ import {
   Blocks,
   Globe2,
   MessageSquare,
-  FolderCog
+  FolderCog,
+  ChevronLeft,
+  ChevronRight,
+  ArrowLeftToLine,
+  ArrowRightToLine
 } from "lucide-react"
 
 import { NavMain } from "@/components/ui/nav-main"
@@ -41,6 +45,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
+  SidebarTrigger
 } from "@/components/ui/sidebar"
 import HistoryList from "@/components/ui/SearchHistory"
 
@@ -57,7 +62,6 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {}
 
 export function AppSidebar({ ...props }: AppSidebarProps) {
   const { user, isLoading } = useAuth()
-  
   
   const navMain = React.useMemo(() => [
     {

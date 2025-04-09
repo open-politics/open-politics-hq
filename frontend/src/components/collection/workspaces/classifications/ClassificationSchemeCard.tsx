@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 interface ClassificationSchemeCardProps {
   show: boolean;
@@ -16,6 +17,7 @@ interface ClassificationSchemeCardProps {
   mode: 'edit' | 'create' | 'watch';
   width?: string;
   height?: string;
+  className?: string;
 }
 
 export default function ClassificationSchemeCard({
@@ -24,10 +26,13 @@ export default function ClassificationSchemeCard({
   title,
   children,
   mode,
+  width,
+  height,
+  className
 }: ClassificationSchemeCardProps) {
   return (
     <Dialog open={show} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[600px] h-[80vh] flex flex-col">
+      <DialogContent className={cn("sm:max-w-[600px] h-[80vh] flex flex-col", className)}>
         <DialogHeader className="flex items-center justify-between">
           <DialogTitle>{title}</DialogTitle>
           <Button

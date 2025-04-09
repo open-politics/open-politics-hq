@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
-import { useSchemes } from '@/hooks/useSchemes';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import DocumentDetailView from './DocumentsDetailView';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,9 @@ export default function DocumentDetailOverlay({
   onLoadIntoRunner
 }: DocumentDetailOverlayProps) {
   const { documents, fetchDocuments } = useDocumentStore();
-  const { schemes, loadSchemes } = useSchemes();
+  const { schemes, loadSchemes } = useClassificationSystem({
+    autoLoadSchemes: true
+  });
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const { activeWorkspace } = useWorkspaceStore();
@@ -40,7 +42,7 @@ export default function DocumentDetailOverlay({
     try {
       await Promise.all([
         fetchDocuments(),
-        loadSchemes(activeWorkspace.uid)
+        loadSchemes()
       ]);
       setDataFetched(true);
     } catch (error) {

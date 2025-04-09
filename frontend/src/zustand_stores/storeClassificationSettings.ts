@@ -47,6 +47,14 @@ export const useClassificationSettingsStore = create<ClassificationSettingsState
       const schemeExists = schemes.some(s => s.id === defaultSchemeIds[workspaceId]);
       if (schemeExists) {
         return defaultSchemeIds[workspaceId];
+      } else {
+        // If scheme doesn't exist, clear the invalid default
+        set(state => {
+          const newDefaults = {...state.defaultSchemeIds};
+          delete newDefaults[workspaceId];
+          saveSettings(newDefaults);
+          return { defaultSchemeIds: newDefaults };
+        });
       }
     }
     

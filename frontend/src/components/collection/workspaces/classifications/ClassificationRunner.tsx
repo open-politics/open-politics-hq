@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Card,
   CardHeader,
@@ -10,34 +10,27 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Microscope, Loader2, X, AlertCircle, Info, History, Clock, RefreshCw, Search, CheckCircle, ChevronUp, ChevronDown, Star, StarOff, ArrowUp, ArrowDown, Pencil, Play, BarChart3, Table as TableIcon } from 'lucide-react';
+import { FileText, Microscope, Loader2, X, AlertCircle, Info, History, Clock, RefreshCw, Search, CheckCircle, ChevronUp, ChevronDown, Star, StarOff, ArrowUp, ArrowDown, Pencil, Play, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, ListChecks, List, Plus } from 'lucide-react';
 import {
   ClassificationSchemeRead,
   ClassificationResultRead,
   DocumentRead,
   ClassificationResultCreate,
 } from '@/client/models';
-import { FormattedClassificationResult } from '@/lib/classification/types';
+import { Textarea } from '@/components/ui/textarea';
+import { FormattedClassificationResult, ClassificationScheme } from '@/lib/classification/types';
 import ClassificationResultsChart from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
-import { useSchemes } from '@/hooks/useSchemes';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { format } from 'date-fns';
-import { 
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  createColumnHelper
-} from '@tanstack/react-table';
-import { ResultFilters } from './ResultFilters';
+import { getTargetFieldDefinition, ResultFilters } from './ClassificationResultFilters';
 import { ClassificationService } from '@/lib/classification/service';
-import { schemesToSchemeReads, resultsToResultReads } from '@/lib/classification/adapters';
-
-import ClassificationResultDisplay from './ClassificationResultDisplay';
+import { schemesToSchemeReads, resultsToResultReads, resultReadToResult, resultToResultRead, schemeToSchemeRead, documentToDocumentRead } from '@/lib/classification/adapters';
+import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import DocumentManagerOverlay from '../documents/DocumentManagerOverlay';
-import SchemeManagerOverlay from './SchemeManagerOverlay';
+import SchemeManagerOverlay from './ClassificationSchemeManagerOverlay';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import { ClassificationService as ApiClassificationService } from '@/client/services';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
@@ -61,28 +54,49 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { HelpCircle } from 'lucide-react';
+import useGeocode, { GeocodeResult } from '@/hooks/useGeocder'; // Import hook and its result type
+import type { GeocodeResult as GeocodeResultType } from '@/hooks/useGeocder'; // Explicit type import & Corrected path
+import ClassificationResultsMap, { MapPoint } from './ClassificationResultsMap'; // Renamed from LocationMap
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
+import { XCircle } from 'lucide-react'; // Import XCircle for the clear button
+import ClassificationSchemeEditor from './ClassificationSchemeEditor'; // Import the new component
+import { useGeocodingCacheStore } from '@/zustand_stores/storeGeocodingCache'; // Import the new store
+import { checkFilterMatch, extractLocationString, formatDisplayValue } from '@/lib/classification/utils';
+import { ResultFilter } from './ClassificationResultFilters';
+import ClassificationResultsTable from './ClassificationResultsTable';
+
+// Custom hook for persistent state using localStorage
+function usePersistentState<T>(
+  key: string,
+  initialValue: T
+): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [state, setState] = useState<T>(() => {
+    try {
+      const storedValue = localStorage.getItem(key);
+      return storedValue ? JSON.parse(storedValue) : initialValue;
+    } catch (error) {
+      console.error(`Error reading localStorage key "${key}":`, error);
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(state));
+    } catch (error) {
+      console.error(`Error setting localStorage key "${key}":`, error);
+    }
+  }, [key, state]);
+
+  return [state, setState];
+}
 
 // Extend TableMeta type to include our custom onRowClick property
 declare module '@tanstack/react-table' {
   interface TableMeta<TData extends unknown> {
     onRowClick?: (row: any) => void;
   }
-}
-
-interface ClassificationRun {
-  id: number;
-  timestamp: Date;
-  documentIds: number[];
-  schemeIds: number[];
-  results: ClassificationResultRead[];
-  name?: string;
-  description?: string;
-}
-
-interface ResultFilter {
-  schemeId: number;
-  operator: 'equals' | 'contains' | 'range';
-  value: any;
 }
 
 interface SchemeData {
@@ -96,42 +110,6 @@ interface ResultGroup {
   date: string;
   schemes: Record<number, SchemeData>;
 }
-
-const formatDisplayValue = (value: any, scheme: ClassificationSchemeRead) => {
-  if (!value) return null;
-
-  try {
-    return ClassificationService.getFormattedValue(value as any, scheme as any);
-  } catch (error) {
-    console.error('Error formatting value:', error);
-    
-    // Fallback to original implementation
-    switch (scheme.fields[0].type) {
-      case 'int':
-        // Check scale range to determine binary vs scale
-        if (scheme.fields[0].scale_min === 0 && scheme.fields[0].scale_max === 1) {
-          return value > 0.5 ? 'Positive' : 'Negative';
-        }
-        return typeof value === 'number' ? Number(value.toFixed(2)) : value;
-        
-      case 'List[str]':
-        if (scheme.fields[0].is_set_of_labels && scheme.fields[0].labels) {
-          // If value is already a label, return it
-          if (typeof value === 'string' && scheme.fields[0].labels.includes(value)) {
-            return value;
-          }
-          // If value is an index, convert to label
-          if (typeof value === 'number' && scheme.fields[0].labels[value]) {
-            return scheme.fields[0].labels[value];
-          }
-        }
-        return value;
-        
-      default:
-        return value;
-    }
-  }
-};
 
 // Run History Panel Component
 const RunHistoryPanel: React.FC<{
@@ -147,7 +125,7 @@ const RunHistoryPanel: React.FC<{
 
   // Filter runs based on search term
   const filteredRuns = useMemo(() => {
-    return runs.filter(run => 
+    return runs.filter(run =>
       run.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [runs, searchTerm]);
@@ -156,11 +134,27 @@ const RunHistoryPanel: React.FC<{
   const sortedRuns = useMemo(() => {
     return [...filteredRuns].sort((a, b) => {
       if (sortBy === 'date') {
-        const dateA = new Date(a.timestamp);
-        const dateB = new Date(b.timestamp);
-        return sortOrder === 'asc' 
-          ? dateA.getTime() - dateB.getTime() 
-          : dateB.getTime() - dateA.getTime();
+        // Attempt to parse potentially varied date formats
+        const parseDate = (ts: string): number => {
+           try {
+             // Handle "Month Day, Year at HH:MM:SS AM/PM" format from date-fns 'PPp'
+             const date = new Date(ts.replace(' at ', ' '));
+             if (!isNaN(date.getTime())) return date.getTime();
+           } catch (e) { /* ignore parsing errors */ }
+           // Fallback for ISO strings or other formats Date can parse
+           try {
+             const date = new Date(ts);
+             if (!isNaN(date.getTime())) return date.getTime();
+           } catch (e) { /* ignore parsing errors */ }
+           return 0; // Fallback if parsing fails completely
+        };
+        const timeA = parseDate(a.timestamp);
+        const timeB = parseDate(b.timestamp);
+        if (timeA === 0 || timeB === 0) return 0; // Don't sort if parsing failed
+
+        return sortOrder === 'asc'
+          ? timeA - timeB
+          : timeB - timeA;
       } else {
         return sortOrder === 'asc'
           ? a.name.localeCompare(b.name)
@@ -168,6 +162,7 @@ const RunHistoryPanel: React.FC<{
       }
     });
   }, [filteredRuns, sortBy, sortOrder]);
+
 
   // Find the active run
   const activeRun = useMemo(() => {
@@ -247,8 +242,9 @@ const RunHistoryPanel: React.FC<{
                         e.stopPropagation();
                         onToggleFavorite(run);
                       }}
+                      className="h-6 w-6"
                     >
-                      {favoriteRunIds.includes(run.id) ? (
+                      {(favoriteRunIds ?? []).includes(run.id) ? (
                         <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
                       ) : (
                         <Star className="h-4 w-4" />
@@ -281,33 +277,44 @@ const RunHistoryPanel: React.FC<{
 };
 
 // Update the RunHistoryDialog component to use the runHistory from the store
-function RunHistoryDialog({ 
-  isOpen, 
-  onClose, 
-  activeRunId, 
-  onSelectRun 
-}: { 
-  isOpen: boolean; 
-  onClose: () => void; 
-  activeRunId: number | null; 
-  onSelectRun: (runId: number, runName: string, runDescription?: string) => void 
+function RunHistoryDialog({
+  isOpen,
+  onClose,
+  activeRunId,
+  onSelectRun
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  activeRunId: number | null;
+  onSelectRun: (runId: number, runName: string, runDescription?: string) => void
 }) {
-  const [searchTerm, setSearchTerm] = useState("");
   const { runs, isLoading, fetchRunHistory } = useRunHistoryStore();
-  const { favoriteRuns } = useFavoriteRunsStore();
+  const { favoriteRuns, addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
   const { activeWorkspace } = useWorkspaceStore();
-  
-  // Filter runs based on search term
-  const filteredRuns = useMemo(() => {
-    return runs.filter(run => 
-      run.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [runs, searchTerm]);
 
   // Get favorite run IDs
   const favoriteRunIds = useMemo(() => {
     return favoriteRuns.map(run => run.id);
   }, [favoriteRuns]);
+
+   // Memoized toggle handler
+   const handleToggleFavoriteRun = useCallback((run: RunHistoryItem) => {
+     const workspaceId = activeWorkspace?.uid || '';
+     if (isFavorite(run.id)) {
+       removeFavoriteRun(run.id);
+     } else {
+       addFavoriteRun({
+         id: run.id,
+         name: run.name,
+         timestamp: run.timestamp,
+         documentCount: run.documentCount || 0,
+         schemeCount: run.schemeCount || 0,
+         workspaceId: String(workspaceId),
+         description: run.description
+       });
+     }
+   }, [activeWorkspace?.uid, isFavorite, addFavoriteRun, removeFavoriteRun]);
+
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -318,7 +325,7 @@ function RunHistoryDialog({
             Select a previous run to load its results into the runner
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="flex-1 overflow-hidden">
           {isLoading ? (
             <div className="flex items-center justify-center h-full">
@@ -326,44 +333,29 @@ function RunHistoryDialog({
               <span className="ml-2">Loading run history...</span>
             </div>
           ) : (
-            <RunHistoryPanel 
-              runs={filteredRuns} 
-              activeRunId={activeRunId} 
-              onSelectRun={onSelectRun} 
+            <RunHistoryPanel
+              runs={runs} // Pass the raw runs from the store
+              activeRunId={activeRunId}
+              onSelectRun={onSelectRun}
               favoriteRunIds={favoriteRunIds}
-              onToggleFavorite={(run) => {
-                const { addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore.getState();
-                const workspaceId = useWorkspaceStore.getState().activeWorkspace?.uid || '';
-                
-                if (isFavorite(run.id)) {
-                  removeFavoriteRun(run.id);
-                } else {
-                  addFavoriteRun({
-                    id: run.id,
-                    name: run.name,
-                    timestamp: run.timestamp,
-                    documentCount: run.documentCount || 0,
-                    schemeCount: run.schemeCount || 0,
-                    workspaceId: String(workspaceId),
-                    description: run.description
-                  });
-                }
-              }}
+              onToggleFavorite={handleToggleFavoriteRun} // Pass memoized handler
             />
           )}
         </div>
-        
+
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Close</Button>
-          <Button 
-            variant="default" 
+          <Button
+            variant="default"
             onClick={() => {
               if (activeWorkspace?.uid) {
-                const workspaceId = typeof activeWorkspace.uid === 'string' 
-                  ? parseInt(activeWorkspace.uid, 10) 
+                const workspaceId = typeof activeWorkspace.uid === 'string'
+                  ? parseInt(activeWorkspace.uid, 10)
                   : activeWorkspace.uid;
-                
-                fetchRunHistory(workspaceId);
+
+                if (!isNaN(workspaceId)) {
+                   fetchRunHistory(workspaceId);
+                }
               }
             }}
             disabled={isLoading}
@@ -394,47 +386,55 @@ const RunHistoryTimeline: React.FC<{
   maxItems?: number;
 }> = ({ runs, activeRunId, onSelectRun, maxItems = 5 }) => {
   const displayRuns = runs.slice(0, maxItems);
-  
+
   return (
     <div className="relative w-full h-24 my-4">
       {/* Timeline track */}
       <div className="absolute top-1/2 left-0 right-0 h-1 bg-muted/50 rounded-full transform -translate-y-1/2"></div>
-      
+
       {/* Run markers */}
       <div className="relative h-full">
         {displayRuns.map((run, index) => {
           // Calculate position along the timeline
-          const position = `${(index / (maxItems - 1)) * 100}%`;
+          const positionPercent = maxItems > 1 ? (index / (maxItems - 1)) * 100 : 50;
+          const position = `${positionPercent}%`;
           const isActive = run.id === activeRunId;
-          
+
           return (
-            <div 
+            <div
               key={run.id}
               className="absolute top-1/2 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-300"
               style={{ left: position }}
             >
-              <div 
-                className={cn(
-                  "flex flex-col items-center cursor-pointer group",
-                  isActive && "scale-110"
-                )}
-                onClick={() => onSelectRun(run.id, run.name, run.description)}
-              >
-                <div 
-                  className={cn(
-                    "w-8 h-8 rounded-full flex items-center justify-center mb-1 transition-all duration-300",
-                    isActive 
-                      ? "bg-primary text-primary-foreground shadow-lg" 
-                      : "bg-muted hover:bg-muted/80"
-                  )}
-                >
-                  <span className="text-xs font-medium">{index + 1}</span>
-                </div>
-                <div className="opacity-0 group-hover:opacity-100 absolute -bottom-12 bg-popover shadow-md rounded-md p-2 text-xs w-40 text-center transition-all duration-200">
-                  <div className="font-medium truncate">{run.name}</div>
-                  <div className="text-muted-foreground text-[10px] mt-1">{run.timestamp}</div>
-                </div>
-              </div>
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div
+                          className={cn(
+                            "flex flex-col items-center cursor-pointer group",
+                            isActive && "scale-110 z-10"
+                          )}
+                          onClick={() => onSelectRun(run.id, run.name, run.description)}
+                        >
+                          <div
+                            className={cn(
+                              "w-8 h-8 rounded-full flex items-center justify-center mb-1 transition-all duration-300",
+                              isActive
+                                ? "bg-primary text-primary-foreground shadow-lg"
+                                : "bg-muted hover:bg-muted/80"
+                            )}
+                          >
+                             {/* Display index relative to the full list, not just displayed items */}
+                            <span className="text-xs font-medium">{runs.length - runs.findIndex(r => r.id === run.id)}</span>
+                          </div>
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                        <div className="font-medium truncate max-w-[150px]">{run.name}</div>
+                        <div className="text-muted-foreground text-[10px] mt-1">{run.timestamp}</div>
+                    </TooltipContent>
+                </Tooltip>
+             </TooltipProvider>
             </div>
           );
         })}
@@ -450,9 +450,9 @@ const FavoriteRunsDisplay: React.FC<{
   onSelectRun: (runId: number, runName: string, runDescription?: string) => void;
 }> = ({ runs, activeRunId, onSelectRun }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  
+
   if (runs.length === 0) return null;
-  
+
   return (
     <div className="mb-4 bg-muted/20 rounded-lg border p-3">
       <div className="flex items-center justify-between mb-2">
@@ -460,20 +460,20 @@ const FavoriteRunsDisplay: React.FC<{
           <Star className="h-4 w-4 text-yellow-500 fill-yellow-500 mr-2" />
           Favorite Runs
         </h3>
-        <Button 
-          variant="ghost" 
-          size="sm" 
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setIsExpanded(!isExpanded)}
           className="h-6 w-6 p-0"
         >
           {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </Button>
       </div>
-      
+
       {isExpanded ? (
         <div className="space-y-2 mt-2">
           {runs.map(run => (
-            <div 
+            <div
               key={run.id}
               className={cn(
                 "p-2 rounded border cursor-pointer hover:bg-muted/50 transition-colors",
@@ -495,7 +495,7 @@ const FavoriteRunsDisplay: React.FC<{
       ) : (
         <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
           {runs.slice(0, 3).map(run => (
-            <div 
+            <div
               key={run.id}
               className={cn(
                 "p-2 rounded border cursor-pointer hover:bg-muted/50 transition-colors flex-shrink-0",
@@ -507,9 +507,9 @@ const FavoriteRunsDisplay: React.FC<{
             </div>
           ))}
           {runs.length > 3 && (
-            <Button 
-              variant="outline" 
-              size="sm" 
+            <Button
+              variant="outline"
+              size="sm"
               className="flex-shrink-0 h-auto"
               onClick={() => setIsExpanded(true)}
             >
@@ -525,1348 +525,1027 @@ const FavoriteRunsDisplay: React.FC<{
 export default function ClassificationRunner() {
   const { activeWorkspace } = useWorkspaceStore();
   const { fetchDocuments } = useDocumentStore();
-  const { schemes, loadSchemes: fetchSchemes } = useSchemes();
-  const documents = useDocumentStore(state => state.documents);
+  const {
+    schemes: allSchemesHook,
+    documents: allDocumentsHook,
+    isLoadingSchemes,
+    isLoadingDocuments,
+    isCreatingRun,
+    error: classificationHookError,
+    loadSchemes,
+    loadDocuments,
+    loadRun,
+    createRun: createRunHook,
+    setActiveRun: setActiveRunHook,
+  } = useClassificationSystem({ autoLoadSchemes: true, autoLoadDocuments: true });
+
+  // Use consistent naming for schemes/documents from the hook
+  const allSchemes = allSchemesHook;
+  const allDocuments = allDocumentsHook;
+
+  // --- Moved Geocode State Declaration to the TOP ---
+  const [selectedGeocodeSchemeId, setSelectedGeocodeSchemeId] = useState<string | null>(null);
+  const [selectedGeocodeField, setSelectedGeocodeField] = useState<string | null>(null);
+  // --- End Move ---
 
   const [selectedDocs, setSelectedDocs] = useState<number[]>([]);
   const [selectedSchemes, setSelectedSchemes] = useState<number[]>([]);
-  const [isRunning, setIsRunning] = useState(false);
-  const [viewMode, setViewMode] = useState<'chart' | 'table'>('chart');
-  const [runs, setRuns] = useState<ClassificationRun[]>([]);
   const [runName, setRunName] = useState<string>('');
   const [runDescription, setRunDescription] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [filters, setFilters] = useState<ResultFilter[]>([]);
+  const [activeFilters, setActiveFilters] = useState<ResultFilter[]>([]);
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [isDocumentManagerOpen, setIsDocumentManagerOpen] = useState(false);
   const [isSchemeManagerOpen, setIsSchemeManagerOpen] = useState(false);
-  const [isLoadingResults, setIsLoadingResults] = useState(false);
-  const [isLoadingInitialData, setIsLoadingInitialData] = useState(false);
-  const [activeRunInfo, setActiveRunInfo] = useState<{
-    id: number;
-    name: string;
-    timestamp?: string;
-    documentCount?: number;
-    schemeCount?: number;
-  } | null>(null);
-  // New state for run history
-  const [runHistory, setRunHistory] = useState<RunHistoryItem[]>([]);
-  const [isRunHistoryOpen, setIsRunHistoryOpen] = useState(false);
-  // Update the state type to store document ID instead of a single result
+  const [isLoadingRunDetails, setIsLoadingRunDetails] = useState(false);
+  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
-  // Add local state for activeRunId
-  const [activeRunId, setActiveRunId] = useState<number | null>(null);
+  const [isCreateSchemeEditorOpen, setIsCreateSchemeEditorOpen] = useState(false);
 
-  const {
-    results: classificationResults,
-    loadResultsByRun,
-    error: resultsError,
-    isLoadingResults: isLoading,
-  } = useClassificationSystem({
-    autoLoadRuns: true
-  });
+  // Local state for the currently loaded run's details
+  const [currentRunId, setCurrentRunId] = useState<number | null>(null);
+  const [currentRunName, setCurrentRunName] = useState<string>('');
+  const [currentRunDescription, setCurrentRunDescription] = useState<string>('');
+  const [runSchemes, setRunSchemes] = useState<ClassificationSchemeRead[]>([]);
+  const [currentRunResults, setCurrentRunResults] = useState<FormattedClassificationResult[]>([]);
+  const [currentRunDocuments, setCurrentRunDocuments] = useState<DocumentRead[]>([]);
 
-  // Add a type assertion for classificationResults to help TypeScript understand its structure
-  const typedResults = classificationResults as FormattedClassificationResult[];
+  // Favorite runs state
+  const { favoriteRuns, addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
+  const favoriteRunIds = useMemo(() => favoriteRuns.map(fr => fr.id), [favoriteRuns]);
 
+  // --- State Definitions ---
+  const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
+  const [filteredGeocodedPoints, setFilteredGeocodedPoints] = useState<MapPoint[]>([]);
+  const [isLoadingGeocoding, setIsLoadingGeocoding] = useState(false);
+  const [geocodingError, setGeocodingError] = useState<string | null>(null);
+
+  // --- Calculate options for geocode selectors (Now uses state declared above) ---
+  const geocodeSchemeOptions = useMemo(() => {
+    return runSchemes.map(scheme => ({
+      value: scheme.id.toString(),
+      label: scheme.name
+    }));
+  }, [runSchemes]);
+
+  const geocodeFieldOptions = useMemo(() => {
+    if (!selectedGeocodeSchemeId) return [];
+    const scheme = runSchemes.find(s => s.id === parseInt(selectedGeocodeSchemeId, 10));
+    if (!scheme) return [];
+    return scheme.fields.map(field => ({
+      value: field.name,
+      label: `${field.name} (${field.type})`
+    }));
+  }, [selectedGeocodeSchemeId, runSchemes]); // Depends on state declared above
+
+  // --- State for Geocoding Hook ---
+  const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
+
+  // Zustand stores
+  const { showClassificationRunnerTutorial, toggleClassificationRunnerTutorial } = useTutorialStore();
   const { toast } = useToast();
   const { runs: runHistoryStore, isLoading: isLoadingRunHistory, fetchRunHistory } = useRunHistoryStore();
-  const { showClassificationRunnerTutorial, toggleClassificationRunnerTutorial } = useTutorialStore();
 
-  // Add useEffect to load documents and classification schemes once on mount
-  useEffect(() => {
-    const loadInitialData = async () => {
-      if (!activeWorkspace?.uid) return;
-      
-      setIsLoadingInitialData(true);
-      try {
-        // Load documents and classification schemes in parallel
-        await Promise.all([
-          fetchDocuments(),
-          fetchSchemes()
-        ]);
-      } catch (error) {
-        console.error('Error loading initial data:', error);
-      } finally {
-        setIsLoadingInitialData(false);
-      }
-    };
+  // --- Memoized Data for Views ---
+  // Schemes/Documents relevant to the *currently loaded run*
+  const selectedSchemesData = useMemo(() => runSchemes, [runSchemes]);
+  const selectedDocumentsData = useMemo(() => currentRunDocuments, [currentRunDocuments]);
 
-    loadInitialData();
-    // Only run this effect once when the component mounts and activeWorkspace is available
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.uid]);
+  // Memoized Run History (Sorted)
+  const runHistory = useMemo(() => {
+    return (runHistoryStore || [])
+       .sort((a, b) => {
+            const parseDate = (ts: string): number => {
+                try { const date = new Date(ts.replace(' at ', ' ')); if (!isNaN(date.getTime())) return date.getTime(); } catch (e) {}
+                try { const date = new Date(ts); if (!isNaN(date.getTime())) return date.getTime(); } catch (e) {}
+                return 0;
+            };
+            const timeA = parseDate(a.timestamp);
+            const timeB = parseDate(b.timestamp);
+            return timeB - timeA; // Descending order
+       });
+ }, [runHistoryStore]);
 
-  // Add useEffect to load run history when the component mounts
+ // Memoized Favorite Runs (Filtered for current workspace)
+ const currentFavoriteRuns = useMemo(() => {
+    const workspaceIdStr = String(activeWorkspace?.uid || '');
+    return favoriteRuns.filter(run => String(run.workspaceId) === workspaceIdStr);
+ }, [favoriteRuns, activeWorkspace?.uid]);
+
+  // --- Initial data loading effects ---
   useEffect(() => {
     if (activeWorkspace?.uid) {
-      const workspaceId = typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid, 10) 
-        : activeWorkspace.uid;
-      
-      fetchRunHistory(workspaceId);
-    }
-  }, [activeWorkspace?.uid, fetchRunHistory]);
-
-  // Effect to update run history when activeRunId changes
-  useEffect(() => {
-    if (activeRunId && typedResults.length > 0) {
-      // Check if this run is already in the history
-      const existingRunIndex = runHistory.findIndex(run => run.id === activeRunId);
-      
-      if (existingRunIndex === -1) {
-        // Get unique document and scheme counts
-        const uniqueDocIds = [...new Set(typedResults.map(r => r.document_id))];
-        const uniqueSchemeIds = [...new Set(typedResults.map(r => r.scheme_id))];
-        
-        // Get the first result to extract run info
-        const firstResult = typedResults[0];
-        
-        // Create a new run history item
-        const newRunItem: RunHistoryItem = {
-          id: activeRunId,
-          name: firstResult.run_name || `Run ${activeRunId}`,
-          timestamp: firstResult.timestamp ? format(new Date(firstResult.timestamp), 'PPp') : format(new Date(), 'PPp'),
-          documentCount: uniqueDocIds.length,
-          schemeCount: uniqueSchemeIds.length
-        };
-        
-        // Add to run history
-        setRunHistory(prev => [newRunItem, ...prev]);
+      console.log("Workspace active, loading initial data...");
+      loadSchemes();
+      loadDocuments();
+      const workspaceIdNum = typeof activeWorkspace.uid === 'string' ? parseInt(activeWorkspace.uid) : activeWorkspace.uid;
+      if (!isNaN(workspaceIdNum)) {
+          fetchRunHistory(workspaceIdNum); // Load run history via store
       }
     }
-  }, [activeRunId, typedResults, runHistory]);
+  }, [activeWorkspace?.uid, loadSchemes, loadDocuments, fetchRunHistory]);
 
-  // Effect to fetch results when activeRunId changes
+  // Effect to load the latest run by default
   useEffect(() => {
-    if (activeRunId && activeWorkspace) {
-      const workspaceId = typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid, 10) 
-        : activeWorkspace.uid;
-        
-      loadResultsByRun(activeRunId, workspaceId);
+    if (!currentRunId && !isLoadingRunHistory && runHistoryStore && runHistoryStore.length > 0) {
+       const latestRun = runHistoryStore[0];
+       console.log("No run loaded, auto-loading latest run:", latestRun.id);
+       requestAnimationFrame(() => {
+           handleLoadFromRun(latestRun.id, latestRun.name || `Run ${latestRun.id}`, latestRun.description || '');
+       });
     }
-  }, [activeRunId, activeWorkspace, loadResultsByRun]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runHistoryStore, currentRunId, isLoadingRunHistory]); // Dependencies are correct
 
-  // Effect to update run info when results are loaded
-  useEffect(() => {
-    if (typedResults.length > 0 && activeRunId) {
-      // Get the first result to extract run info
-      const firstResult = typedResults[0];
-      
-      // Get unique document and scheme counts
-      const uniqueDocIds = [...new Set(typedResults.map(r => r.document_id))];
-      const uniqueSchemeIds = [...new Set(typedResults.map(r => r.scheme_id))];
-      
-      const runInfo = {
-        id: activeRunId,
-        name: firstResult.run_name || `Run ${activeRunId}`,
-        timestamp: firstResult.timestamp ? format(new Date(firstResult.timestamp), 'PPp') : format(new Date(), 'PPp'),
-        documentCount: uniqueDocIds.length,
-        schemeCount: uniqueSchemeIds.length
-      };
-      
-      setActiveRunInfo(runInfo);
-      
-      // Set the selected documents and schemes
-      setSelectedDocs(uniqueDocIds);
-      setSelectedSchemes(uniqueSchemeIds);
-    } else if (!activeRunId) {
-      setActiveRunInfo(null);
+  // --- Handlers for Editable Run Name/Description ---
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+
+  const handleEditClick = (field: 'name' | 'description') => {
+      const elementId = field === 'name' ? 'run-name-editable' : 'run-description-editable';
+      if (field === 'name') setIsEditingName(true);
+      else setIsEditingDescription(true);
+
+      setTimeout(() => {
+          const el = document.getElementById(elementId);
+          if (el) {
+              el.contentEditable = 'true';
+              el.focus();
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              const sel = window.getSelection();
+              sel?.removeAllRanges();
+              sel?.addRange(range);
+          }
+      }, 0);
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLSpanElement>, field: 'name' | 'description') => {
+    const newValue = e.target.innerText.trim();
+    e.target.contentEditable = 'false'; // Always disable editing on blur
+
+    if (field === 'name') {
+        setIsEditingName(false);
+        if (newValue !== currentRunName) {
+            handleRunNameChange(newValue);
+        }
+    } else {
+        setIsEditingDescription(false);
+        const placeholder = "Add a description...";
+        if (newValue !== currentRunDescription && newValue !== placeholder) {
+            handleRunDescriptionChange(newValue);
+        } else if (newValue === placeholder && currentRunDescription !== '') {
+            handleRunDescriptionChange(''); // Clear description if set back to placeholder
+        }
     }
-  }, [typedResults, activeRunId]);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLSpanElement>, field: 'name' | 'description') => {
+      if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+      } else if (e.key === 'Escape') {
+          e.currentTarget.innerText = field === 'name' ? currentRunName : (currentRunDescription || "Add a description...");
+          e.currentTarget.blur();
+      }
+  };
 
   const handleRunNameChange = (newName: string) => {
-    setRunName(newName);
-    if (activeRunInfo) {
-      setActiveRunInfo({
-        ...activeRunInfo,
-        name: newName
-      });
-    }
+    setCurrentRunName(newName);
+    // TODO: API call to patch run name
+    console.log("TODO: Update run name in backend:", newName);
+    toast({ title: "Run Name Updated (Local)", description: `Run name set to "${newName}". Backend update pending.` });
+    // Consider updating run history store if changes should reflect immediately
   };
 
   const handleRunDescriptionChange = (newDescription: string) => {
-    setRunDescription(newDescription);
-    // We don't update activeRunInfo here since it doesn't have a description field
+    setCurrentRunDescription(newDescription);
+    // TODO: API call to patch run description
+    console.log("TODO: Update run description in backend:", newDescription);
+    toast({ title: "Run Description Updated (Local)", description: `Description updated. Backend update pending.` });
   };
+  // --- End Editable Handlers ---
 
-  // Fetch classification results
-  const fetchResults = async (specificRunId?: number) => {
-    if (!activeWorkspace) return;
-    
-    setIsLoadingResults(true);
-    
-    try {
-      // Convert workspace ID to number if needed
-      const workspaceId = typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid, 10) 
-        : activeWorkspace.uid;
-      
-      // Use loadResultsByRun directly
-      await loadResultsByRun(specificRunId || activeRunId || 0, workspaceId);
-      
-      // After fetching results, update the run info if needed
-      if (typedResults.length > 0) {
-        // Get unique document and scheme counts
-        const uniqueDocIds = [...new Set(typedResults.map(r => r.document_id))];
-        const uniqueSchemeIds = [...new Set(typedResults.map(r => r.scheme_id))];
-        
-        // Get the first result to extract run info
-        const firstResult = typedResults[0];
-        
-        // If we're loading a specific run or don't have active run info yet
-        if (specificRunId || !activeRunInfo) {
-          const runInfo = {
-            id: specificRunId || firstResult.run_id,
-            name: firstResult.run_name || `Run ${firstResult.run_id}`,
-            timestamp: firstResult.timestamp ? format(new Date(firstResult.timestamp), 'PPp') : format(new Date(), 'PPp'),
-            documentCount: uniqueDocIds.length,
-            schemeCount: uniqueSchemeIds.length
-          };
-          
-          setActiveRunInfo(runInfo);
-          setActiveRunId(runInfo.id);
-          setRunName(runInfo.name);
-          
-          // Add to run history if not already there
-          if (!runHistory.some(r => r.id === runInfo.id)) {
-            setRunHistory(prev => [runInfo, ...prev]);
+  // --- Geocoding Logic ---
+  const { getCache, setCache } = useGeocodingCacheStore();
+
+  const generateGeocodingCacheKey = useCallback(() => {
+    if (!activeWorkspace?.uid || !currentRunId) return null;
+    return `${activeWorkspace.uid}-run-${currentRunId}`;
+  }, [activeWorkspace?.uid, currentRunId]);
+
+  const handleGeocodeRunLocations = useCallback(async () => {
+    if (!currentRunId || !selectedGeocodeSchemeId || !selectedGeocodeField) {
+      console.log("Geocoding prerequisites not met. Clearing points.");
+      setGeocodedPoints([]);
+      setFilteredGeocodedPoints([]); // Ensure filtered points are also cleared
+      return;
+    }
+
+    const cacheKey = generateGeocodingCacheKey();
+    if (cacheKey) {
+        const cachedPoints = getCache(cacheKey);
+        if (cachedPoints) {
+            console.log("Using cached geocoded points.");
+            setGeocodedPoints(cachedPoints);
+            // Initial filtering happens in useEffect, no need to set filtered here
+            return;
+        }
+    }
+
+    console.log(`Geocoding run ${currentRunId}, scheme ${selectedGeocodeSchemeId}, field ${selectedGeocodeField}`);
+    setIsLoadingGeocoding(true);
+    setGeocodingError(null);
+    setGeocodedPoints([]);
+    setFilteredGeocodedPoints([]);
+
+    const schemeIdNum = parseInt(selectedGeocodeSchemeId, 10);
+    const locationStrings = new Set<string>();
+    currentRunResults.forEach(result => {
+      if (result.scheme_id === schemeIdNum) {
+        const loc = extractLocationString(result.value, selectedGeocodeField);
+        if (loc) locationStrings.add(loc);
+      }
+    });
+
+    if (locationStrings.size === 0) {
+        console.log("No location strings found to geocode.");
+        setIsLoadingGeocoding(false);
+        return;
+    }
+
+    const geocodedData = new Map<string, GeocodeResultType | null>();
+    let errorsEncountered = false;
+    for (const locStr of locationStrings) {
+      try {
+        const result = await geocodeLocation(locStr);
+        geocodedData.set(locStr, result);
+      } catch (error: any) {
+        console.error(`Error geocoding "${locStr}":`, error);
+        geocodedData.set(locStr, null);
+        errorsEncountered = true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50)); // Rate limiting
+    }
+
+    if (errorsEncountered) {
+        setGeocodingError("Some locations failed to geocode. See console for details.");
+    }
+
+    const pointsMap = new Map<string, MapPoint>();
+    currentRunResults.forEach(result => {
+      if (result.scheme_id === schemeIdNum) {
+        const locStr = extractLocationString(result.value, selectedGeocodeField);
+        if (locStr) {
+          const geoResult = geocodedData.get(locStr);
+          if (geoResult?.latitude && geoResult?.longitude) {
+            const pointId = locStr;
+            let mapPoint = pointsMap.get(pointId);
+            if (!mapPoint) {
+              mapPoint = {
+                id: pointId,
+                locationString: locStr,
+                coordinates: { latitude: geoResult.latitude, longitude: geoResult.longitude },
+                documentIds: [],
+                bbox: geoResult.bbox,
+                type: geoResult.type
+              };
+              pointsMap.set(pointId, mapPoint);
+            }
+            if (!mapPoint.documentIds.includes(result.document_id)) {
+              mapPoint.documentIds.push(result.document_id);
+            }
           }
         }
       }
-    } catch (error) {
-      console.error("Error fetching classification results:", error);
-      toast({
-        title: "Error fetching results",
-        description: "Failed to fetch classification results",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingResults(false);
-    }
-  };
-
-  // Fix for the toast notification without using icon property
-  useEffect(() => {
-    if (typedResults.length > 0 && activeRunId) {
-      toast({
-        title: "Run loaded successfully",
-        description: (
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-green-500" />
-            <span>Loaded {typedResults.length} classification results</span>
-          </div>
-        ),
-        variant: "default",
-        duration: 3000,
-      });
-    }
-  }, [typedResults, activeRunId, toast]);
-
-  const handleRunClassification = async () => {
-    if (!selectedDocs.length || !selectedSchemes.length || !activeWorkspace) return;
-    
-    setIsRunning(true);
-    const runId = Date.now() % 1000000000;
-    
-    try {
-      const { apiKeys, selectedProvider, selectedModel } = useApiKeysStore.getState();
-      
-      if (!selectedProvider || !apiKeys[selectedProvider]) {
-        throw new Error('API key not found for selected provider');
-      }
-      
-      // Get the API key for the selected provider
-      const apiKey = apiKeys[selectedProvider];
-      console.log(`ClassificationRunner: Using API key: ${apiKey ? 'Yes (key hidden)' : 'No'}`);
-
-      await Promise.all(
-        selectedDocs.map(async (docId) => {
-          return Promise.all(
-            selectedSchemes.map(async (schemeId) => {
-              return ApiClassificationService.classifyDocument({
-                documentId: docId,
-                schemeId: schemeId,
-                provider: selectedProvider,
-                model: selectedModel,
-                runId: runId,
-                runName: runName || `Run ${runId}`,
-                runDescription: runDescription,
-                xApiKey: apiKey // Pass the API key
-              });
-            })
-          );
-        })
-      );
-
-      // Use the hook's setActiveRunId
-      setActiveRunId(runId);
-      
-      // Add a new run to the history
-      const newRunInfo = {
-        id: runId,
-        name: runName || `Run ${runId}`,
-        timestamp: format(new Date(), 'PPp'),
-        documentCount: selectedDocs.length,
-        schemeCount: selectedSchemes.length
-      };
-      
-      setRunHistory(prev => [newRunInfo, ...prev]);
-      setActiveRunInfo(newRunInfo);
-      
-      // Fetch the results for the new run
-      const workspaceId = typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid, 10) 
-        : activeWorkspace.uid;
-        
-      // Wait a moment for the backend to process the results
-      setTimeout(async () => {
-        await loadResultsByRun(runId, workspaceId);
-        
-        toast({
-          title: "Classification completed",
-          description: `Successfully classified ${selectedDocs.length} documents with ${selectedSchemes.length} schemes`,
-          duration: 5000,
-        });
-      }, 1000);
-      
-    } catch (error) {
-      console.error('Classification failed:', error);
-      toast({
-        title: "Classification failed",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
-        variant: "destructive",
-      });
-    } finally {
-      setIsRunning(false);
-    }
-  };
-
-  // Function to handle loading from a selected run
-  const handleLoadFromRun = async (runId: number, runName: string, runDescription?: string) => {
-    if (!activeWorkspace) return;
-    
-    setIsLoadingResults(true);
-    toast({
-      title: "Loading run",
-      description: `Loading results from run: ${runName} (ID: ${runId})`,
     });
-    
+
+    const newPoints = Array.from(pointsMap.values());
+    console.log(`Generated ${newPoints.length} geocoded points.`);
+    setGeocodedPoints(newPoints);
+    // Initial filtering is done in the useEffect below, no need to setFiltered here
+
+    if (cacheKey) {
+        setCache(cacheKey, newPoints); // Cache the newly fetched points
+    }
+
+    setIsLoadingGeocoding(false);
+    console.log("Finished geocoding.");
+  }, [
+    currentRunId,
+    selectedGeocodeSchemeId,
+    selectedGeocodeField,
+    currentRunResults,
+    extractLocationString,
+    geocodeLocation,
+    setIsLoadingGeocoding,
+    setGeocodedPoints,
+    setFilteredGeocodedPoints,
+    setGeocodingError,
+    generateGeocodingCacheKey,
+    getCache,
+    setCache,
+  ]);
+
+  // Function to fetch results for a specific run
+  const fetchResults = useCallback(async (runIdToLoad: number) => {
+    if (!activeWorkspace?.uid) return;
+    console.log(`Fetching results for run ID: ${runIdToLoad}`);
+    setIsLoadingRunDetails(true); // Start loading state
     try {
-      // Convert workspace ID to number if needed
-      const workspaceId = typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid, 10) 
-        : activeWorkspace.uid;
-        
-      // Fetch results for the selected run
-      await loadResultsByRun(runId, workspaceId);
-      
-      // After fetching, extract unique document and scheme IDs
-      const uniqueDocIds = [...new Set(typedResults.map(r => r.document_id))];
-      const uniqueSchemeIds = [...new Set(typedResults.map(r => r.scheme_id))];
-      
-      // Update selected documents and schemes
-      setSelectedDocs(uniqueDocIds);
-      setSelectedSchemes(uniqueSchemeIds);
-      
-      // Update active run information
-      setActiveRunId(runId);
-      setRunName(runName);
-      setRunDescription(runDescription || '');
-      
-      toast({
-        title: "Run loaded successfully",
-        description: `Loaded ${uniqueDocIds.length} documents and ${uniqueSchemeIds.length} schemes from run "${runName}"`,
-        variant: "default",
-        duration: 5000,
-      });
-    } catch (error) {
-      console.error("Error loading run:", error);
+      const runData = await loadRun(runIdToLoad); // Use hook's loadRun
+
+      if (runData) {
+        console.log("Run data loaded:", runData);
+        const { run, results, schemes: loadedSchemes } = runData;
+
+        setCurrentRunId(run.id);
+        setCurrentRunName(run.name || `Run ${run.id}`);
+        setCurrentRunDescription(run.description || '');
+        setCurrentRunResults(results);
+        setRunSchemes(schemesToSchemeReads(loadedSchemes));
+
+        const docIds = [...new Set(results.map(r => r.document_id))];
+        const documentsForRun = allDocumentsHook
+          .filter(doc => docIds.includes(doc.id))
+          .map(doc => documentToDocumentRead(doc));
+        setCurrentRunDocuments(documentsForRun);
+
+        setActiveRunHook(run); // Update hook state
+
+        // Trigger geocoding after data is loaded
+        await handleGeocodeRunLocations(); // Await geocoding
+
+      } else {
+        toast({
+          title: "Error Loading Run",
+          description: `Could not load details for run ${runIdToLoad}.`,
+          variant: "destructive",
+        });
+        handleClearRun(); // Clear state if run load fails
+      }
+    } catch (err: any) {
+      console.error('Error fetching run details:', err);
       toast({
         title: "Error loading run",
-        description: "Failed to load results from the selected run",
+        description: err.message || "An unexpected error occurred.",
         variant: "destructive",
       });
+      handleClearRun(); // Clear state on error
     } finally {
-      setIsLoadingResults(false);
-      setIsRunHistoryOpen(false);
+      setIsLoadingRunDetails(false);
+      console.log("Finished fetching run details.");
+    }
+  }, [currentRunId, activeWorkspace?.uid, loadRun, allDocumentsHook, setActiveRunHook, toast, handleGeocodeRunLocations]); 
+
+  // Handler for running a new classification
+  const handleRunClassification = async () => {
+    if (!activeWorkspace?.uid) {
+      toast({ title: "No Workspace", description: "Please select a workspace.", variant: "destructive" });
+      return;
+    }
+    const documentsToClassify = allDocumentsHook.filter(doc => selectedDocs.includes(doc.id));
+    const schemesToUse = selectedSchemes;
+
+    if (documentsToClassify.length === 0 || schemesToUse.length === 0) {
+      toast({ title: "Missing Selection", description: "Please select documents and schemes.", variant: "default" });
+      return;
+    }
+
+    try {
+      const newRun = await createRunHook(
+        documentsToClassify,
+        schemesToUse,
+        { name: runName || undefined, description: runDescription || undefined }
+      );
+
+      if (newRun) {
+        toast({ title: "Run Started", description: `Classification run "${newRun.name}" created.` });
+        handleLoadFromRun(newRun.id, newRun.name || `Run ${newRun.id}`, newRun.description || '');
+        const workspaceIdNum = typeof activeWorkspace.uid === 'string' ? parseInt(activeWorkspace.uid) : activeWorkspace.uid;
+        if (!isNaN(workspaceIdNum)) fetchRunHistory(workspaceIdNum);
+        setSelectedDocs([]);
+        setSelectedSchemes([]);
+        setRunName('');
+        setRunDescription('');
+      }
+    } catch (err: any) {
+      toast({ title: "Run Failed", description: err.message || "Could not start run.", variant: "destructive" });
     }
   };
 
-  const groupedResults = useMemo(() => {
-    if (!typedResults.length) return new Map();
+  // Handler to clear the currently loaded run state
+  const handleClearRun = useCallback(() => { // Wrap in useCallback
+       setCurrentRunId(null);
+       setCurrentRunName('');
+       setCurrentRunDescription('');
+       setCurrentRunResults([]);
+       setRunSchemes([]);
+       setCurrentRunDocuments([]);
+       setActiveRunHook(null);
+       setGeocodedPoints([]);
+       setFilteredGeocodedPoints([]);
+       setActiveFilters([]);
+       setSelectedGeocodeSchemeId(null);
+       setSelectedGeocodeField(null);
+       toast({ title: "Run Cleared", description: "Current run data unloaded." });
+  }, [setActiveRunHook, toast]); // Added dependencies
 
-    // Convert to compatible types for grouping
-    const compatibleResultsForGrouping = resultsToResultReads(typedResults);
-    
-    const grouped = new Map<string, ClassificationResultRead[]>();
-    
-    compatibleResultsForGrouping.forEach(result => {
-      const date = new Date(result.timestamp).toLocaleDateString();
-      if (!grouped.has(date)) {
-        grouped.set(date, []);
-      }
-      grouped.get(date)?.push(result);
-    });
+  // Handler to load data from a selected run history item
+  const handleLoadFromRun = useCallback(async (runId: number, runName: string, runDescription?: string) => {
+    console.log(`Loading data for run: ${runId} (${runName})`);
+    setCurrentRunId(runId); // Set current run ID first
+    // Fetch results will update name/desc based on actual loaded data
+    setIsHistoryDialogOpen(false);
+    await fetchResults(runId); // Fetch results using the new ID
+  }, [fetchResults]); // Depends on fetchResults
 
-    return grouped;
-  }, [typedResults]);
+  // --- Selection Handlers ---
+  const handleDocSelect = useCallback((docId: number, isSelected: boolean) => {
+    setSelectedDocs(prev =>
+      isSelected ? [...prev, docId] : prev.filter(id => id !== docId)
+    );
+  }, []);
 
-  // Simplified filtered results calculation
+  const handleSchemeSelect = useCallback((schemeId: number, isSelected: boolean) => {
+    setSelectedSchemes(prev =>
+      isSelected ? [...prev, schemeId] : prev.filter(id => id !== schemeId)
+    );
+  }, []);
+
+  const handleSelectAllDocs = useCallback((selectAll: boolean) => {
+    if (selectAll) setSelectedDocs(allDocuments.map(doc => doc.id));
+    else setSelectedDocs([]);
+  }, [allDocuments]);
+
+  const handleSelectAllSchemes = useCallback((selectAll: boolean) => {
+    if (selectAll) setSelectedSchemes(allSchemes.map(scheme => scheme.id));
+    else setSelectedSchemes([]);
+  }, [allSchemes]);
+  // --- End Selection Handlers ---
+
+  // --- Filtered Results Logic ---
   const filteredResults = useMemo(() => {
-    if (filters.length === 0) return typedResults;
-    
-    console.log(`Applying ${filters.length} filters to ${typedResults.length} results`);
-    
-    // Convert results to a format that's easier to work with
-    const resultsById = typedResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+    if (activeFilters.length === 0) return currentRunResults;
+
+    const resultsByDocId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
       const docId = result.document_id;
       if (!acc[docId]) acc[docId] = [];
       acc[docId].push(result);
       return acc;
     }, {});
-    
-    // Filter document IDs based on the filters
-    const filteredDocIds = Object.keys(resultsById)
+
+    const filteredDocIds = Object.keys(resultsByDocId)
       .map(Number)
       .filter(docId => {
-        const docResults = resultsById[docId];
-        
-        // Check if this document matches all filters
-        return filters.every(filter => {
-          // Get results for this scheme
-          const schemeResults = docResults.filter(r => r.scheme_id === filter.schemeId);
-          
-          // If no results for this scheme, skip this filter
-          if (schemeResults.length === 0) return true;
-          
-          // Check if any result matches the filter
-          return schemeResults.some(result => {
-            // Get the scheme
-            const scheme = schemes.find(s => s.id === filter.schemeId);
-            if (!scheme) return true;
-            
-            // Special handling for entity statements (List[Dict[str, any]])
-            if (scheme.fields?.[0]?.type === 'List[Dict[str, any]]' && filter.operator === 'contains') {
-              // For entity statements, search within entity names and statements
-              if (Array.isArray(result.value)) {
-                const searchTerm = String(filter.value || '').toLowerCase();
-                
-                // Check if any entity or statement contains the search term
-                return result.value.some(item => {
-                  if (typeof item !== 'object' || item === null) {
-                    return String(item).toLowerCase().includes(searchTerm);
-                  }
-                  
-                  // Check entity field
-                  if ('entity' in item && typeof item.entity === 'string') {
-                    if (item.entity.toLowerCase().includes(searchTerm)) {
-                      return true;
-                    }
-                  }
-                  
-                  // Check statement field
-                  if ('statement' in item && typeof item.statement === 'string') {
-                    if (item.statement.toLowerCase().includes(searchTerm)) {
-                      return true;
-                    }
-                  }
-                  
-                  // Check all other fields
-                  return Object.values(item).some(val => 
-                    typeof val === 'string' && val.toLowerCase().includes(searchTerm)
-                  );
-                });
-              }
-              
-              // If it has a default_field, search in that
-              if (typeof result.value === 'object' && 
-                  result.value !== null && 
-                  'default_field' in result.value &&
-                  typeof result.value.default_field === 'string') {
-                return result.value.default_field.toLowerCase().includes(String(filter.value || '').toLowerCase());
-              }
-              
-              // Fallback to string representation
-              return String(result.value || '').toLowerCase().includes(String(filter.value || '').toLowerCase());
-            }
-            
-            // Get the display value
-            const displayValue = result.displayValue;
-            
-            // Apply the filter based on the operator
-            switch (filter.operator) {
-              case 'equals':
-                if (typeof displayValue === 'string' && typeof filter.value === 'string') {
-                  return displayValue.toLowerCase() === filter.value.toLowerCase();
-                }
-                if (typeof displayValue === 'number' && typeof filter.value === 'number') {
-                  return displayValue === filter.value;
-                }
-                return String(displayValue) === String(filter.value);
-                
-              case 'contains':
-                // Convert both to strings for comparison
-                return String(displayValue || '').toLowerCase().includes(String(filter.value || '').toLowerCase());
-                
-              case 'range':
-                if (typeof displayValue === 'number' && Array.isArray(filter.value) && filter.value.length === 2) {
-                  const [min, max] = filter.value as number[];
-                  return displayValue >= min && displayValue <= max;
-                }
-                return true;
-                
-              default:
-                return true;
-            }
-          });
-        });
+        const docResults = resultsByDocId[docId];
+        return activeFilters.every(filter => checkFilterMatch(filter, docResults, runSchemes));
       });
-    
-    // Return only results for filtered documents
-    const filtered = typedResults.filter(result => filteredDocIds.includes(result.document_id));
-    console.log(`Filtered results: ${filtered.length} of ${typedResults.length}`);
-    return filtered;
-  }, [typedResults, filters, schemes]) as FormattedClassificationResult[];
 
-  const handleDataPointClick = (date: string) => {
-    const results = groupedResults.get(date);
-    if (results) {
-      // Explicitly type the arrays as numbers
-      const docIds = [...new Set(results.map(r => r.document_id))] as number[];
-      const schemeIds = [...new Set(results.map(r => r.scheme_id))] as number[];
-      setSelectedDocs(docIds);
-      setSelectedSchemes(schemeIds);
+    return currentRunResults.filter(result => filteredDocIds.includes(result.document_id));
+  }, [currentRunResults, activeFilters, runSchemes]);
+
+  // --- useEffect for filtering points ---
+  useEffect(() => {
+    const sourcePoints = geocodedPoints;
+    if (activeFilters.length === 0) {
+      setFilteredGeocodedPoints(sourcePoints);
+      return;
     }
-  };
-
-  // Render run selector
-  const renderRunSelector = () => (
-    <div className="flex items-center gap-4 mb-4">
-      <label htmlFor="run-selector" className="text-sm font-medium">Select Run:</label>
-      <select
-        id="run-selector"
-        value={activeRunId?.toString() || ''}
-        onChange={(e) => setActiveRunId(e.target.value ? Number(e.target.value) : null)}
-        className="p-2 rounded border"
-      >
-        <option value="">Select a run...</option>
-        {runs.map(run => (
-          <option key={run.id} value={run.id.toString()}>
-            {run.name ? `${run.name} - ` : ''}{format(run.timestamp, 'MMM d, yyyy HH:mm:ss')}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-
-  const columns = useMemo(() => {
-    const columnHelper = createColumnHelper<any>();
-    return [
-      columnHelper.accessor('document', {
-        header: 'Document',
-        cell: (info) => {
-          const doc = info.getValue();
-          return (
-            <div className="font-medium">
-              {doc?.title || `Document ${doc?.id}`}
-            </div>
-          );
-        },
-      }),
-      columnHelper.accessor('schemes', {
-        header: 'Scheme',
-        cell: (info) => {
-          const schemes = info.getValue();
-          return (
-            <div className="space-y-1">
-              {schemes.map((scheme: any) => (
-                <div key={scheme.id} className="text-sm font-medium">{scheme.name}</div>
-              ))}
-            </div>
-          );
-        },
-      }),
-      columnHelper.accessor('results', {
-        header: 'Value',
-        cell: (info) => {
-          const results = info.getValue();
-          return (
-            <div className="space-y-3">
-              {results.map((result: any) => (
-                <div key={result.id} className="p-2 bg-card rounded-lg shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-2 flex-1">
-                      <div className="flex items-center gap-3">
-                        <span className="font-medium text-sm">{result.scheme?.name}</span>
-                      </div>
-                      <ClassificationResultDisplay 
-                        result={result}
-                        scheme={result.scheme}
-                        compact={true}
-                      />
-                    </div>
-                    <div className="text-xs text-muted-foreground pl-4">
-                      {format(new Date(result.timestamp), "PP · p")}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          );
-        },
-      }),
-      columnHelper.accessor('timestamp', {
-        header: 'Date',
-        cell: (info) => format(new Date(info.getValue()), 'PP p'),
-      }),
-      columnHelper.accessor('run_name', {
-        header: 'Run',
-        cell: (info) => info.getValue() || '-',
-      }),
-    ];
-  }, []);
-
-  // Table data preparation
-  const tableData = useMemo(() => {
-    // Group results by document
-    const resultsByDocument = typedResults.reduce<Record<number, any[]>>((acc, result) => {
-      if (!acc[result.document_id]) {
-        acc[result.document_id] = [];
-      }
-      
-      // Find the scheme for this result
-      const scheme = schemes.find(s => s.id === result.scheme_id);
-      
-      // Convert to ClassificationResultRead for compatibility with the table
-      const resultAsRead = {
-        id: result.id,
-        document_id: result.document_id,
-        scheme_id: result.scheme_id,
-        value: result.value,
-        timestamp: result.timestamp,
-        run_id: result.run_id,
-        run_name: result.run_name,
-        run_description: result.run_description,
-        document: result.document as unknown as DocumentRead,
-        scheme: scheme as unknown as ClassificationSchemeRead
-      } as ClassificationResultRead & { scheme?: ClassificationSchemeRead };
-      
-      acc[result.document_id].push(resultAsRead);
+    if (!sourcePoints || sourcePoints.length === 0 || !currentRunResults || currentRunResults.length === 0) {
+      setFilteredGeocodedPoints([]);
+      return;
+    }
+    const resultsByDocId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+      const docId = result.document_id;
+      if (!acc[docId]) acc[docId] = [];
+      acc[docId].push(result);
       return acc;
     }, {});
-    
-    // Convert to array format for the table
-    return Object.entries(resultsByDocument).map(([docId, results]) => {
-      const doc = documents.find(d => d.id === Number(docId));
-      const uniqueSchemes = [...new Set(results.map(r => r.scheme_id))].map(
-        schemeId => schemes.find(s => s.id === schemeId)
-      ).filter(Boolean);
-      
-      // Use the most recent timestamp for the document row
-      const latestResult = results.reduce((latest, current) => 
-        new Date(current.timestamp) > new Date(latest.timestamp) ? current : latest
-      );
-      
-      return {
-        document_id: Number(docId),
-        document: doc,
-        schemes: uniqueSchemes,
-        results: results,
-        timestamp: latestResult.timestamp
-      };
-    });
-  }, [typedResults, schemes, documents]);
 
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    meta: {
-      onRowClick: (row: any) => {
-        setSelectedDocumentId(row.original.document_id);
-        setIsResultDialogOpen(true);
-      }
-    }
-  });
+    const newlyFilteredPoints = sourcePoints.filter(point =>
+      point.documentIds.some(docId => {
+        const docResults = resultsByDocId[docId];
+        if (!docResults) return false;
+        return activeFilters.every(filter => checkFilterMatch(filter, docResults, runSchemes));
+      })
+    );
+    setFilteredGeocodedPoints(newlyFilteredPoints);
+  }, [geocodedPoints, activeFilters, currentRunResults, runSchemes]); // Dependencies are correct
 
-  // Add a new function to handle tutorial dismissal
-  const handleDismissTutorial = () => {
-    toggleClassificationRunnerTutorial();
-    toast({
-      title: "Tutorial hidden",
-      description: "You can re-enable tutorials in settings",
-      variant: "default",
-    });
+  // --- UPDATE: Handler for Table Row Click --- (moved from old table meta)
+  const handleTableRowClick = (docId: number) => {
+    setSelectedDocumentId(docId);
+    setIsResultDialogOpen(true);
   };
+  // --- END UPDATE ---
 
-  // Replace the header section with enhanced version
-  const renderHeader = () => (
-    <div className="flex flex-col space-y-3 mb-6 bg-secondary-900/50 p-4 rounded-lg border border-secondary-800">
-      <div className="flex items-center justify-between">
-        {activeRunInfo ? (
-          <div className="flex-1">
-            <div 
-              className="text-lg font-medium text-secondary-300 cursor-pointer hover:text-secondary-100 group flex items-center"
-              onClick={() => {
-                setRunName(activeRunInfo.name);
-                const nameElement = document.getElementById('run-name-editable');
-                if (nameElement) {
-                  nameElement.contentEditable = 'true';
-                  nameElement.focus();
-                  const selection = window.getSelection();
-                  const range = document.createRange();
-                  range.selectNodeContents(nameElement);
-                  selection?.removeAllRanges();
-                  selection?.addRange(range);
-                }
-              }}
-            >
-              <span id="run-name-editable" 
-                className="border-b border-dashed border-transparent group-hover:border-secondary-500 px-1"
-                onBlur={(e) => {
-                  e.currentTarget.contentEditable = 'false';
-                  if (e.currentTarget.textContent) {
-                    handleRunNameChange(e.currentTarget.textContent);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.currentTarget.blur();
-                  }
-                }}
-              >
-                {activeRunInfo.name}
-              </span>
-              <Pencil className="h-3 w-3 ml-2 opacity-0 group-hover:opacity-100 transition-opacity" />
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="h-4 w-4 ml-2 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Click to edit the name of this classification run</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1">
-            <div className="flex items-center">
-              <input
-                type="text"
-                placeholder="Enter run name..."
-                value={runName}
-                onChange={(e) => setRunName(e.target.value)}
-                className="text-lg font-medium bg-transparent border-b border-dashed border-secondary-700 focus:border-secondary-500 focus:outline-none px-1 text-secondary-300 w-64"
-              />
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="h-4 w-4 ml-2 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Enter a name for this classification run</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </div>
-        )}
-      </div>
-      
-      {/* Editable description */}
-      <div 
-        className="text-sm text-secondary-400 cursor-pointer hover:text-secondary-200 group flex items-center"
-        onClick={() => {
-          const descElement = document.getElementById('run-description-editable');
-          if (descElement) {
-            descElement.contentEditable = 'true';
-            descElement.focus();
-            const selection = window.getSelection();
-            const range = document.createRange();
-            range.selectNodeContents(descElement);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-          }
-        }}
-      >
-        <span id="run-description-editable" 
-          className="italic border-b border-dashed border-transparent group-hover:border-secondary-700 px-1"
-          onBlur={(e) => {
-            e.currentTarget.contentEditable = 'false';
-            if (e.currentTarget.textContent !== null) {
-              handleRunDescriptionChange(e.currentTarget.textContent);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              e.currentTarget.blur();
-            }
-          }}
-        >
-          {runDescription || "Add a description..."}
-        </span>
-        <Pencil className="h-3 w-3 ml-2 opacity-0 group-hover:opacity-100 transition-opacity" />
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <HelpCircle className="h-4 w-4 ml-2 text-muted-foreground cursor-help" />
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Click to add a description for this classification run</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
-      
-      {/* Tutorial banner */}
-      {showClassificationRunnerTutorial && (
-        <div className="bg-secondary-900 border border-secondary-700 rounded-md p-3 mt-1 text-sm flex items-start">
-          <Info className="h-5 w-5 text-primary mr-2 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="font-medium mb-1">Classification Runner</p>
-            <p className="text-secondary-300">
-              This tool allows you to run classification models on your documents. 
-              Configure your run by selecting documents and classification schemes, 
-              then click "Run Classification" to start the process.
-            </p>
-          </div>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-6 w-6 p-0 rounded-full"
-            onClick={handleDismissTutorial}
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Dismiss</span>
-          </Button>
+  // --- UPDATE: renderResultsTabs Function ---
+  const renderResultsTabs = () => {
+    if (isLoadingRunDetails) return <div className="flex justify-center items-center h-60"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>;
+    if (!currentRunId && !isLoadingRunDetails) {
+      return ( <div className="text-center p-8 text-muted-foreground border rounded-lg">No run selected. Load a run from history or create a new one.</div> );
+    }
+    if (!currentRunId) return null;
+
+    return (
+      <>
+        {/* Filtered Counts Display */}
+        <div className="text-sm text-muted-foreground mb-2 px-1">
+          {/* Display filtered document count based on tableData logic if possible, or just indicate filtering */}
+          Showing documents {activeFilters.length > 0 ? '(filtered)' : ''}
         </div>
-      )}
-    </div>
-  );
 
-  // Convert our new types to the old API types for compatibility
-  const compatibleSchemes = useMemo(() => schemesToSchemeReads(schemes), [schemes]);
-  const compatibleResults = useMemo(() => resultsToResultReads(typedResults), [typedResults]);
+        <Tabs defaultValue="chart" className="w-full">
+             <TabsList className="grid w-full grid-cols-3 mb-4">
+                <TabsTrigger value="chart"><BarChart3 className="h-4 w-4 mr-1" />Chart</TabsTrigger>
+                {/* --- ADDED: Table Trigger --- */}
+                <TabsTrigger value="table"><TableIcon className="h-4 w-4 mr-1" />Table</TabsTrigger>
+                <TabsTrigger value="map"><MapPin className="h-4 w-4 mr-1" />Map</TabsTrigger>
+             </TabsList>
 
+             {/* Chart Tab */}
+             <TabsContent value="chart">
+                <Card>
+                    <CardHeader>
+                      <CardTitle>Results Overview</CardTitle>
+                      <CardDescription>
+                        Visualize classification results over time or grouped by value.
+                      </CardDescription>
+                   </CardHeader>
+                   <CardContent>
+                      {filteredResults.length > 0 ? (
+                        <ClassificationResultsChart
+                           results={filteredResults}
+                           schemes={runSchemes}
+                           documents={currentRunDocuments}
+                           filters={activeFilters}
+                        />
+                      ) : ( <div className="text-center p-8 border rounded-lg"><AlertCircle className="mx-auto h-10 w-10 text-muted-foreground"/>No results match the current filters for this run.</div>
+                      )}
+                   </CardContent>
+                </Card>
+             </TabsContent>
+
+             {/* --- ADDED: Results Table Tab --- */}
+              <TabsContent value="table">
+                 <Card>
+                    <CardHeader>
+                        <CardTitle>Results Table</CardTitle>
+                        <CardDescription>
+                           Detailed classification results for each document in the run. Click rows for details.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                       {currentRunResults.length > 0 ? (
+                           <ClassificationResultsTable
+                              results={currentRunResults} // Pass potentially unfiltered results
+                              schemes={runSchemes}
+                              documents={currentRunDocuments}
+                              filters={activeFilters} // Let the table handle filtering internally
+                              onRowClick={handleTableRowClick} // Pass the handler
+                           />
+                       ) : (
+                           <div className="text-center p-8 border rounded-lg"><AlertCircle className="mx-auto h-10 w-10 text-muted-foreground"/>No results found for this run.</div>
+                       )}
+                    </CardContent>
+                 </Card>
+              </TabsContent>
+              {/* --- END ADD --- */}
+
+              {/* Map View Tab */}
+              <TabsContent value="map">
+                <Card>
+                  <CardHeader>
+                     <CardTitle>Map View</CardTitle>
+                     <CardDescription>
+                        Geocode location data extracted from classification results and view on a map.
+                     </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                     {/* Geocoding Controls */}
+                     <div className="flex flex-col sm:flex-row gap-4 p-4 border rounded-md bg-muted/30 items-end">
+                        {/* Scheme Select */}
+                         <div className="flex-1 space-y-2">
+                           <label htmlFor="geocode-scheme" className="text-sm font-medium">Location Scheme</label>
+                           <Select value={selectedGeocodeSchemeId ?? ''} onValueChange={(v) => { setSelectedGeocodeSchemeId(v); setSelectedGeocodeField(null); setGeocodedPoints([]); setFilteredGeocodedPoints([]); /* Clear points on scheme change */ }}>
+                              <SelectTrigger id="geocode-scheme"><SelectValue placeholder="Select scheme..." /></SelectTrigger>
+                              <SelectContent>
+                                 {geocodeSchemeOptions.map(option => (<SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>))}
+                                  {geocodeSchemeOptions.length === 0 && <div className="p-2 text-xs text-muted-foreground text-center italic">No schemes in run.</div>}
+                              </SelectContent>
+                           </Select>
+                        </div>
+                        {/* Field Select */}
+                        <div className="flex-1 space-y-2">
+                           <label htmlFor="geocode-field" className="text-sm font-medium">Location Field</label>
+                           <Select value={selectedGeocodeField ?? ''} onValueChange={(v) => {setSelectedGeocodeField(v); setGeocodedPoints([]); setFilteredGeocodedPoints([]); /* Clear points on field change */}} disabled={!selectedGeocodeSchemeId}>
+                              <SelectTrigger id="geocode-field"><SelectValue placeholder="Select field..." /></SelectTrigger>
+                              <SelectContent>
+                                 {geocodeFieldOptions.map(option => (<SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>))}
+                                  {geocodeFieldOptions.length === 0 && <div className="p-2 text-xs text-muted-foreground text-center italic">Select scheme first.</div>}
+                              </SelectContent>
+                           </Select>
+                        </div>
+                        {/* --- ADDED: Geocode Button --- */}
+                        <Button onClick={handleGeocodeRunLocations} disabled={!selectedGeocodeSchemeId || !selectedGeocodeField || isLoadingGeocoding} className="w-full sm:w-auto flex-shrink-0">
+                            {isLoadingGeocoding ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <MapPin className="h-4 w-4 mr-2" />} Geocode Locations
+                        </Button>
+                        {/* --- END ADD --- */}
+                     </div>
+
+                     {/* Geocoding Status */}
+                     {isLoadingGeocoding && (
+                         <div className="text-center text-muted-foreground p-4 border rounded-md">
+                          <Loader2 className="h-5 w-5 inline animate-spin mr-2" />
+                          Geocoding locations... please wait.
+                        </div>
+                     )}
+                     {geocodingError && (
+                        <p className="text-red-600 text-center p-4 border border-red-200 bg-red-50 rounded-md"><AlertCircle className="h-4 w-4 inline mr-1" /> {geocodingError}</p>
+                     )}
+                     {!isLoadingGeocoding && geocodedPoints.length > 0 && filteredGeocodedPoints.length === 0 && activeFilters.length > 0 && (
+                         // Show message if geocoding succeeded but filters removed all points
+                          <p className="text-sm text-center text-orange-600 p-4 border border-orange-200 bg-orange-50 rounded-md">
+                            <AlertCircle className="h-4 w-4 inline mr-1" /> Geocoding complete, but no map points match the current filters.
+                          </p>
+                     )}
+                     {!isLoadingGeocoding && geocodedPoints.length > 0 && filteredGeocodedPoints.length > 0 && (
+                        // Show success count only when points are generated and visible
+                        <p className="text-sm text-center text-green-600 p-4 border border-green-200 bg-green-50 rounded-md">
+                          <CheckCircle className="h-4 w-4 inline mr-1" /> Geocoding complete. Displaying {filteredGeocodedPoints.length} of {geocodedPoints.length} unique locations {activeFilters.length > 0 ? '(filtered)' : ''}. Map updated.
+                        </p>
+                      )}
+                      {!isLoadingGeocoding && geocodedPoints.length === 0 && !geocodingError && selectedGeocodeSchemeId && selectedGeocodeField && (
+                         // Show this if geocoding was attempted but resulted in zero points (e.g., no locs found or all failed)
+                         <p className="text-sm text-center text-muted-foreground p-4 border rounded-md">
+                           Geocoding finished, but no map points could be generated. Check if the selected field contains valid locations or if geocoding failed.
+                         </p>
+                      )
+
+                      }
+
+
+                     {/* --- UPDATED: Render ClassificationResultsMap --- */}
+                     <div className="h-[600px] bg-muted rounded-md border border-dashed relative overflow-hidden">
+                       {isLoadingGeocoding ? ( <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
+                       ) : filteredGeocodedPoints.length > 0 ? (
+                           <ClassificationResultsMap
+                               points={filteredGeocodedPoints} // Use filtered points for display
+                               documents={currentRunDocuments}
+                               results={currentRunResults} // Pass original results for popups
+                               schemes={runSchemes}
+                               onPointClick={(point) => {
+                                  // Simplified click handler for map points
+                                  if (point.documentIds.length > 0) {
+                                     handleTableRowClick(point.documentIds[0]); // Reuse table row click logic
+                                  }
+                               }}
+                           />
+                       ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground p-4 text-center">{ !selectedGeocodeSchemeId || !selectedGeocodeField ? 'Select scheme and field, then click "Geocode Locations".' : 'No map points to display for the current selection or filters.' }</div>
+                        )}
+                     </div>
+                     {/* --- END UPDATE --- */}
+
+                  </CardContent>
+                </Card>
+              </TabsContent>
+          </Tabs>
+      </>
+    );
+  };
+  // --- End renderResultsTabs --- 
+
+  // --- Main Component Return ---
   if (!activeWorkspace) {
     return (
-      <p className="text-center text-red-400">
-        Please select a workspace to continue.
-      </p>
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        Please select a workspace to start classification.
+      </div>
     );
   }
 
+  const areAllDocsSelected = allDocuments.length > 0 && selectedDocs.length === allDocuments.length;
+  const areAllSchemesSelected = allSchemes.length > 0 && selectedSchemes.length === allSchemes.length;
+
   return (
     <DocumentDetailProvider>
-      <DocumentDetailWrapper onLoadIntoRunner={(runId, runName) => handleLoadFromRun(runId, runName)}>
+      <DocumentDetailWrapper onLoadIntoRunner={handleLoadFromRun}>
         <div className="flex flex-col h-full">
           <div className="p-4 flex-1 overflow-auto">
-            {/* Use the new header component */}
-            {renderHeader()}
-            
-            <div className="flex flex-col space-y-6">
-              {/* Configuration section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Document selection - Changed to list view */}
-                <div className="flex flex-col h-full">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-medium text-secondary-300 flex items-center">
-                      Documents
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <HelpCircle className="h-4 w-4 ml-1 text-muted-foreground cursor-help" />
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Select documents to analyze with classification models</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          if (selectedDocs.length === documents.length) {
-                            setSelectedDocs([]);
-                          } else {
-                            setSelectedDocs(documents.map(doc => doc.id));
-                          }
-                        }}
-                      >
-                        {selectedDocs.length === documents.length ? 'Deselect All' : 'Select All'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsDocumentManagerOpen(true)}
-                      >
-                        Manage
-                      </Button>
-                    </div>
+            <div className="mb-4 flex items-center justify-between">
+              <h1 className="text-xl font-semibold">Classification Runner</h1>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={toggleClassificationRunnerTutorial}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <HelpCircle className="h-5 w-5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left"><p>Show/Hide Tutorial</p></TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <FavoriteRunsDisplay runs={currentFavoriteRuns} activeRunId={currentRunId} onSelectRun={handleLoadFromRun}/>
+            <RunHistoryTimeline runs={runHistory} activeRunId={currentRunId} onSelectRun={handleLoadFromRun} maxItems={7} />
+
+            <Card className="mb-4">
+              <CardHeader>
+                <CardTitle>Configuration</CardTitle>
+                <CardDescription>Select model provider, documents, and schemes for the classification run.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                <div className="space-y-2 md:col-span-1">
+                  <h3 className="text-sm font-medium">Model Provider</h3>
+                  <ProviderSelector className="w-full" />
+                </div>
+                <div className="space-y-2 md:col-span-1">
+                  <h3 className="text-sm font-medium">Run Actions</h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    <Button variant="default" onClick={handleRunClassification} disabled={isCreatingRun || selectedDocs.length === 0 || selectedSchemes.length === 0}>
+                      {isCreatingRun ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />} Run New Classification
+                    </Button>
+                    <Button variant="outline" onClick={handleClearRun} disabled={!currentRunId}>
+                      <XCircle className="h-4 w-4 mr-2" /> Clear Current Run
+                    </Button>
                   </div>
-                  <div className="max-h-40 overflow-y-auto border border-secondary-800 rounded-md p-2">
-                    {documents.length === 0 ? (
-                      <div className="text-sm text-secondary-500 p-2 text-center">
-                        No documents available. Click "Manage" to add documents.
+                </div>
+                <div className="space-y-2 md:col-span-1">
+                  <h3 className="text-sm font-medium">History</h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    <Button variant="outline" onClick={() => setIsHistoryDialogOpen(true)}><History className="h-4 w-4 mr-2" /> Load Previous Run</Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex flex-col space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card className="flex flex-col h-full">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">Documents ({allDocuments.length})</CardTitle>
+                      <div className="flex items-center gap-1">
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Checkbox
+                                id="select-all-docs"
+                                checked={areAllDocsSelected}
+                                onCheckedChange={(checked) => handleSelectAllDocs(!!checked)}
+                                disabled={isLoadingDocuments}
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent><p>Select All</p></TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" onClick={() => setIsDocumentManagerOpen(true)}><List className="h-4 w-4" /></Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p>Manage Documents</p></TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </div>
-                    ) : (
-                      <div className="space-y-1">
-                        {documents.map(doc => (
-                          <div key={doc.id} className="flex items-start p-2 hover:bg-primary-900/50 rounded-md">
-                            <Checkbox
-                              checked={selectedDocs.includes(doc.id)}
-                              onCheckedChange={(checked) => {
-                                setSelectedDocs(prev =>
-                                  checked 
-                                    ? [...prev, doc.id] 
-                                    : prev.filter(id => id !== doc.id)
-                                );
-                              }}
-                              id={`doc-${doc.id}`}
-                              className="mt-0.5 mr-2"
-                            />
-                            <div className="flex-1">
-                              <label 
+                    </div>
+                    <CardDescription>Select documents to include in the run.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1 flex flex-col">
+                    {isLoadingDocuments ? (
+                      <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground"/></div>
+                    ) : allDocuments.length > 0 ? (
+                      <ScrollArea className="max-h-60 flex-1 border rounded-md p-2">
+                        <div className="space-y-2">
+                          {allDocuments.map(doc => (
+                            <div key={doc.id} className="flex items-center space-x-2 p-1 rounded hover:bg-muted/50">
+                              <Checkbox
+                                id={`doc-${doc.id}`}
+                                checked={selectedDocs.includes(doc.id)}
+                                onCheckedChange={(checked) => handleDocSelect(doc.id, !!checked)}
+                              />
+                              <label
                                 htmlFor={`doc-${doc.id}`}
-                                className="text-sm font-medium text-secondary-300 cursor-pointer block"
+                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
+                                title={doc.title}
                               >
                                 {doc.title || `Document ${doc.id}`}
                               </label>
-                              {doc.summary && (
-                                <p className="text-xs text-secondary-500 mt-0.5 line-clamp-1">
-                                  {doc.summary}
-                                </p>
-                              )}
                             </div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center text-muted-foreground italic">No documents found.</div>
                     )}
-                  </div>
-                  <div className="mt-1 text-xs text-secondary-500">
-                    {selectedDocs.length} document{selectedDocs.length !== 1 ? 's' : ''} selected
-                  </div>
-                </div>
+                    <div className="mt-1 text-xs text-muted-foreground pt-1">{selectedDocs.length} selected</div>
+                  </CardContent>
+                </Card>
 
-                {/* Classification scheme selection - Keeping as card grid */}
-                <div className="flex flex-col h-full">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-medium text-secondary-300 flex items-center">
-                      Classification Schemes
-                      <TooltipProvider>
+                <Card className="flex flex-col h-full">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">Schemes ({allSchemes.length})</CardTitle>
+                      <div className="flex items-center gap-1">
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" onClick={() => setIsCreateSchemeEditorOpen(true)}><Plus className="h-4 w-4" /></Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p>Create New Scheme</p></TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Checkbox
+                                id="select-all-schemes"
+                                checked={areAllSchemesSelected}
+                                onCheckedChange={(checked) => handleSelectAllSchemes(!!checked)}
+                                disabled={isLoadingSchemes}
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent><p>Select All</p></TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <HelpCircle className="h-4 w-4 ml-1 text-muted-foreground cursor-help" />
+                            <Button variant="ghost" size="sm" onClick={() => setIsSchemeManagerOpen(true)}><ListChecks className="h-4 w-4" /></Button>
                           </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Select classification schemes to apply to your documents</p>
-                          </TooltipContent>
+                          <TooltipContent><p>Manage Schemes</p></TooltipContent>
                         </Tooltip>
-                      </TooltipProvider>
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          if (selectedSchemes.length === schemes.length) {
-                            setSelectedSchemes([]);
-                          } else {
-                            setSelectedSchemes(schemes.map(scheme => scheme.id));
-                          }
-                        }}
-                      >
-                        {selectedSchemes.length === schemes.length ? 'Deselect All' : 'Select All'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsSchemeManagerOpen(true)}
-                      >
-                        Manage
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="max-h-40 overflow-y-auto border border-secondary-800 rounded-md p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {schemes.length === 0 ? (
-                      <div className="text-sm text-secondary-500 p-2 text-center col-span-full">
-                        No schemes available. Click "Manage" to add schemes.
                       </div>
-                    ) : (
-                      schemes.map(scheme => (
-                        <div key={scheme.id} className="flex flex-col p-2 bg-primary-900/50 hover:bg-primary-800 rounded-md border border-secondary-800 shadow-sm">
-                          <div className="flex items-start gap-2">
-                            <Checkbox
-                              checked={selectedSchemes.includes(scheme.id)}
-                              onCheckedChange={(checked) => {
-                                setSelectedSchemes(prev =>
-                                  checked 
-                                    ? [...prev, scheme.id] 
-                                    : prev.filter(id => id !== scheme.id)
-                                );
-                              }}
-                              id={`scheme-${scheme.id}`}
-                              className="mt-0.5"
-                            />
-                            <div className="flex-1">
-                              <label 
+                    </div>
+                    <CardDescription>Select schemes to apply in the run.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1 flex flex-col">
+                    {isLoadingSchemes ? (
+                      <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground"/></div>
+                    ) : allSchemes.length > 0 ? (
+                      <ScrollArea className="max-h-60 flex-1 border rounded-md p-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {allSchemes.map(scheme => (
+                            <div key={scheme.id} className="flex items-center space-x-2 p-1 rounded hover:bg-muted/50">
+                              <Checkbox
+                                id={`scheme-${scheme.id}`}
+                                checked={selectedSchemes.includes(scheme.id)}
+                                onCheckedChange={(checked) => handleSchemeSelect(scheme.id, !!checked)}
+                              />
+                              <label
                                 htmlFor={`scheme-${scheme.id}`}
-                                className="text-sm font-medium text-secondary-300 cursor-pointer block"
+                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex-1 truncate cursor-pointer"
+                                title={scheme.name}
                               >
                                 {scheme.name}
                               </label>
-                              {scheme.description && (
-                                <p className="text-xs text-secondary-500 mt-1 line-clamp-2">
-                                  {scheme.description}
-                                </p>
-                              )}
                             </div>
-                          </div>
-                          
-                          {/* Display fields */}
-                          {scheme.fields && scheme.fields.length > 0 && (
-                            <div className="mt-2 pl-6 border-t border-secondary-800 pt-2">
-                              <p className="text-xs font-medium text-secondary-400 mb-1">Fields:</p>
-                              <div className="space-y-1">
-                                {scheme.fields.map((field, idx) => (
-                                  <div key={idx} className="flex items-center gap-1">
-                                    <span className="w-2 h-2 rounded-full bg-primary-500"></span>
-                                    <span className="text-xs text-secondary-300">{field.name}</span>
-                                    <span className="text-xs text-secondary-500 ml-auto">{field.type}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                          ))}
                         </div>
-                      ))
-                    )}
-                  </div>
-                  <div className="mt-1 text-xs text-secondary-500">
-                    {selectedSchemes.length} scheme{selectedSchemes.length !== 1 ? 's' : ''} selected
-                  </div>
-                </div>
-              </div>
-
-              {/* Provider selector and run controls */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-secondary-300 flex items-center">
-                    Run Controls
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 ml-1 text-muted-foreground cursor-help" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Run classification or view history</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setIsRunHistoryOpen(true)}
-                      className="flex items-center w-full"
-                    >
-                      <History className="h-4 w-4 mr-2" />
-                      Run History
-                    </Button>
-                    <Button
-                      variant="default"
-                      onClick={handleRunClassification}
-                      disabled={isRunning || selectedDocs.length === 0 || selectedSchemes.length === 0}
-                      className="flex items-center w-full"
-                    >
-                      {isRunning ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Running...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="h-4 w-4 mr-2" />
-                          Run
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-                
-                <div className="space-y-2 md:col-span-2">
-                  <div className="flex items-center">
-                    <h3 className="text-sm font-medium text-secondary-300">Model Provider</h3>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 ml-1 text-muted-foreground cursor-help" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Select the AI model provider to use for classification</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                  <ProviderSelector className="w-full" />
-                </div>
-              </div>
-
-              {/* Results section */}
-              {activeRunId && (
-                <div className="mt-4 border-t border-secondary-800 pt-4">
-                  <h3 className="text-sm font-medium text-secondary-300 mb-2 flex items-center">
-                    Results
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 ml-1 text-muted-foreground cursor-help" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>View and analyze classification results</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </h3>
-                  
-                  {/* View mode toggle */}
-                  <div className="flex items-center space-x-3 mb-4">
-                    <label className="text-sm font-medium text-secondary-300">View Mode:</label>
-                    <div className="relative bg-secondary-900 border border-secondary-800 rounded-lg p-1 flex items-center">
-                      {/* Animated highlight background */}
-                      <div 
-                        className={`absolute inset-y-1 transition-all duration-200 ease-in-out rounded-md ${
-                          viewMode === 'table' ? 'left-1 right-[calc(50%+1px)]' : 'left-[calc(50%+1px)] right-1'
-                        }`}
-                        style={{
-                          background: 'linear-gradient(90deg, rgba(59, 130, 246, 0.2) 0%, rgba(16, 185, 129, 0.2) 100%)',
-                          boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)'
-                        }}
-                      />
-                      
-                      {/* Table button */}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={`relative z-10 px-3 py-1.5 rounded-md flex items-center gap-1.5 min-w-[80px] justify-center ${
-                          viewMode === 'table' 
-                            ? 'text-primary-500 font-medium' 
-                            : 'text-secondary-400 hover:text-secondary-300'
-                        }`}
-                        onClick={() => setViewMode('table')}
-                      >
-                        <TableIcon className="h-4 w-4" />
-                        <span className="text-xs">Table</span>
-                      </Button>
-                      
-                      {/* Divider */}
-                      <div className="h-5 w-px bg-secondary-800 mx-1" />
-                      
-                      {/* Chart button */}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={`relative z-10 px-3 py-1.5 rounded-md flex items-center gap-1.5 min-w-[80px] justify-center ${
-                          viewMode === 'chart' 
-                            ? 'text-primary-500 font-medium' 
-                            : 'text-secondary-400 hover:text-secondary-300'
-                        }`}
-                        onClick={() => setViewMode('chart')}
-                      >
-                        <BarChart3 className="h-4 w-4" />
-                        <span className="text-xs">Chart</span>
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  {/* Results content */}
-                  <div className="space-y-4">
-                    <ResultFilters
-                      filters={filters}
-                      schemes={schemes as unknown as ClassificationSchemeRead[]}
-                      onChange={setFilters}
-                    />
-                    
-                    {filters.length > 0 && (
-                      <div className="flex items-center justify-between text-sm text-muted-foreground mt-2 mb-4 p-2 bg-muted/20 rounded-md border">
-                        <div>
-                          <span className="font-medium">{filteredResults.length}</span> of <span className="font-medium">{typedResults.length}</span> results match your filters
-                          <span className="mx-2">•</span>
-                          <span className="font-medium">{new Set(filteredResults.map(r => r.document_id)).size}</span> of <span className="font-medium">{new Set(typedResults.map(r => r.document_id)).size}</span> documents
-                        </div>
-                        {filteredResults.length !== typedResults.length && (
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => setFilters([])}
-                          >
-                            Clear Filters
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                    
-                    {typedResults.length === 0 ? (
-                      <div className="text-center py-8 text-secondary-400">
-                        No results for the selected run.
-                      </div>
+                      </ScrollArea>
                     ) : (
-                      <div>
-                        {viewMode === 'chart' ? (
-                          <ClassificationResultsChart 
-                            results={filteredResults as unknown as ClassificationResultRead[]} 
-                            schemes={schemes.filter(s => selectedSchemes.includes(s.id)) as unknown as ClassificationSchemeRead[]}
-                            documents={documents}
-                            onDocumentSelect={(documentId) => {
-                              const docResults = filteredResults.filter(
-                                result => result.document_id === documentId
-                              );
-                              const doc = documents.find(d => d.id === documentId);
-                              if (doc) {
-                                setSelectedDate(new Date(doc.insertion_date).toLocaleDateString());
-                              }
-                            }}
-                            chartData={chartData}
-                            onDataPointClick={handleDataPointClick}
-                          />
-                        ) : (
-                          <div className="overflow-x-auto">
-                            {isLoadingResults ? (
-                              <div className="flex items-center justify-center p-4">
-                                <Loader2 className="h-6 w-6 animate-spin" />
-                              </div>
-                            ) : (
-                              <table className="w-full">
-                                <thead>
-                                  {table.getHeaderGroups().map(headerGroup => (
-                                    <tr key={headerGroup.id}>
-                                      {headerGroup.headers.map(header => (
-                                        <th key={header.id} className="text-left p-2 border-b">
-                                          {flexRender(header.column.columnDef.header, header.getContext())}
-                                        </th>
-                                      ))}
-                                    </tr>
-                                  ))}
-                                </thead>
-                                <tbody>
-                                  {table.getRowModel().rows.map(row => (
-                                    <tr 
-                                      key={row.id} 
-                                      className="hover:bg-muted/50 cursor-pointer"
-                                      onClick={() => table.options.meta?.onRowClick?.(row)}
-                                    >
-                                      {row.getVisibleCells().map(cell => (
-                                        <td key={cell.id} className="p-2 border-b max-h-10 overflow-y-auto">
-                                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                      <div className="flex-1 flex items-center justify-center text-muted-foreground italic">No schemes found.</div>
                     )}
-                  </div>
-                </div>
-              )}
+                    <div className="mt-1 text-xs text-muted-foreground pt-1">{selectedSchemes.length} selected</div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card className="mt-4">
+                 <CardHeader>
+                      <div className="flex items-center justify-between">
+                          <CardTitle>Run Results</CardTitle>
+                          {currentRunId && (
+                              <div className="flex items-center gap-1">
+                                  <span
+                                      id="run-name-editable"
+                                      className={`font-medium text-lg px-1 ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
+                                      contentEditable={isEditingName ? 'true' : 'false'}
+                                      suppressContentEditableWarning={true}
+                                      onBlur={(e) => handleBlur(e, 'name')}
+                                      onKeyDown={(e) => handleKeyDown(e, 'name')}
+                                      onClick={() => !isEditingName && handleEditClick('name')}
+                                  >
+                                      {currentRunName || 'Unnamed Run'}
+                                  </span>
+                                  <TooltipProvider delayDuration={100}>
+                                     <Tooltip>
+                                         <TooltipTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
+                                         </TooltipTrigger>
+                                         <TooltipContent><p>Edit Run Name</p></TooltipContent>
+                                     </Tooltip>
+                                 </TooltipProvider>
+                              </div>
+                          )}
+                      </div>
+                      <CardDescription className="flex items-center gap-1">
+                         {currentRunId ? (
+                            <span
+                                id="run-description-editable"
+                                className={`px-1 ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
+                                contentEditable={isEditingDescription ? 'true' : 'false'}
+                                suppressContentEditableWarning={true}
+                                onBlur={(e) => handleBlur(e, 'description')}
+                                onKeyDown={(e) => handleKeyDown(e, 'description')}
+                                onClick={() => !isEditingDescription && handleEditClick('description')}
+                            >
+                                {currentRunDescription || 'Add a description...'}
+                            </span>
+                         ) : "Load a run from history or create a new one to see results."
+                         }
+                         {currentRunId && (
+                            <TooltipProvider delayDuration={100}>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent><p>Edit Description</p></TooltipContent>
+                                </Tooltip>
+                            </TooltipProvider>
+                         )}
+                      </CardDescription>
+                 </CardHeader>
+                 <CardContent>
+                     {currentRunId && !isLoadingRunDetails && (
+                        <>
+                            <ResultFilters
+                                filters={activeFilters}
+                                schemes={runSchemes}
+                                onChange={setActiveFilters}
+                            />
+                            {renderResultsTabs()}
+                        </>
+                     )}
+                     {isLoadingRunDetails && (
+                        <div className="flex justify-center items-center h-60">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary"/>
+                        </div>
+                     )}
+                     {!currentRunId && !isLoadingRunDetails && (
+                         <div className="text-center p-8 text-muted-foreground border rounded-lg">
+                            Load a run from history or create a new one to view results.
+                         </div>
+                     )}
+                 </CardContent>
+              </Card>
             </div>
           </div>
 
-          {/* Run History Dialog */}
-          <RunHistoryDialog
-            isOpen={isRunHistoryOpen}
-            onClose={() => setIsRunHistoryOpen(false)}
-            activeRunId={activeRunId}
-            onSelectRun={(runId, runName, runDescription) => {
-              handleLoadFromRun(runId, runName, runDescription);
-              setIsRunHistoryOpen(false);
-            }}
-          />
-
-          {/* Result Detail Dialog */}
+          {/* Dialogs */}
+          <RunHistoryDialog isOpen={isHistoryDialogOpen} onClose={() => setIsHistoryDialogOpen(false)} activeRunId={currentRunId} onSelectRun={handleLoadFromRun} />
           <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
-            <DialogContent className="max-w-4xl">
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>Classification Results</DialogTitle>
+                <DialogTitle>Result Details</DialogTitle>
+                <DialogDescription>
+                   Detailed view of classification results for the selected document.
+                </DialogDescription>
               </DialogHeader>
-              <ScrollArea className="max-h-[80vh]">
-                {selectedDocumentId && (
-                  <div className="space-y-6 p-4">
-                    <div>
-                      <h3 className="font-medium text-lg">Document</h3>
-                      {documents.find(d => d.id === selectedDocumentId)?.title || `Document ${selectedDocumentId}`}
-                    </div>
-                    
-                    <div className="space-y-4">
-                      <h3 className="font-medium text-lg">Classifications</h3>
-                      {typedResults
-                        .filter(result => result.document_id === selectedDocumentId)
-                        .map(result => {
-                          const scheme = schemes.find(s => s.id === result.scheme_id);
-                          if (!scheme) return null;
-                          
-                          return (
-                            <div key={result.id} className="border-b pb-4 last:border-b-0">
-                              <div className="font-medium text-base mb-2">{scheme.name}</div>
-                              <ClassificationResultDisplay 
-                                result={result as unknown as ClassificationResultRead}
-                                scheme={scheme as unknown as ClassificationSchemeRead}
+              <ScrollArea className="max-h-[60vh] p-4">
+                  {selectedDocumentId && (() => {
+                     const doc = currentRunDocuments.find(d => d.id === selectedDocumentId);
+                     const resultsForDoc = currentRunResults.filter(r => r.document_id === selectedDocumentId);
+                     const schemesForDoc = resultsForDoc
+                         .map(r => runSchemes.find(s => s.id === r.scheme_id))
+                         .filter((s): s is ClassificationSchemeRead => !!s);
+
+                     if (!doc) return <p>Document details not found.</p>;
+
+                     return (
+                       <div className="space-y-4">
+                          <h3 className="font-semibold text-lg">{doc.title}</h3>
+                          {resultsForDoc.length > 0 ? (
+                              <ClassificationResultDisplay
+                                 result={resultsToResultReads(resultsForDoc)}
+                                 scheme={schemesForDoc}
+                                 useTabs={schemesForDoc.length > 1}
+                                 renderContext="dialog"
                               />
-                              <div className="text-sm text-muted-foreground mt-2">
-                                {result.run_name && (
-                                  <p>Run: {result.run_name}</p>
-                                )}
-                                <p>Classified on: {format(new Date(result.timestamp), 'PPp')}</p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
+                          ) : (
+                             <p className="text-muted-foreground italic">No results for this document in run.</p>
+                          )}
+                       </div>
+                     );
+                  })()}
               </ScrollArea>
+              <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsResultDialogOpen(false)}>Close</Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
+          {isDocumentManagerOpen && <DocumentManagerOverlay isOpen={isDocumentManagerOpen} onClose={() => setIsDocumentManagerOpen(false)} onLoadIntoRunner={handleLoadFromRun} />}
+          {isSchemeManagerOpen && <SchemeManagerOverlay isOpen={isSchemeManagerOpen} onClose={() => setIsSchemeManagerOpen(false)} />}
+          <ClassificationSchemeEditor
+            show={isCreateSchemeEditorOpen}
+            onClose={() => {
+              setIsCreateSchemeEditorOpen(false);
+              loadSchemes();
+            }}
+            mode="create"
+          />
 
-          {/* Document Manager */}
-          {isDocumentManagerOpen && (
-            <DocumentManagerOverlay
-              isOpen={isDocumentManagerOpen}
-              onClose={() => setIsDocumentManagerOpen(false)}
-              onLoadIntoRunner={(runId, runName) => {
-                // Create a RunHistoryItem from the runId and runName
-                const runItem: RunHistoryItem = {
-                  id: runId,
-                  name: runName,
-                  timestamp: format(new Date(), 'PPp'),
-                  documentCount: 0,  // These will be updated after loading
-                  schemeCount: 0
-                };
-                handleLoadFromRun(runId, runName);
-              }}
-            />
-          )}
-
-          {/* Classification Scheme Manager */}
-          {isSchemeManagerOpen && (
-            <SchemeManagerOverlay
-              isOpen={isSchemeManagerOpen}
-              onClose={() => setIsSchemeManagerOpen(false)}
-            />
-          )}
-          
           <Toaster />
         </div>
       </DocumentDetailWrapper>

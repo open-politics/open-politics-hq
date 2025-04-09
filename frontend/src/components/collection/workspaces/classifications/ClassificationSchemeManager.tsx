@@ -18,27 +18,29 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { useSchemes } from '@/hooks/useSchemes';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { ClassificationSchemesService } from '@/client/services';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { cn } from '@/lib/utils';
-import { SchemeForm } from '@/components/collection/workspaces/schemes/SchemeForm';
+import { SchemeForm } from '../schemaCreation/SchemeForm';
 import { SchemeFormData } from '@/lib/classification/types';
 import { useTutorialStore } from '@/zustand_stores/storeTutorial';
 import { Switch } from "@/components/ui/switch"
 import FixedCard from '@/components/collection/wrapper/fixed-card';
 import ClassificationSchemeEditor from './ClassificationSchemeEditor';
 import { transformFormDataToApi } from '@/lib/classification/service';
+import { schemesToSchemeReads } from '@/lib/classification/adapters';
+import { Plus } from 'lucide-react';
 
 export default function ClassificationSchemeManager() {
   const { activeWorkspace } = useWorkspaceStore();
   const {
+    schemes,
+    isLoadingSchemes,
+    loadSchemes,
     createScheme,
     deleteScheme,
-    schemes,
-    loadSchemes,
-    isLoading
-  } = useSchemes({ autoLoad: true });
+  } = useClassificationSystem({ autoLoadSchemes: false });
 
   // State variables
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -117,8 +119,7 @@ export default function ClassificationSchemeManager() {
         workspaceId: activeWorkspace.uid,
       });
       alert('All classification schemes deleted successfully.');
-      // Reload schemes after deletion
-      loadSchemes(activeWorkspace.uid);
+      loadSchemes();
     } catch (error) {
       console.error('Error deleting all classification schemes:', error);
     } finally {
@@ -127,13 +128,25 @@ export default function ClassificationSchemeManager() {
     }
   };
 
-  // Effects
+  // --- ADDING Effect to explicitly load schemes on workspace change ---
   useEffect(() => {
+    console.log("[SchemeManager] useEffect triggered. Workspace UID:", activeWorkspace?.uid);
     if (activeWorkspace?.uid) {
-      loadSchemes(activeWorkspace.uid);
+      console.log("[SchemeManager] Calling loadSchemes for workspace:", activeWorkspace.uid);
+      loadSchemes(); // Call loadSchemes from the hook
+    } else {
+      console.log("[SchemeManager] No active workspace UID yet.");
     }
+    // Depend on workspace uid and the loadSchemes function itself
   }, [activeWorkspace?.uid, loadSchemes]);
 
+  // --- Moved Hook Call Before Conditional Return ---
+  // Adapt delete function to match expected return type
+  const handleDeleteProp = useCallback(async (schemeId: number): Promise<void> => {
+    await deleteScheme(schemeId); // Call original function, ignore boolean return
+  }, [deleteScheme]);
+
+  // --- Conditional Rendering ---
   if (!activeWorkspace) {
     return (
       <p className="text-center text-red-400">
@@ -142,27 +155,35 @@ export default function ClassificationSchemeManager() {
     );
   }
 
+  // Adapt schemes to the expected type
+  const adaptedSchemes = schemesToSchemeReads(schemes);
+
   return (
     <div className="grid grid-cols-1 gap-4 w-full">
       <Card className="h-full p-4 px-0">
         <CardHeader>
           <div className="flex justify-between w-full">
             <CardTitle>Classification Schemes</CardTitle>
-            <Button variant="outline" onClick={() => loadSchemes(activeWorkspace.uid)}>Reload Schemes</Button>
+            <Button variant="outline" onClick={() => loadSchemes()}>Reload Schemes</Button>
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoadingSchemes ? (
             <div className="flex justify-center items-center h-40">
               <p className="text-muted-foreground">Loading schemes...</p>
             </div>
-          ) : schemes.length === 0 ? (
-            <div className="flex justify-center items-center h-40">
-              <p className="text-muted-foreground">No classification schemes found. Create one to get started.</p>
+          ) : adaptedSchemes.length === 0 ? (
+            <div className="flex flex-col justify-center items-center h-40 text-center">
+              <p className="text-muted-foreground mb-4">No classification schemes found.</p>
+              <Button onClick={() => setIsSheetOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" /> Create New Scheme
+              </Button>
             </div>
           ) : (
             <ClassificationSchemesTablePage 
+              schemes={adaptedSchemes}
               onCreateClick={() => setIsSheetOpen(true)}
+              onDelete={handleDeleteProp}
             />
           )}
         </CardContent>

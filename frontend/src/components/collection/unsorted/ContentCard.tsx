@@ -28,8 +28,10 @@ import { CoreContentModel } from '@/lib/content';
 import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import { toast } from "@/components/ui/use-toast";
-import { useClassification } from '@/hooks/useClassification';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { ClassificationService } from '@/lib/classification/service';
+import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
+import { ClassificationResultRead, ClassificationSchemeRead } from '@/client';
 
 export interface ContentCardProps extends CoreContentModel {
   id: string;
@@ -74,12 +76,10 @@ export function ContentCard({
     loadResults,
     classifyContent,
     clearResultsCache
-  } = useClassification({
-    loadSchemesOnMount: true,
-    loadResultsOnMount: true,
+  } = useClassificationSystem({
+    autoLoadSchemes: true,
     contentId: parseInt(id),
-    useCache: true, // Enable caching to prevent redundant API calls
-    preloadedSchemes: preloadedSchemes
+    useCache: true,
   });
 
   const isBookmarked = bookmarks.some(bookmark => bookmark.url === url);
@@ -124,10 +124,10 @@ export function ContentCard({
     console.log("Classification completed from dialog:", result);
     setClassificationCompleted(true);
     
-    // Reload results to ensure we have the latest data
+    // Pass runId from the result
     const contentId = parseInt(id);
     if (contentId > 0) {
-      loadResults(contentId);
+      loadResults(contentId, result?.run_id);
     }
   }, [id, loadResults]);
 
@@ -157,7 +157,7 @@ export function ContentCard({
         ? parseInt(activeWorkspace.uid) 
         : activeWorkspace.uid;
       
-      // Get the default scheme ID
+      // Get the default scheme ID using the store's validation
       const defaultSchemeId = classificationSettings.getDefaultSchemeId(workspaceId, schemes);
       
       if (!defaultSchemeId) {
@@ -170,22 +170,25 @@ export function ContentCard({
         return;
       }
       
+      // Store the run ID
+      const runId = Math.floor(Math.random() * 2147483647);
+      
       // Use the classifyContent method from the hook
       const result = await classifyContent(
         classifiableContent,
         defaultSchemeId,
-        undefined,
-        'Ad-hoc classification from ContentCard'
+        runId,
+        'Ad-hoc classification'
       );
       
       if (result) {
         console.log("ContentCard: Classification completed successfully");
         setClassificationCompleted(true);
         
-        // Reload results to ensure we have the latest data
+        // Pass runId to loadResults
         const contentId = parseInt(id);
         if (contentId > 0) {
-          loadResults(contentId);
+          loadResults(contentId, runId);
         }
       }
     } catch (error) {
@@ -387,35 +390,32 @@ export function ContentCard({
                   <span className="text-xs font-medium">Classifications</span>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {classificationResults.slice(0, 2).map((result, index) => {
-                    // Extract a more user-friendly display value
-                    let displayValue = result.displayValue || 'N/A';
-                    
-                    // For complex types, create a more readable summary
-                    if (result.scheme?.fields?.[0]?.type === 'List[Dict[str, any]]') {
-                      if (typeof result.value === 'object' && result.value !== null && 'default_field' in result.value) {
-                        // If we have a default_field (summary), use a shortened version
-                        const summary = result.value.default_field;
-                        displayValue = summary.length > 30 ? summary.substring(0, 30) + '...' : summary;
-                      } else if (Array.isArray(result.value) && result.value.length > 0) {
-                        // If we have structured data, show entity count
-                        displayValue = `${result.value.length} entities`;
-                      }
+                  {classificationResults.slice(0, 3).map((result, index) => {
+                    if (!result.scheme) {
+                      return (
+                        <Badge 
+                          key={`${result.id || index}-no-scheme`} 
+                          variant="outline" 
+                          className="text-xs text-muted-foreground italic"
+                        >
+                          Scheme missing
+                        </Badge>
+                      );
                     }
-                    
+
                     return (
-                      <Badge 
-                        key={index} 
-                        variant="outline" 
-                        className="text-xs hover:bg-muted/20 cursor-pointer transition-colors"
-                      >
-                        {result.scheme?.name}: {displayValue}
-                      </Badge>
+                      <div key={result.id || index}> 
+                        <ClassificationResultDisplay 
+                          result={result as unknown as ClassificationResultRead} 
+                          scheme={result.scheme as unknown as ClassificationSchemeRead} 
+                          compact={true}
+                        />
+                      </div>
                     );
                   })}
-                  {classificationResults.length > 2 && (
+                  {classificationResults.length > 3 && ( 
                     <Badge variant="outline" className="text-xs">
-                      +{classificationResults.length - 2} more
+                      +{classificationResults.length - 3} more
                     </Badge>
                   )}
                 </div>
@@ -500,78 +500,14 @@ export function ContentCard({
                       </Badge>
                     </div>
                     <div className="mt-1">
-                      {result.scheme?.fields?.[0]?.type === 'List[Dict[str, any]]' ? (
-                        <div className="space-y-2">
-                          {typeof result.value === 'string' || 
-                           (typeof result.value === 'object' && result.value !== null && 
-                            'default_field' in result.value) ? (
-                            <div className="text-sm p-2 bg-muted/10 rounded border border-muted">
-                              <p className="italic text-muted-foreground text-xs mb-1">Summary:</p>
-                              <p>{typeof result.value === 'string' ? 
-                                  result.value : 
-                                  result.value.default_field}</p>
-                            </div>
-                          ) : (
-                            <div>
-                              {Array.isArray(result.value) ? (
-                                // Use the centralized helper function for entity statements
-                                (() => {
-                                  const formattedItems = ClassificationService.formatEntityStatements(result.value, {
-                                    compact: false,
-                                    maxItems: 10
-                                  });
-                                  
-                                  if (Array.isArray(formattedItems)) {
-                                    return formattedItems.map((item, i) => {
-                                      if (typeof item === 'string') {
-                                        return (
-                                          <div key={i} className="p-2 bg-muted/10 rounded border border-muted mb-2">
-                                            <p className="text-sm">{item}</p>
-                                          </div>
-                                        );
-                                      }
-                                      
-                                      return (
-                                        <div key={i} className="p-2 bg-muted/10 rounded border border-muted mb-2">
-                                          <div className="flex justify-between">
-                                            <span className="font-medium">{item.entity || 'Unknown Entity'}</span>
-                                            {item.sentiment !== undefined && (
-                                              <Badge variant={item.sentiment > 0 ? "default" : 
-                                                              item.sentiment < 0 ? "destructive" : "outline"}>
-                                                {item.sentiment > 0 ? 'Positive' : 
-                                                 item.sentiment < 0 ? 'Negative' : 'Neutral'}
-                                              </Badge>
-                                            )}
-                                          </div>
-                                          <p className="text-sm mt-1">{item.statement || item.raw || 'No statement'}</p>
-                                          {item.summary && <p className="text-xs text-muted-foreground mt-1">{item.summary}</p>}
-                                        </div>
-                                      );
-                                    });
-                                  }
-                                  
-                                  return (
-                                    <div className="text-sm p-2 bg-muted/10 rounded border border-muted">
-                                      <p className="italic text-muted-foreground">
-                                        {String(formattedItems)}
-                                      </p>
-                                    </div>
-                                  );
-                                })()
-                              ) : (
-                                <div className="text-sm p-2 bg-muted/10 rounded border border-muted">
-                                  <p className="italic text-muted-foreground">
-                                    {result.displayValue || ClassificationService.safeStringify(result.value) || 'No structured data available'}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                      {result.scheme ? (
+                        <ClassificationResultDisplay 
+                          result={result as unknown as ClassificationResultRead} 
+                          scheme={result.scheme as unknown as ClassificationSchemeRead}
+                          compact={false}
+                        />
                       ) : (
-                        <Badge variant="secondary">
-                          {result.displayValue || 'N/A'}
-                        </Badge>
+                        <div className="text-sm text-red-500 italic">Scheme data missing for this result (ID: {result.id}).</div>
                       )}
                     </div>
                   </div>
@@ -633,6 +569,7 @@ function EvaluationSummary({ evaluation }: { evaluation: ContentCardProps['evalu
       <div className="grid grid-cols-2 gap-1">
         <div className="p-1 border border-transparent hover:border-blue-500 transition-colors">
           <p className="text-sm text-green-500 font-semibold">{evaluation?.event_type}</p>
+          <p className="text-xs text-blue-500">{evaluation?.event_subtype}</p>
         </div>
         <div className="p-1 border border-transparent hover:border-blue-500 transition-colors">
           <p className="text-sm font-semibold">🗣️ {evaluation?.rhetoric}</p>

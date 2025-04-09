@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/zustand_stores/storeWorkspace";
-import { useSchemes } from "@/hooks/useSchemes";
-import { SchemeForm } from "@/components/collection/workspaces/schemes/SchemeForm";
+import { useClassificationSystem } from "@/hooks/useClassificationSystem";
+import { SchemeForm } from "../schemaCreation/SchemeForm";
 import { SchemeFormData } from "@/lib/classification/types";
 import { useTutorialStore } from "@/zustand_stores/storeTutorial";
 import { Switch } from "@/components/ui/switch";
@@ -34,7 +34,7 @@ export default function ClassificationSchemeEditor({
   defaultValues = defaultSchemeFormData,
 }: ClassificationSchemeEditorProps) {
   const { activeWorkspace } = useWorkspaceStore();
-  const { createScheme, updateScheme } = useSchemes();
+  const { createScheme, updateScheme } = useClassificationSystem();
   const { showSchemaBuilderTutorial, toggleSchemaBuilderTutorial } = useTutorialStore();
 
   const [formData, setFormData] = useState<SchemeFormData>({
@@ -109,6 +109,7 @@ export default function ClassificationSchemeEditor({
       mode={mode}
       width="w-[800px]"
       height="h-[80vh]"
+      className="border-2 border-schemes"
     >
       <div className="space-y-6">
         {mode !== 'watch' && (

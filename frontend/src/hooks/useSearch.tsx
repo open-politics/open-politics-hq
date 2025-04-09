@@ -186,7 +186,7 @@ export function useSearch(
           try {
             const google = createGoogleGenerativeAI();
             const llmResult = await generateText({
-              model: google('gemini-2.0-flash-exp'),
+              model: google('gemini-2.0-flash'),
               prompt: `Generate a summary of the following articles: ${opolResults
                 .map((article) => article.paragraphs)
                 .join('\n')}. Analysis Type: ${analysisType}`,

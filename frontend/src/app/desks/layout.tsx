@@ -17,12 +17,14 @@ import { Button } from "@/components/ui/button"
 import { BrainCircuit } from "lucide-react"
 import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSchemes } from '@/hooks/useSchemes';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 function DefaultSchemeSelector() {
   const { activeWorkspace } = useWorkspaceStore();
-  const { schemes, loadSchemes } = useSchemes();
+  const { schemes, loadSchemes } = useClassificationSystem({
+    autoLoadSchemes: true
+  });
   const { getDefaultSchemeId, setDefaultSchemeId } = useClassificationSettingsStore();
   const [selectedSchemeId, setSelectedSchemeId] = useState<string | null>(null);
   
@@ -33,15 +35,11 @@ function DefaultSchemeSelector() {
       ? parseInt(activeWorkspace.uid) 
       : activeWorkspace.uid;
     
-    loadSchemes(workspaceId);
-    
-    if (schemes.length > 0) {
+    loadSchemes().then(() => {
       const defaultId = getDefaultSchemeId(workspaceId, schemes);
-      if (defaultId) {
-        setSelectedSchemeId(defaultId.toString());
-      }
-    }
-  }, [activeWorkspace?.uid, schemes.length, loadSchemes, getDefaultSchemeId]);
+      setSelectedSchemeId(defaultId?.toString() || '');
+    });
+  }, [activeWorkspace?.uid, schemes, loadSchemes, getDefaultSchemeId]);
   
   const handleSchemeChange = (value: string) => {
     if (!activeWorkspace?.uid) return;
@@ -60,25 +58,11 @@ function DefaultSchemeSelector() {
   
   return (
     <div className="flex items-center gap-2">
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="flex items-center gap-1">
-              <BrainCircuit className="h-4 w-4 text-primary" />
-              <span className="text-xs font-medium">Default Scheme:</span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p className="text-xs">Set the default classification scheme used when clicking the Tag icon</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      
       <Select
         value={selectedSchemeId || ''}
         onValueChange={handleSchemeChange}
       >
-        <SelectTrigger className="h-8 w-[180px] text-xs">
+        <SelectTrigger className="h-8 w-full">
           <SelectValue placeholder="Select default scheme" />
         </SelectTrigger>
         <SelectContent>
@@ -89,6 +73,19 @@ function DefaultSchemeSelector() {
           ))}
         </SelectContent>
       </Select>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-medium">?</span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="text-xs">Your base analyser. The selected scheme will be applied one-click when hitting the <BrainCircuit className="inline-block" /> icon</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      
     </div>
   );
 }
@@ -120,12 +117,9 @@ export default function DesksLayout({ children }: { children: React.ReactNode })
             </div>
             <div className="flex-1 flex justify-end gap-2 h-10">
               <DefaultSchemeSelector />
-              <Button variant="outline" size="icon">
-                <BrainCircuit className="h-4 w-4" />
-              </Button>
             </div>
           </header>
-          <main>
+          <main className="flex-1 overflow-hidden">
             {children}
           </main>
         </SidebarInset>

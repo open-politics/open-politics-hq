@@ -12,7 +12,7 @@ import { DocumentRead, ClassificationResultRead, ClassificationSchemeRead, Enhan
 import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import useClassificationSchemes from '@/hooks/useClassify';
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -29,6 +29,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Toaster } from '@/components/ui/toaster';
 import DocumentLink from './DocumentLink';
 import { useRunHistoryStore } from '@/zustand_stores/storeRunHistory';
+import { ClassifiableContent } from '@/lib/classification/types';
 
 interface DocumentDetailViewProps {
   documents: DocumentRead[];
@@ -71,7 +72,9 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   const { updateDocument, fetchDocuments } = useDocumentStore();
   const document = documents.find((item) => item.id === selectedDocumentId) || null;
   const [isImageOpen, setIsImageOpen] = useState(false);
-  const { classificationSchemesQuery, runClassification } = useClassificationSchemes();
+  const { classifyContent } = useClassificationSystem({
+    autoLoadSchemes: true
+  });
   const { workingResult, autoSave, setAutoSave } = useClassificationResultStore;
   const { setActiveRunId } = useClassificationResultStore;
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
@@ -158,18 +161,48 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   }, [activeWorkspace?.uid, fetchRunHistory]);
 
   const handleRunClassification = async () => {
-    if (!selectedScheme || !document?.id || !activeWorkspace?.uid) return;
+    if (!selectedScheme || !document || !activeWorkspace?.uid) {
+      console.error("Cannot classify: Missing scheme, document, or workspace.");
+      return;
+    }
     setIsLoading(true);
+    setClassificationResult(null);
 
     try {
-      const result = await runClassification({
-        schemeId: selectedScheme,
-        documentId: document.id,
-      });
-      setClassificationResult(result);
-      await fetchClassificationResults(document.id, activeWorkspace.uid.toString(), selectedRun);
+      // Create an object conforming to ClassifiableContent
+      const contentToClassify: ClassifiableContent = {
+        id: document.id,
+        title: document.title,
+        text_content: document.text_content ?? undefined,
+        url: document.url ?? undefined,
+        source: document.source ?? undefined,
+        content_type: document.content_type ?? undefined,
+      };
+
+      // Call classifyContent with the prepared content object and scheme ID
+      const result = await classifyContent(
+        contentToClassify,
+        selectedScheme
+      );
+
+      if (result) {
+        setClassificationResult(result);
+        await fetchClassificationResults(document.id, activeWorkspace.uid.toString(), selectedRun);
+      } else {
+         console.error("Classification returned null");
+         toast({
+           title: "Classification Failed",
+           description: "The classification process did not return a result.",
+           variant: "destructive",
+         });
+      }
     } catch (error) {
       console.error("Classification failed:", error);
+      toast({
+        title: "Classification Error",
+        description: error instanceof Error ? error.message : "An unknown error occurred during classification.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -384,7 +417,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
     
     if (documentRuns.length === 0) {
       return (
-        <div className="mb-4 p-3 bg-muted/20 rounded-lg border border-dashed">
+        <div className="mb-4 p-3 bg-muted/20 rounded-lg border border-2 border-metadata">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium">Available Runs</h4>
           </div>
@@ -396,7 +429,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
     }
     
     return (
-      <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
+      <div className="mb-4 p-3 bg-muted/20 rounded-lg border border-2 border-metadata">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium">Available Runs</h4>
           {isLoadingRunsFromStore && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -442,7 +475,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   };
 
   const renderClassificationSection = () => (
-    <div className="p-6 w-full backdrop-blur-md bg-secondary/70 rounded-lg shadow-md relative overflow-hidden">
+    <div className="p-6 w-full backdrop-blur-md bg-secondary/70 rounded-lg shadow-md relative overflow-hidden border-2 border-results">
       {/* Run Selector */}
       {renderRunSelector()}
       
@@ -545,7 +578,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
               "space-y-2",
               isNewDocument && "border-2 border-green-500"
             )}>
-              <div className="flex items-start p-4">
+              <div className="flex items-start p-4 border-b border-2 border-documents rounded-t-lg">
                 <div className="flex items-start gap-4 text-sm">
                   <Avatar>
                     <AvatarImage alt={document.title} />
@@ -571,7 +604,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
                 )}
               </div>
               {document.files && document.files.length > 0 && (
-                <div className="p-0 px-4">
+                <div className="p-4 border-t border-2 border-documents">
                   <h4 className="text-sm font-medium mb-2">Files</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {(document?.files || []).map((file) => (
@@ -623,7 +656,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
               {document.top_image && (
                 <>
               <Separator />
-              <div className="h-44 w-1/2 p-4 relative overflow-hidden">
+              <div className="p-4 relative overflow-hidden border-t border-2 border-documents">
                 {document.top_image && (
                   <>
                     <div className="absolute inset-6 cursor-pointer hover:scale-110 transition-transform duration-200" onClick={() => setIsImageOpen(true)}>
@@ -661,7 +694,7 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
               
 
               <Separator />
-              <div className="p-4 ">
+              <div className="p-4 border-t border-2 border-documents rounded-b-lg">
                 <div className="flex items-center justify-start mb-2">
                   <h4 className="text-sm font-medium">Document Content</h4>
                   

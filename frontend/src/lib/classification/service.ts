@@ -134,7 +134,9 @@ export class ClassificationService {
         model_instructions: scheme.model_instructions ?? undefined,
         validation_rules: scheme.validation_rules ?? undefined,
         created_at: scheme.created_at,
-        updated_at: scheme.updated_at
+        updated_at: scheme.updated_at,
+        classification_count: scheme.classification_count ?? 0,
+        document_count: scheme.document_count ?? 0
       }));
     } catch (error) {
       console.error('Error fetching classification schemes:', error);

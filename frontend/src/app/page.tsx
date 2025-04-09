@@ -73,7 +73,7 @@ const HomePage: React.FC<HiProps> = () => {
 
   return (
     <LandingLayout>
-      <div className="flex flex-col md:mt-0 md:min-h-screen justify-between">
+      <div className="flex flex-col mt-36 md:mt-0 md:min-h-screen justify-between">
         {/* Main Content Section */}
         <section className="flex flex-col items-center justify-center flex-grow p-8">
           <div className="text-center mb-8">

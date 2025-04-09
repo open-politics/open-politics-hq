@@ -38,7 +38,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClassifiableContent, ClassificationScheme } from '@/lib/classification/types';
-import { useSchemes } from '@/hooks/useSchemes';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { ContentCardProps } from './ContentCard';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
@@ -123,7 +122,6 @@ export function ContentsView({
   const [selectedEventType, setSelectedEventType] = useState(highlightedEventType || 'all');
   const [selectedContents, setSelectedContents] = useState<Content[]>([]);
   const [selectedSchemeId, setSelectedSchemeId] = useState<number | null>(null);
-  const { schemes: legacySchemes, loadSchemes: loadLegacySchemes } = useSchemes();
   const { activeWorkspace } = useWorkspaceStore();
   
   // Use the consolidated classification system hook to load schemes once
@@ -165,10 +163,8 @@ export function ContentsView({
     if (activeWorkspace?.uid) {
       // Load schemes using the new hook
       loadSchemes();
-      // Keep the legacy hook for backward compatibility
-      loadLegacySchemes(activeWorkspace.uid);
     }
-  }, [activeWorkspace?.uid, loadSchemes, loadLegacySchemes]);
+  }, [activeWorkspace?.uid, loadSchemes]);
 
   useEffect(() => {
     if (selectedContentId && selectedContentRef.current) {

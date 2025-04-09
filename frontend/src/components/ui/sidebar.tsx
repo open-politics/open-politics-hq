@@ -16,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Laptop, ChevronLeft, ChevronRight } from "lucide-react"
+import { Laptop, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar:state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -259,8 +259,11 @@ Sidebar.displayName = "Sidebar"
 
 const SidebarTrigger = React.forwardRef<
   React.ElementRef<typeof Button>,
-  React.ComponentProps<typeof Button>
->(({ className, onClick, ...props }, ref) => {
+  React.ComponentProps<typeof Button> & {
+    expandedIcon?: React.ReactNode
+    collapsedIcon?: React.ReactNode
+  }
+>(({ className, onClick, expandedIcon, collapsedIcon, ...props }, ref) => {
   const { state, toggleSidebar } = useSidebar()
 
   return (
@@ -277,9 +280,9 @@ const SidebarTrigger = React.forwardRef<
       {...props}
     >
       {state === "expanded" ? (
-        <ChevronLeft className="size-6" />
+        expandedIcon || <PanelLeftClose className="size-6" />
       ) : (
-        <ChevronRight className="size-6" />
+        collapsedIcon || <PanelLeftOpen className="size-6" />
       )}
     </Button>
   )

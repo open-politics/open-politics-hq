@@ -103,6 +103,8 @@ export interface ClassificationResult {
 // A classification result with formatted display value
 export interface FormattedClassificationResult extends ClassificationResult {
   displayValue?: string | number | string[] | null;
+  scheme?: ClassificationScheme;
+  isOptimistic?: boolean;
 }
 
 // A classification run

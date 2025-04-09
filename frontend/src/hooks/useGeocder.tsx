@@ -8,6 +8,8 @@ interface GeocodeResult {
   type?: 'continent' | 'country' | 'locality' | 'region' | 'city' | 'address';
 }
 
+export type { GeocodeResult };
+
 const useGeocode = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,9 @@ const useGeocode = () => {
       console.log('Response received:', response.data);
       
       // Extract all relevant data from the response
-      const { longitude, latitude, bbox, location_type } = response.data;
+      const { coordinates, bbox, location_type } = response.data;
+      const longitude = coordinates?.[0];
+      const latitude = coordinates?.[1];
       
       return {
         longitude,

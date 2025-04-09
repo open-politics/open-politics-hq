@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PlusIcon } from "lucide-react"
 import { useWorkspaceStore } from "@/zustand_stores/storeWorkspace"
 import { SchemaFieldInput } from "./SchemaFieldInput"
-import { useSchemes } from "@/hooks/useSchemes"
+import { useClassificationSystem } from "@/hooks/useClassificationSystem"
 import { FieldType, IntType, SchemeFormData, SchemeField, DictKeyDefinition, getFieldTypeDescription, SCHEME_TYPE_OPTIONS } from "@/lib/classification/types"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -42,7 +42,9 @@ interface SchemeFormProps {
 
 export function SchemeForm({ formData, setFormData, showTutorial = false, readOnly = false, onSubmit }: SchemeFormProps) {
   const { activeWorkspace } = useWorkspaceStore()
-  const { createScheme } = useSchemes()
+  const { createScheme } = useClassificationSystem({
+    autoLoadSchemes: true
+  })
   const [fields, setFields] = useState<Field[]>([])
   const [currentField, setCurrentField] = useState<SchemeField>({
     name: "",

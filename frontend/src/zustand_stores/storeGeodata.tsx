@@ -61,16 +61,18 @@ type GeoDataState = {
   // Actions
   fetchBaselineGeoJson: (limit?: number) => Promise<any | null>;
   fetchEventGeoJson: (eventType: string, startDate?: string, endDate?: string, limit?: number) => Promise<any | null>;
-  setSelectedLocation: (locationName: string | null) => void;
+  setSelectedLocation: (locationName: string | null, contentIds?: string[]) => void;
   setSelectedEventType: (eventType: string | null) => void;
   setDateRange: (startDate: string | null, endDate: string | null) => void;
   fetchContentsByLocation: (locationName: string) => Promise<CoreContentModel[]>;
+  fetchContentsByIds: (contentIds: string[]) => Promise<CoreContentModel[]>;
   fetchContentById: (contentId: string) => Promise<CoreContentModel | null>;
   setSelectedContentId: (contentId: string | null) => void;
   clearContents: () => void;
+  setActiveContents: (contents: CoreContentModel[]) => void;
 };
 
-export const useGeoDataStore = create<GeoDataState>((set, get) => ({
+export const useGeoDataStore = create<GeoDataState>()((set, get) => ({
   // Initial state
   geojsonData: null,
   eventGeojsonData: null,
@@ -98,8 +100,14 @@ export const useGeoDataStore = create<GeoDataState>((set, get) => ({
       if (startDate) params.start_date = sanitizeIsoDate(startDate);
       if (endDate) params.end_date = sanitizeIsoDate(endDate);
       
+      console.log('Fetching baseline GeoJSON data from API');
       const response = await axios.get('/api/v2/geo/geojson', { params });
-      set({ geojsonData: response.data, isLoading: false });
+      
+      set({ 
+        geojsonData: response.data, 
+        isLoading: false
+      });
+      
       return response.data;
     } catch (error) {
       console.error('Error fetching baseline GeoJSON:', error);
@@ -120,12 +128,15 @@ export const useGeoDataStore = create<GeoDataState>((set, get) => ({
       if (startDate) params.start_date = sanitizeIsoDate(startDate);
       if (endDate) params.end_date = sanitizeIsoDate(endDate);
       
+      console.log(`Fetching event GeoJSON data for ${eventType} from API`);
       const response = await axios.get('/api/v2/geo/geojson_events', { params });
+      
       set({ 
         eventGeojsonData: response.data, 
         isLoading: false, 
-        selectedEventType: eventType 
+        selectedEventType: eventType
       });
+      
       return response.data;
     } catch (error) {
       console.error('Error fetching event GeoJSON:', error);
@@ -134,12 +145,65 @@ export const useGeoDataStore = create<GeoDataState>((set, get) => ({
     }
   },
   
-  setSelectedLocation: (locationName) => {
-    set({ selectedLocation: locationName });
-    
-    // If there's a location selected, fetch its contents
-    if (locationName) {
+  // NEW ACTION: Fetch full content details by multiple IDs
+  fetchContentsByIds: async (contentIds) => {
+    if (!contentIds || contentIds.length === 0) {
+      return [];
+    }
+    set({ activeContentLoading: true, activeContentError: null });
+    try {
+      // TODO: Implement this API endpoint in the backend!
+      // It should accept a list of IDs (e.g., via request body or query params)
+      // and return an array of CoreContentModel objects.
+      const response = await axios.post('/api/v2/articles/by_ids', { ids: contentIds }); // Example using POST body
+      
+      // Ensure the response data is an array
+      const fetchedContents = Array.isArray(response.data) ? response.data : [];
+      
+      // Sort by insertion date (descending) for consistent display
+      fetchedContents.sort((a, b) => 
+         new Date(b.insertion_date || 0).getTime() - new Date(a.insertion_date || 0).getTime()
+      );
+      
+      set({ 
+        activeContents: fetchedContents, 
+        activeContentLoading: false 
+      });
+      return fetchedContents;
+    } catch (error) {
+      console.error(`Error fetching contents for IDs ${contentIds.join(', ')}:`, error);
+      set({ 
+        activeContentError: error as Error, 
+        activeContentLoading: false,
+        activeContents: [] // Clear contents on error
+      });
+      return [];
+    }
+  },
+
+  // UPDATED ACTION: Handle location selection (single point, country, or cluster)
+  setSelectedLocation: (locationName, contentIds) => {
+    // Always update the selected location name for the panel title
+    set({ selectedLocation: locationName }); 
+
+    if (contentIds && contentIds.length > 0) {
+      // --- Cluster Click --- 
+      // Clear previous contents immediately and set loading
+      set({ activeContents: [], activeContentLoading: true, activeContentError: null });
+      // Fetch full details for the specific content IDs from the cluster
+      get().fetchContentsByIds(contentIds);
+      
+    } else if (locationName) {
+      // --- Single Point or Country Click ---
+      // Clear previous contents immediately and set loading
+      set({ activeContents: [], activeContentLoading: true, activeContentError: null });
+      // Fetch contents based on the location name (existing logic)
       get().fetchContentsByLocation(locationName);
+
+    } else {
+      // --- Location Deselected --- 
+      // Clear everything
+      set({ activeContents: [], activeContentLoading: false, selectedLocation: null, activeContentError: null });
     }
   },
   
@@ -211,5 +275,14 @@ export const useGeoDataStore = create<GeoDataState>((set, get) => ({
   
   clearContents: () => {
     set({ activeContents: [], selectedContentId: null });
+  },
+
+  // Add the new action implementation
+  setActiveContents: (contents) => {
+    set({ 
+      activeContents: contents, 
+      activeContentLoading: false, // Assume loading is finished when contents are set directly
+      activeContentError: null 
+    });
   }
 }));

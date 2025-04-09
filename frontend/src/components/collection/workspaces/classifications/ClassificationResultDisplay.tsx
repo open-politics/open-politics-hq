@@ -1,283 +1,289 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ClassificationResultRead, ClassificationSchemeRead } from '@/client';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SchemeField } from "@/lib/classification/types";
+import { SchemeField, FieldType } from "@/lib/classification/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ClassificationService } from '@/lib/classification/service';
+import { Button } from '@/components/ui/button';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import { cn } from "@/lib/utils"; // Import cn helper
 
-// Helper functions to replace the ones from the missing module
-const formatSchemeValue = (value: any, field: SchemeField): string => {
-  if (value === null || value === undefined) return 'N/A';
-  
-  switch (field.type) {
-    case 'int':
-      const num = Number(value);
-      if (!isNaN(num)) {
-        if (field.config.scale_min === 0 && field.config.scale_max === 1) {
-          return num > 0.5 ? 'True' : 'False';
-        }
-        return num.toFixed(2);
-      }
-      return String(value);
-      
-    case 'List[str]':
-      if (Array.isArray(value)) {
-        return value.join(', ');
-      }
-      return String(value);
-      
-    case 'List[Dict[str, any]]':
-      if (Array.isArray(value)) {
-        return `${value.length} items`;
-      }
-      return String(value);
-      
-    default:
-      return String(value);
-  }
-};
+// Component-level types (if needed, e.g., for props)
+interface ClassificationResultDisplayProps {
+  /** The classification result(s) to display. Can be a single result or an array. */
+  result: ClassificationResultRead | EnhancedClassificationResultRead | ClassificationResultRead[] | EnhancedClassificationResultRead[];
+  /** The classification scheme(s) associated with the result(s). */
+  scheme: ClassificationSchemeRead | ClassificationSchemeRead[];
+  /** If true, renders a more compact version suitable for previews. Defaults to false. */
+  compact?: boolean;
+  /** If true and multiple results are provided, renders them in tabs (unless overridden by context). Defaults to false. */
+  useTabs?: boolean;
+  /** Optional context for rendering adjustments */
+  renderContext?: 'dialog' | 'table' | 'default';
+}
 
-const getFormattedClassificationValue = (result: ClassificationResultRead, scheme: ClassificationSchemeRead): any => {
-  if (!result.value) return '';
-  
-  // Get the first field of the scheme
-  const field = scheme.fields[0];
-  if (!field) return '';
-  
-  // Extract the value for this field
-  let fieldValue: any;
-  
-  // If the value is a simple type, use it directly
-  if (typeof result.value !== 'object' || result.value === null) {
-    fieldValue = result.value;
-  } 
-  // If the value is an object, try to extract the field value
-  else if (!Array.isArray(result.value)) {
-    // Try field name first
-    if (result.value[field.name] !== undefined) {
-      fieldValue = result.value[field.name];
-    }
-    // Try scheme name
-    else if (result.value[scheme.name] !== undefined) {
-      fieldValue = result.value[scheme.name];
-    }
-    // If it has a value property, use that
-    else if ('value' in result.value) {
-      fieldValue = result.value.value;
-    }
-    // If it has only one property, use that
-    else if (Object.keys(result.value).length === 1) {
-      fieldValue = Object.values(result.value)[0];
-    }
-    // Otherwise use the whole object
-    else {
-      fieldValue = result.value;
-    }
-  }
-  // If the value is an array, use it directly
-  else {
-    fieldValue = result.value;
-  }
-  
-  return fieldValue;
-};
+interface SingleClassificationResultProps {
+  result: ClassificationResultRead | EnhancedClassificationResultRead;
+  scheme: ClassificationSchemeRead;
+  compact?: boolean;
+  renderContext?: 'dialog' | 'table' | 'default';
+}
 
+interface ConsolidatedSchemesViewProps {
+  results: (ClassificationResultRead | EnhancedClassificationResultRead)[];
+  schemes: ClassificationSchemeRead[];
+  compact?: boolean;
+  useTabs?: boolean;
+  renderContext?: 'dialog' | 'table' | 'default';
+}
+
+// Add missing EnhancedClassificationResultRead type if not globally defined
 interface EnhancedClassificationResultRead extends ClassificationResultRead {
   display_value?: string | number | Record<string, any> | null;
 }
 
-// Component for displaying a single classification result
-const SingleClassificationResult: React.FC<{ 
-  result: ClassificationResultRead, 
-  scheme: ClassificationSchemeRead,
-  compact?: boolean
-}> = ({ result, scheme, compact = false }) => {
-  // Helper function to adapt a field from ClassificationFieldCreate to SchemeField
-  const adaptFieldToSchemeField = (field: any): SchemeField => ({
-    name: field.name,
-    type: field.type,
-    description: field.description,
-    config: {
-      scale_min: field.scale_min,
-      scale_max: field.scale_max,
-      is_set_of_labels: field.is_set_of_labels,
-      labels: field.labels,
-      dict_keys: field.dict_keys
-    }
+
+/**
+ * Component for displaying a single classification result based on its scheme.
+ */
+const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({ result, scheme, compact = false, renderContext = 'default' }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const isPotentiallyLong = scheme.fields.some(f => f.type === 'List[Dict[str, any]]');
+
+  /**
+   * Adapts an API field definition (like ClassificationFieldCreate) to the internal SchemeField type.
+   * @param apiField - The field definition object from the API.
+   * @returns A SchemeField object compatible with internal formatting logic.
+   */
+  const adaptFieldToSchemeField = (apiField: any): SchemeField => ({
+      name: apiField.name,
+      type: apiField.type as FieldType, // Cast to the imported FieldType
+      description: apiField.description,
+      config: { 
+          scale_min: apiField.scale_min ?? undefined,
+          scale_max: apiField.scale_max ?? undefined,
+          is_set_of_labels: apiField.is_set_of_labels ?? undefined,
+          labels: apiField.labels ?? undefined,
+          dict_keys: apiField.dict_keys ? apiField.dict_keys.map((dk: any) => ({ name: dk.name, type: dk.type })) : undefined
+      }
   });
 
-  // Extract values from the classification result
-  const extractFieldValues = () => {
-    // Log the result value for debugging
-    console.log('Classification result value:', JSON.stringify(result.value, null, 2));
-    
-    // Handle empty or null values
-    if (!result.value || Object.keys(result.value).length === 0) {
-      console.log('Empty classification result value');
-      return { value: 'No classification data available' };
-    }
-    
-    // Since result.value is the direct output of the Pydantic model from the backend,
-    // we can use it directly without complex transformations
-    if (typeof result.value === 'object' && !Array.isArray(result.value)) {
-      // The result.value should already have the field names as keys
-      return result.value;
-    }
-    
-    // Handle simple value case (for single-field schemes)
-    if (scheme.fields && scheme.fields.length === 1) {
-      return { [scheme.fields[0].name]: result.value };
-    }
-    
-    // Fallback for other cases
-    return { value: result.value };
-  };
+  /**
+   * Formats the value of a single classification field for display.
+   * Handles different field types (int, str, List[str], List[Dict[str, any]]).
+   * @param rawValueObject - The entire 'value' object from the ClassificationResultRead.
+   * @param field - The SchemeField definition for the field being formatted.
+   * @returns A React node representing the formatted value.
+   */
+  const formatFieldValue = (rawValueObject: any, field: SchemeField): React.ReactNode => {
+      const valueForField = (typeof rawValueObject === 'object' && rawValueObject !== null && !Array.isArray(rawValueObject))
+          ? rawValueObject[field.name]
+          : rawValueObject; 
 
-  const fieldValues = extractFieldValues();
+      // Handle null, undefined, or explicit "N/A"
+      if (valueForField === null || valueForField === undefined) return <span className="text-gray-400 italic">N/A</span>;
+      if (typeof valueForField === 'string' && valueForField.toLowerCase() === 'n/a') {
+          return <span className="text-gray-400 italic">N/A</span>;
+      }
 
-  const formatFieldValue = (value: any, field: SchemeField): React.ReactNode => {
-    if (value === null || value === undefined) return <span className="text-gray-400">N/A</span>;
+      switch (field.type) {
+          case 'int':
+              // Handle integer type, including binary interpretation (0/1 scale)
+              const num = Number(valueForField);
+              if (!isNaN(num)) {
+                  if (field.config?.scale_min === 0 && field.config?.scale_max === 1) {
+                      return <Badge variant={num > 0.5 ? "default" : "outline"} className="bg-green-600/75 text-black">{num > 0.5 ? 'True' : 'False'}</Badge>;
+                  }
+                  // Display integer directly
+                  return <Badge variant="outline" className="bg-green-400/60 text-black">{String(num)}</Badge>; 
+              }
+              // Fallback if conversion to number fails
+              return <span>{String(valueForField)}</span>;
 
-    // Handle special case for "N/A"
-    if (value === "N/A" || (typeof value === 'string' && value.toLowerCase() === 'n/a')) {
-      return <span className="text-gray-400">N/A</span>;
-    }
-
-    // Handle special case for no data message
-    if (value === 'No classification data available') {
-      return <span className="text-amber-500 italic">{value}</span>;
-    }
-
-    // Format based on field type
-    switch (field.type) {
-      case 'int':
-        const num = Number(value);
-        if (!isNaN(num)) {
-          // Binary classification (0-1 scale)
-          if (field.config.scale_min === 0 && field.config.scale_max === 1) {
-            return <Badge variant={num > 0.5 ? "default" : "outline"}>{num > 0.5 ? 'True' : 'False'}</Badge>;
-          }
-          // Regular numeric scale
-          return <Badge variant="outline">{num.toFixed(2)}</Badge>;
-        }
-        return <span>{String(value)}</span>;
-
-      case 'List[str]':
-        if (Array.isArray(value)) {
-          return (
-            <div className="flex flex-wrap gap-1">
-              {value.map((item, i) => (
-                <Badge key={i} variant="secondary">{item}</Badge>
-              ))}
-            </div>
-          );
-        }
-        return <span>{String(value)}</span>;
-
-      case 'str':
-        return <span>{String(value)}</span>;
-
-      case 'List[Dict[str, any]]':
-        // Use the centralized helper function for entity statements
-        const formattedItems = ClassificationService.formatEntityStatements(value, {
-          compact: false,
-          maxItems: 10
-        });
-        
-        if (Array.isArray(formattedItems)) {
-          return (
-            <div className="space-y-1">
-              {formattedItems.map((item, i) => {
-                if (typeof item === 'string') {
+          case 'List[str]':
+              // Handle list of strings
+              if (Array.isArray(valueForField)) {
+                  if (valueForField.length === 0) return <span className="text-gray-400 italic"></span>;
+                  // Render each string in the list as a badge
                   return (
-                    <div key={i} className="text-xs bg-gray-100 dark:bg-gray-800 p-1 rounded">
-                      {item}
-                    </div>
+                      <div className="flex flex-wrap gap-1">
+                          {valueForField.map((item, i) => (
+                              <Badge key={i} variant="secondary">{String(item)}</Badge>
+                          ))}
+                      </div>
                   );
-                }
-                
-                return (
-                  <div key={i} className="text-xs bg-gray-100 dark:bg-gray-800 p-1 rounded">
-                    {item.entity && <span className="font-medium">{String(item.entity)}: </span>}
-                    {item.statement && <span>{String(item.statement)}</span>}
-                    {item.raw && <span>{item.raw}</span>}
-                    {item.summary && <span className="text-muted-foreground">{item.summary}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        }
-        
-        return <span>{String(formattedItems)}</span>;
+              }
+              // Error display if the value is not an array as expected
+              return <span className="text-red-500 italic">Expected List[str], got: {typeof valueForField}</span>;
 
-      default:
-        if (typeof value === 'object' && value !== null) {
-          if (Array.isArray(value)) {
-            return (
-              <div className="space-y-1">
-                {value.map((item, i) => (
-                  <div key={i} className="text-xs">
-                    {typeof item === 'object' ? JSON.stringify(item) : String(item)}
-                  </div>
-                ))}
-              </div>
-            );
-          }
-          return <pre className="text-xs overflow-auto">{JSON.stringify(value, null, 2)}</pre>;
-        }
-        return <span>{String(value)}</span>;
-    }
+          case 'str':
+              // Handle simple string type
+              return <span>{String(valueForField)}</span>;
+
+          case 'List[Dict[str, any]]':
+              const dataArray = valueForField; 
+              if (Array.isArray(dataArray)) {
+                  if (dataArray.length === 0) {
+                      return <p className="text-sm text-muted-foreground italic">{compact ? 'None' : 'No items found.'}</p>;
+                  }
+                  
+                  // --- MODIFIED: itemsToShow depends on isExpanded --- 
+                  const maxItemsInitial = compact ? 2 : 5; // Initial limit when collapsed
+                  const itemsToShow = isExpanded ? dataArray : dataArray.slice(0, maxItemsInitial);
+                  const isTruncated = !isExpanded && dataArray.length > maxItemsInitial;
+
+                  if (compact) {
+                    // Compact mode logic (unchanged, already handles truncation differently)
+                    return itemsToShow.map((itemObject, index) => {
+                        if (typeof itemObject !== 'object' || itemObject === null) return null; 
+
+                        let previewText = itemObject?.statement || Object.values(itemObject)[0] || 'Item Data';
+                        if (typeof previewText !== 'string') previewText = String(previewText);
+                        
+                        const maxCompactLength = 35; 
+                        if (previewText.length > maxCompactLength) {
+                          previewText = previewText.substring(0, maxCompactLength) + '...';
+                        }
+
+                        return (
+                          <Badge 
+                            key={index} 
+                            variant="outline" 
+                            className="text-xs mr-1 mb-1"
+                            title={itemObject?.statement || String(Object.values(itemObject)[0] || '')}
+                          >
+                             {previewText}
+                          </Badge>
+                        );
+                      });
+                  } else {
+                    // Non-compact mode: Render detailed structure
+                    return (
+                        <div className="grid grid-cols-1 gap-2">
+                            {itemsToShow.map((itemObject, index) => (
+                                typeof itemObject === 'object' && itemObject !== null ? (
+                                    <div key={index} className="p-1.5 bg-muted/10 rounded border border-metadata grid grid-cols-1 gap-1">
+                                        {Object.entries(itemObject).map(([key, itemValue]) => (
+                                            <div key={key} className="flex items-start text-xs">
+                                                <Badge variant="secondary" className="mr-2 shrink-0">{key}</Badge>
+                                                <span className="min-w-0 break-words">{String(itemValue ?? 'N/A')}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div key={index} className="p-1.5 bg-red-100 rounded border border-red-300 text-xs text-red-700">
+                                        Invalid item structure: {String(itemObject)}
+                                    </div>
+                                )
+                            ))}
+                            {/* --- MODIFIED: Show message only if truncated --- */}
+                            {isTruncated && (
+                              <p className="text-xs text-muted-foreground italic mt-1">... and {dataArray.length - maxItemsInitial} more items.</p>
+                            )}
+                        </div>
+                    );
+                  }
+              } else {
+                  console.error(`Error in ClassificationResultDisplay: Expected an array for field '${field.name}' of type List[Dict[str, any]], but received:`, valueForField, 'Raw Value Object:', rawValueObject);
+                  return <span className="text-sm text-red-500 italic">Error: Expected an array, received {typeof valueForField}. Check console.</span>;
+              }
+
+          default:
+              // Fallback for unhandled field types
+              console.warn(`Warning in ClassificationResultDisplay: Unhandled field type '${field.type}' for field '${field.name}'. Value:`, valueForField);
+              // Attempt to render objects as JSON
+              if (typeof valueForField === 'object' && valueForField !== null) {
+                  return <pre className="text-xs overflow-auto bg-muted/10 p-1 rounded">{JSON.stringify(valueForField, null, 2)}</pre>;
+              }
+              // Default to string conversion
+              return <span>{String(valueForField)}</span>;
+      }
   };
 
-  const content = (
-    <div className="space-y-4">
-      {scheme.fields && Array.isArray(scheme.fields) ? scheme.fields.map((field, idx) => {
-        // Convert the field to SchemeField format
-        const schemeField = adaptFieldToSchemeField(field);
-        
-        // Get the value for this field directly from fieldValues
-        const fieldValue = fieldValues[field.name];
-        
-        // Log the field and its value for debugging
-        console.log(`Field ${field.name} (${field.type}):`, fieldValue);
-        
-        return (
-          <div key={idx} className="space-y-1">
-            <div className="text-sm font-medium">{field.name}</div>
-            {formatFieldValue(fieldValue, schemeField)}
-          </div>
-        );
-      }) : <div className="text-sm text-gray-500">No fields defined in scheme</div>}
-    </div>
-  );
 
-  if (compact) {
-    return (
-      <ScrollArea className="max-h-24">
-        <div className="p-1">{content}</div>
-      </ScrollArea>
-    );
+  // --- Render the fields defined in the scheme ---
+  if (!scheme || !Array.isArray(scheme.fields)) {
+      return <div className="text-sm text-red-500 italic">Invalid scheme provided.</div>;
+  }
+  if (result.value === null || result.value === undefined) {
+       return <div className="text-sm text-gray-500 italic">No classification value available.</div>;
   }
 
-  return content;
+  // --- MODIFIED: Conditional styling based on context ---
+  const containerClasses = cn(
+    'space-y-2',
+    // Remove border/padding only in dialog context when not compact
+    renderContext !== 'dialog' && !compact && 'border-2 border-results p-2 rounded-md'
+  );
+
+  return (
+      <div className={containerClasses}>
+          {/* Only show scheme name if not compact OR if context is not dialog (to avoid repetition) */}
+          {(!compact || renderContext !== 'dialog') && (
+             <div className="font-medium text-base mb-2">{scheme.name}</div>
+          )}
+          {/* Add scheme name specifically for dialog if it's the compact view (might be redundant if title already shows) */}
+          {/* {compact && renderContext === 'dialog' && (
+             <div className="font-medium text-sm mb-1">{scheme.name}</div>
+          )} */}
+
+          <div
+            // --- MODIFIED: Adjust max-height based on context ---
+            className={cn(
+              'transition-all duration-300 ease-in-out overflow-hidden',
+              !isExpanded && isPotentiallyLong && (compact ? 'max-h-16' : renderContext === 'dialog' ? 'max-h-40' : 'max-h-24'), // Different collapsed heights
+              isExpanded && isPotentiallyLong && 'max-h-80 overflow-y-auto' // Consistent expanded height
+            )}
+          >
+            <div className={'space-y-3'}>
+              {scheme.fields.map((apiField, idx) => {
+                  const schemeField = adaptFieldToSchemeField(apiField);
+                  if (compact && idx > 0) return null;
+
+                  return (
+                      <div key={idx} className={'space-y-1'}>
+                          {/* Only show field name if not compact OR if scheme has multiple fields */}
+                          {(!compact || scheme.fields.length > 1) && (
+                             <div className="text-sm font-medium">{schemeField.name}</div>
+                          )}
+                          {formatFieldValue(result.value, schemeField)}
+                      </div>
+                  );
+              })}
+            </div>
+          </div>
+          {isPotentiallyLong && !compact && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="mt-1 text-xs w-full justify-start text-muted-foreground hover:text-foreground"
+            >
+              {isExpanded ? (
+                <><ChevronUp className="h-3 w-3 mr-1" /> Show Less</>
+              ) : (
+                <><ChevronDown className="h-3 w-3 mr-1" /> Show More</>
+              )}
+            </Button>
+          )}
+      </div>
+  );
 };
 
-// Component to display multiple schemes in a consolidated view
-const ConsolidatedSchemesView: React.FC<{
-  results: ClassificationResultRead[],
-  schemes: ClassificationSchemeRead[],
-  compact?: boolean,
-  useTabs?: boolean
-}> = ({ results, schemes, compact = false, useTabs = false }) => {
-  // If we should use tabs, use the original tabbed view
-  if (useTabs) {
+/**
+ * Component to display multiple classification results, potentially in tabs or a consolidated list.
+ */
+const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ results, schemes, compact = false, useTabs = false, renderContext = 'default' }) => {
+  // --- MODIFIED: Force useTabs to false if context is dialog ---
+  const actuallyUseTabs = useTabs && renderContext !== 'dialog';
+
+  if (actuallyUseTabs) {
     return (
-      <Tabs defaultValue={schemes[0].id?.toString() || "0"} className="w-full">
-        <TabsList className="mb-2">
+      <Tabs defaultValue={schemes[0]?.id?.toString() || "0"} className="w-full">
+        <TabsList className="mb-2 overflow-x-auto h-auto justify-start">
           {schemes.map(s => (
-            <TabsTrigger key={s.id} value={s.id?.toString() || "0"}>
+            <TabsTrigger key={s.id} value={s.id?.toString() || "0"} className="whitespace-nowrap">
               {s.name}
             </TabsTrigger>
           ))}
@@ -285,13 +291,12 @@ const ConsolidatedSchemesView: React.FC<{
         
         {schemes.map(s => {
           const schemeResult = results.find(r => r.scheme_id === s.id);
-          
           return (
             <TabsContent key={s.id} value={s.id?.toString() || "0"}>
               {schemeResult ? (
-                <SingleClassificationResult result={schemeResult} scheme={s} compact={compact} />
+                <SingleClassificationResult result={schemeResult} scheme={s} compact={compact} renderContext={renderContext} />
               ) : (
-                <div className="text-sm text-gray-500">No results for this scheme</div>
+                <div className="text-sm text-gray-500 italic">No results for this scheme</div>
               )}
             </TabsContent>
           );
@@ -300,78 +305,99 @@ const ConsolidatedSchemesView: React.FC<{
     );
   }
   
-  // Otherwise, display all schemes in a consolidated view
+  // Default: Consolidated view
   return (
-    <div className="space-y-6 ml-4">
+    // Reduced spacing for dialog context
+    <div className={cn("ml-4", renderContext === 'dialog' ? "space-y-3" : "space-y-6")}>
       {schemes.map(scheme => {
         const schemeResult = results.find(r => r.scheme_id === scheme.id);
-        
-        if (!schemeResult) return null;
+        if (!schemeResult) return null; // Skip if no result for this scheme
         
         return (
-          <div key={scheme.id} className="border-b pb-4 last:border-b-0">
-            <div className="font-medium text-base mb-2">{scheme.name}</div>
-            <SingleClassificationResult 
-              result={schemeResult} 
-              scheme={scheme} 
-              compact={compact} 
-            />
-          </div>
+          <SingleClassificationResult 
+            key={scheme.id}
+            result={schemeResult} 
+            scheme={scheme} 
+            compact={compact} 
+            renderContext={renderContext}
+          />
         );
       })}
     </div>
   );
 };
 
-// Main component that can handle multiple results
-const ClassificationResultDisplay: React.FC<{ 
-  result: ClassificationResultRead | ClassificationResultRead[], 
-  scheme: ClassificationSchemeRead | ClassificationSchemeRead[],
-  compact?: boolean,
-  useTabs?: boolean
-}> = ({ result, scheme, compact = false, useTabs = false }) => {
-  // Handle array of results with array of schemes
-  if (Array.isArray(result) && Array.isArray(scheme)) {
-    // If there's only one result, render it directly
-    if (result.length === 1 && scheme.length === 1) {
-      return <SingleClassificationResult result={result[0]} scheme={scheme[0]} compact={compact} />;
+
+/**
+ * Main component to display one or more classification results.
+ * It handles routing to SingleClassificationResult or ConsolidatedSchemesView.
+ */
+const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = ({ result, scheme, compact = false, useTabs = false, renderContext = 'default' }) => {
+    
+  /**
+   * Finds the matching ClassificationSchemeRead object for a given result's scheme_id.
+   * @param res - The classification result.
+   * @param sch - The scheme or array of schemes to search within.
+   * @returns The matching scheme object or null if not found.
+   */
+  const findSchemeForResult = (res: ClassificationResultRead | EnhancedClassificationResultRead, sch: ClassificationSchemeRead | ClassificationSchemeRead[]): ClassificationSchemeRead | null => {
+    if (!res || !sch) return null;
+    // If 'sch' is an array, find the scheme by ID
+    if (Array.isArray(sch)) {
+      return sch.find(s => s.id === res.scheme_id) || null;
+    }
+    // If 'sch' is a single object, check if its ID matches
+    return sch.id === res.scheme_id ? sch : null;
+  };
+
+  // --- MODIFIED: Handle array result with stricter type checking --- 
+  if (Array.isArray(result)) {
+    // Map results to include their schemes, then filter out those without a scheme
+    const validResultsWithSchemes = result
+      .map(r => ({ result: r, scheme: findSchemeForResult(r, scheme) }))
+      .filter((item): item is { result: ClassificationResultRead | EnhancedClassificationResultRead; scheme: ClassificationSchemeRead } => item.scheme !== null);
+      // This filter explicitly tells TS that item.scheme is non-null in the resulting array
+
+    if (validResultsWithSchemes.length === 0) {
+      return <div className="text-sm text-gray-500 italic">No valid classification results with matching schemes found.</div>;
+    }
+
+    // If only one valid result, render it directly
+    if (validResultsWithSchemes.length === 1) {
+      const { result: singleResult, scheme: singleScheme } = validResultsWithSchemes[0];
+      // singleScheme is guaranteed non-null here due to the filter
+      return (
+        <SingleClassificationResult result={singleResult} scheme={singleScheme} compact={compact} renderContext={renderContext} />
+      );
     }
     
-    // Use the consolidated view for multiple schemes
-    return <ConsolidatedSchemesView results={result} schemes={scheme} compact={compact} useTabs={useTabs} />;
+    // If multiple valid results, use ConsolidatedSchemesView
+    // Pass the already filtered schemes (guaranteed non-null)
+    return (
+      <ConsolidatedSchemesView 
+        results={validResultsWithSchemes.map(item => item.result)} 
+        schemes={validResultsWithSchemes.map(item => item.scheme)} 
+        compact={compact} 
+        useTabs={useTabs} 
+        renderContext={renderContext}
+      />
+    );
   }
   
-  // Handle single result with single scheme
-  if (!Array.isArray(result) && !Array.isArray(scheme)) {
-    return <SingleClassificationResult result={result} scheme={scheme} compact={compact} />;
-  }
-  
-  // Handle array of results with single scheme
-  if (Array.isArray(result) && !Array.isArray(scheme)) {
-    // Find the result that matches the scheme
-    const matchingResult = result.find(r => r.scheme_id === scheme.id);
-    
-    if (matchingResult) {
-      return <SingleClassificationResult result={matchingResult} scheme={scheme} compact={compact} />;
-    }
-    
-    return <div className="text-sm text-gray-500">No matching result for this scheme</div>;
-  }
-  
-  // Handle single result with array of schemes
-  if (!Array.isArray(result) && Array.isArray(scheme)) {
-    // Find the scheme that matches the result
-    const matchingScheme = scheme.find(s => s.id === result.scheme_id);
-    
+  // Handle case where 'result' is a single object
+  if (!Array.isArray(result)) {
+    const matchingScheme = findSchemeForResult(result, scheme);
     if (matchingScheme) {
-      return <SingleClassificationResult result={result} scheme={matchingScheme} compact={compact} />;
+      // matchingScheme is non-null here
+      return (
+        <SingleClassificationResult result={result} scheme={matchingScheme} compact={compact} renderContext={renderContext} />
+      );
     }
-    
-    return <div className="text-sm text-gray-500">No matching scheme for this result</div>;
+    return <div className="text-sm text-gray-500 italic">No matching scheme found for this result. Scheme ID: {result.scheme_id}</div>;
   }
   
-  // Fallback
-  return <div className="text-sm text-gray-500">Invalid result or scheme configuration</div>;
+  // Fallback message for invalid props configuration
+  return <div className="text-sm text-gray-500 italic">Invalid result or scheme configuration provided.</div>;
 };
 
 export default ClassificationResultDisplay;
