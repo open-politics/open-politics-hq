@@ -260,7 +260,9 @@ const getFormattedClassificationValue = (result: any, scheme: any): any => {
     }
     // Otherwise use the whole object
     else {
+      // --- MODIFIED: If no specific key matches, keep the object for later handling
       fieldValue = result.value;
+      // --- END MODIFICATION ---
     }
   }
   // If the value is an array, use it directly
@@ -296,15 +298,39 @@ const getFormattedClassificationValue = (result: any, scheme: any): any => {
       return String(fieldValue);
       
     case 'List[Dict[str, any]]':
-      // Use the centralized helper function for entity statements
-      return ClassificationService.formatEntityStatements(fieldValue, { compact: true });
+      // --- MODIFIED: Ensure fieldValue is processed correctly for complex type ---
+      // Note: fieldValue here might be the original object if extraction above failed
+      // Or it could be an array if result.value was an array.
+      const formattedNodes = ClassificationService.formatEntityStatements(fieldValue, { compact: true, maxItems: 3 });
+      
+      if (Array.isArray(formattedNodes)) {
+        // Map nodes to strings, handling potential objects like { raw: '...' } or { summary: '...' }
+        return formattedNodes.map(node => {
+          if (typeof node === 'string') return node;
+          if (typeof node === 'object' && node !== null) {
+            if ('raw' in node) return String(node.raw);
+            if ('summary' in node) return String(node.summary);
+          }
+          // Fallback for unexpected node types
+          return ClassificationService.safeStringify(node);
+        }).join('; ');
+      } else if (typeof formattedNodes === 'object' && formattedNodes !== null) {
+        // If formatEntityStatements returned a single object (e.g., { default_field: ... })
+        return ClassificationService.safeStringify(formattedNodes);
+      } else {
+        // If it's not an array or object, just stringify it
+        return String(formattedNodes);
+      }
+      // --- END MODIFICATION ---
       
     default:
       if (typeof fieldValue === 'object') {
         if (Object.keys(fieldValue).length === 0) {
           return 'N/A';
         }
-        return ClassificationService.safeStringify(fieldValue);
+        // --- MODIFIED: Use safeStringify for unhandled objects in default case --- 
+        return ClassificationService.safeStringify(fieldValue); 
+        // --- END MODIFICATION ---
       }
       return String(fieldValue);
   }
@@ -483,71 +509,29 @@ const processLineChartData = (
           // Process categorical values (non-numeric)
           else if (result.value !== null && result.value !== undefined) {
             // Handle categorical data by tracking frequency
-            const fieldType = scheme.fields[0]?.type;
-            
             // Initialize category frequency tracker for this scheme
             if (!chartPoint.categoryFrequency || !chartPoint.categoryFrequency[schemeName]) {
               chartPoint.categoryFrequency = chartPoint.categoryFrequency || {};
               chartPoint.categoryFrequency[schemeName] = {};
             }
             
-            // Extract categorical value based on field type
-            let categoryValue: string = 'N/A';
+            // --- MODIFIED: Use formatDisplayValue from utils for consistent key generation ---
+            const adaptedScheme = adaptSchemeReadToScheme(scheme); // Adapt the scheme
+            const displayValue = formatDisplayValue(result.value, adaptedScheme); // Use utility function
+            let categoryKey = String(displayValue ?? 'N/A'); // Convert result to string key
+            // --- END MODIFICATION ---
             
-            if (fieldType === 'str') {
-              // String values directly
-              categoryValue = String(result.value);
-            } 
-            else if (fieldType === 'List[str]') {
-              // For list of strings, join them
-              if (Array.isArray(result.value)) {
-                categoryValue = result.value.join(', ');
-              } else {
-                categoryValue = String(result.value);
-              }
+            // Limit key length for display sanity
+            const MAX_KEY_LENGTH = 75;
+            if (categoryKey.length > MAX_KEY_LENGTH) {
+              categoryKey = categoryKey.substring(0, MAX_KEY_LENGTH) + '...';
             }
-            else if (fieldType === 'List[Dict[str, any]]') {
-              // For entity lists, count entities by type if available
-              if (Array.isArray(result.value)) {
-                // See if we can get entity type from the dictionaries
-                const entityTypes = result.value
-                  .filter(item => typeof item === 'object' && item !== null)
-                  .map(item => item.type || item.category || 'entity')
-                  .filter(Boolean);
-                
-                if (entityTypes.length > 0) {
-                  // Count each entity type
-                  entityTypes.forEach(type => {
-                    if (chartPoint.categoryFrequency && chartPoint.categoryFrequency[schemeName]) {
-                      chartPoint.categoryFrequency[schemeName][type] = 
-                        (chartPoint.categoryFrequency[schemeName][type] || 0) + 1;
-                    }
-                  });
-                  
-                  // Skip default category counting for entity lists
-                  return;
-                }
-                
-                // Fallback: just note the count of entities
-                categoryValue = `${result.value.length} entities`;
-              }
-            }
-            else if (typeof result.value === 'object' && result.value !== null) {
-              // For other objects, try to extract a meaningful value
-              const fieldName = scheme.fields[0]?.name;
-              if (fieldName && result.value[fieldName] !== undefined) {
-                categoryValue = String(result.value[fieldName]);
-              } else {
-                // Get first property value as fallback
-                const values = Object.values(result.value);
-                categoryValue = values.length > 0 ? String(values[0]) : 'Complex Data';
-              }
-            }
+            // console.log('Generated Category Key:', categoryKey); // Keep commented unless debugging
             
-            // Increment count for this categorical value
+            // Increment count for this categorical value using the generated key
             if (chartPoint.categoryFrequency && chartPoint.categoryFrequency[schemeName]) {
-              chartPoint.categoryFrequency[schemeName][categoryValue] = 
-                (chartPoint.categoryFrequency[schemeName][categoryValue] || 0) + 1;
+              chartPoint.categoryFrequency[schemeName][categoryKey] = 
+                (chartPoint.categoryFrequency[schemeName][categoryKey] || 0) + 1;
             }
           }
           // Log if value couldn't be processed
@@ -1048,14 +1032,16 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                   
                   // If showing statistics and we have min/max data, render area + avg line
                   if (showStatistics) {
-                    // Check if we have stats for this scheme
-                    const hasStats = displayData.some(point => {
+                    // --- MODIFIED: Check for stats AND if scheme is numerical ---
+                    const isNumericalScheme = scheme.fields[0]?.type === 'int'; // Add float etc. if needed
+                    const hasStats = isNumericalScheme && displayData.some(point => {
                       return (
                         point[`${scheme.name}_min`] !== undefined && 
                         point[`${scheme.name}_max`] !== undefined && 
                         point[`${scheme.name}_avg`] !== undefined
                       );
                     });
+                    // --- END MODIFICATION ---
                     
                     if (hasStats) {
                       return (
@@ -1232,7 +1218,7 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
       {/* --- Top Categories Section --- */}
       {!isGrouped && 'categoryFrequency' in dataPoint && dataPoint.categoryFrequency && (
         <div className="mb-3 pb-2 border-b border-border">
-          <p className="text-sm font-medium mb-2">Top Categories:</p>
+          <p className="text-sm font-medium mb-2">Most Frequent Items:</p>
           <div className="grid grid-cols-1 gap-2">
             {Object.entries(dataPoint.categoryFrequency)
               .filter(([_, categories]) => Object.keys(categories).length > 0)
