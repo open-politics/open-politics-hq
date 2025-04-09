@@ -56,6 +56,10 @@ Here's a glimpse of what we're building:
 
 [Opol](https://github.com/open-politics/opol) serves the data for the interactive globe visualisation of this webapp, displaying news articles processed through LLM classification, entity extraction, and geocoding for spatial representation.
 
+![HQ Classification Runner](.github/assets/gifs/HQ-Recording-Runner-Github-001.gif)
+
+The classification runner of HQ lets you classify, extract and work with structured data to analyse and visualise data according to your needs. The possibilities are endless!
+
 ## Why Open Politics Exists
 
 Politics, news, conflicts, and legislative procedures are increasingly difficult to track and understand. Few have the time to read through the mountains of documents and news articles necessary to form a comprehensive understanding of political situations.
