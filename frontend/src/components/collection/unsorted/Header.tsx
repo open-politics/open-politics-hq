@@ -116,11 +116,11 @@ const Header = () => {
                   <div className="flex flex-col space-y-0.5">
                     <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
                       <Code className="h-4 w-4" />
-                      <span>Webapp</span>
+                      <span>Webapp (HQ)</span>
                     </a>
                     <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
                       <Database className="h-4 w-4" />
-                      <span>Data Engine</span>
+                      <span>Data Engine (OPOL)</span>
                     </a>
                   </div>
                 </PopoverContent>
@@ -222,7 +222,7 @@ const Header = () => {
                           <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
                               <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer">
                                   <Code className="h-4 w-4 mr-2" />
-                                  <span>GitHub (Webapp)</span>
+                                  <span>GitHub (HQ)</span>
                               </a>
                           </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -230,7 +230,7 @@ const Header = () => {
                           <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
                               <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer">
                                   <Database className="h-4 w-4 mr-2" />
-                                  <span>GitHub (Data Engine)</span>
+                                  <span>GitHub (OPOL)</span>
                               </a>
                           </SidebarMenuButton>
                       </SidebarMenuItem>
