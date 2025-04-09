@@ -463,11 +463,12 @@ const processLineChartData = (
           // Process numeric values for statistics
           if (typeof plottableValue === 'number') {
             // Initialize stats object for this scheme if needed
-            if (!chartPoint.stats[schemeName]) {
+            if (!chartPoint.stats || !chartPoint.stats[schemeName]) {
+              chartPoint.stats = chartPoint.stats || {};
               chartPoint.stats[schemeName] = { min: Infinity, max: -Infinity, avg: 0, count: 0 };
             }
             
-            if (chartPoint.stats[schemeName]) {
+            if (chartPoint.stats && chartPoint.stats[schemeName]) {
               const stats = chartPoint.stats[schemeName];
               stats.min = Math.min(stats.min, plottableValue);
               stats.max = Math.max(stats.max, plottableValue);
@@ -485,7 +486,8 @@ const processLineChartData = (
             const fieldType = scheme.fields[0]?.type;
             
             // Initialize category frequency tracker for this scheme
-            if (!chartPoint.categoryFrequency[schemeName]) {
+            if (!chartPoint.categoryFrequency || !chartPoint.categoryFrequency[schemeName]) {
+              chartPoint.categoryFrequency = chartPoint.categoryFrequency || {};
               chartPoint.categoryFrequency[schemeName] = {};
             }
             
@@ -549,7 +551,7 @@ const processLineChartData = (
             }
           }
           // Log if value couldn't be processed
-          else if (result.value !== null && !(Array.isArray(result.value) && result.value.length === 0)) {
+          else if (result.value !== null && !(Array.isArray(result.value) && (result.value as any[]).length === 0)) {
             console.log(`Value for scheme '${schemeName}' not processed (type: ${scheme.fields[0]?.type}, value:`, result.value, ")");
           }
         });
