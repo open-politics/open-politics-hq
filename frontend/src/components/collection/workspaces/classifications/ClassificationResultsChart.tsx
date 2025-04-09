@@ -15,6 +15,7 @@ import {
   BarProps,
   Cell,
   ReferenceDot,
+  Area,
 } from 'recharts';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -32,6 +33,7 @@ import { ResultFilter } from './ClassificationResultFilters';
 import { getTargetFieldDefinition, getTargetKeysForScheme, formatDisplayValue, checkFilterMatch, compareValues } from '@/lib/classification/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 
 // Define gradient colors for bars
 const gradientColors = [
@@ -113,6 +115,8 @@ interface ChartDataPoint {
   count: number;
   documents: number[];
   docSchemeValues?: Record<string, Record<string, any>>;
+  stats?: Record<string, { min: number; max: number; avg: number; count: number }>;
+  categoryFrequency?: Record<string, Record<string, number>>;
   [key: string]: string | number | any;
 }
 
@@ -339,10 +343,375 @@ const adaptSchemeReadToScheme = (schemeRead: ClassificationSchemeRead): Classifi
   };
 };
 
+// --- Data Processing for Line Chart (isGrouped = false) ---
+const processLineChartData = (
+  results: FormattedClassificationResult[],
+  schemes: ClassificationSchemeRead[],
+  documents?: DocumentRead[]
+) => {
+  console.log('[Line Chart] Processing filtered results:', results.length, 'Documents:', documents?.length);
+  const resultsByDateAndDoc = results.reduce<Record<string, Record<string, ClassificationResultRead[]>>>((acc, result) => {
+    // Find the corresponding document
+    const doc = documents?.find(d => d.id === result.document_id);
+    
+    // Determine the date key: Prioritize publication_date, fallback to insertion_date, then result.timestamp
+    let dateToUse: string | Date | null | undefined = null;
+    let dateSource = 'unknown'; // Variable to track the source of the date
+    if (doc) {
+      // @ts-ignore - Check if publication_date exists and is valid, even if not strictly in DocumentRead type
+      if (doc.publication_date && !isNaN(new Date(doc.publication_date).getTime())) {
+        // @ts-ignore
+        dateToUse = doc.publication_date;
+        dateSource = 'publication_date';
+      } else if (doc.insertion_date && !isNaN(new Date(doc.insertion_date).getTime())) {
+        dateToUse = doc.insertion_date;
+        dateSource = 'insertion_date';
+      }
+    }
+    
+    // Final fallback to result timestamp if no valid document date found
+    if (!dateToUse) {
+      dateToUse = result.timestamp;
+      dateSource = 'result_timestamp';
+    }
+
+    // Format the date key
+    let dateKey: string;
+    try {
+      // Ensure dateToUse is valid before formatting
+      const validDate = dateToUse ? new Date(dateToUse) : null;
+      if (validDate && !isNaN(validDate.getTime())) {
+        dateKey = format(validDate, 'yyyy-MM-dd');
+      } else {
+        throw new Error('Invalid date object');
+      }
+    } catch (e) {
+      console.warn(`Could not format date: ${dateToUse} for result ${result.id}. Using fallback.`);
+      dateKey = 'Unknown Date'; // Fallback for invalid dates
+    }
+
+    // Log the chosen date source for debugging
+    console.log(`[Line Chart] Result ${result.id}, Doc ${result.document_id}: Using ${dateSource} (${dateKey}) for X-axis.`);
+
+    const docKey = `doc-${result.document_id}`;
+    
+    if (!acc[dateKey]) {
+      acc[dateKey] = {};
+    }
+    
+    if (!acc[dateKey][docKey]) {
+      acc[dateKey][docKey] = [];
+    }
+    
+    // Push the result, ensuring type compatibility using the adapter
+    acc[dateKey][docKey].push(resultToResultRead(result));
+    return acc;
+  }, {});
+  
+  console.log('[Line Chart] Results grouped by date and document:', Object.keys(resultsByDateAndDoc).length);
+  
+  // Transform grouped data into chart format with statistical aggregations
+  const finalChartData = Object.entries(resultsByDateAndDoc).map(([date, docResults]) => {
+    // Initialize chart point with base properties
+    const chartPoint: ChartDataPoint = {
+      dateString: date,
+      timestamp: new Date(date).getTime(),
+      count: Object.keys(docResults).length, // Count of unique documents on this date
+      documents: [...new Set(Object.values(docResults).flatMap(results => results.map(r => r.document_id)))],
+      // New statistical properties to be calculated
+      stats: {},
+      categoryFrequency: {}
+    };
+    
+    // For consolidated view, we'll create a map of documents to their scheme results
+    const docSchemeValues: Record<string, Record<string, any>> = {};
+    
+    // Process each document's results
+    Object.entries(docResults).forEach(([docKey, docSchemeResults]) => {
+      const documentId = docKey.replace('doc-', '');
+      docSchemeValues[documentId] = {};
+      
+      // Group this document's results by scheme
+      const schemeGroups = docSchemeResults.reduce<Record<number, ClassificationResultRead[]>>((acc, result) => {
+        if (!acc[result.scheme_id]) {
+          acc[result.scheme_id] = [];
+        }
+        acc[result.scheme_id].push(result);
+        return acc;
+      }, {});
+      
+      // Add scheme-specific data
+      Object.entries(schemeGroups).forEach(([schemeIdStr, docSchemeResults]) => {
+        const schemeId = Number(schemeIdStr);
+        const scheme = schemes.find(s => s.id === schemeId);
+        if (!scheme) {
+          console.log(`Scheme ${schemeId} not found`);
+          return;
+        }
+        
+        const schemeName = scheme.name;
+        console.log(`Processing scheme ${schemeName} with ${docSchemeResults.length} results`);
+        
+        // Process results in this scheme for this document
+        docSchemeResults.forEach(result => {
+          // Extract the plottable value (numeric or null)
+          const plottableValue = getPlottableValue(result, scheme);
+          
+          // Store in document-specific structure for tooltip access
+          docSchemeValues[documentId][schemeName] = result.value;
+          
+          // Process numeric values for statistics
+          if (typeof plottableValue === 'number') {
+            // Initialize stats object for this scheme if needed
+            if (!chartPoint.stats[schemeName]) {
+              chartPoint.stats[schemeName] = { min: Infinity, max: -Infinity, avg: 0, count: 0 };
+            }
+            
+            if (chartPoint.stats[schemeName]) {
+              const stats = chartPoint.stats[schemeName];
+              stats.min = Math.min(stats.min, plottableValue);
+              stats.max = Math.max(stats.max, plottableValue);
+              stats.count += 1;
+              // Running sum for average calculation
+              stats.avg = (stats.avg * (stats.count - 1) + plottableValue) / stats.count;
+            }
+
+            // Also store raw value for backwards compatibility
+            chartPoint[schemeName] = plottableValue;
+          } 
+          // Process categorical values (non-numeric)
+          else if (result.value !== null && result.value !== undefined) {
+            // Handle categorical data by tracking frequency
+            const fieldType = scheme.fields[0]?.type;
+            
+            // Initialize category frequency tracker for this scheme
+            if (!chartPoint.categoryFrequency[schemeName]) {
+              chartPoint.categoryFrequency[schemeName] = {};
+            }
+            
+            // Extract categorical value based on field type
+            let categoryValue: string = 'N/A';
+            
+            if (fieldType === 'str') {
+              // String values directly
+              categoryValue = String(result.value);
+            } 
+            else if (fieldType === 'List[str]') {
+              // For list of strings, join them
+              if (Array.isArray(result.value)) {
+                categoryValue = result.value.join(', ');
+              } else {
+                categoryValue = String(result.value);
+              }
+            }
+            else if (fieldType === 'List[Dict[str, any]]') {
+              // For entity lists, count entities by type if available
+              if (Array.isArray(result.value)) {
+                // See if we can get entity type from the dictionaries
+                const entityTypes = result.value
+                  .filter(item => typeof item === 'object' && item !== null)
+                  .map(item => item.type || item.category || 'entity')
+                  .filter(Boolean);
+                
+                if (entityTypes.length > 0) {
+                  // Count each entity type
+                  entityTypes.forEach(type => {
+                    if (chartPoint.categoryFrequency && chartPoint.categoryFrequency[schemeName]) {
+                      chartPoint.categoryFrequency[schemeName][type] = 
+                        (chartPoint.categoryFrequency[schemeName][type] || 0) + 1;
+                    }
+                  });
+                  
+                  // Skip default category counting for entity lists
+                  return;
+                }
+                
+                // Fallback: just note the count of entities
+                categoryValue = `${result.value.length} entities`;
+              }
+            }
+            else if (typeof result.value === 'object' && result.value !== null) {
+              // For other objects, try to extract a meaningful value
+              const fieldName = scheme.fields[0]?.name;
+              if (fieldName && result.value[fieldName] !== undefined) {
+                categoryValue = String(result.value[fieldName]);
+              } else {
+                // Get first property value as fallback
+                const values = Object.values(result.value);
+                categoryValue = values.length > 0 ? String(values[0]) : 'Complex Data';
+              }
+            }
+            
+            // Increment count for this categorical value
+            if (chartPoint.categoryFrequency && chartPoint.categoryFrequency[schemeName]) {
+              chartPoint.categoryFrequency[schemeName][categoryValue] = 
+                (chartPoint.categoryFrequency[schemeName][categoryValue] || 0) + 1;
+            }
+          }
+          // Log if value couldn't be processed
+          else if (result.value !== null && !(Array.isArray(result.value) && result.value.length === 0)) {
+            console.log(`Value for scheme '${schemeName}' not processed (type: ${scheme.fields[0]?.type}, value:`, result.value, ")");
+          }
+        });
+      });
+    });
+    
+    // Store the document scheme values for use in tooltips
+    chartPoint.docSchemeValues = docSchemeValues;
+    
+    // Set actual min/max/avg keys for direct chart access
+    if (chartPoint.stats) {
+      Object.entries(chartPoint.stats).forEach(([schemeName, stats]) => {
+        // Add statistical values with prefix for direct plotting
+        chartPoint[`${schemeName}_min`] = stats.min !== Infinity ? stats.min : null;
+        chartPoint[`${schemeName}_max`] = stats.max !== -Infinity ? stats.max : null;
+        chartPoint[`${schemeName}_avg`] = stats.count > 0 ? stats.avg : null;
+        
+        // For highest frequency categorical values, get top 3
+        if (chartPoint.categoryFrequency && chartPoint.categoryFrequency[schemeName]) {
+          const categories = Object.entries(chartPoint.categoryFrequency[schemeName])
+            .sort((a, b) => b[1] - a[1]) // Sort by frequency descending
+            .slice(0, 3); // Take top 3
+          
+          // Store the most frequent category and its count
+          if (categories.length > 0) {
+            chartPoint[`${schemeName}_topCategory`] = categories[0][0];
+            chartPoint[`${schemeName}_topCategoryCount`] = categories[0][1];
+          }
+        }
+      });
+    }
+    
+    return chartPoint;
+  });
+  
+  console.log('[Line Chart] Final chart data:', finalChartData);
+  return finalChartData.sort((a, b) => a.timestamp - b.timestamp); // Sort by date
+};
+
+// --- Data Processing for Bar Chart (isGrouped = true) ---
+const processGroupedChartData = (
+  filteredResults: FormattedClassificationResult[],
+  schemes: ClassificationSchemeRead[],
+  groupingSchemeId: number | null,
+  groupingFieldKey: string | null
+) => {
+  console.log('[Grouped Chart] Processing filtered results:', filteredResults.length, 'Group By:', groupingSchemeId, groupingFieldKey);
+  const valueCountsMap = new Map<string, { count: number; documents: number[]; schemeName: string; valueKey: string }>();
+  let calculatedMaxCount = 0;
+
+  // Filter results based on selected grouping scheme
+  const resultsForGroupingScheme = groupingSchemeId ? filteredResults.filter(r => r.scheme_id === groupingSchemeId) : [];
+  if (resultsForGroupingScheme.length === 0 || groupingSchemeId === null) {
+      console.log('[Grouped Chart] No results for selected scheme or no scheme selected.');
+      return { data: [], maxCount: 0 };
+  }
+
+  const selectedScheme = schemes.find(s => s.id === groupingSchemeId);
+  if (!selectedScheme) {
+     console.error('[Grouped Chart] Selected scheme not found.');
+     return { data: [], maxCount: 0 };
+  }
+
+  resultsForGroupingScheme.forEach(result => {
+    try {
+      let actualValue: any;
+      // --- MODIFIED: Extract value based on groupingFieldKey ---
+      const mockFilter: ResultFilter = {
+         schemeId: groupingSchemeId,
+         // Use nullish coalescing to provide undefined if groupingFieldKey is null
+         fieldKey: groupingFieldKey ?? undefined,
+         operator: 'equals', // Operator doesn't matter for extraction
+         value: '', // Value doesn't matter for extraction
+         isActive: true
+      };
+      const { definition: targetDefinition } = getTargetFieldDefinition(mockFilter, schemes);
+
+      if (!targetDefinition) {
+         console.warn("Could not find definition for grouping key:", groupingFieldKey, "in scheme:", selectedScheme.name);
+         actualValue = 'Error: Field Not Found';
+      } else {
+          // Logic to extract the specific value based on the targetDefinition and groupingFieldKey
+          if ('dict_keys' in targetDefinition && targetDefinition.type === 'List[Dict[str, any]]' && groupingFieldKey) {
+              // List[Dict] - need to decide *how* to group. Group by presence? Count? First value?
+              // Let's group by the *values* found for the specified key across all dicts in the list.
+              // This might create many bars. For now, let's just say "Complex Data" as a placeholder.
+              // A more robust approach would be needed here based on desired behavior.
+              if (Array.isArray(result.value)) {
+                 // Collect all unique values for the key from the list of dicts
+                 const valuesInList = result.value
+                     .map(item => (typeof item === 'object' && item !== null && groupingFieldKey in item) ? item[groupingFieldKey] : undefined)
+                     .filter(v => v !== undefined);
+                 // Use the *first* value found for simplicity, or a summary string
+                 actualValue = valuesInList.length > 0 ? valuesInList[0] : 'N/A'; // Simplified: use first value
+                 // TODO: Or maybe count occurrences of the key? Needs clearer spec.
+              } else {
+                  actualValue = 'Invalid Data Structure';
+              }
+          } else if ('name' in targetDefinition) {
+               // Top-level field or simple type
+               const fieldValue = (typeof result.value === 'object' && result.value !== null && !Array.isArray(result.value))
+                  ? result.value[targetDefinition.name]
+                  : result.value;
+               actualValue = fieldValue;
+          } else {
+               actualValue = 'Unknown Field Structure';
+          }
+      }
+      // --- End MODIFIED value extraction ---
+
+      // Format the extracted value for consistent key generation
+      // Use the formatDisplayValue helper for consistency, converting result to string for map key
+      const formattedValue = formatDisplayValue(actualValue, selectedScheme);
+      const valueKey = String(formattedValue ?? 'N/A'); // Ensure valueKey is a string
+
+      // Use selectedScheme.name which is guaranteed to exist here
+      const mapKey = `${selectedScheme.name}_${valueKey}`;
+
+      const currentEntry = valueCountsMap.get(mapKey) || { count: 0, documents: [], schemeName: selectedScheme.name, valueKey: valueKey };
+      currentEntry.count += 1;
+      if (!currentEntry.documents.includes(result.document_id)) {
+        currentEntry.documents.push(result.document_id);
+      }
+      valueCountsMap.set(mapKey, currentEntry);
+      
+      // Update max count
+      if (currentEntry.count > calculatedMaxCount) {
+        calculatedMaxCount = currentEntry.count;
+      }
+      
+    } catch (error) {
+      console.error('[Grouped Chart] Error processing result for grouping:', error, result);
+    }
+  });
+
+  // Convert map to array format suitable for recharts bar chart
+  // X-axis = valueString (now simplified to just the valueKey), Y-axis = count
+  const finalGroupedData = Array.from(valueCountsMap.values()).map(entry => ({
+    valueString: entry.valueKey, // Simplified X-axis label
+    count: entry.count,
+    documents: entry.documents,
+    schemeName: entry.schemeName,
+    valueKey: entry.valueKey
+  }));
+
+  console.log('[Grouped Chart] Final grouped data:', finalGroupedData, 'Max Count:', calculatedMaxCount);
+  // Sort grouped data alphabetically by valueString for consistent bar order
+  finalGroupedData.sort((a, b) => a.valueString.localeCompare(b.valueString));
+  return { data: finalGroupedData, maxCount: calculatedMaxCount };
+};
+
 const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documents, onDocumentSelect, onDataPointClick, filters }) => {
   const [isGrouped, setIsGrouped] = useState(false);
+  const [showStatistics, setShowStatistics] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  
+  // Add state for selected schema fields to plot
+  const [selectedSchemaIds, setSelectedSchemaIds] = useState<number[]>(() => 
+    // By default, select all schemas
+    schemes.map(s => s.id)
+  );
 
   // --- State for Grouping Selection ---
   const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(schemes[0]?.id ?? null);
@@ -367,6 +736,12 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
         setGroupingFieldKey(null); // No scheme selected
     }
   }, [groupingSchemeId, schemes, groupingFieldKey]); // Added groupingFieldKey dependency
+
+  // Filter schemes based on selection for plotting
+  const filteredSchemes = useMemo(() => 
+    schemes.filter(scheme => selectedSchemaIds.includes(scheme.id)),
+    [schemes, selectedSchemaIds]
+  );
 
   // Data processing for the chart
   const { chartData, groupedData, maxGroupCount } = useMemo(() => {
@@ -401,323 +776,15 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
          return { chartData: [], groupedData: [], maxGroupCount: 'auto' };
     }
 
-    // --- Data Processing for Line Chart (isGrouped = false) ---
-    const processLineChartData = () => {
-      console.log('[Line Chart] Processing filtered results:', filteredResults.length, 'Documents:', documents?.length);
-      const resultsByDateAndDoc = filteredResults.reduce<Record<string, Record<string, ClassificationResultRead[]>>>((acc, result) => {
-        // Find the corresponding document
-        const doc = documents?.find(d => d.id === result.document_id);
-        
-        // Determine the date key: Prioritize publication_date, fallback to insertion_date, then result.timestamp
-        let dateToUse: string | Date | null | undefined = null;
-        let dateSource = 'unknown'; // Variable to track the source of the date
-        if (doc) {
-          // @ts-ignore - Check if publication_date exists and is valid, even if not strictly in DocumentRead type
-          if (doc.publication_date && !isNaN(new Date(doc.publication_date).getTime())) {
-            // @ts-ignore
-            dateToUse = doc.publication_date;
-            dateSource = 'publication_date';
-          } else if (doc.insertion_date && !isNaN(new Date(doc.insertion_date).getTime())) {
-            dateToUse = doc.insertion_date;
-            dateSource = 'insertion_date';
-          }
-        }
-        
-        // Final fallback to result timestamp if no valid document date found
-        if (!dateToUse) {
-          dateToUse = result.timestamp;
-          dateSource = 'result_timestamp';
-        }
-
-        // Format the date key
-        let dateKey: string;
-        try {
-          // Ensure dateToUse is valid before formatting
-          const validDate = dateToUse ? new Date(dateToUse) : null;
-          if (validDate && !isNaN(validDate.getTime())) {
-            dateKey = format(validDate, 'yyyy-MM-dd');
-          } else {
-            throw new Error('Invalid date object');
-          }
-        } catch (e) {
-          console.warn(`Could not format date: ${dateToUse} for result ${result.id}. Using fallback.`);
-          dateKey = 'Unknown Date'; // Fallback for invalid dates
-        }
-
-        // Log the chosen date source for debugging
-        console.log(`[Line Chart] Result ${result.id}, Doc ${result.document_id}: Using ${dateSource} (${dateKey}) for X-axis.`);
-
-        const docKey = `doc-${result.document_id}`;
-        
-        if (!acc[dateKey]) {
-          acc[dateKey] = {};
-        }
-        
-        if (!acc[dateKey][docKey]) {
-          acc[dateKey][docKey] = [];
-        }
-        
-        // Push the result, ensuring type compatibility using the adapter
-        acc[dateKey][docKey].push(resultToResultRead(result));
-        return acc;
-      }, {});
-      
-      console.log('[Line Chart] Results grouped by date and document:', Object.keys(resultsByDateAndDoc).length);
-      
-      // Transform grouped data into chart format
-      const finalChartData = Object.entries(resultsByDateAndDoc).map(([date, docResults]) => {
-        const chartPoint: ChartDataPoint = {
-          dateString: date,
-          timestamp: new Date(date).getTime(),
-          count: Object.keys(docResults).length, // Count of unique documents on this date
-          documents: [...new Set(Object.values(docResults).flatMap(results => results.map(r => r.document_id)))]
-        };
-        
-        // For consolidated view, we'll create a map of documents to their scheme results
-        const docSchemeValues: Record<string, Record<string, any>> = {};
-        
-        // Process each document's results
-        Object.entries(docResults).forEach(([docKey, docSchemeResults]) => {
-          const documentId = docKey.replace('doc-', '');
-          docSchemeValues[documentId] = {};
-          
-          // Group this document's results by scheme
-          const schemeGroups = docSchemeResults.reduce<Record<number, ClassificationResultRead[]>>((acc, result) => {
-            if (!acc[result.scheme_id]) {
-              acc[result.scheme_id] = [];
-            }
-            acc[result.scheme_id].push(result);
-            return acc;
-          }, {});
-          
-          // Add scheme-specific data
-          Object.entries(schemeGroups).forEach(([schemeIdStr, schemeResults]) => {
-            const schemeId = Number(schemeIdStr);
-            const scheme = schemes.find(s => s.id === schemeId);
-            if (!scheme) {
-              console.log(`Scheme ${schemeId} not found`);
-              return;
-            }
-            
-            const schemeName = scheme.name;
-            console.log(`Processing scheme ${schemeName} with ${schemeResults.length} results`);
-            
-            if (isGrouped) {
-              // For grouped view, count occurrences of each value
-              const valueCounts = new Map<string, number>();
-              
-              schemeResults.forEach(result => {
-                try {
-                  let valueKey: string; // Key used for grouping/counting
-                  let actualValue: any; // Variable to hold the extracted value
-
-                  // Handle empty/null values
-                  if (!result.value || (typeof result.value === 'object' && Object.keys(result.value).length === 0)) {
-                    valueKey = 'N/A';
-                    actualValue = null; // Set actualValue for consistency
-                  }
-                  // Special handling for List[Dict[str, any]] type (entity statements)
-                  else if (scheme.fields?.[0]?.type === 'List[Dict[str, any]]') {
-                    if (Array.isArray(result.value)) {
-                      if (result.value.length > 0 && result.value.some(item => typeof item === 'object' && item?.entity)) {
-                        valueKey = 'Entities Found';
-                      } else {
-                        valueKey = `${result.value.length}_items`;
-                      }
-                      actualValue = result.value; // Keep the array for potential future use
-                    } else if (typeof result.value === 'object' && result.value !== null && 'default_field' in result.value) {
-                      valueKey = 'Summary';
-                      actualValue = result.value.default_field;
-                    } else {
-                      valueKey = 'Complex Data';
-                      actualValue = result.value;
-                    }
-                  }
-                  // Handle object values - extract the primary value
-                  else if (typeof result.value === 'object' && !Array.isArray(result.value)) {
-                    if (scheme.fields && scheme.fields.length > 0) {
-                      const fieldName = scheme.fields[0].name;
-                      actualValue = result.value[fieldName];
-                    } else {
-                      actualValue = Object.values(result.value)[0];
-                    }
-                     valueKey = String(actualValue ?? 'N/A');
-                  }
-                  // Handle simple values
-                  else {
-                    actualValue = result.value;
-                    valueKey = String(result.value ?? 'N/A');
-                  }
-
-                  // Increment count for the derived value key
-                  // Ensure the key accurately reflects the core value for counting
-                  valueKey = String(actualValue ?? 'N/A'); // Re-assign key based on extracted actualValue
-
-                  const count = valueCounts.get(valueKey) || 0;
-                  valueCounts.set(valueKey, count + 1);
-
-                } catch (error) {
-                  console.error('Error formatting value for grouping:', error);
-                  // Avoid polluting counts with errors, just log
-                }
-              });
-              
-              // Add counts to chart point using the derived keys
-              valueCounts.forEach((count, key) => {
-                // Ensure the key is filesystem-safe if necessary, although unlikely needed here.
-                // Let's use the raw key derived above.
-                chartPoint[`${schemeName}_${key}`] = count;
-              });
-            } else {
-              // For Line Chart: Get the plottable value for each scheme
-              const firstResult = schemeResults[0];
-              if (firstResult) {
-                const schemeId = Number(schemeIdStr);
-                const scheme = schemes.find(s => s.id === schemeId);
-                if (!scheme) return;
-                const schemeName = scheme.name;
-
-                const plottableValue = getPlottableValue(firstResult, scheme);
-                chartPoint[schemeName] = plottableValue; // Assign the numerical value or null
-
-                // Store the original value for the tooltip
-                docSchemeValues[documentId][schemeName] = firstResult.value;
-
-                // Log if value couldn't be plotted
-                if (plottableValue === null && firstResult.value !== null && !(Array.isArray(firstResult.value) && firstResult.value.length === 0) ) {
-                   console.log(`Value for scheme '${schemeName}' not plotted (type: ${scheme.fields[0]?.type}, value:`, firstResult.value, ")");
-                }
-              }
-            }
-          });
-        });
-        
-        // Store the document scheme values for use in tooltips
-        chartPoint.docSchemeValues = docSchemeValues;
-        
-        return chartPoint;
-      });
-      
-      console.log('[Line Chart] Final chart data:', finalChartData);
-      return finalChartData.sort((a, b) => a.timestamp - b.timestamp); // Sort by date
-    };
-
-    // --- Data Processing for Bar Chart (isGrouped = true) ---
-    const processGroupedChartData = () => {
-      console.log('[Grouped Chart] Processing filtered results:', filteredResults.length, 'Group By:', groupingSchemeId, groupingFieldKey);
-      const valueCountsMap = new Map<string, { count: number; documents: number[]; schemeName: string; valueKey: string }>();
-      let calculatedMaxCount = 0;
-
-      // Filter results based on selected grouping scheme
-      const resultsForGroupingScheme = filteredResults.filter(r => r.scheme_id === groupingSchemeId);
-      if (resultsForGroupingScheme.length === 0 || groupingSchemeId === null) {
-          console.log('[Grouped Chart] No results for selected scheme or no scheme selected.');
-          return { data: [], maxCount: 0 };
-      }
-
-      const selectedScheme = schemes.find(s => s.id === groupingSchemeId);
-      if (!selectedScheme) {
-         console.error('[Grouped Chart] Selected scheme not found.');
-         return { data: [], maxCount: 0 };
-      }
-
-      resultsForGroupingScheme.forEach(result => {
-        try {
-          let actualValue: any;
-          // --- MODIFIED: Extract value based on groupingFieldKey ---
-          const mockFilter: ResultFilter = {
-             schemeId: groupingSchemeId,
-             // Use nullish coalescing to provide undefined if groupingFieldKey is null
-             fieldKey: groupingFieldKey ?? undefined,
-             operator: 'equals', // Operator doesn't matter for extraction
-             value: '', // Value doesn't matter for extraction
-             isActive: true
-          };
-          const { definition: targetDefinition } = getTargetFieldDefinition(mockFilter, schemes);
-
-          if (!targetDefinition) {
-             console.warn("Could not find definition for grouping key:", groupingFieldKey, "in scheme:", selectedScheme.name);
-             actualValue = 'Error: Field Not Found';
-          } else {
-              // Logic to extract the specific value based on the targetDefinition and groupingFieldKey
-              if ('dict_keys' in targetDefinition && targetDefinition.type === 'List[Dict[str, any]]' && groupingFieldKey) {
-                  // List[Dict] - need to decide *how* to group. Group by presence? Count? First value?
-                  // Let's group by the *values* found for the specified key across all dicts in the list.
-                  // This might create many bars. For now, let's just say "Complex Data" as a placeholder.
-                  // A more robust approach would be needed here based on desired behavior.
-                  if (Array.isArray(result.value)) {
-                     // Collect all unique values for the key from the list of dicts
-                     const valuesInList = result.value
-                         .map(item => (typeof item === 'object' && item !== null && groupingFieldKey in item) ? item[groupingFieldKey] : undefined)
-                         .filter(v => v !== undefined);
-                     // Use the *first* value found for simplicity, or a summary string
-                     actualValue = valuesInList.length > 0 ? valuesInList[0] : 'N/A'; // Simplified: use first value
-                     // TODO: Or maybe count occurrences of the key? Needs clearer spec.
-                  } else {
-                      actualValue = 'Invalid Data Structure';
-                  }
-              } else if ('name' in targetDefinition) {
-                   // Top-level field or simple type
-                   const fieldValue = (typeof result.value === 'object' && result.value !== null && !Array.isArray(result.value))
-                      ? result.value[targetDefinition.name]
-                      : result.value;
-                   actualValue = fieldValue;
-              } else {
-                   actualValue = 'Unknown Field Structure';
-              }
-          }
-          // --- End MODIFIED value extraction ---
-
-          // Format the extracted value for consistent key generation
-          // Use the formatDisplayValue helper for consistency, converting result to string for map key
-          const formattedValue = formatDisplayValue(actualValue, selectedScheme);
-          const valueKey = String(formattedValue ?? 'N/A'); // Ensure valueKey is a string
-
-          // Use selectedScheme.name which is guaranteed to exist here
-          const mapKey = `${selectedScheme.name}_${valueKey}`;
-
-          const currentEntry = valueCountsMap.get(mapKey) || { count: 0, documents: [], schemeName: selectedScheme.name, valueKey: valueKey };
-          currentEntry.count += 1;
-          if (!currentEntry.documents.includes(result.document_id)) {
-            currentEntry.documents.push(result.document_id);
-          }
-          valueCountsMap.set(mapKey, currentEntry);
-          
-          // Update max count
-          if (currentEntry.count > calculatedMaxCount) {
-            calculatedMaxCount = currentEntry.count;
-          }
-          
-        } catch (error) {
-          console.error('[Grouped Chart] Error processing result for grouping:', error, result);
-        }
-      });
-
-      // Convert map to array format suitable for recharts bar chart
-      // X-axis = valueString (now simplified to just the valueKey), Y-axis = count
-      const finalGroupedData = Array.from(valueCountsMap.values()).map(entry => ({
-        valueString: entry.valueKey, // Simplified X-axis label
-        count: entry.count,
-        documents: entry.documents,
-        schemeName: entry.schemeName,
-        valueKey: entry.valueKey
-      }));
-
-      console.log('[Grouped Chart] Final grouped data:', finalGroupedData, 'Max Count:', calculatedMaxCount);
-      // Sort grouped data alphabetically by valueString for consistent bar order
-      finalGroupedData.sort((a, b) => a.valueString.localeCompare(b.valueString));
-      return { data: finalGroupedData, maxCount: calculatedMaxCount };
-    };
-
     // Return processed data based on the isGrouped state
     if (isGrouped) {
-      const groupedResult = processGroupedChartData();
+      const groupedResult = processGroupedChartData(filteredResults, schemes, groupingSchemeId, groupingFieldKey);
       return { chartData: [], groupedData: groupedResult.data, maxGroupCount: groupedResult.maxCount };
     } else {
-      const lineData = processLineChartData();
+      const lineData = processLineChartData(filteredResults, schemes, documents);
       return { chartData: lineData, groupedData: [], maxGroupCount: 'auto' }; // 'auto' for line chart Y-axis
     }
-  }, [results, schemes, isGrouped, documents, filters]);
+  }, [results, schemes, isGrouped, documents, filters, groupingSchemeId, groupingFieldKey]);
 
   // Determine which data source to use based on the switch
   const displayData = isGrouped ? groupedData : chartData;
@@ -752,17 +819,117 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
       return [];
   }, [groupingSchemeId, schemes]);
 
+  // renderArea function to create a proper area between min and max values
+  const renderMinMaxArea = useCallback((scheme: ClassificationSchemeRead, color: string) => {
+    const schemeColor = color;
+    
+    return (
+      <Area
+        key={`area-${scheme.id}`}
+        type="monotone"
+        dataKey={`${scheme.name}_min`}
+        stroke="none"
+        fill={schemeColor}
+        fillOpacity={0.2}
+        activeDot={false}
+        name={`${scheme.name} (min/max range)`}
+        isAnimationActive={false}
+      >
+        <YAxis yAxisId={0} domain={["auto", "auto"]} />
+        {/* Using the _max value for the upper bound of the area */}
+        <YAxis yAxisId={1} orientation="right" domain={[0, 10]} />
+      </Area>
+    );
+  }, []);
+
+  // Handle schema selection change
+  const handleSchemaSelectionChange = useCallback((value: string[]) => {
+    const schemaIds = value.map(v => parseInt(v));
+    setSelectedSchemaIds(schemaIds);
+  }, []);
+
   return (
     <div>
-      {/* --- Grouping Controls --- */}
+      {/* --- Chart Controls --- */}
       <div className="flex flex-wrap items-center gap-4 mb-4 p-3 border rounded-md bg-muted/10">
         {/* Group Toggle */}
-        <Switch
-          checked={isGrouped}
-          onCheckedChange={setIsGrouped}
-          id="group-switch"
-        />
-        <label htmlFor="group-switch">Group by value</label>
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={isGrouped}
+            onCheckedChange={setIsGrouped}
+            id="group-switch"
+          />
+          <label htmlFor="group-switch">Group by value</label>
+        </div>
+
+        {/* Statistics Toggle (only when not grouped) */}
+        {!isGrouped && (
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={showStatistics}
+              onCheckedChange={setShowStatistics}
+              id="stats-switch"
+            />
+            <label htmlFor="stats-switch">Show statistics (min/avg/max)</label>
+          </div>
+        )}
+
+        {/* Schema Selection (only when not in group mode) */}
+        {!isGrouped && schemes.length > 1 && (
+          <div className="flex items-center gap-2">
+            <Label htmlFor="schema-select" className="text-sm">Schemas to plot:</Label>
+            <div className="flex flex-wrap gap-1 max-w-[50vw]">
+              {schemes.map(scheme => (
+                <Button
+                  key={scheme.id}
+                  variant={selectedSchemaIds.includes(scheme.id) ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    if (selectedSchemaIds.includes(scheme.id)) {
+                      // Don't allow deselecting the last schema
+                      if (selectedSchemaIds.length > 1) {
+                        setSelectedSchemaIds(selectedSchemaIds.filter(id => id !== scheme.id));
+                      }
+                    } else {
+                      setSelectedSchemaIds([...selectedSchemaIds, scheme.id]);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 h-auto"
+                >
+                  {scheme.name}
+                </Button>
+              ))}
+              {/* Show "Select All" button only if not all schemas are selected */}
+              {selectedSchemaIds.length < schemes.length && (
+                <Button 
+                  variant="secondary" 
+                  size="sm" 
+                  onClick={() => setSelectedSchemaIds(schemes.map(s => s.id))}
+                  className="text-xs px-2 py-1 h-auto"
+                >
+                  Select All
+                </Button>
+              )}
+              {/* Show "Clear All" button only if more than one schema is selected */}
+              {selectedSchemaIds.length > 1 && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => {
+                    // Always keep at least one schema selected
+                    if (schemes.length > 0) {
+                      setSelectedSchemaIds([schemes[0].id]);
+                    }
+                  }}
+                  className="text-xs px-2 py-1 h-auto"
+                >
+                  Clear All
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Scheme Selector (only show when grouping) */}
         {isGrouped && (
           <div className="flex items-center gap-2">
@@ -815,7 +982,6 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                 <span className="text-sm px-3 py-1.5 bg-muted rounded">{currentGroupingKeys[0].name}</span>
             </div>
         )}
-
       </div>
 
       {/* --- Chart Area --- */}
@@ -837,9 +1003,13 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
               >
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="valueString" />
-                <YAxis domain={[0, maxGroupCount]} allowDataOverflow={true} />
-                <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} documents={documents} results={results} />} />
-                <Legend />
+                <YAxis 
+                  domain={[0, maxGroupCount]} 
+                  allowDataOverflow={true}
+                  label={{ value: "Count", angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
+                />
+                <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} documents={documents} results={results} showStatistics={showStatistics} />} />
+                <Legend payload={[]} />
                 <Bar dataKey="count" isAnimationActive={false}>
                   {displayData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={colorPalette[index % colorPalette.length]} />
@@ -847,7 +1017,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                 </Bar>
               </ComposedChart>
             ) : (
-              // Line chart for individual data
+              // Line chart for individual data with optional statistics
               <ComposedChart 
                 data={displayData} 
                 margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
@@ -856,9 +1026,11 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="dateString" />
                 <YAxis domain={[0, 'auto']} allowDataOverflow={true} />
-                <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} documents={documents} results={results} />} />
+                <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} documents={documents} results={results} showStatistics={showStatistics} />} />
                 <Legend />
-                {schemes.map((scheme, index) => {
+                
+                {/* Render individual points or statistics based on toggle */}
+                {filteredSchemes.map((scheme, index) => {
                   // Check if we have any data for this scheme
                   const hasData = displayData.some(point => {
                     const value = point[scheme.name];
@@ -869,12 +1041,65 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                   
                   if (!hasData) return null;
                   
+                  // Get unique color for this scheme
+                  const schemeColor = colorPalette[index % colorPalette.length];
+                  
+                  // If showing statistics and we have min/max data, render area + avg line
+                  if (showStatistics) {
+                    // Check if we have stats for this scheme
+                    const hasStats = displayData.some(point => {
+                      return (
+                        point[`${scheme.name}_min`] !== undefined && 
+                        point[`${scheme.name}_max`] !== undefined && 
+                        point[`${scheme.name}_avg`] !== undefined
+                      );
+                    });
+                    
+                    if (hasStats) {
+                      return (
+                        <React.Fragment key={`stats-${scheme.id}`}>
+                          {/* Create a reference area between min and max */}
+                          <Area
+                            type="monotone"
+                            dataKey={`${scheme.name}_min`}
+                            stroke="none"
+                            fillOpacity={0}
+                            name={`${scheme.name} (min)`}
+                            isAnimationActive={false}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey={`${scheme.name}_max`}
+                            stroke="none"
+                            fillOpacity={0.2}
+                            fill={schemeColor}
+                            name={`${scheme.name} (range)`}
+                            isAnimationActive={false}
+                          />
+                          
+                          {/* Average Line */}
+                          <Line
+                            type="monotone"
+                            dataKey={`${scheme.name}_avg`}
+                            stroke={schemeColor}
+                            strokeWidth={3}
+                            dot={renderDot}
+                            name={`${scheme.name} (avg)`}
+                            isAnimationActive={false}
+                            strokeOpacity={0.8}
+                          />
+                        </React.Fragment>
+                      );
+                    }
+                  }
+                  
+                  // Default: render individual points as a line
                   return (
                     <Line
                       key={`line-${scheme.id}`}
                       type="monotone"
                       dataKey={scheme.name}
-                      stroke={colorPalette[index % colorPalette.length]}
+                      stroke={schemeColor}
                       strokeWidth={3}
                       dot={renderDot}
                       isAnimationActive={false}
@@ -882,6 +1107,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                     />
                   );
                 })}
+                
                 {/* --- MODIFIED: Conditionally render ReferenceDot --- */}
                 {!isGrouped && selectedPoint && 'dateString' in selectedPoint && (
                    <ReferenceDot
@@ -935,16 +1161,15 @@ interface CustomTooltipProps extends TooltipProps<number, string> {
   schemes: ClassificationSchemeRead[];
   documents?: DocumentRead[];
   results: FormattedClassificationResult[];
+  showStatistics?: boolean;
 }
 
-const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, isGrouped, schemes, documents, results }) => {
+const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, isGrouped, schemes, documents, results, showStatistics }) => {
   if (!active || !payload || !payload.length) return null;
   
   // Get the data point from the payload
   const dataPoint = payload[0]?.payload as ChartDataPoint | GroupedDataPoint | undefined;
   if (!dataPoint) return null;
-  
-  // --- Tooltip Content Logic ---
   
   // --- Find documents and their values using dataPoint --- START
   // Get the list of document IDs associated with this specific data point (date or value group)
@@ -956,96 +1181,111 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
   // --- Find documents and their values using dataPoint --- END
   
   return (
-    <div className="custom-tooltip bg-secondary/75 p-3 border border-gray-300 rounded-lg shadow-lg max-w-md">
-      {/* --- MODIFIED: Show Group Info OR Date Info --- */}
-      <p className="text-xs text-muted-foreground mb-2">
-        {isGrouped && 'valueString' in dataPoint
-          ? `Group: ${dataPoint.schemeName} - ${dataPoint.valueKey}`
-          : `Date: ${label}`}
-      </p>
+    <div className="custom-tooltip bg-card/95 p-3 border border-border rounded-lg shadow-lg max-w-md">
+      {/* --- Date or Group Info --- */}
+      <div className="mb-3 pb-2 border-b border-border">
+        <p className="text-sm font-semibold text-foreground">
+          {isGrouped && 'valueString' in dataPoint
+            ? `Group: ${dataPoint.schemeName} - ${dataPoint.valueString}`
+            : `Date: ${label}`}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          {docsToShow.length} document{docsToShow.length !== 1 ? 's' : ''}
+        </p>
+      </div>
 
-      {/* --- MODIFIED: Always show document list if available --- */}
-      {docsToShow.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-gray-200">
-          <p className="text-xs font-medium mb-1">Documents ({docsToShow.length}):</p>
-          {docsToShow.slice(0, 3).map((doc) => (
-            <div key={doc.id} className="text-xs truncate">
-              <DocumentLink documentId={doc.id}>{doc.title || `Document ${doc.id}`}</DocumentLink>
-            </div>
-          ))}
-          {docsToShow.length > 3 && (
-            <div className="text-xs text-gray-500 italic mt-1">
-              ...and {docsToShow.length - 3} more document(s)
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* --- MODIFIED: Show Scheme Values ONLY for Line Chart --- */}
-      {!isGrouped && 'docSchemeValues' in dataPoint && (
-        <div className="mt-2 pt-2 border-t border-gray-200">
-          {docsToShow.slice(0, 3).map((doc) => {
-            const docValues = dataPoint.docSchemeValues?.[doc.id];
-            if (!docValues) return null;
-
-            const docSchemesWithValue = Object.keys(docValues)
-              .map(schemeName => schemes.find(s => s.name === schemeName))
-              .filter((s): s is ClassificationSchemeRead => !!s);
-
-            if (docSchemesWithValue.length === 0) return null; // Skip if no relevant schemes found for this doc in the point
-
-            return (
-              <div key={doc.id} className="mb-2 pb-2 border-b border-gray-200 last:border-b-0">
-                <p className="text-xs font-medium">{doc.title || `Document ${doc.id}`}</p>
-                <div className="grid grid-cols-1 gap-1 mt-1">
-                  {docSchemesWithValue.map(s => {
-                    const originalValue = docValues[s.name];
-                    const pseudoResult = { value: originalValue };
-
-                    // Handle complex entity statements separately for detailed view
-                    if (s.fields?.[0]?.type === 'List[Dict[str, any]]') {
-                       const formattedItems = ClassificationService.formatEntityStatements(originalValue, { compact: false, maxItems: 3 });
-                       return (
-                         <div key={s.id} className="text-xs p-1 bg-muted/10 rounded">
-                           <span className="font-medium">{s.name}: </span>
-                           <div className="mt-1 space-y-1">
-                             {Array.isArray(formattedItems) && formattedItems.map((item: any, idx: number) => {
-                               if (typeof item === 'string') return <div key={idx} className="pl-2 border-l-2 border-primary/30"><span>{item}</span></div>;
-                               return (
-                                 <div key={idx} className="pl-2 border-l-2 border-primary/30">
-                                   {item.entity && <span className="font-medium">{String(item.entity)}: </span>}
-                                   {item.statement && <span>{String(item.statement)}</span>}
-                                   {item.raw && <span>{item.raw}</span>}
-                                   {item.summary && <span className="text-muted-foreground">{item.summary}</span>}
-                                 </div>
-                               );
-                             })}
-                           </div>
-                         </div>
-                       );
-                     }
-
-                    // Format other types
-                    const displayValue = getFormattedClassificationValue(pseudoResult, s);
-                    return (
-                      <div key={s.id} className="text-xs">
-                        <span className="font-medium">{s.name}: </span>
-                        <span>{String(displayValue)}</span>
-                      </div>
-                    );
-                  })}
+      {/* --- Statistics Section (when not grouped and statistics mode is active) --- */}
+      {!isGrouped && showStatistics && 'stats' in dataPoint && dataPoint.stats && (
+        <div className="mb-3 pb-2 border-b border-border">
+          <p className="text-sm font-medium mb-2">Statistics:</p>
+          <div className="grid grid-cols-1 gap-2">
+            {Object.entries(dataPoint.stats)
+              .filter(([_, stats]) => stats.count > 0)
+              .map(([schemeName, stats]) => (
+                <div key={schemeName} className="px-2 py-1.5 bg-muted/30 rounded-sm">
+                  <p className="text-sm font-medium mb-1">{schemeName}:</p>
+                  <div className="grid grid-cols-3 gap-1 text-xs">
+                    <div className="flex flex-col items-center p-1 bg-blue-500/10 rounded">
+                      <span className="text-blue-500 font-semibold">Min</span>
+                      <span>{stats.min.toFixed(1)}</span>
+                    </div>
+                    <div className="flex flex-col items-center p-1 bg-green-500/10 rounded">
+                      <span className="text-green-500 font-semibold">Avg</span>
+                      <span>{stats.avg.toFixed(1)}</span>
+                    </div>
+                    <div className="flex flex-col items-center p-1 bg-red-500/10 rounded">
+                      <span className="text-red-500 font-semibold">Max</span>
+                      <span>{stats.max.toFixed(1)}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 text-center">
+                    {stats.count} data point{stats.count !== 1 ? 's' : ''}
+                  </p>
                 </div>
-              </div>
-            );
-          })}
-          {docsToShow.length > 3 && !isGrouped && ( // Show this only if not grouped and truncated
-             <div className="text-xs text-gray-500 italic">
-                 Showing details for 3 of {docsToShow.length} documents on this date.
-             </div>
-           )}
+              ))}
+          </div>
         </div>
       )}
 
+      {/* --- Top Categories Section --- */}
+      {!isGrouped && 'categoryFrequency' in dataPoint && dataPoint.categoryFrequency && (
+        <div className="mb-3 pb-2 border-b border-border">
+          <p className="text-sm font-medium mb-2">Top Categories:</p>
+          <div className="grid grid-cols-1 gap-2">
+            {Object.entries(dataPoint.categoryFrequency)
+              .filter(([_, categories]) => Object.keys(categories).length > 0)
+              .map(([schemeName, categories]) => {
+                // Get top categories
+                const topCategories = Object.entries(categories)
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 3);
+                
+                if (topCategories.length === 0) return null;
+                
+                return (
+                  <div key={schemeName} className="px-2 py-1.5 bg-muted/30 rounded-sm">
+                    <p className="text-sm font-medium mb-1">{schemeName}:</p>
+                    <div className="space-y-1">
+                      {topCategories.map(([category, count], idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs">
+                          <span className="font-medium truncate max-w-[70%]" title={category}>
+                            {category}
+                          </span>
+                          <span className="bg-primary/20 px-1.5 py-0.5 rounded-full text-primary-foreground">
+                            {count}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* --- Documents List --- */}
+      {docsToShow.length > 0 && (
+        <div>
+          <p className="text-sm font-medium mb-2">Documents:</p>
+          <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+            {docsToShow.slice(0, 5).map((doc) => (
+              <div key={doc.id} className="flex items-center px-2 py-1 bg-muted/20 rounded-sm">
+                <span className="text-xs truncate">
+                  <DocumentLink documentId={doc.id}>
+                    {doc.title || `Document ${doc.id}`}
+                  </DocumentLink>
+                </span>
+              </div>
+            ))}
+            {docsToShow.length > 5 && (
+              <div className="text-xs text-muted-foreground italic text-center mt-1">
+                ...and {docsToShow.length - 5} more document{docsToShow.length - 5 !== 1 ? 's' : ''}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
