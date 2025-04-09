@@ -547,12 +547,15 @@ const processLineChartData = (
     // Set actual min/max/avg keys for direct chart access
     if (chartPoint.stats) {
       Object.entries(chartPoint.stats).forEach(([schemeName, stats]) => {
-        // Add statistical values with prefix for direct plotting
-        chartPoint[`${schemeName}_min`] = stats.min !== Infinity ? stats.min : null;
-        chartPoint[`${schemeName}_max`] = stats.max !== -Infinity ? stats.max : null;
-        chartPoint[`${schemeName}_avg`] = stats.count > 0 ? stats.avg : null;
-        
-        // For highest frequency categorical values, get top 3
+        const finalMin = stats.min !== Infinity ? stats.min : null;
+        const finalMax = stats.max !== -Infinity ? stats.max : null;
+        // Ensure avg is null if count is 0 to prevent NaN division or incorrect avg
+        const finalAvg = stats.count > 0 ? stats.avg : null; 
+
+        chartPoint[`${schemeName}_min`] = finalMin;
+        chartPoint[`${schemeName}_max`] = finalMax;
+        chartPoint[`${schemeName}_avg`] = finalAvg;
+
         if (chartPoint.categoryFrequency && chartPoint.categoryFrequency[schemeName]) {
           const categories = Object.entries(chartPoint.categoryFrequency[schemeName])
             .sort((a, b) => b[1] - a[1]) // Sort by frequency descending
@@ -971,7 +974,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
 
       {/* --- Chart Area --- */}
       {(results.length === 0 || (isGrouped && groupedData.length === 0)) ? (
-        <div className="flex flex-col items-center justify-center p-8 text-center border border-dashed rounded-lg">
+        <div className="flex flex-col items-center justify-center mt-16 p-8 text-center border border-dashed rounded-lg">
           <Info className="h-10 w-10 text-muted-foreground mb-2" />
           <p className="text-muted-foreground">No results to display. Try adjusting your filters.</p>
           {isGrouped && results.length > 0 && <p className="text-xs text-muted-foreground">(Or select a different scheme/field for grouping)</p>}
@@ -986,7 +989,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
                 margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                 onClick={handleClick}
               >
-                <CartesianGrid strokeDasharray="3 3" />
+                {/* <CartesianGrid strokeDasharray="0 0" /> */}
                 <XAxis dataKey="valueString" />
                 <YAxis 
                   domain={[0, maxGroupCount]} 
@@ -1003,14 +1006,18 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
               </ComposedChart>
             ) : (
               // Line chart for individual data with optional statistics
-              <ComposedChart 
-                data={displayData} 
-                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+              <ComposedChart
+                data={displayData}
+                margin={{ top: -5, right: 30, left: 20, bottom: 25 }}
                 onClick={handleClick}
               >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="dateString" />
-                <YAxis domain={[0, 'auto']} allowDataOverflow={true} />
+                {/* <CartesianGrid strokeDasharray="3 3" /> */}
+                <XAxis dataKey="dateString" angle={-15} textAnchor="end" height={50} />
+                <YAxis
+                  domain={[0, 'auto']}
+                  allowDataOverflow={false}
+                  width={60}
+                />
                 <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} documents={documents} results={results} showStatistics={showStatistics} />} />
                 <Legend />
                 
