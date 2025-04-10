@@ -265,10 +265,6 @@ export const $ClassificationFieldCreate = {
 
 export const $ClassificationResultCreate = {
 	properties: {
-		run_id: {
-	type: 'number',
-	isRequired: true,
-},
 		document_id: {
 	type: 'number',
 	isRequired: true,
@@ -276,6 +272,14 @@ export const $ClassificationResultCreate = {
 		scheme_id: {
 	type: 'number',
 	isRequired: true,
+},
+		run_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 		value: {
 	type: 'dictionary',
@@ -289,22 +293,6 @@ export const $ClassificationResultCreate = {
 	contains: [{
 	type: 'string',
 	format: 'date-time',
-}, {
-	type: 'null',
-}],
-},
-		run_name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		run_description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
 }, {
 	type: 'null',
 }],
@@ -314,10 +302,6 @@ export const $ClassificationResultCreate = {
 
 export const $ClassificationResultRead = {
 	properties: {
-		run_id: {
-	type: 'number',
-	isRequired: true,
-},
 		document_id: {
 	type: 'number',
 	isRequired: true,
@@ -325,6 +309,14 @@ export const $ClassificationResultRead = {
 		scheme_id: {
 	type: 'number',
 	isRequired: true,
+},
+		run_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 		value: {
 	type: 'dictionary',
@@ -335,24 +327,7 @@ export const $ClassificationResultRead = {
 },
 		timestamp: {
 	type: 'string',
-	isRequired: true,
 	format: 'date-time',
-},
-		run_name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		run_description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
 },
 		id: {
 	type: 'number',
@@ -364,6 +339,74 @@ export const $ClassificationResultRead = {
 },
 		scheme: {
 	type: 'ClassificationSchemeRead',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ClassificationRunCreate = {
+	properties: {
+		status: {
+	properties: {
+	},
+},
+	},
+} as const;
+
+export const $ClassificationRunRead = {
+	properties: {
+		status: {
+	properties: {
+	},
+},
+	},
+} as const;
+
+export const $ClassificationRunStatus = {
+	type: 'Enum',
+	enum: ['pending','running','completed','failed',],
+} as const;
+
+export const $ClassificationRunUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'ClassificationRunStatus',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $ClassificationRunsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'ClassificationRunRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
 	isRequired: true,
 },
 	},
@@ -443,6 +486,14 @@ export const $ClassificationSchemeRead = {
 	type: 'number',
 	isRequired: true,
 },
+		workspace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
 		created_at: {
 	type: 'string',
 	isRequired: true,
@@ -482,12 +533,20 @@ export const $ClassificationSchemeRead = {
 export const $ClassificationSchemeUpdate = {
 	properties: {
 		name: {
+	type: 'any-of',
+	contains: [{
 	type: 'string',
-	isRequired: true,
+}, {
+	type: 'null',
+}],
 },
 		description: {
+	type: 'any-of',
+	contains: [{
 	type: 'string',
-	isRequired: true,
+}, {
+	type: 'null',
+}],
 },
 		model_instructions: {
 	type: 'any-of',
@@ -510,11 +569,15 @@ export const $ClassificationSchemeUpdate = {
 }],
 },
 		fields: {
+	type: 'any-of',
+	contains: [{
 	type: 'array',
 	contains: {
 		type: 'ClassificationFieldCreate',
 	},
-	isRequired: true,
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -526,7 +589,8 @@ export const $DictKeyDefinition = {
 	isRequired: true,
 },
 		type: {
-	type: 'string',
+	type: 'Enum',
+	enum: ['str','int','float','bool',],
 	isRequired: true,
 },
 	},
@@ -588,7 +652,6 @@ export const $DocumentRead = {
 },
 		insertion_date: {
 	type: 'string',
-	isRequired: true,
 	format: 'date-time',
 },
 		id: {
@@ -616,8 +679,12 @@ export const $DocumentRead = {
 export const $DocumentUpdate = {
 	properties: {
 		title: {
+	type: 'any-of',
+	contains: [{
 	type: 'string',
-	isRequired: true,
+}, {
+	type: 'null',
+}],
 },
 		url: {
 	type: 'any-of',
@@ -668,18 +735,20 @@ export const $DocumentUpdate = {
 }],
 },
 		insertion_date: {
+	type: 'any-of',
+	contains: [{
 	type: 'string',
 	format: 'date-time',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
 
 export const $EnhancedClassificationResultRead = {
+	description: `Adds a processed 'display_value' based on the raw 'value' and scheme.`,
 	properties: {
-		run_id: {
-	type: 'number',
-	isRequired: true,
-},
 		document_id: {
 	type: 'number',
 	isRequired: true,
@@ -687,6 +756,14 @@ export const $EnhancedClassificationResultRead = {
 		scheme_id: {
 	type: 'number',
 	isRequired: true,
+},
+		run_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 		value: {
 	type: 'dictionary',
@@ -697,24 +774,7 @@ export const $EnhancedClassificationResultRead = {
 },
 		timestamp: {
 	type: 'string',
-	isRequired: true,
 	format: 'date-time',
-},
-		run_name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		run_description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
 },
 		id: {
 	type: 'number',
@@ -736,6 +796,12 @@ export const $EnhancedClassificationResultRead = {
 	type: 'string',
 }, {
 	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'array',
 	contains: {
 	properties: {
 	},
@@ -1410,6 +1476,10 @@ export const $WorkspaceRead = {
 	type: 'string',
 	isRequired: true,
 	format: 'date-time',
+},
+		user_id_ownership: {
+	type: 'number',
+	isRequired: true,
 },
 	},
 } as const;

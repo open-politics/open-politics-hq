@@ -4,6 +4,7 @@ from typing import List, Optional, Union, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import joinedload
 from pydantic import BaseModel, model_validator, Field
+import time
 
 from app.models import (
     ClassificationResult,
@@ -158,9 +159,7 @@ def create_classification_result(
             scheme_id=result_in.scheme_id,
             value=classification_output,
             timestamp=result_in.timestamp or datetime.now(timezone.utc),
-            run_id=result_in.run_id,
-            run_name=result_in.run_name,
-            run_description=result_in.run_description
+            run_id=result_in.run_id, # Pass run_id directly from input
         )
         
         session.add(classification_result)

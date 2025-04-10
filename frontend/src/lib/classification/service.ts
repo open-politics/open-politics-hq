@@ -2,7 +2,8 @@ import {
   ClassificationResultsService, 
   ClassificationSchemesService, 
   DocumentsService,
-  ClassificationService as ClientClassificationService
+  ClassificationService as ClientClassificationService,
+  ClassificationRunsService
 } from '@/client/services';
 import { 
   ClassificationResultRead, 
@@ -10,7 +11,10 @@ import {
   DocumentRead,
   Body_documents_create_document,
   ClassificationResultCreate,
-  ClassificationSchemeCreate
+  ClassificationSchemeCreate,
+  ClassificationRunCreate,
+  ClassificationRunRead,
+  ClassificationRunUpdate
 } from '@/client/models';
 import { 
   ClassifiableContent, 
@@ -81,7 +85,7 @@ export class ClassificationService {
   // Cache for classification results
   private static resultsCache = new Map<string, {
     timestamp: number;
-    results: FormattedClassificationResult[];
+    results: ClassificationResultRead[];
   }>();
   
   // Cache expiration time (5 minutes)
@@ -428,7 +432,7 @@ export class ClassificationService {
       limit?: number,
       useCache?: boolean
     } = {}
-  ): Promise<ClassificationResult[]> {
+  ): Promise<ClassificationResultRead[]> {
     const { documentId, schemeId, runId, runName, limit, useCache = true } = options;
     
     // Check cache if enabled and we have a document ID
@@ -438,7 +442,7 @@ export class ClassificationService {
       
       if (cachedData && (Date.now() - cachedData.timestamp < this.CACHE_EXPIRATION)) {
         console.log('Using cached results for:', cacheKey);
-        return cachedData.results as unknown as ClassificationResult[];
+        return cachedData.results;
       }
     }
     
@@ -462,25 +466,6 @@ export class ClassificationService {
         queryParams.runName = runName;
       }
       
-      // If we have a run ID, use the specific endpoint
-      if (runId) {
-        const results = await ClassificationResultsService.getResultsByRun({
-          workspaceId,
-          runId
-        });
-        
-        // Cache results if we have a document ID
-        if (useCache && documentId) {
-          const cacheKey = this.getResultsCacheKey(documentId, runId, workspaceId);
-          this.resultsCache.set(cacheKey, {
-            timestamp: Date.now(),
-            results: results as any
-          });
-        }
-        
-        return results as unknown as ClassificationResult[];
-      }
-      
       // Otherwise use the general endpoint
       const results = await ClassificationResultsService.listClassificationResults(queryParams);
       
@@ -489,14 +474,34 @@ export class ClassificationService {
         const cacheKey = this.getResultsCacheKey(documentId, runId, workspaceId);
         this.resultsCache.set(cacheKey, {
           timestamp: Date.now(),
-          results: results as any
+          results: results
         });
       }
       
-      return results as unknown as ClassificationResult[];
+      return results;
     } catch (error: any) {
       console.error('Error fetching classification results:', error);
       throw new Error(`Failed to fetch classification results: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get classification results specifically for a given run ID.
+   */
+  static async getResultsByRunAPI(
+    workspaceId: number,
+    runId: number,
+    limit: number = 1000
+  ): Promise<ClassificationResultRead[]> {
+    try {
+      const results = await ClassificationResultsService.getResultsByRun({
+        workspaceId,
+        runId,
+      });
+      return results;
+    } catch (error: any) {
+      console.error(`Error fetching results for run ${runId}:`, error);
+      throw new Error(`Failed to fetch results for run ${runId}: ${error.message}`);
     }
   }
 
@@ -545,10 +550,12 @@ export class ClassificationService {
 
   /**
    * Extract and format a value from a classification result
+   * --- MODIFIED: Takes run details for context ---
    */
   static getFormattedValue(
-    result: ClassificationResult, 
-    scheme: ClassificationScheme
+    result: ClassificationResult, // Internal type, might already have run details
+    scheme: ClassificationScheme,
+    runDetails?: ClassificationRun // Optional run details for context
   ): string | number | string[] {
     if (!result.value) return '';
     
@@ -791,97 +798,59 @@ export class ClassificationService {
   }
 
   /**
-   * Classify content with a specific scheme
+   * Classify content with a specific scheme using the V2 endpoint.
+   * This method handles the direct call to the classification API.
+   * --- MODIFIED: Returns ClassificationResultRead, accepts ClassificationParams ---
    */
   static async classify(
-    workspaceId: number,
+    workspaceId: number, // Although not used by V2 endpoint, keep for consistency?
     params: ClassificationParams
-  ): Promise<ClassificationResult> {
+  ): Promise<ClassificationResultRead> {
     try {
       // Ensure we have a valid document ID
       const documentId = params.documentId;
-      
-      // If we have an API key, use the direct classification API
-      if (params.provider && params.apiKey) {
-        console.log('Using direct classification API with API key');
-        try {
-          const result = await ClientClassificationService.classifyDocument({
-            documentId,
-            schemeId: params.schemeId,
-            provider: params.provider,
-            model: params.model,
-            runId: params.runId,
-            runName: params.runName,
-            runDescription: params.runDescription,
-            xApiKey: params.apiKey
-          });
-          
-          return {
-            id: result.id,
-            document_id: result.document_id,
-            scheme_id: result.scheme_id,
-            value: result.value,
-            timestamp: result.timestamp,
-            run_id: result.run_id,
-            run_name: result.run_name || '',
-            run_description: result.run_description || undefined
-          };
-        } catch (error) {
-          console.error('Error using direct classification API:', error);
-          // Fall through to the regular API if direct classification fails
-        }
+      if (!documentId) {
+        throw new Error("Document ID is required for classification.");
       }
-      
-      // Fall back to the regular API
-      console.log('Using regular classification API');
-      
-      // Create a classification result
-      const requestBody: ClassificationResultCreate = {
-        document_id: documentId,
-        scheme_id: params.schemeId,
-        value: {},
-        run_id: params.runId || this.generateRunId(),
-        run_name: params.runName || 'Ad-hoc classification',
-        run_description: params.runDescription
+
+      // V2 endpoint expects provider/model in body, API key in header, run info in query
+      const requestBody = {
+          provider: params.provider,
+          model: params.model,
       };
-      
-      // Add model and provider as custom properties if provided
-      const requestBodyWithExtras: any = {
-        ...requestBody
-      };
-      
-      if (params.provider) {
-        requestBodyWithExtras.provider = params.provider;
-      }
-      
-      if (params.model) {
-        requestBodyWithExtras.model = params.model;
-      }
-      
-      const result = await ClassificationResultsService.createClassificationResult({
-        workspaceId,
-        requestBody: requestBodyWithExtras
+
+      // Call the V2 endpoint
+      console.log(`Calling V2 classify: doc=${documentId}, scheme=${params.schemeId}, run=${params.runId}`);
+      const result = await ClientClassificationService.classifyDocument({
+          documentId: documentId,
+          schemeId: params.schemeId,
+          // Query parameters for run info
+          runId: params.runId,
+          runName: params.runName,
+          runDescription: params.runDescription,
+          // API key in header
+          xApiKey: params.apiKey,
+          // Provider/Model in body (if backend V2 expects it)
+          // requestBody: requestBody - Check if needed
       });
-      
-      return {
-        id: result.id,
-        document_id: result.document_id,
-        scheme_id: result.scheme_id,
-        value: result.value,
-        timestamp: result.timestamp,
-        run_id: result.run_id,
-        run_name: result.run_name,
-        run_description: result.run_description
-      };
-    } catch (error) {
-      console.error('Error classifying content:', error);
-      throw error;
+
+      // The V2 endpoint returns ClassificationResultRead, which we return directly
+      return result;
+
+    } catch (error: any) {
+      console.error('Error classifying content via V2 endpoint:', error);
+      // Rethrow with more specific context if possible
+      if (error.status === 401) {
+          throw new Error(`Unauthorized: Invalid API Key for provider ${params.provider}`);
+      }
+      throw new Error(`Classification failed for doc ${params.documentId}, scheme ${params.schemeId}: ${error.message}`);
     }
   }
 
   /**
    * Classify arbitrary content with a specific scheme
    * This will create a document if needed
+   * --- MODIFIED: Returns ClassificationResultRead ---
    */
   static async classifyContent(
     content: ClassifiableContent,
@@ -896,7 +865,7 @@ export class ClassificationService {
       apiKey?: string,
       onProgress?: (status: string) => void
     } = {}
-  ): Promise<ClassificationResult> {
+  ): Promise<ClassificationResultRead> {
     const { runId, runName, runDescription, provider, model, apiKey, onProgress } = options;
     
     // Validate content
@@ -924,7 +893,7 @@ export class ClassificationService {
       onProgress?.('Classifying content...');
       
       // Prepare classification parameters
-      const params = {
+      const params: ClassificationParams = {
         documentId,
         schemeId,
         runId,
@@ -952,6 +921,7 @@ export class ClassificationService {
 
   /**
    * Batch classify multiple content items
+   * --- MODIFIED: Returns ClassificationResultRead[] ---
    */
   static async batchClassify(
     contents: ClassifiableContent[],
@@ -966,13 +936,14 @@ export class ClassificationService {
       apiKey?: string,
       onProgress?: (status: string, current: number, total: number) => void
     } = {}
-  ): Promise<ClassificationResult[]> {
+  ): Promise<ClassificationResultRead[]> {
     try {
-      // Generate a single run ID for all classifications in this batch
-      const runId = options.runId || this.generateRunId();
-      const runName = options.runName || `Batch classification - ${new Date().toLocaleString()}`;
-      
-      const results: ClassificationResult[] = [];
+      // Generate a single run ID for all classifications in this batch if not provided
+      const runId = options.runId; // Use provided runId directly
+      const runName = options.runName;
+      const runDescription = options.runDescription;
+
+      const results: ClassificationResultRead[] = [];
       
       // Process each content item
       for (let i = 0; i < contents.length; i++) {
@@ -1033,195 +1004,77 @@ export class ClassificationService {
     return Math.min(runId, 2147483647);
   }
 
-  // New method to get run information
-  static async getRuns(workspaceId: number): Promise<ClassificationRun[]> {
-    try {
-      // Get all classification results to extract unique run IDs
-      const allResults = await this.getResults(workspaceId, {
-        limit: 1000 // Fetch a large number to get as many runs as possible
-      });
-      
-      // Create a map to track unique runs and their document/scheme counts
-      const runsMap = new Map<number, {
-        id: number;
-        name: string;
-        timestamp: string;
-        documentIds: Set<number>;
-        schemeIds: Set<number>;
-        description?: string;
-      }>();
-      
-      // Process each result to extract run information
-      allResults.forEach(result => {
-        if (result.run_id && result.run_name) {
-          if (!runsMap.has(result.run_id)) {
-            runsMap.set(result.run_id, {
-              id: result.run_id,
-              name: result.run_name,
-              timestamp: result.timestamp,
-              documentIds: new Set([result.document_id]),
-              schemeIds: new Set([result.scheme_id]),
-              description: nullToUndefined(result.run_description)
-            });
-          } else {
-            const runInfo = runsMap.get(result.run_id)!;
-            runInfo.documentIds.add(result.document_id);
-            runInfo.schemeIds.add(result.scheme_id);
-          }
-        }
-      });
-      
-      // Convert map to array of ClassificationRun objects
-      const runsArray = Array.from(runsMap.values()).map(runInfo => ({
-        id: runInfo.id,
-        name: runInfo.name,
-        timestamp: runInfo.timestamp,
-        documentCount: runInfo.documentIds.size,
-        schemeCount: runInfo.schemeIds.size,
-        description: runInfo.description
-      })) as ClassificationRun[];
-      
-      // Sort by timestamp (newest first)
-      runsArray.sort((a, b) => {
-        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-      });
-      
-      return runsArray;
-    } catch (error: any) {
-      console.error('Error fetching runs:', error);
-      throw new Error(`Failed to fetch classification runs: ${error.message}`);
-    }
+  // --- ADDED: Method to fetch runs from API --- 
+  static async getRunsAPI(workspaceId: number): Promise<ClassificationRunRead[]> {
+      try {
+          const response = await ClassificationRunsService.readClassificationRuns({
+              workspaceId: workspaceId,
+              limit: 500 // Fetch a reasonable number of recent runs
+          });
+          return response.data;
+      } catch (error: any) {
+          console.error('Error fetching runs from API:', error);
+          throw new Error(`Failed to fetch classification runs: ${error.message}`);
+      }
   }
   
-  // New method to load a specific run
-  static async getRun(workspaceId: number, runId: number): Promise<{
-    run: ClassificationRun;
-    results: FormattedClassificationResult[];
-    schemes: ClassificationScheme[];
-  }> {
-    try {
-      // Get all results for this run
-      const runResults = await this.getResults(workspaceId, {
-        runId,
-        limit: 1000
-      });
-      
-      if (runResults.length === 0) {
-        throw new Error(`No results found for run ID ${runId}`);
+  // --- ADDED: Method to fetch a single run from API ---
+  static async getRunAPI(workspaceId: number, runId: number): Promise<ClassificationRunRead> {
+      try {
+          const run = await ClassificationRunsService.readClassificationRun({
+              runId: runId
+          });
+          return run;
+      } catch (error: any) {
+          console.error(`Error fetching run ${runId} from API:`, error);
+          throw new Error(`Failed to fetch run ${runId}: ${error.message}`);
       }
-      
-      // Extract unique document IDs and scheme IDs
-      const documentIds = [...new Set(runResults.map(r => r.document_id))];
-      const schemeIds = [...new Set(runResults.map(r => r.scheme_id))];
-      
-      // Get run info from the first result
-      const firstResult = runResults[0];
-      const run = {
-        id: runId,
-        name: firstResult.run_name || `Run ${runId}`,
-        timestamp: firstResult.timestamp,
-        documentCount: documentIds.length,
-        schemeCount: schemeIds.length,
-        description: nullToUndefined(firstResult.run_description)
-      } as ClassificationRun;
-      
-      // Load all schemes used in this run
-      const loadedSchemes = await Promise.all(
-        schemeIds.map(schemeId => this.getScheme(workspaceId, schemeId))
-      );
-      
-      // Format results with their display values
-      const formattedResults = runResults.map(result => {
-        const scheme = loadedSchemes.find(s => s.id === result.scheme_id);
-        if (!scheme) return null;
-        return this.formatResult(result, scheme);
-      }).filter(Boolean) as FormattedClassificationResult[];
-      
-      return {
-        run,
-        results: formattedResults,
-        schemes: loadedSchemes
+  }
+
+  // --- ADDED: Method to create a run via API ---
+  static async createRunAPI(workspaceId: number, runData: Partial<ClassificationRunCreate>): Promise<ClassificationRunRead> {
+    try {
+      const requestBody: ClassificationRunCreate = {
+        workspace_id: workspaceId,
+        name: runData.name ?? null, // Use null if undefined
+        description: runData.description ?? null,
+        status: runData.status ?? 'pending' // Default status
+        // document_count and scheme_count are usually calculated or not set on create
       };
+      const createdRun = await ClassificationRunsService.createClassificationRun({
+        workspaceId: workspaceId,
+        requestBody: requestBody
+      });
+      return createdRun;
     } catch (error: any) {
-      console.error('Error loading run:', error);
-      throw new Error(`Failed to load run: ${error.message}`);
+      console.error('Error creating run via API:', error);
+      throw new Error(`Failed to create classification run: ${error.message}`);
     }
   }
-  
-  // New method to create a classification run
-  static async createRun(
-    contents: ClassifiableContent[],
-    schemeIds: number[],
-    workspaceId: number,
-    options: {
-      name?: string;
-      description?: string;
-      provider?: string;
-      model?: string;
-      apiKey?: string;
-      onProgress?: (status: string, current: number, total: number) => void;
-    } = {}
-  ): Promise<ClassificationRun> {
-    const { name, description, provider, model, apiKey, onProgress } = options;
-    
-    if (contents.length === 0 || schemeIds.length === 0) {
-      throw new Error('No content or schemes provided for classification run');
-    }
-    
+
+  // --- ADDED: Method to update a run via API ---
+  static async updateRunAPI(workspaceId: number, runId: number, runData: ClassificationRunUpdate): Promise<ClassificationRunRead> {
     try {
-      // Generate a run ID and name
-      const runId = this.generateRunId();
-      const runName = name || `Classification Run - ${new Date().toLocaleString()}`;
-      
-      onProgress?.('Starting classification run...', 0, contents.length * schemeIds.length);
-      
-      // Process each content item with each scheme
-      const allResults: ClassificationResult[] = [];
-      let completedCount = 0;
-      
-      for (const schemeId of schemeIds) {
-        // Use batch classify for each scheme
-        const schemeResults = await this.batchClassify(
-          contents,
-          schemeId,
-          workspaceId,
-          {
-            runId,
-            runName,
-            runDescription: description,
-            provider,
-            model,
-            apiKey
-          }
-        );
-        
-        allResults.push(...schemeResults);
-        
-        // Update progress
-        completedCount += contents.length;
-        onProgress?.(
-          `Classifying with scheme ${schemeId}... complete`,
-          completedCount,
-          contents.length * schemeIds.length
-        );
-      }
-      
-      // Create a run object
-      const run = {
-        id: runId,
-        name: runName,
-        timestamp: new Date().toISOString(),
-        documentCount: contents.length,
-        schemeCount: schemeIds.length,
-        description
-      } as ClassificationRun;
-      
-      onProgress?.('Classification run complete', contents.length * schemeIds.length, contents.length * schemeIds.length);
-      
-      return run;
+      const updatedRun = await ClassificationRunsService.updateClassificationRun({
+        runId: runId,
+        requestBody: runData
+      });
+      return updatedRun;
     } catch (error: any) {
-      console.error('Error creating run:', error);
-      throw new Error(`Failed to create classification run: ${error.message}`);
+      console.error(`Error updating run ${runId} via API:`, error);
+      throw new Error(`Failed to update run ${runId}: ${error.message}`);
+    }
+  }
+
+  // --- ADDED: Method to delete a run via API ---
+  static async deleteRunAPI(workspaceId: number, runId: number): Promise<void> {
+    try {
+      await ClassificationRunsService.deleteClassificationRun({
+        runId: runId
+      });
+    } catch (error: any) {
+      console.error(`Error deleting run ${runId} via API:`, error);
+      throw new Error(`Failed to delete run ${runId}: ${error.message}`);
     }
   }
 } 

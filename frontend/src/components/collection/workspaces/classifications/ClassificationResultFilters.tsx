@@ -91,7 +91,7 @@ export const getTargetFieldDefinition = (
 };
 
 // Helper to get possible target keys for a scheme
-const getTargetKeysForScheme = (schemeId: number, schemes: ClassificationSchemeRead[]): { key: string, name: string, type: string }[] => {
+export const getTargetKeysForScheme = (schemeId: number, schemes: ClassificationSchemeRead[]): { key: string, name: string, type: string }[] => {
     const scheme = schemes.find(s => s.id === schemeId);
     if (!scheme || !scheme.fields || scheme.fields.length === 0) return [];
 

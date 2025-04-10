@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Card,
   CardHeader,
@@ -16,6 +16,8 @@ import {
   ClassificationResultRead,
   DocumentRead,
   ClassificationResultCreate,
+  ClassificationRunRead,
+  ClassificationRunUpdate
 } from '@/client/models';
 import { Textarea } from '@/components/ui/textarea';
 import { FormattedClassificationResult, ClassificationScheme } from '@/lib/classification/types';
@@ -23,7 +25,7 @@ import ClassificationResultsChart from '@/components/collection/workspaces/class
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { format, formatDate } from 'date-fns';
-import { getTargetFieldDefinition, ResultFilters } from './ClassificationResultFilters';
+import { getTargetFieldDefinition, ResultFilters, getTargetKeysForScheme } from './ClassificationResultFilters';
 import { ClassificationService } from '@/lib/classification/service';
 import { schemesToSchemeReads, resultsToResultReads, resultReadToResult, resultToResultRead, schemeToSchemeRead, documentToDocumentRead } from '@/lib/classification/adapters';
 import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
@@ -65,6 +67,11 @@ import { useGeocodingCacheStore } from '@/zustand_stores/storeGeocodingCache'; /
 import { checkFilterMatch, extractLocationString, formatDisplayValue } from '@/lib/classification/utils';
 import { ResultFilter } from './ClassificationResultFilters';
 import ClassificationResultsTable from './ClassificationResultsTable';
+import { Switch } from '@/components/ui/switch';
+import { Label } from "@/components/ui/label";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+
 
 // Custom hook for persistent state using localStorage
 function usePersistentState<T>(
@@ -535,7 +542,19 @@ export default function ClassificationRunner() {
     loadRun,
     createRun: createRunHook,
     setActiveRun: setActiveRunHook,
-  } = useClassificationSystem({ autoLoadSchemes: true, autoLoadDocuments: true });
+    updateRun,
+    deleteRun,
+    // Results for the active run (use this instead of local state)
+    results: activeRunResultsFromHook, // Rename results from hook
+    isLoadingResults,
+    loadResults,
+    // Classification
+    isClassifying,
+    classifyContent,
+    batchClassify,
+    // Error
+    error: classificationError,
+  } = useClassificationSystem({ autoLoadSchemes: true, autoLoadDocuments: true, autoLoadRuns: true });
 
   // Use consistent naming for schemes/documents from the hook
   const allSchemes = allSchemesHook;
@@ -644,6 +663,8 @@ export default function ClassificationRunner() {
 
   // Effect to load the latest run by default
   useEffect(() => {
+    // --- TEMPORARILY DISABLED AUTO-LOAD ---
+    /*
     if (!currentRunId && !isLoadingRunHistory && runHistoryStore && runHistoryStore.length > 0) {
        const latestRun = runHistoryStore[0];
        console.log("No run loaded, auto-loading latest run:", latestRun.id);
@@ -651,6 +672,7 @@ export default function ClassificationRunner() {
            handleLoadFromRun(latestRun.id, latestRun.name || `Run ${latestRun.id}`, latestRun.description || '');
        });
     }
+    */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runHistoryStore, currentRunId, isLoadingRunHistory]); // Dependencies are correct
 
@@ -847,20 +869,23 @@ export default function ClassificationRunner() {
   // Function to fetch results for a specific run
   const fetchResults = useCallback(async (runIdToLoad: number) => {
     if (!activeWorkspace?.uid) return;
-    console.log(`Fetching results for run ID: ${runIdToLoad}`);
+    // Modified log to indicate if called with runId
+    console.log(`[DEBUG] fetchResults called ${runIdToLoad ? 'for run ID: ' + runIdToLoad : 'WITHOUT specific run ID'}`); 
     setIsLoadingRunDetails(true); // Start loading state
     try {
       const runData = await loadRun(runIdToLoad); // Use hook's loadRun
 
       if (runData) {
-        console.log("Run data loaded:", runData);
+        console.log("[DEBUG] Run data loaded:", runData); // <<< ADDED LOG
         const { run, results, schemes: loadedSchemes } = runData;
+        console.log(`[DEBUG] loadRun returned ${results.length} results for run ${runIdToLoad}.`); // <<< ADDED LOG
 
         setCurrentRunId(run.id);
         setCurrentRunName(run.name || `Run ${run.id}`);
         setCurrentRunDescription(run.description || '');
         setCurrentRunResults(results);
         setRunSchemes(schemesToSchemeReads(loadedSchemes));
+        console.log(`[DEBUG] Set currentRunResults state with ${results.length} items.`); // <<< ADDED LOG
 
         const docIds = [...new Set(results.map(r => r.document_id))];
         const documentsForRun = allDocumentsHook
@@ -909,6 +934,7 @@ export default function ClassificationRunner() {
       return;
     }
 
+    console.log("[DEBUG] handleRunClassification started."); // <<< ADDED LOG
     try {
       const newRun = await createRunHook(
         documentsToClassify,
@@ -918,7 +944,7 @@ export default function ClassificationRunner() {
 
       if (newRun) {
         toast({ title: "Run Started", description: `Classification run "${newRun.name}" created.` });
-        handleLoadFromRun(newRun.id, newRun.name || `Run ${newRun.id}`, newRun.description || '');
+        handleLoadFromRun(newRun.id, newRun.name || `Run ${newRun.id}`, newRun.description || ''); // <<< ADD LOG INSIDE handleLoadFromRun
         const workspaceIdNum = typeof activeWorkspace.uid === 'string' ? parseInt(activeWorkspace.uid) : activeWorkspace.uid;
         if (!isNaN(workspaceIdNum)) fetchRunHistory(workspaceIdNum);
         setSelectedDocs([]);
@@ -928,6 +954,8 @@ export default function ClassificationRunner() {
       }
     } catch (err: any) {
       toast({ title: "Run Failed", description: err.message || "Could not start run.", variant: "destructive" });
+    } finally { // <<< ADDED FINALLY BLOCK
+        console.log("[DEBUG] handleRunClassification finished."); // <<< ADDED LOG
     }
   };
 
@@ -950,7 +978,7 @@ export default function ClassificationRunner() {
 
   // Handler to load data from a selected run history item
   const handleLoadFromRun = useCallback(async (runId: number, runName: string, runDescription?: string) => {
-    console.log(`Loading data for run: ${runId} (${runName})`);
+    console.log(`[DEBUG] handleLoadFromRun called for run: ${runId} (${runName})`); // <<< ADDED LOG
     setCurrentRunId(runId); // Set current run ID first
     // Fetch results will update name/desc based on actual loaded data
     setIsHistoryDialogOpen(false);
@@ -1004,6 +1032,7 @@ export default function ClassificationRunner() {
 
   // --- useEffect for filtering points ---
   useEffect(() => {
+    console.log(`[DEBUG] Geocoding filter useEffect triggered. Filters: ${activeFilters.length}, Current Results: ${currentRunResults.length}, Geocoded Points: ${geocodedPoints.length}`); // <<< ADDED LOG
     const sourcePoints = geocodedPoints;
     if (activeFilters.length === 0) {
       setFilteredGeocodedPoints(sourcePoints);
@@ -1037,181 +1066,222 @@ export default function ClassificationRunner() {
   };
   // --- END UPDATE ---
 
-  // --- UPDATE: renderResultsTabs Function ---
-  const renderResultsTabs = () => {
-    if (isLoadingRunDetails) return <div className="flex justify-center items-center h-60"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>;
-    if (!currentRunId && !isLoadingRunDetails) {
-      return ( <div className="text-center p-8 text-muted-foreground border rounded-lg">No run selected. Load a run from history or create a new one.</div> );
+  // --- ADDED STATE for Map Labels ---
+  const [showMapLabels, setShowMapLabels] = useState<boolean>(false);
+  const [mapLabelSchemeId, setMapLabelSchemeId] = useState<number | null>(null);
+  const [mapLabelFieldKey, setMapLabelFieldKey] = useState<string | null>(null);
+  // --- END ADDED STATE ---
+
+  // --- ADDED: Effect to initialize and update map label field key ---
+  useEffect(() => {
+    // Initialize scheme ID if not set and schemes are available
+    if (mapLabelSchemeId === null && runSchemes.length > 0) {
+      setMapLabelSchemeId(runSchemes[0].id);
     }
-    if (!currentRunId) return null;
+
+    // Update field key when scheme ID changes or initially
+    if (mapLabelSchemeId !== null) {
+      const keys = getTargetKeysForScheme(mapLabelSchemeId, runSchemes);
+      const currentKeyIsValid = keys.some(k => k.key === mapLabelFieldKey);
+      // Reset to the first key if the current one is invalid or null for the new scheme
+      if (!currentKeyIsValid || mapLabelFieldKey === null) {
+        setMapLabelFieldKey(keys.length > 0 ? keys[0].key : null);
+      }
+    } else {
+      setMapLabelFieldKey(null); // No scheme selected
+    }
+  // Ensure filteredSchemes is stable or memoized if needed
+  }, [mapLabelSchemeId, runSchemes, mapLabelFieldKey]);
+  // --- END ADDED Effect ---
+
+  // --- ADDED: Prepare map points ---
+  // --- MODIFIED: Removed redundant mapPoints calculation ---
+  /*
+  const mapPoints = useMemo((): MapPoint[] => {
+    // ... (removed calculation logic) ...
+  }, [currentRunResults, runSchemes]);
+  */
+  // --- END Prepare map points ---
+
+  // --- ADDED: Prepare label config ---
+  const mapLabelConfig = useMemo(() => {
+    if (!showMapLabels || mapLabelSchemeId === null || mapLabelFieldKey === null) {
+      return undefined;
+    }
+    return {
+      schemeId: mapLabelSchemeId,
+      fieldKey: mapLabelFieldKey,
+      // colorField: undefined // Add logic for colorField later if needed
+    };
+  }, [showMapLabels, mapLabelSchemeId, mapLabelFieldKey]);
+  // --- END Prepare label config ---
+
+  // --- ADDED: Get target keys for map label field selector ---
+  const currentMapLabelKeys = useMemo(() => {
+    // --- MODIFIED: Use runSchemes ---
+    if (mapLabelSchemeId !== null && runSchemes.length > 0) {
+        // Find the actual scheme object to pass
+        const scheme = runSchemes.find(s => s.id === mapLabelSchemeId);
+        return scheme ? getTargetKeysForScheme(mapLabelSchemeId, [scheme]) : [];
+    }
+    return [];
+  // --- MODIFIED: Depend on runSchemes ---
+  }, [mapLabelSchemeId, runSchemes]);
+  // --- END Get target keys ---
+
+  // --- Define renderResultsTabs function BEFORE the main return ---
+  const renderResultsTabs = () => {
+    if (isLoadingRunDetails) {
+      return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+    }
+    if (!currentRunResults || currentRunResults.length === 0) {
+      return <div className="flex items-center justify-center h-64 text-muted-foreground">No results found for this run.</div>;
+    }
 
     return (
-      <>
-        {/* Filtered Counts Display */}
-        <div className="text-sm text-muted-foreground mb-2 px-1">
-          {/* Display filtered document count based on tableData logic if possible, or just indicate filtering */}
-          Showing documents {activeFilters.length > 0 ? '(filtered)' : ''}
-        </div>
-
-        <Tabs defaultValue="chart" className="w-full">
-             <TabsList className="grid w-full grid-cols-3 mb-4">
-                <TabsTrigger value="chart"><BarChart3 className="h-4 w-4 mr-1" />Chart</TabsTrigger>
-                {/* --- ADDED: Table Trigger --- */}
-                <TabsTrigger value="table"><TableIcon className="h-4 w-4 mr-1" />Table</TabsTrigger>
-                <TabsTrigger value="map"><MapPin className="h-4 w-4 mr-1" />Map</TabsTrigger>
-             </TabsList>
-
-             {/* Chart Tab */}
-             <TabsContent value="chart">
-                <Card>
-                    <CardHeader>
-                      <CardTitle>Results Overview</CardTitle>
-                      <CardDescription>
-                        Visualize classification results over time or grouped by value.
-                      </CardDescription>
-                   </CardHeader>
-                   <CardContent>
-                      {filteredResults.length > 0 ? (
-                        <ClassificationResultsChart
-                           results={filteredResults}
-                           schemes={runSchemes}
-                           documents={currentRunDocuments}
-                           filters={activeFilters}
-                        />
-                      ) : ( <div className="text-center p-8 border rounded-lg"><AlertCircle className="mx-auto h-10 w-10 text-muted-foreground"/>No results match the current filters for this run.</div>
-                      )}
-                   </CardContent>
-                </Card>
-             </TabsContent>
-
-             {/* --- ADDED: Results Table Tab --- */}
-              <TabsContent value="table">
-                 <Card>
-                    <CardHeader>
-                        <CardTitle>Results Table</CardTitle>
-                        <CardDescription>
-                           Detailed classification results for each document in the run. Click rows for details.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                       {currentRunResults.length > 0 ? (
-                           <ClassificationResultsTable
-                              results={currentRunResults} // Pass potentially unfiltered results
-                              schemes={runSchemes}
-                              documents={currentRunDocuments}
-                              filters={activeFilters} // Let the table handle filtering internally
-                              onRowClick={handleTableRowClick} // Pass the handler
-                           />
-                       ) : (
-                           <div className="text-center p-8 border rounded-lg"><AlertCircle className="mx-auto h-10 w-10 text-muted-foreground"/>No results found for this run.</div>
+       <Tabs defaultValue="chart" className="w-full">
+         <TabsList className="grid w-full grid-cols-3 mb-2 sticky top-0 bg-background z-10">
+           <TabsTrigger value="chart">Chart</TabsTrigger>
+           <TabsTrigger value="table">Table</TabsTrigger>
+           <TabsTrigger value="map">Map</TabsTrigger>
+         </TabsList>
+         <TabsContent value="chart">
+           <div className="p-1 border rounded-lg bg-muted/10">
+             <ClassificationResultsChart results={currentRunResults} schemes={runSchemes} documents={currentRunDocuments} filters={activeFilters} />
+           </div>
+         </TabsContent>
+         <TabsContent value="table">
+           <div className="p-1 border rounded-lg bg-muted/10">
+             <ClassificationResultsTable results={currentRunResults} schemes={runSchemes} documents={currentRunDocuments} filters={activeFilters} onRowClick={handleTableRowClick} />
+           </div>
+         </TabsContent>
+         <TabsContent value="map">
+            {/* --- MOVED: Map Display Controls --- */}
+            <div className="mb-4 p-3 border rounded-md bg-muted/10 space-y-4">
+               {/* Geocoding Source Controls */}
+               <div className="space-y-2">
+                   <h4 className="text-sm font-medium text-muted-foreground">Map Point Source</h4>
+                   <div className="flex flex-wrap items-end gap-4">
+                       <div className="flex items-center gap-2">
+                           <Label htmlFor="geocode-scheme-select" className="text-sm">Scheme:</Label>
+                           <Select value={selectedGeocodeSchemeId ?? ""} onValueChange={(v) => {setSelectedGeocodeSchemeId(v); setSelectedGeocodeField(null); /* Reset field on scheme change */}}>
+                               <SelectTrigger id="geocode-scheme-select" className="w-[220px]">
+                                   <SelectValue placeholder="Select scheme for locations..." />
+                               </SelectTrigger>
+                               <SelectContent>
+                                   {geocodeSchemeOptions.map(option => (
+                                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                   ))}
+                                   {geocodeSchemeOptions.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No schemes in run</div>}
+                               </SelectContent>
+                           </Select>
+                       </div>
+                       {selectedGeocodeSchemeId && (
+                           <div className="flex items-center gap-2">
+                               <Label htmlFor="geocode-field-select" className="text-sm">Field:</Label>
+                               <Select value={selectedGeocodeField ?? ""} onValueChange={setSelectedGeocodeField}>
+                                   <SelectTrigger id="geocode-field-select" className="w-[200px]">
+                                       <SelectValue placeholder="Select location field..." />
+                                   </SelectTrigger>
+                                   <SelectContent>
+                                       {geocodeFieldOptions.map(option => (
+                                           <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                       ))}
+                                       {geocodeFieldOptions.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No fields in scheme</div>}
+                                   </SelectContent>
+                               </Select>
+                           </div>
                        )}
-                    </CardContent>
-                 </Card>
-              </TabsContent>
-              {/* --- END ADD --- */}
+                       <Button
+                           onClick={handleGeocodeRunLocations}
+                           disabled={!selectedGeocodeSchemeId || !selectedGeocodeField || isLoadingGeocoding}
+                           size="sm"
+                       >
+                           {isLoadingGeocoding ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <MapPin className="h-4 w-4 mr-2" />}
+                           Geocode Locations
+                       </Button>
+                   </div>
+                   {isLoadingGeocoding && (<div className="text-sm text-muted-foreground mt-2">Geocoding...</div>)}
+                   {geocodingError && (
+                      <p className="text-sm text-red-500 mt-2 flex items-center">
+                           <AlertCircle className="h-4 w-4 mr-1" /> {geocodingError}
+                       </p>
+                    )}
+               </div>
 
-              {/* Map View Tab */}
-              <TabsContent value="map">
-                <Card>
-                  <CardHeader>
-                     <CardTitle>Map View</CardTitle>
-                     <CardDescription>
-                        Geocode location data extracted from classification results and view on a map.
-                     </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                     {/* Geocoding Controls */}
-                     <div className="flex flex-col sm:flex-row gap-4 p-4 border rounded-md bg-muted/30 items-end">
-                        {/* Scheme Select */}
-                         <div className="flex-1 space-y-2">
-                           <label htmlFor="geocode-scheme" className="text-sm font-medium">Location Scheme</label>
-                           <Select value={selectedGeocodeSchemeId ?? ''} onValueChange={(v) => { setSelectedGeocodeSchemeId(v); setSelectedGeocodeField(null); setGeocodedPoints([]); setFilteredGeocodedPoints([]); /* Clear points on scheme change */ }}>
-                              <SelectTrigger id="geocode-scheme"><SelectValue placeholder="Select scheme..." /></SelectTrigger>
-                              <SelectContent>
-                                 {geocodeSchemeOptions.map(option => (<SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>))}
-                                  {geocodeSchemeOptions.length === 0 && <div className="p-2 text-xs text-muted-foreground text-center italic">No schemes in run.</div>}
-                              </SelectContent>
-                           </Select>
-                        </div>
-                        {/* Field Select */}
-                        <div className="flex-1 space-y-2">
-                           <label htmlFor="geocode-field" className="text-sm font-medium">Location Field</label>
-                           <Select value={selectedGeocodeField ?? ''} onValueChange={(v) => {setSelectedGeocodeField(v); setGeocodedPoints([]); setFilteredGeocodedPoints([]); /* Clear points on field change */}} disabled={!selectedGeocodeSchemeId}>
-                              <SelectTrigger id="geocode-field"><SelectValue placeholder="Select field..." /></SelectTrigger>
-                              <SelectContent>
-                                 {geocodeFieldOptions.map(option => (<SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>))}
-                                  {geocodeFieldOptions.length === 0 && <div className="p-2 text-xs text-muted-foreground text-center italic">Select scheme first.</div>}
-                              </SelectContent>
-                           </Select>
-                        </div>
-                        {/* --- ADDED: Geocode Button --- */}
-                        <Button onClick={handleGeocodeRunLocations} disabled={!selectedGeocodeSchemeId || !selectedGeocodeField || isLoadingGeocoding} className="w-full sm:w-auto flex-shrink-0">
-                            {isLoadingGeocoding ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <MapPin className="h-4 w-4 mr-2" />} Geocode Locations
-                        </Button>
-                        {/* --- END ADD --- */}
-                     </div>
+               {/* Map Label Controls */}
+               <div className="space-y-2 pt-4 border-t">
+                   <div className="flex items-center justify-between">
+                       <h4 className="text-sm font-medium text-muted-foreground">Map Label Display</h4>
+                       <div className="flex items-center gap-2">
+                           <Switch id="map-label-switch" checked={showMapLabels} onCheckedChange={setShowMapLabels} />
+                           <Label htmlFor="map-label-switch">Show Labels</Label>
+                       </div>
+                   </div>
+                   {showMapLabels && (
+                       <div className="flex flex-wrap items-center gap-4">
+                           <div className="flex items-center gap-2">
+                               <Label htmlFor="map-label-scheme-select" className="text-sm">Scheme:</Label>
+                               <Select value={mapLabelSchemeId?.toString() ?? ""} onValueChange={(v) => setMapLabelSchemeId(v ? parseInt(v) : null)}>
+                                   <SelectTrigger id="map-label-scheme-select" className="w-[220px]">
+                                       <SelectValue placeholder="Select scheme for labels" />
+                                   </SelectTrigger>
+                                   <SelectContent>
+                                       {runSchemes.map(s => (<SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>))}
+                                   </SelectContent>
+                               </Select>
+                           </div>
+                           {mapLabelSchemeId !== null && currentMapLabelKeys.length > 0 && (
+                               <div className="flex items-center gap-2">
+                                   <Label htmlFor="map-label-key-select" className="text-sm">Field/Key:</Label>
+                                   <Select value={mapLabelFieldKey ?? ""} onValueChange={(v) => setMapLabelFieldKey(v || null)}>
+                                       <SelectTrigger id="map-label-key-select" className="w-[200px]">
+                                           <SelectValue placeholder="Select field/key" />
+                                       </SelectTrigger>
+                                       <SelectContent>
+                                           {currentMapLabelKeys.map(tk => (<SelectItem key={tk.key} value={tk.key}>{tk.name} ({tk.type})</SelectItem>))}
+                                       </SelectContent>
+                                   </Select>
+                               </div>
+                           )}
+                           {mapLabelSchemeId !== null && currentMapLabelKeys.length === 1 && (
+                               <div className="flex items-center gap-2">
+                                   <Label className="text-sm">Field:</Label>
+                                   <span className="text-sm px-3 py-1.5 bg-muted rounded">{currentMapLabelKeys[0].name}</span>
+                               </div>
+                           )}
+                       </div>
+                   )}
+               </div>
+            </div>
 
-                     {/* Geocoding Status */}
-                     {isLoadingGeocoding && (
-                         <div className="text-center text-muted-foreground p-4 border rounded-md">
-                          <Loader2 className="h-5 w-5 inline animate-spin mr-2" />
-                          Geocoding locations... please wait.
-                        </div>
-                     )}
-                     {geocodingError && (
-                        <p className="text-red-600 text-center p-4 border border-red-200 bg-red-50 rounded-md"><AlertCircle className="h-4 w-4 inline mr-1" /> {geocodingError}</p>
-                     )}
-                     {!isLoadingGeocoding && geocodedPoints.length > 0 && filteredGeocodedPoints.length === 0 && activeFilters.length > 0 && (
-                         // Show message if geocoding succeeded but filters removed all points
-                          <p className="text-sm text-center text-orange-600 p-4 border border-orange-200 bg-orange-50 rounded-md">
-                            <AlertCircle className="h-4 w-4 inline mr-1" /> Geocoding complete, but no map points match the current filters.
-                          </p>
-                     )}
-                     {!isLoadingGeocoding && geocodedPoints.length > 0 && filteredGeocodedPoints.length > 0 && (
-                        // Show success count only when points are generated and visible
-                        <p className="text-sm text-center text-green-600 p-4 border border-green-200 bg-green-50 rounded-md">
-                          <CheckCircle className="h-4 w-4 inline mr-1" /> Geocoding complete. Displaying {filteredGeocodedPoints.length} of {geocodedPoints.length} unique locations {activeFilters.length > 0 ? '(filtered)' : ''}. Map updated.
-                        </p>
-                      )}
-                      {!isLoadingGeocoding && geocodedPoints.length === 0 && !geocodingError && selectedGeocodeSchemeId && selectedGeocodeField && (
-                         // Show this if geocoding was attempted but resulted in zero points (e.g., no locs found or all failed)
-                         <p className="text-sm text-center text-muted-foreground p-4 border rounded-md">
-                           Geocoding finished, but no map points could be generated. Check if the selected field contains valid locations or if geocoding failed.
-                         </p>
-                      )
-
-                      }
-
-
-                     {/* --- UPDATED: Render ClassificationResultsMap --- */}
-                     <div className="h-[600px] bg-muted rounded-md border border-dashed relative overflow-hidden">
-                       {isLoadingGeocoding ? ( <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
-                       ) : filteredGeocodedPoints.length > 0 ? (
-                           <ClassificationResultsMap
-                               points={filteredGeocodedPoints} // Use filtered points for display
-                               documents={currentRunDocuments}
-                               results={currentRunResults} // Pass original results for popups
-                               schemes={runSchemes}
-                               onPointClick={(point) => {
-                                  // Simplified click handler for map points
-                                  if (point.documentIds.length > 0) {
-                                     handleTableRowClick(point.documentIds[0]); // Reuse table row click logic
-                                  }
-                               }}
-                           />
-                       ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground p-4 text-center">{ !selectedGeocodeSchemeId || !selectedGeocodeField ? 'Select scheme and field, then click "Geocode Locations".' : 'No map points to display for the current selection or filters.' }</div>
-                        )}
-                     </div>
-                     {/* --- END UPDATE --- */}
-
-                  </CardContent>
-                </Card>
-              </TabsContent>
-          </Tabs>
-      </>
+            {/* Map Component - Use filteredGeocodedPoints */}
+            <div className="p-1 border rounded-lg bg-muted/10 overflow-hidden h-[600px] relative">
+              {isLoadingGeocoding ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
+              ) : filteredGeocodedPoints.length > 0 ? (
+                  <ClassificationResultsMap
+                      points={filteredGeocodedPoints} // Use filtered points
+                      documents={currentRunDocuments}
+                      results={currentRunResults}
+                      schemes={runSchemes}
+                      labelConfig={mapLabelConfig}
+                      onPointClick={(point) => { // Pass inline function reusing handleTableRowClick
+                          if (point.documentIds.length > 0) {
+                            handleTableRowClick(point.documentIds[0]);
+                          }
+                      }} 
+                  />
+              ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground p-4 text-center">
+                      {geocodedPoints.length > 0 ? 'No map points match the current filters.' : 'Geocode locations using the controls above to see the map.'}
+                  </div>
+              )}
+            </div>
+         </TabsContent>
+       </Tabs>
     );
   };
-  // --- End renderResultsTabs --- 
 
   // --- Main Component Return ---
   if (!activeWorkspace) {
@@ -1264,20 +1334,42 @@ export default function ClassificationRunner() {
                     <h3 className="text-sm font-medium">Model Provider</h3>
                     <ProviderSelector className="w-full" />
                   </div>
+                  {/* <<< REMOVED Run History/Button Section from here >>> */}
                   <div className="space-y-2 md:col-span-1">
-                    <h3 className="text-sm font-medium">Run History</h3>
-                    <div className="grid grid-cols-1 gap-2">
-                      <Button variant="default" onClick={handleRunClassification} disabled={isCreatingRun || selectedDocs.length === 0 || selectedSchemes.length === 0}>
-                        {isCreatingRun ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />} Run New Classification
-                      </Button>
-                      {/* Moved Clear Run to Results Card Header? Or keep here? Let's keep Load here for now. */}
-                    </div>
+                    {/* Placeholder or shift Load Previous Run button here if desired */}
+                    {/* Example: Keep Load button, remove Run button */}
+                     <h3 className="text-sm font-medium">Load Previous Run</h3>
+                     <Button variant="outline" onClick={() => setIsHistoryDialogOpen(true)} className="w-full"><History className="h-4 w-4 mr-2" /> Load Previous Run</Button>
                   </div>
                   <div className="space-y-2 md:col-span-1">
-                    <h3 className="text-sm font-medium">Load Previous Run</h3>
-                    <Button variant="outline" onClick={() => setIsHistoryDialogOpen(true)} className="w-full"><History className="h-4 w-4 mr-2" /> Load Previous Run</Button>
+                    {/* Placeholder if Load button was moved */}
                   </div>
                 </div>
+
+                {/* --- ADDED: New Run Name/Description Inputs --- */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="space-y-2">
+                       <label htmlFor="new-run-name" className="text-sm font-medium">New Run Name (Optional)</label>
+                       <Input
+                          id="new-run-name"
+                          placeholder={`Run - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`}
+                          value={runName} // Bind to the state used by handleRunClassification
+                          onChange={(e) => setRunName(e.target.value)}
+                       />
+                   </div>
+                   <div className="space-y-2">
+                       <label htmlFor="new-run-description" className="text-sm font-medium">New Run Description (Optional)</label>
+                       <Textarea
+                          id="new-run-description"
+                          placeholder="Describe the purpose or parameters of this run..."
+                          value={runDescription} // Bind to the state used by handleRunClassification
+                          onChange={(e) => setRunDescription(e.target.value)}
+                          rows={1} // Keep it compact initially
+                          className="resize-none" // Prevent manual resizing
+                       />
+                   </div>
+                </div>
+                {/* --- END ADDED --- */}
 
                 {/* Row 2: Documents and Schemes */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1409,6 +1501,21 @@ export default function ClassificationRunner() {
                     </CardContent>
                   </Card>
                 </div>
+
+                {/* --- ADDED: Moved Run Button Here --- */}
+                <div className="mt-4 pt-4 border-t border-muted">
+                   <h3 className="text-sm font-medium mb-2">Execute Run</h3>
+                   <Button
+                      variant="default"
+                      onClick={handleRunClassification}
+                      disabled={isCreatingRun || selectedDocs.length === 0 || selectedSchemes.length === 0}
+                      className="w-full md:w-auto"
+                   >
+                      {isCreatingRun ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />} Run New Classification
+                   </Button>
+                </div>
+                {/* --- END ADDED --- */}
+
               </CardContent>
             </Card>
             {/* === END: Setup Card === */}
@@ -1503,6 +1610,7 @@ export default function ClassificationRunner() {
                             )}
 
                             {/* Render tabs only when not loading and run is selected */}
+                            {/* --- MODIFIED: Call defined function --- */}
                             {currentRunId && !isLoadingRunDetails && renderResultsTabs()}
                         </>
                      ) : (

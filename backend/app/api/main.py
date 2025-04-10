@@ -10,7 +10,8 @@ from app.api.routes import (
     workspaces,
     classification_schemes,
     classification_results,
-    filestorage
+    filestorage,
+    classification_runs
 )
 from app.api.v1.locations.routes import router as location_router
 from app.api.v1.search.routes import router as search_router
@@ -43,10 +44,12 @@ api_router_v1.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router_v1.include_router(items.router, prefix="/items", tags=["items"])
 api_router_v1.include_router(search_history.router, prefix="/search_histories", tags=["search-history"])
 api_router_v1.include_router(workspaces.router, tags=["workspaces"])
-api_router_v1.include_router(classification_schemes.router, tags=["classification-schemes"])
-api_router_v1.include_router(classification_results.router, tags=["classification-results"])
 api_router_v1.include_router(documents.router, tags=["documents"])
 api_router_v1.include_router(filestorage.router, tags=["filestorage"])
+api_router_v1.include_router(classification_schemes.router, tags=["classification-schemes"])
+api_router_v1.include_router(classification_results.router, tags=["classification-results"])
+api_router_v1.include_router(classification_runs.router, tags=["classification-runs"])
+
 
 # V2/ Experimental APIs
 api_router_v2.include_router(geo.router, prefix="/geo", tags=["geo"])

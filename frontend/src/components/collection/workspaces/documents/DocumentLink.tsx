@@ -37,7 +37,7 @@ export default function DocumentLink({
     <button
       onClick={handleClick}
       className={cn(
-        "text-blue-600 hover:underline cursor-pointer",
+        "text-foreground hover:text-primary hover:underline cursor-pointer",
         className
       )}
     >

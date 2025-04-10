@@ -11,6 +11,7 @@ import {
   ClassifiableDocument
 } from '@/lib/classification/types';
 import { ClassificationService } from '@/lib/classification/service';
+import { ClassificationRunRead, ClassificationRunUpdate } from '@/client/models';
 import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
 
 // Global cache for schemes to prevent redundant API calls
@@ -80,6 +81,8 @@ interface UseClassificationSystemResult {
     description?: string;
   }) => Promise<ClassificationRun | null>;
   setActiveRun: (run: ClassificationRun | null) => void;
+  updateRun: (runId: number, data: ClassificationRunUpdate) => Promise<ClassificationRun | null>;
+  deleteRun: (runId: number) => Promise<boolean>;
   
   // Default scheme management
   getDefaultSchemeId: () => number | null;
@@ -246,8 +249,17 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     
     try {
       const workspaceId = getWorkspaceId();
-      const loadedRuns = await ClassificationService.getRuns(workspaceId);
-      setRuns(loadedRuns);
+      const loadedRuns = await ClassificationService.getRunsAPI(workspaceId);
+      const internalRuns: ClassificationRun[] = loadedRuns.map(runRead => ({
+          id: runRead.id,
+          name: runRead.name || `Run ${runRead.id}`,
+          timestamp: runRead.updated_at || runRead.created_at,
+          documentCount: runRead.document_count ?? 0,
+          schemeCount: runRead.scheme_count ?? 0,
+          description: runRead.description || undefined,
+          status: runRead.status === 'pending' || runRead.status === 'running' || runRead.status === 'completed' || runRead.status === 'failed' ? runRead.status : undefined,
+      }));
+      setRuns(internalRuns);
     } catch (err: any) {
       console.error('Error loading runs:', err);
       setError('Failed to load classification runs');
@@ -271,22 +283,75 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     
     try {
       const workspaceId = getWorkspaceId();
-      const { run, results, schemes } = await ClassificationService.getRun(workspaceId, runId);
       
-      setActiveRun(run);
-      setResults(results);
-      
-      // Update schemes if we got new ones
-      if (schemes.length > 0) {
-        setSchemes(prevSchemes => {
-          // Merge new schemes with existing ones, avoiding duplicates
-          const schemeMap = new Map(prevSchemes.map(s => [s.id, s]));
-          schemes.forEach(s => schemeMap.set(s.id, s));
-          return Array.from(schemeMap.values());
-        });
+      // Fetch run details and results separately
+      // 1. Fetch Run Details
+      const runDetailsRead = await ClassificationService.getRunAPI(workspaceId, runId);
+
+      // Convert runDetailsRead (ClassificationRunRead) to internal ClassificationRun type
+      const runDetails: ClassificationRun = {
+        id: runDetailsRead.id,
+        name: runDetailsRead.name || `Run ${runDetailsRead.id}`,
+        timestamp: runDetailsRead.updated_at || runDetailsRead.created_at,
+        documentCount: runDetailsRead.document_count ?? 0,
+        schemeCount: runDetailsRead.scheme_count ?? 0,
+        description: runDetailsRead.description || undefined,
+        status: runDetailsRead.status === 'pending' || runDetailsRead.status === 'running' || runDetailsRead.status === 'completed' || runDetailsRead.status === 'failed' ? runDetailsRead.status : undefined,
+      };
+
+      // 2. Fetch Results by Run ID
+      const runResults = await ClassificationService.getResultsByRunAPI(workspaceId, runId);
+
+      if (runResults.length === 0) {
+        console.warn(`No results found for run ID ${runId}, but run exists.`);
+        // Still set the active run, but results will be empty
+        setActiveRun(runDetails);
+        setResults([]);
+        // Since there are no results, we can't infer schemes reliably. Return empty schemes array.
+        return { run: runDetails, results: [], schemes: [] };
       }
-      
-      return { run, results, schemes };
+
+      // 3. Extract unique scheme IDs
+      const schemeIds = [...new Set(runResults.map(r => r.scheme_id))].filter(id => typeof id === 'number') as number[];
+
+      // 4. Fetch Schemes (ensure they are loaded or fetch missing ones)
+      const currentSchemesMap = new Map(schemes.map(s => [s.id, s]));
+      const schemesToFetch = schemeIds.filter(id => !currentSchemesMap.has(id));
+
+      if (schemesToFetch.length > 0) {
+        const fetchedSchemes = await Promise.all(
+          schemesToFetch.map(id => ClassificationService.getScheme(workspaceId, id))
+        );
+        fetchedSchemes.forEach(s => currentSchemesMap.set(s.id, s));
+        // Update global schemes state if new ones were fetched
+        setSchemes(Array.from(currentSchemesMap.values()));
+      }
+      const runSchemes = schemeIds.map(id => currentSchemesMap.get(id)).filter(Boolean) as ClassificationScheme[];
+
+      // 5. Format Results
+      const formattedResults = runResults
+        .map(result => {
+          const scheme = runSchemes.find(s => s.id === result.scheme_id);
+          // Cast result to ClassificationResult expected by formatResult
+          const resultToFormat: ClassificationResult = {
+              id: result.id,
+              document_id: result.document_id,
+              scheme_id: result.scheme_id,
+              value: result.value || {},
+              timestamp: result.timestamp || new Date().toISOString(),
+              run_id: result.run_id || runId,
+              run_name: runDetails.name,
+              run_description: runDetails.description,
+          };
+          return scheme ? ClassificationService.formatResult(resultToFormat, scheme) : null;
+        })
+        .filter(Boolean) as FormattedClassificationResult[];
+
+      // 6. Update State
+      setActiveRun(runDetails);
+      setResults(formattedResults);
+
+      return { run: runDetails, results: formattedResults, schemes: runSchemes };
     } catch (err: any) {
       console.error('Error loading run:', err);
       setError('Failed to load classification run');
@@ -300,7 +365,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       setIsLoadingRuns(false);
       setIsLoadingResults(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
+  }, [activeWorkspace?.uid, getWorkspaceId, toast, schemes]);
   
   // Load classification results
   const loadResults = useCallback(async (contentId?: number, runId?: number) => {
@@ -312,7 +377,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     try {
       const workspaceId = getWorkspaceId();
       
-      // Get results using our service
+      // Use getResultsAPI which should return ClassificationResultRead[]
       const apiResults = await ClassificationService.getResults(workspaceId, {
         documentId: contentId,
         runId
@@ -341,7 +406,18 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
           if (!scheme) return null;
           
           // Format the result
-          return ClassificationService.formatResult(result, scheme);
+          const resultToFormat: ClassificationResult = {
+            id: result.id,
+            document_id: result.document_id,
+            scheme_id: result.scheme_id,
+            value: result.value || {},
+            timestamp: result.timestamp || new Date().toISOString(),
+            run_id: result.run_id || runId || 0,
+            run_name: (runId ? `Run ${runId}` : 'Unknown Run'),
+            run_description: undefined,
+          };
+
+          return ClassificationService.formatResult(resultToFormat, scheme);
         })
       );
       
@@ -399,7 +475,8 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       timestamp: new Date().toISOString(),
       run_id: runId || 0, // Use provided runId or 0
       run_name: runName || 'Optimistic Classification',
-      value: null, // Placeholder value
+      run_description: runDescription,
+      value: {}, // Placeholder value, ensure it's a dict
       scheme: schemes.find(s => s.id === schemeId),
       displayValue: 'Classifying...', // Indicate loading state
       isOptimistic: true
@@ -422,7 +499,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       // Get the API key if a provider is selected
       const apiKey = provider ? apiKeys[provider] : undefined;
       
-      // Use our service to classify
+      // Use our service to classify (this should hit the V2 endpoint)
       const result = await ClassificationService.classifyContent(
         content,
         schemeId,
@@ -459,8 +536,18 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       // Remove optimistic result after completion (success or failure)
       setResults(prev => prev.filter(r => r.id !== tempId));
 
-      // Format the actual result
-      const formattedResult = ClassificationService.formatResult(result, scheme);
+      // The result from classifyContent might be ClassificationResultRead, adapt it
+      const resultToFormat: ClassificationResult = {
+        id: result.id,
+        document_id: result.document_id,
+        scheme_id: result.scheme_id,
+        value: result.value || {}, // Ensure value is a dict
+        timestamp: result.timestamp || new Date().toISOString(), // Provide fallback timestamp
+        run_id: result.run_id || runId || 0, // Use passed runId if available
+        run_name: runName || (result.run_id ? `Run ${result.run_id}` : 'Classified Item'), // Use runName from function scope
+        run_description: runDescription || undefined, // Use runDescription from function scope
+      };
+      const formattedResult = ClassificationService.formatResult(resultToFormat, scheme);
       
       // Update results list with the actual result
       setResults(prev => [formattedResult, ...prev]);
@@ -528,7 +615,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
         description: `Classifying ${contents.length} items`,
       });
       
-      // Use our service to batch classify
+      // Use our service to batch classify (this likely calls classifyContent internally)
       const results = await ClassificationService.batchClassify(
         contents,
         schemeId,
@@ -559,9 +646,19 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       }
       
       // Format the results
-      const formattedResults = results.map(result => 
-        ClassificationService.formatResult(result, scheme!)
-      );
+      const formattedResults = results.map(result => {
+        const resultToFormat: ClassificationResult = {
+            id: result.id,
+            document_id: result.document_id,
+            scheme_id: result.scheme_id,
+            value: result.value || {},
+            timestamp: result.timestamp || new Date().toISOString(),
+            run_id: result.run_id || 0,
+            run_name: runName || (result.run_id ? `Run ${result.run_id}` : 'Classified Item'),
+            run_description: runDescription || undefined,
+        };
+        return ClassificationService.formatResult(resultToFormat, scheme!)
+      });
       
       // Update results list
       setResults(prev => [...formattedResults, ...prev]);
@@ -608,70 +705,159 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     
     setIsCreatingRun(true);
     setError(null);
-    
+    let createdRun: ClassificationRun | null = null; // Store the created run
+
     try {
       const workspaceId = getWorkspaceId();
+      const runName = options.name || `Run - ${new Date().toLocaleString()}`;
+      const runDescription = options.description;
+
+      // Call new API flow
+      // 1. Create the ClassificationRun record via API
+      toast({ title: 'Creating run record...' });
+      const createdRunRead = await ClassificationService.createRunAPI(workspaceId, {
+        name: runName,
+        description: runDescription,
+        status: 'pending', // Start as pending
+      });
       
-      // Get the API provider and model
+      // Convert to internal ClassificationRun type
+      createdRun = {
+          id: createdRunRead.id,
+          name: createdRunRead.name || `Run ${createdRunRead.id}`,
+          timestamp: createdRunRead.updated_at || createdRunRead.created_at,
+          documentCount: createdRunRead.document_count ?? 0,
+          schemeCount: createdRunRead.scheme_count ?? 0,
+          description: createdRunRead.description || undefined,
+          status: createdRunRead.status === 'pending' || createdRunRead.status === 'running' || createdRunRead.status === 'completed' || createdRunRead.status === 'failed' ? createdRunRead.status : undefined,
+      }
+
+      if (!createdRun) {
+        throw new Error('Failed to create run record in the backend.');
+      }
+      const runId = createdRun.id;
+      setActiveRun(createdRun); // Optimistically set active run
+
+      // 2. Get API provider and model details
       const provider = selectedProvider || undefined;
       const model = selectedModel || undefined;
-      
-      if (provider && !apiKeys[provider]) {
+      const apiKey = provider ? apiKeys[provider] : undefined;
+      if (provider && !apiKey) {
         throw new Error('API key not found for selected provider');
       }
-      
-      // Get the API key if a provider is selected
-      const apiKey = provider ? apiKeys[provider] : undefined;
-      
-      // Show a toast that we're starting the run
-      toast({
-        title: 'Starting classification run',
-        description: `Classifying ${contents.length} items with ${schemeIds.length} schemes`,
-      });
-      
-      // Use our service to create a run
-      const run = await ClassificationService.createRun(
-        contents,
-        schemeIds,
-        workspaceId,
-        {
-          name: options.name,
-          description: options.description,
-          provider,
-          model,
-          apiKey,
-          onProgress: (status, current, total) => {
-            console.log(`Run progress: ${status} (${current}/${total})`);
+
+      // 3. Iterate and classify each document with each scheme using V2 endpoint
+      toast({ title: `Classifying ${contents.length * schemeIds.length} items for Run ${runId}` });
+      const allClassificationResults: ClassificationResult[] = [];
+      let completedCount = 0;
+      const totalTasks = contents.length * schemeIds.length;
+
+      // Update run status to running
+      await ClassificationService.updateRunAPI(workspaceId, runId, { status: 'running' });
+
+      for (const content of contents) {
+        for (const schemeId of schemeIds) {
+          try {
+            // Ensure document exists before classifying
+            const documentId = await ClassificationService.ensureDocumentExists(content, workspaceId);
+
+            // Call classify service (which should hit V2 endpoint)
+            const classificationResult = await ClassificationService.classify(workspaceId, {
+                documentId: documentId,
+                schemeId: schemeId,
+                runId: runId,
+                runName: runName, // Pass run name/desc here
+                runDescription: runDescription,
+                provider: provider,
+                model: model,
+                apiKey: apiKey,
+                // No content needed here as classify uses documentId
+            });
+
+            // Adapt ClassificationResultRead to ClassificationResult before pushing
+            const resultToPush: ClassificationResult = {
+              id: classificationResult.id,
+              document_id: classificationResult.document_id,
+              scheme_id: classificationResult.scheme_id,
+              value: classificationResult.value || {}, // Ensure value is a dict
+              timestamp: classificationResult.timestamp || new Date().toISOString(), // Provide fallback timestamp
+              run_id: classificationResult.run_id || runId, // Use runId from function scope
+              run_name: runName, // Use runName from function scope (options)
+              run_description: runDescription, // Use runDescription from function scope (options)
+            };
+            allClassificationResults.push(resultToPush);
+            completedCount++;
+            console.log(`Run progress: Classified ${completedCount}/${totalTasks}`);
+            // Optionally update progress toast/state here if needed
+
+          } catch (individualError: any) {
+            console.error(`Error classifying doc ${content.id || 'new'} with scheme ${schemeId} for run ${runId}:`, individualError);
+            // Decide how to handle partial failures: continue, stop, mark run as failed?
+            // For now, we log and continue.
+            setError(`Partial failure during run: ${individualError.message}`);
+            toast({
+              title: 'Partial Run Failure',
+              description: `Error classifying doc ${content.id || 'new'} with scheme ${schemeId}. Check console.`,
+              variant: 'default'
+            });
           }
         }
-      );
-      
-      // Update runs list
-      setRuns(prev => [run, ...prev]);
-      setActiveRun(run);
-      
-      // Load the full run to get formatted results
-      await loadRun(run.id);
-      
+      }
+
+      // 4. Update Run Status (e.g., completed)
+      await ClassificationService.updateRunAPI(workspaceId, runId, { status: 'completed' });
+      createdRun.status = 'completed'; // Update local object
+
+      // 5. Update State and Return
+      // Update global runs list
+      setRuns(prev => {
+          const existingRunIndex = prev.findIndex(r => r.id === runId);
+          if (existingRunIndex > -1) {
+              const updatedRuns = [...prev];
+              updatedRuns[existingRunIndex] = createdRun!;
+              return updatedRuns;
+          } else {
+              return [createdRun!, ...prev];
+          }
+      });
+      // Set active run and results (loadRun might be better for consistency)
+      setActiveRun(createdRun);
+      // Optionally format and set results directly, or rely on loadRun to be called after
+      // const formattedResults = allClassificationResults.map(r => ... format ...);
+      // setResults(formattedResults);
+
+      // For more robust state, call loadRun to fetch the complete picture
+      await loadRun(runId);
+
       toast({
         title: 'Classification run complete',
-        description: `Successfully classified ${contents.length} items with ${schemeIds.length} schemes`,
+        description: `Finished Run ${runId}: ${runName}. Classified ${completedCount}/${totalTasks} items.`,
       });
-      
-      return run;
+
+      return createdRun;
+
     } catch (err: any) {
       console.error('Error creating run:', err);
       setError(`Failed to create run: ${err.message}`);
       toast({
-        title: 'Error',
-        description: `Failed to create run: ${err.message}`,
+        title: 'Error Creating Run',
+        description: err.message,
         variant: 'destructive',
       });
+      // Optionally update run status to failed if createdRun exists
+       if (createdRun?.id) {
+          try {
+              const workspaceId = getWorkspaceId();
+              await ClassificationService.updateRunAPI(workspaceId, createdRun.id, { status: 'failed' });
+          } catch (updateError) {
+              console.error("Failed to update run status to failed:", updateError);
+          }
+       }
       return null;
     } finally {
       setIsCreatingRun(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, loadRun, toast, selectedProvider, selectedModel, apiKeys]);
+  }, [activeWorkspace?.uid, getWorkspaceId, loadRun, toast, selectedProvider, selectedModel, apiKeys, schemes]);
   
   // Create a new document
   const createDocument = useCallback(async (documentData: Partial<ClassifiableDocument>) => {
@@ -873,16 +1059,52 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       
       console.log(`Loading results for run ID: ${runId} in workspace: ${wsId}`);
       
-      // Use the existing loadResults function with the runId parameter
-      const results = await ClassificationService.getResults(wsId, { runId });
-      
+      // Use the specific service method for loading results by run
+      const results = await ClassificationService.getResultsByRunAPI(wsId, runId);
+
       // Format the results with their display values
+      // Need run details to properly format run_name/description
+      let runDetails: ClassificationRun | null = null;
+      if (results.length > 0) {
+          // Try to find run details from the active run or fetch if necessary
+          const currentActiveRun = activeRun;
+          if (currentActiveRun && currentActiveRun.id === runId) {
+              runDetails = currentActiveRun;
+          } else {
+              try {
+                  const runDetailsRead = await ClassificationService.getRunAPI(wsId, runId);
+                  runDetails = {
+                      id: runDetailsRead.id,
+                      name: runDetailsRead.name || `Run ${runDetailsRead.id}`,
+                      timestamp: runDetailsRead.updated_at || runDetailsRead.created_at,
+                      documentCount: runDetailsRead.document_count ?? 0,
+                      schemeCount: runDetailsRead.scheme_count ?? 0,
+                      description: runDetailsRead.description || undefined,
+                      status: runDetailsRead.status === 'pending' || runDetailsRead.status === 'running' || runDetailsRead.status === 'completed' || runDetailsRead.status === 'failed' ? runDetailsRead.status : undefined,
+                  };
+              } catch (runFetchError) {
+                  console.warn(`Could not fetch run details for run ${runId}:`, runFetchError);
+              }
+          }
+      }
+
       const formattedResults = results.map(result => {
         const scheme = schemes.find(s => s.id === result.scheme_id);
-        if (!scheme) return result as FormattedClassificationResult;
-        return ClassificationService.formatResult(result, scheme);
+        // Adapt ClassificationResultRead to ClassificationResult
+        const resultToFormat: ClassificationResult = {
+            id: result.id,
+            document_id: result.document_id,
+            scheme_id: result.scheme_id,
+            value: result.value || {},
+            timestamp: result.timestamp || new Date().toISOString(),
+            run_id: result.run_id || runId,
+            run_name: runDetails?.name || `Run ${runId}`,
+            run_description: runDetails?.description || undefined,
+        };
+        if (!scheme) return resultToFormat as FormattedClassificationResult; // Return adapted result if scheme missing
+        return ClassificationService.formatResult(resultToFormat, scheme);
       });
-      
+
       setResults(formattedResults);
       return formattedResults;
     } catch (error: any) {
@@ -892,7 +1114,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     } finally {
       setIsLoadingResults(false);
     }
-  }, [activeWorkspace, schemes]);
+  }, [activeWorkspace, schemes, activeRun, getWorkspaceId, toast]);
   
   // Add a function to load results filtered by scheme ID
   const loadResultsByScheme = useCallback(async (schemeId: number) => {
@@ -911,7 +1133,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     try {
       const workspaceId = getWorkspaceId();
       
-      // Get results using our service, filtered by schemeId
+      // Use getResultsAPI
       const apiResults = await ClassificationService.getResults(workspaceId, {
         schemeId,
         limit: 50 // Add a limit to avoid loading too many results initially
@@ -939,7 +1161,22 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
 
       // Format results
       const formattedResults = apiResults
-        .map(result => ClassificationService.formatResult(result, scheme!))
+        .map(result => {
+            // result here is ClassificationResultRead
+            const resultToFormat: ClassificationResult = {
+                id: result.id,
+                document_id: result.document_id,
+                scheme_id: result.scheme_id,
+                value: result.value || {}, // Ensure value is dict
+                timestamp: result.timestamp || new Date().toISOString(), // Fallback timestamp
+                run_id: result.run_id || 0,
+                // Use placeholders as run details aren't readily available here
+                // Corrected: Do not access result.run_name or result.run_description
+                run_name: (result.run_id ? `Run ${result.run_id}` : 'Unknown Run'), 
+                run_description: undefined, 
+            };
+            return ClassificationService.formatResult(resultToFormat, scheme!) // scheme is guaranteed here
+        })
         .filter(Boolean) as FormattedClassificationResult[];
         
       // Unlike loadResults, we don't automatically set the main `results` state here,
@@ -999,6 +1236,67 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     loadRun
   ]);
   
+  // Update a classification run
+  const updateRun = useCallback(async (runId: number, data: ClassificationRunUpdate): Promise<ClassificationRun | null> => {
+    if (!activeWorkspace?.uid) return null;
+    setIsLoadingRuns(true);
+    setError(null);
+    try {
+      const workspaceId = getWorkspaceId();
+      const updatedRunRead = await ClassificationService.updateRunAPI(workspaceId, runId, data);
+      // Convert to internal type
+      const updatedRun: ClassificationRun = {
+        id: updatedRunRead.id,
+        name: updatedRunRead.name || `Run ${updatedRunRead.id}`,
+        timestamp: updatedRunRead.updated_at || updatedRunRead.created_at,
+        documentCount: updatedRunRead.document_count ?? 0,
+        schemeCount: updatedRunRead.scheme_count ?? 0,
+        description: updatedRunRead.description || undefined,
+        status: updatedRunRead.status === 'pending' || updatedRunRead.status === 'running' || updatedRunRead.status === 'completed' || updatedRunRead.status === 'failed' ? updatedRunRead.status : undefined,
+      };
+      // Update local state
+      setRuns(prev => prev.map(r => r.id === runId ? updatedRun : r));
+      if (activeRun?.id === runId) {
+        setActiveRun(updatedRun);
+      }
+      toast({ title: 'Run Updated', description: `Run "${updatedRun.name}" details saved.` });
+      return updatedRun;
+    } catch (err: any) {
+      console.error('Error updating run:', err);
+      setError(`Failed to update run: ${err.message}`);
+      toast({ title: 'Error Updating Run', description: err.message, variant: 'destructive' });
+      return null;
+    } finally {
+      setIsLoadingRuns(false);
+    }
+  }, [activeWorkspace?.uid, getWorkspaceId, toast, activeRun]);
+
+  // Delete a classification run
+  const deleteRun = useCallback(async (runId: number): Promise<boolean> => {
+    if (!activeWorkspace?.uid) return false;
+    setIsLoadingRuns(true); // Reuse loading state
+    setError(null);
+    try {
+      const workspaceId = getWorkspaceId();
+      await ClassificationService.deleteRunAPI(workspaceId, runId);
+      // Update local state
+      setRuns(prev => prev.filter(r => r.id !== runId));
+      if (activeRun?.id === runId) {
+        setActiveRun(null);
+        setResults([]); // Clear results if the active run was deleted
+      }
+      toast({ title: 'Run Deleted', description: `Run ${runId} successfully deleted.` });
+      return true;
+    } catch (err: any) {
+      console.error('Error deleting run:', err);
+      setError(`Failed to delete run: ${err.message}`);
+      toast({ title: 'Error Deleting Run', description: err.message, variant: 'destructive' });
+      return false;
+    } finally {
+      setIsLoadingRuns(false);
+    }
+  }, [activeWorkspace?.uid, getWorkspaceId, toast, activeRun]);
+  
   return {
     // Schemes
     schemes,
@@ -1028,6 +1326,8 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     loadRun,
     createRun,
     setActiveRun,
+    updateRun,
+    deleteRun,
     
     // Results
     results,

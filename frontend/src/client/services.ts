@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest,app__api__v1__entities__routes__SearchType,Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationResultRead,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,SavedResultSetCreate,SavedResultSetRead,ClassificationResultCreate,EnhancedClassificationResultRead,Body_documents_bulk_upload_documents,Body_documents_create_document,Body_documents_extract_document_metadata_from_pdf,DocumentRead,DocumentUpdate,FileRead,Body_filestorage_file_upload,FileUploadResponse,ArticleResponse } from './models';
+import type { Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest,app__api__v1__entities__routes__SearchType,Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,Body_documents_bulk_upload_documents,Body_documents_create_document,Body_documents_extract_document_metadata_from_pdf,DocumentRead,DocumentUpdate,FileRead,Body_filestorage_file_upload,FileUploadResponse,ClassificationResultRead,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,SavedResultSetCreate,SavedResultSetRead,ClassificationResultCreate,EnhancedClassificationResultRead,ClassificationRunCreate,ClassificationRunRead,ClassificationRunsOut,ClassificationRunUpdate,ArticleResponse } from './models';
 
 export type AppData = {
         
@@ -348,6 +348,122 @@ DeleteWorkspace: {
                 };
     }
 
+export type DocumentsData = {
+        CreateDocument: {
+                    formData: Body_documents_create_document
+workspaceId: number
+                    
+                };
+ReadDocuments: {
+                    limit?: number
+skip?: number
+workspaceId: number
+                    
+                };
+DeleteAllDocuments: {
+                    workspaceId: number
+                    
+                };
+CreateDocument1: {
+                    formData: Body_documents_create_document
+workspaceId: number
+                    
+                };
+ReadDocuments1: {
+                    limit?: number
+skip?: number
+workspaceId: number
+                    
+                };
+DeleteAllDocuments1: {
+                    workspaceId: number
+                    
+                };
+ReadDocument: {
+                    documentId: number
+workspaceId: number
+                    
+                };
+UpdateDocument: {
+                    documentId: number
+requestBody: DocumentUpdate
+workspaceId: number
+                    
+                };
+DeleteDocument: {
+                    documentId: number
+workspaceId: number
+                    
+                };
+GetDocumentFiles: {
+                    documentId: number
+                    
+                };
+DeleteDocumentFile: {
+                    documentId: number
+fileId: number
+                    
+                };
+DownloadFile: {
+                    fileId: number
+                    
+                };
+TransferDocuments: {
+                    copy?: boolean
+requestBody: Array<number>
+targetWorkspaceId: number
+workspaceId: number
+                    
+                };
+ExtractPdfContent: {
+                    documentId: number
+fileId: number
+workspaceId: number
+                    
+                };
+BulkUploadDocuments: {
+                    formData: Body_documents_bulk_upload_documents
+workspaceId: number
+                    
+                };
+ExtractDocumentMetadataFromPdf: {
+                    formData: Body_documents_extract_document_metadata_from_pdf
+                    
+                };
+    }
+
+export type FilestorageData = {
+        FileUpload: {
+                    formData: Body_filestorage_file_upload
+                    
+                };
+FileDownload: {
+                    filePath: string
+storageId: string
+                    
+                };
+DeleteFile: {
+                    filename: string
+                    
+                };
+    }
+
+export type FilesData = {
+        FileUpload: {
+                    formData: Body_filestorage_file_upload
+                    
+                };
+FileDownload: {
+                    filePath: string
+storageId: string
+                    
+                };
+DeleteFile: {
+                    filename: string
+                    
+                };
+    }
+
 export type ClassificationSchemesData = {
         CreateSavedResultSet: {
                     requestBody: SavedResultSetCreate
@@ -488,125 +604,97 @@ workspaceId: number
                 };
     }
 
-export type DocumentsData = {
-        CreateDocument: {
-                    formData: Body_documents_create_document
+export type ClassificationRunsData = {
+        CreateClassificationRun: {
+                    requestBody: ClassificationRunCreate
 workspaceId: number
                     
                 };
-ReadDocuments: {
+CreateClassificationRun1: {
+                    requestBody: ClassificationRunCreate
+workspaceId: number
+                    
+                };
+CreateClassificationRun2: {
+                    requestBody: ClassificationRunCreate
+workspaceId: number
+                    
+                };
+CreateClassificationRun3: {
+                    requestBody: ClassificationRunCreate
+workspaceId: number
+                    
+                };
+ReadClassificationRuns: {
                     limit?: number
 skip?: number
 workspaceId: number
                     
                 };
-DeleteAllDocuments: {
-                    workspaceId: number
-                    
-                };
-CreateDocument1: {
-                    formData: Body_documents_create_document
-workspaceId: number
-                    
-                };
-ReadDocuments1: {
+ReadClassificationRuns1: {
                     limit?: number
 skip?: number
 workspaceId: number
                     
                 };
-DeleteAllDocuments1: {
-                    workspaceId: number
+ReadClassificationRun: {
+                    runId: number
                     
                 };
-ReadDocument: {
-                    documentId: number
-workspaceId: number
+ReadClassificationRun1: {
+                    runId: number
                     
                 };
-UpdateDocument: {
-                    documentId: number
-requestBody: DocumentUpdate
-workspaceId: number
+UpdateClassificationRun: {
+                    requestBody: ClassificationRunUpdate
+runId: number
                     
                 };
-DeleteDocument: {
-                    documentId: number
-workspaceId: number
+UpdateClassificationRun1: {
+                    requestBody: ClassificationRunUpdate
+runId: number
                     
                 };
-GetDocumentFiles: {
-                    documentId: number
+DeleteClassificationRun: {
+                    runId: number
                     
                 };
-DeleteDocumentFile: {
-                    documentId: number
-fileId: number
-                    
-                };
-DownloadFile: {
-                    fileId: number
-                    
-                };
-TransferDocuments: {
-                    copy?: boolean
-requestBody: Array<number>
-targetWorkspaceId: number
-workspaceId: number
-                    
-                };
-ExtractPdfContent: {
-                    documentId: number
-fileId: number
-workspaceId: number
-                    
-                };
-BulkUploadDocuments: {
-                    formData: Body_documents_bulk_upload_documents
-workspaceId: number
-                    
-                };
-ExtractDocumentMetadataFromPdf: {
-                    formData: Body_documents_extract_document_metadata_from_pdf
-                    
-                };
-    }
-
-export type FilestorageData = {
-        FileUpload: {
-                    formData: Body_filestorage_file_upload
-                    
-                };
-FileDownload: {
-                    filePath: string
-storageId: string
-                    
-                };
-DeleteFile: {
-                    filename: string
-                    
-                };
-    }
-
-export type FilesData = {
-        FileUpload: {
-                    formData: Body_filestorage_file_upload
-                    
-                };
-FileDownload: {
-                    filePath: string
-storageId: string
-                    
-                };
-DeleteFile: {
-                    filename: string
+DeleteClassificationRun1: {
+                    runId: number
                     
                 };
     }
 
 export type GeoData = {
         GeojsonEventsView: {
-                    eventType: string
+                    /**
+ * ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)
+ */
+endDate?: string
+eventType: string
+/**
+ * Maximum number of locations to return
+ */
+limit?: number
+/**
+ * ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)
+ */
+startDate?: string
+                    
+                };
+GeojsonRawView: {
+                    /**
+ * ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)
+ */
+endDate?: string
+/**
+ * Maximum number of locations to return
+ */
+limit?: number
+/**
+ * ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)
+ */
+startDate?: string
                     
                 };
     }
@@ -647,6 +735,13 @@ date?: string
  * Entity for articles
  */
 entity: string
+                    
+                };
+ArticleById: {
+                    /**
+ * Content ID of the article
+ */
+id: string
                     
                 };
     }
@@ -2300,586 +2395,6 @@ workspaceId,
 
 }
 
-export class ClassificationSchemesService {
-
-	/**
-	 * Create Saved Result Set
-	 * @returns SavedResultSetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createSavedResultSet(data: ClassificationSchemesData['CreateSavedResultSet']): CancelablePromise<SavedResultSetRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Saved Result Sets
-	 * @returns SavedResultSetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readSavedResultSets(data: ClassificationSchemesData['ReadSavedResultSets']): CancelablePromise<Array<SavedResultSetRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Scheme
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationScheme(data: ClassificationSchemesData['CreateClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Schemes
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationSchemes(data: ClassificationSchemesData['ReadClassificationSchemes']): CancelablePromise<Array<ClassificationSchemeRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete All Classification Schemes
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAllClassificationSchemes(data: ClassificationSchemesData['DeleteAllClassificationSchemes']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Scheme
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationScheme1(data: ClassificationSchemesData['CreateClassificationScheme1']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Schemes
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationSchemes1(data: ClassificationSchemesData['ReadClassificationSchemes1']): CancelablePromise<Array<ClassificationSchemeRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete All Classification Schemes
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAllClassificationSchemes1(data: ClassificationSchemesData['DeleteAllClassificationSchemes1']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Scheme
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationScheme(data: ClassificationSchemesData['ReadClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-schemeId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Classification Scheme
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateClassificationScheme(data: ClassificationSchemesData['UpdateClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-schemeId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Classification Scheme
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteClassificationScheme(data: ClassificationSchemesData['DeleteClassificationScheme']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-schemeId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Classify Document
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static classifyDocument(data: ClassificationSchemesData['ClassifyDocument']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-schemeId,
-documentId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}/classify/{document_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId, document_id: documentId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Saved Result Set
-	 * @returns SavedResultSetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getSavedResultSet(data: ClassificationSchemesData['GetSavedResultSet']): CancelablePromise<SavedResultSetRead> {
-		const {
-workspaceId,
-resultSetId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results/{result_set_id}',
-			path: {
-				workspace_id: workspaceId, result_set_id: resultSetId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class ClassificationResultsService {
-
-	/**
-	 * Create Classification Result
-	 * Create (store) an individual classification result.
- * Verifies that the workspace exists and that the referenced document and scheme belong to that workspace.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationResult(data: ClassificationResultsData['CreateClassificationResult']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Result
-	 * Create (store) an individual classification result.
- * Verifies that the workspace exists and that the referenced document and scheme belong to that workspace.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationResult1(data: ClassificationResultsData['CreateClassificationResult1']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List all classification results for the given workspace.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults(data: ClassificationResultsData['ListClassificationResults']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-documentIds,
-schemeIds,
-runName,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List all classification results for the given workspace.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults1(data: ClassificationResultsData['ListClassificationResults1']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-documentIds,
-schemeIds,
-runName,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Classification Result
-	 * Load (retrieve) an individual classification result by its ID.
- * Verifies that this result's document and scheme belong to the workspace.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getClassificationResult(data: ClassificationResultsData['GetClassificationResult']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-resultId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
-			path: {
-				workspace_id: workspaceId, result_id: resultId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Classification Result
-	 * Load (retrieve) an individual classification result by its ID.
- * Verifies that this result's document and scheme belong to the workspace.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getClassificationResult1(data: ClassificationResultsData['GetClassificationResult1']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-resultId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
-			path: {
-				workspace_id: workspaceId, result_id: resultId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List all classification results for the given workspace.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults2(data: ClassificationResultsData['ListClassificationResults2']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-documentIds,
-schemeIds,
-runName,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List all classification results for the given workspace.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults3(data: ClassificationResultsData['ListClassificationResults3']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-documentIds,
-schemeIds,
-runName,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Results By Run
-	 * Retrieve all classification results for a specific run ID.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getResultsByRun(data: ClassificationResultsData['GetResultsByRun']): CancelablePromise<Array<ClassificationResultRead>> {
-		const {
-workspaceId,
-runId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/by_run/{run_id}',
-			path: {
-				workspace_id: workspaceId, run_id: runId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Results By Run
-	 * Retrieve all classification results for a specific run ID.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getResultsByRun1(data: ClassificationResultsData['GetResultsByRun1']): CancelablePromise<Array<ClassificationResultRead>> {
-		const {
-workspaceId,
-runId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/by_run/{run_id}',
-			path: {
-				workspace_id: workspaceId, run_id: runId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
 export class DocumentsService {
 
 	/**
@@ -3461,6 +2976,896 @@ filename,
 
 }
 
+export class ClassificationSchemesService {
+
+	/**
+	 * Create Saved Result Set
+	 * @returns SavedResultSetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createSavedResultSet(data: ClassificationSchemesData['CreateSavedResultSet']): CancelablePromise<SavedResultSetRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Saved Result Sets
+	 * @returns SavedResultSetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readSavedResultSets(data: ClassificationSchemesData['ReadSavedResultSets']): CancelablePromise<Array<SavedResultSetRead>> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Classification Scheme
+	 * @returns ClassificationSchemeRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationScheme(data: ClassificationSchemesData['CreateClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Schemes
+	 * @returns ClassificationSchemeRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationSchemes(data: ClassificationSchemesData['ReadClassificationSchemes']): CancelablePromise<Array<ClassificationSchemeRead>> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete All Classification Schemes
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAllClassificationSchemes(data: ClassificationSchemesData['DeleteAllClassificationSchemes']): CancelablePromise<unknown> {
+		const {
+workspaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
+			path: {
+				workspace_id: workspaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Classification Scheme
+	 * @returns ClassificationSchemeRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationScheme1(data: ClassificationSchemesData['CreateClassificationScheme1']): CancelablePromise<ClassificationSchemeRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Schemes
+	 * @returns ClassificationSchemeRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationSchemes1(data: ClassificationSchemesData['ReadClassificationSchemes1']): CancelablePromise<Array<ClassificationSchemeRead>> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete All Classification Schemes
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAllClassificationSchemes1(data: ClassificationSchemesData['DeleteAllClassificationSchemes1']): CancelablePromise<unknown> {
+		const {
+workspaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
+			path: {
+				workspace_id: workspaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Scheme
+	 * @returns ClassificationSchemeRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationScheme(data: ClassificationSchemesData['ReadClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
+		const {
+workspaceId,
+schemeId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
+			path: {
+				workspace_id: workspaceId, scheme_id: schemeId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Classification Scheme
+	 * @returns ClassificationSchemeRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateClassificationScheme(data: ClassificationSchemesData['UpdateClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
+		const {
+workspaceId,
+schemeId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
+			path: {
+				workspace_id: workspaceId, scheme_id: schemeId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Classification Scheme
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteClassificationScheme(data: ClassificationSchemesData['DeleteClassificationScheme']): CancelablePromise<unknown> {
+		const {
+workspaceId,
+schemeId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
+			path: {
+				workspace_id: workspaceId, scheme_id: schemeId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Classify Document
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static classifyDocument(data: ClassificationSchemesData['ClassifyDocument']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+schemeId,
+documentId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}/classify/{document_id}',
+			path: {
+				workspace_id: workspaceId, scheme_id: schemeId, document_id: documentId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Saved Result Set
+	 * @returns SavedResultSetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getSavedResultSet(data: ClassificationSchemesData['GetSavedResultSet']): CancelablePromise<SavedResultSetRead> {
+		const {
+workspaceId,
+resultSetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results/{result_set_id}',
+			path: {
+				workspace_id: workspaceId, result_set_id: resultSetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class ClassificationResultsService {
+
+	/**
+	 * Create Classification Result
+	 * Create (store) an individual classification result.
+ * Verifies that the workspace exists and that the referenced document and scheme belong to that workspace.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationResult(data: ClassificationResultsData['CreateClassificationResult']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Classification Result
+	 * Create (store) an individual classification result.
+ * Verifies that the workspace exists and that the referenced document and scheme belong to that workspace.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationResult1(data: ClassificationResultsData['CreateClassificationResult1']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Classification Results
+	 * List all classification results for the given workspace.
+	 * @returns EnhancedClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listClassificationResults(data: ClassificationResultsData['ListClassificationResults']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
+		const {
+workspaceId,
+documentIds,
+schemeIds,
+runName,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Classification Results
+	 * List all classification results for the given workspace.
+	 * @returns EnhancedClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listClassificationResults1(data: ClassificationResultsData['ListClassificationResults1']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
+		const {
+workspaceId,
+documentIds,
+schemeIds,
+runName,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Classification Result
+	 * Load (retrieve) an individual classification result by its ID.
+ * Verifies that this result's document and scheme belong to the workspace.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getClassificationResult(data: ClassificationResultsData['GetClassificationResult']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+resultId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
+			path: {
+				workspace_id: workspaceId, result_id: resultId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Classification Result
+	 * Load (retrieve) an individual classification result by its ID.
+ * Verifies that this result's document and scheme belong to the workspace.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getClassificationResult1(data: ClassificationResultsData['GetClassificationResult1']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+resultId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
+			path: {
+				workspace_id: workspaceId, result_id: resultId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Classification Results
+	 * List all classification results for the given workspace.
+	 * @returns EnhancedClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listClassificationResults2(data: ClassificationResultsData['ListClassificationResults2']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
+		const {
+workspaceId,
+documentIds,
+schemeIds,
+runName,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Classification Results
+	 * List all classification results for the given workspace.
+	 * @returns EnhancedClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listClassificationResults3(data: ClassificationResultsData['ListClassificationResults3']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
+		const {
+workspaceId,
+documentIds,
+schemeIds,
+runName,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				document_ids: documentIds, scheme_ids: schemeIds, run_name: runName, skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Results By Run
+	 * Retrieve all classification results for a specific run ID.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getResultsByRun(data: ClassificationResultsData['GetResultsByRun']): CancelablePromise<Array<ClassificationResultRead>> {
+		const {
+workspaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/by_run/{run_id}',
+			path: {
+				workspace_id: workspaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Results By Run
+	 * Retrieve all classification results for a specific run ID.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getResultsByRun1(data: ClassificationResultsData['GetResultsByRun1']): CancelablePromise<Array<ClassificationResultRead>> {
+		const {
+workspaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/by_run/{run_id}',
+			path: {
+				workspace_id: workspaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class ClassificationRunsService {
+
+	/**
+	 * Create Classification Run
+	 * Create a new classification run.
+ * Workspace must exist and belong to the current user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationRun(data: ClassificationRunsData['CreateClassificationRun']): CancelablePromise<ClassificationRunRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Classification Run
+	 * Create a new classification run.
+ * Workspace must exist and belong to the current user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationRun1(data: ClassificationRunsData['CreateClassificationRun1']): CancelablePromise<ClassificationRunRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Classification Run
+	 * Create a new classification run.
+ * Workspace must exist and belong to the current user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationRun2(data: ClassificationRunsData['CreateClassificationRun2']): CancelablePromise<ClassificationRunRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Classification Run
+	 * Create a new classification run.
+ * Workspace must exist and belong to the current user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createClassificationRun3(data: ClassificationRunsData['CreateClassificationRun3']): CancelablePromise<ClassificationRunRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Runs
+	 * Retrieve classification runs for a specific workspace
+	 * @returns ClassificationRunsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationRuns(data: ClassificationRunsData['ReadClassificationRuns']): CancelablePromise<ClassificationRunsOut> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Runs
+	 * Retrieve classification runs for a specific workspace
+	 * @returns ClassificationRunsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationRuns1(data: ClassificationRunsData['ReadClassificationRuns1']): CancelablePromise<ClassificationRunsOut> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Run
+	 * Get a specific classification run by ID.
+ * Only returns runs belonging to the user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationRun(data: ClassificationRunsData['ReadClassificationRun']): CancelablePromise<ClassificationRunRead> {
+		const {
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}',
+			path: {
+				run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Classification Run
+	 * Get a specific classification run by ID.
+ * Only returns runs belonging to the user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readClassificationRun1(data: ClassificationRunsData['ReadClassificationRun1']): CancelablePromise<ClassificationRunRead> {
+		const {
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}',
+			path: {
+				run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Classification Run
+	 * Update a specific classification run by ID.
+ * Only allows updates to runs belonging to the user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateClassificationRun(data: ClassificationRunsData['UpdateClassificationRun']): CancelablePromise<ClassificationRunRead> {
+		const {
+runId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}',
+			path: {
+				run_id: runId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Classification Run
+	 * Update a specific classification run by ID.
+ * Only allows updates to runs belonging to the user.
+	 * @returns ClassificationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateClassificationRun1(data: ClassificationRunsData['UpdateClassificationRun1']): CancelablePromise<ClassificationRunRead> {
+		const {
+runId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}',
+			path: {
+				run_id: runId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Classification Run
+	 * Delete a specific classification run by ID.
+ * Only allows deletion of runs belonging to the user.
+ * Note: This will cascade delete associated ClassificationResults if the DB constraint is active.
+ * If not, results might be orphaned. Consider handling orphans separately if needed.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteClassificationRun(data: ClassificationRunsData['DeleteClassificationRun']): CancelablePromise<void> {
+		const {
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}',
+			path: {
+				run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Classification Run
+	 * Delete a specific classification run by ID.
+ * Only allows deletion of runs belonging to the user.
+ * Note: This will cascade delete associated ClassificationResults if the DB constraint is active.
+ * If not, results might be orphaned. Consider handling orphans separately if needed.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteClassificationRun1(data: ClassificationRunsData['DeleteClassificationRun1']): CancelablePromise<void> {
+		const {
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}',
+			path: {
+				run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
 export class GeoService {
 
 	/**
@@ -3471,12 +3876,38 @@ export class GeoService {
 	public static geojsonEventsView(data: GeoData['GeojsonEventsView']): CancelablePromise<unknown> {
 		const {
 eventType,
+startDate,
+endDate,
+limit = 100,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v2/geo/geojson_events',
 			query: {
-				event_type: eventType
+				event_type: eventType, start_date: startDate, end_date: endDate, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Geojson Raw View
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static geojsonRawView(data: GeoData['GeojsonRawView'] = {}): CancelablePromise<unknown> {
+		const {
+startDate,
+endDate,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/geo/geojson',
+			query: {
+				start_date: startDate, end_date: endDate, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3548,6 +3979,28 @@ date,
 			url: '/api/v2/articles/by_entity/',
 			query: {
 				entity, date
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Article By Id
+	 * Fetch a single article by its content ID.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static articleById(data: ArticlesData['ArticleById']): CancelablePromise<Record<string, unknown>> {
+		const {
+id,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/articles/by_id',
+			query: {
+				id
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3665,7 +4118,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-03-03',
+timeframeTo = '2025-04-10',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

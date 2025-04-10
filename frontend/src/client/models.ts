@@ -9,7 +9,6 @@ export type Body_documents_bulk_upload_documents = {
 	files: Array<Blob | File>;
 	content_type?: string;
 	source?: string | null;
-	use_filenames_as_titles?: boolean;
 };
 
 
@@ -80,28 +79,58 @@ export type ClassificationFieldCreate = {
 
 
 export type ClassificationResultCreate = {
-	run_id: number;
 	document_id: number;
 	scheme_id: number;
+	run_id?: number | null;
 	value?: Record<string, unknown>;
 	timestamp?: string | null;
-	run_name?: string | null;
-	run_description?: string | null;
 };
 
 
 
 export type ClassificationResultRead = {
-	run_id: number;
 	document_id: number;
 	scheme_id: number;
+	run_id?: number | null;
 	value?: Record<string, unknown>;
-	timestamp: string;
-	run_name?: string | null;
-	run_description?: string | null;
+	timestamp?: string;
 	id: number;
 	document: DocumentRead;
 	scheme: ClassificationSchemeRead;
+};
+
+
+
+export type ClassificationRunCreate = {
+	status?: unknown;
+};
+
+
+
+export type ClassificationRunRead = {
+	status?: unknown;
+};
+
+
+
+/**
+ * Defines the possible states of a ClassificationRun.
+ */
+export type ClassificationRunStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+
+
+export type ClassificationRunUpdate = {
+	name?: string | null;
+	description?: string | null;
+	status?: ClassificationRunStatus | null;
+};
+
+
+
+export type ClassificationRunsOut = {
+	data: Array<ClassificationRunRead>;
+	count: number;
 };
 
 
@@ -122,6 +151,8 @@ export type ClassificationSchemeRead = {
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
 	id: number;
+	workspace_id: number;
+	user_id: number;
 	created_at: string;
 	updated_at: string;
 	fields: Array<ClassificationFieldCreate>;
@@ -132,19 +163,20 @@ export type ClassificationSchemeRead = {
 
 
 export type ClassificationSchemeUpdate = {
-	name: string;
-	description: string;
+	name?: string | null;
+	description?: string | null;
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
-	fields: Array<ClassificationFieldCreate>;
+	fields?: Array<ClassificationFieldCreate> | null;
 };
 
 
 
 export type DictKeyDefinition = {
 	name: string;
-	type: string;
+	type: 'str' | 'int' | 'float' | 'bool';
 };
+
 
 
 
@@ -156,7 +188,7 @@ export type DocumentRead = {
 	top_image?: string | null;
 	text_content?: string | null;
 	summary?: string | null;
-	insertion_date: string;
+	insertion_date?: string;
 	id: number;
 	workspace_id: number;
 	user_id: number;
@@ -166,34 +198,38 @@ export type DocumentRead = {
 
 
 export type DocumentUpdate = {
-	title: string;
+	title?: string | null;
 	url?: string | null;
 	content_type?: string | null;
 	source?: string | null;
 	top_image?: string | null;
 	text_content?: string | null;
 	summary?: string | null;
-	insertion_date?: string;
+	insertion_date?: string | null;
 };
 
 
 
+/**
+ * Adds a processed 'display_value' based on the raw 'value' and scheme.
+ */
 export type EnhancedClassificationResultRead = {
-	run_id: number;
 	document_id: number;
 	scheme_id: number;
+	run_id?: number | null;
 	value?: Record<string, unknown>;
-	timestamp: string;
-	run_name?: string | null;
-	run_description?: string | null;
+	timestamp?: string;
 	id: number;
 	document: DocumentRead;
 	scheme: ClassificationSchemeRead;
-	display_value?: number | string | Record<string, unknown> | null;
+	display_value?: number | string | Record<string, unknown> | Array<unknown> | null;
 };
 
 
 
+/**
+ * Defines the data type for a ClassificationField.
+ */
 export type FieldType = 'int' | 'str' | 'List[str]' | 'List[Dict[str, any]]';
 
 
@@ -440,6 +476,7 @@ export type WorkspaceRead = {
 	uid: number;
 	created_at: string;
 	updated_at: string;
+	user_id_ownership: number;
 };
 
 

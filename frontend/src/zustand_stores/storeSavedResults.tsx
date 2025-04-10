@@ -3,11 +3,9 @@ import {
   ClassificationSchemesService,
   DocumentsService,
   ClassificationResultsService,
-  // SavedResultsService, // Removed as it's not in the provided services.ts
 } from '@/client/services';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { useDocumentStore } from '@/zustand_stores/storeDocuments';
-import { useClassificationSchemeStore } from '@/zustand_stores/storeSchemas';
 import {
   ClassificationSchemeRead,
   DocumentRead,
@@ -15,7 +13,6 @@ import {
   SavedResultSetCreate,
   ClassificationResultRead
 } from '@/client/models';
-import { useClassificationResultStore } from '@/zustand_stores/storeClassificationResults';
 
 interface SavedResultSetState {
   savedResults: SavedResultSetRead[];
@@ -90,12 +87,12 @@ export const useSavedResultSetStore = create<SavedResultSetState>((set, get) => 
       
       // Update stores with the loaded data
       useDocumentStore.getState().fetchDocuments();
-      useClassificationSchemeStore.getState().fetchClassificationSchemes(activeWorkspace.uid);
+      // useClassificationSchemeStore.getState().fetchClassificationSchemes(activeWorkspace.uid); // Remove this line
       
       // Set the run ID in the classification results store
-      if (resultSet.results?.[0]?.run_id) {
-        useClassificationResultStore.getState().setSelectedRunId(resultSet.results[0].run_id);
-      }
+      // if (resultSet.results?.[0]?.run_id) { // Remove this block
+      //   useClassificationResultStore.getState().setSelectedRunId(resultSet.results[0].run_id);
+      // }
     } catch (error: any) {
       set({ error: "Error loading result set" });
       console.error(error);

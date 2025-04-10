@@ -3158,6 +3158,1132 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/documents/": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Create Document",
+        "operationId": "create_document",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_documents-create_document"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Read Documents",
+        "operationId": "read_documents",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentRead"
+                  },
+                  "title": "Response Documents-Read Documents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Delete All Documents",
+        "operationId": "delete_all_documents",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Documents-Delete All Documents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Create Document",
+        "operationId": "create_document",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_documents-create_document"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Read Documents",
+        "operationId": "read_documents",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentRead"
+                  },
+                  "title": "Response Documents-Read Documents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Delete All Documents",
+        "operationId": "delete_all_documents",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Documents-Delete All Documents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/{document_id}": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Read Document",
+        "operationId": "read_document",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Update Document",
+        "operationId": "update_document",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Delete Document",
+        "operationId": "delete_document",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Documents-Delete Document"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/files": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Get Document Files",
+        "operationId": "get_document_files",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FileRead"
+                  },
+                  "title": "Response Documents-Get Document Files"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/files/{file_id}": {
+      "delete": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Delete Document File",
+        "operationId": "delete_document_file",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Documents-Delete Document File"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/files/{file_id}/download": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Download File",
+        "operationId": "download_file",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/transfer": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Transfer Documents",
+        "description": "Transfer or copy documents to another workspace",
+        "operationId": "transfer_documents",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "target_workspace_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Target Workspace Id"
+            }
+          },
+          {
+            "name": "copy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Copy"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Document Ids"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Documents-Transfer Documents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/extract_pdf_content": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Extract Pdf Content",
+        "description": "Extract text content from a PDF file and update the document using PyMuPDF",
+        "operationId": "extract_pdf_content",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Documents-Extract Pdf Content"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/bulk-upload": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Bulk Upload Documents",
+        "description": "Bulk upload multiple PDF documents with optional metadata autofill.\n\nIf autofill is True, the system will attempt to extract metadata from each PDF.",
+        "operationId": "bulk_upload_documents",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_documents-bulk_upload_documents"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentRead"
+                  },
+                  "title": "Response Documents-Bulk Upload Documents"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/documents/extract-pdf-metadata": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Extract Document Metadata From Pdf",
+        "description": "Extract metadata from a PDF file to pre-fill document creation form.\nReturns title, text content, summary, etc. extracted from the PDF.",
+        "operationId": "extract_document_metadata_from_pdf",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_documents-extract_document_metadata_from_pdf"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Documents-Extract Document Metadata From Pdf"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/": {
+      "post": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "File Upload",
+        "description": "Upload a file to Minio.\nExpects form-data with a file.",
+        "operationId": "file_upload",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_filestorage-file_upload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "File Download",
+        "description": "Download a file from Minio.\nExpects query parameters for storage_id and file_path.\nThe file is saved temporarily and a background task deletes the temp file.",
+        "operationId": "file_download",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "storage_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Storage Id"
+            }
+          },
+          {
+            "name": "file_path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/files/list": {
+      "get": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "List Files",
+        "description": "List all files in the storage bucket.",
+        "operationId": "list_files",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Filestorage-List Files"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/files/{filename}": {
+      "delete": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "Delete File",
+        "description": "Delete a file from the storage bucket.",
+        "operationId": "delete_file",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results": {
       "post": {
         "tags": [
@@ -4326,13 +5452,15 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/documents/": {
+    "/api/v1/workspaces/{workspace_id}/classification_runs/": {
       "post": {
         "tags": [
-          "documents"
+          "classification-runs",
+          "ClassificationRuns"
         ],
-        "summary": "Create Document",
-        "operationId": "create_document",
+        "summary": "Create Classification Run",
+        "description": "Create a new classification run.\nWorkspace must exist and belong to the current user.",
+        "operationId": "create_classification_run",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4352,9 +5480,9 @@
         "requestBody": {
           "required": true,
           "content": {
-            "multipart/form-data": {
+            "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Body_documents-create_document"
+                "$ref": "#/components/schemas/ClassificationRunCreate"
               }
             }
           }
@@ -4365,7 +5493,66 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
+                  "$ref": "#/components/schemas/ClassificationRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/classification_runs": {
+      "post": {
+        "tags": [
+          "classification-runs",
+          "ClassificationRuns"
+        ],
+        "summary": "Create Classification Run",
+        "description": "Create a new classification run.\nWorkspace must exist and belong to the current user.",
+        "operationId": "create_classification_run",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassificationRunCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassificationRunRead"
                 }
               }
             }
@@ -4384,10 +5571,12 @@
       },
       "get": {
         "tags": [
-          "documents"
+          "classification-runs",
+          "ClassificationRuns"
         ],
-        "summary": "Read Documents",
-        "operationId": "read_documents",
+        "summary": "Read Classification Runs",
+        "description": "Retrieve classification runs for a specific workspace",
+        "operationId": "read_classification_runs",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4409,6 +5598,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 0,
               "default": 0,
               "title": "Skip"
             }
@@ -4419,6 +5609,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 200,
               "default": 100,
               "title": "Limit"
             }
@@ -4430,56 +5621,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRead"
-                  },
-                  "title": "Response Documents-Read Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete All Documents",
-        "operationId": "delete_all_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete All Documents"
+                  "$ref": "#/components/schemas/ClassificationRunsOut"
                 }
               }
             }
@@ -4497,68 +5639,15 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/documents": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Create Document",
-        "operationId": "create_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-create_document"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
+    "/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}": {
       "get": {
         "tags": [
-          "documents"
+          "classification-runs",
+          "ClassificationRuns"
         ],
-        "summary": "Read Documents",
-        "operationId": "read_documents",
+        "summary": "Read Classification Run",
+        "description": "Get a specific classification run by ID.\nOnly returns runs belonging to the user.",
+        "operationId": "read_classification_run",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4566,32 +5655,12 @@
         ],
         "parameters": [
           {
-            "name": "workspace_id",
+            "name": "run_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 100,
-              "title": "Limit"
+              "title": "Run Id"
             }
           }
         ],
@@ -4601,112 +5670,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRead"
-                  },
-                  "title": "Response Documents-Read Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete All Documents",
-        "operationId": "delete_all_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete All Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}": {
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Read Document",
-        "operationId": "read_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
+                  "$ref": "#/components/schemas/ClassificationRunRead"
                 }
               }
             }
@@ -4725,10 +5689,12 @@
       },
       "patch": {
         "tags": [
-          "documents"
+          "classification-runs",
+          "ClassificationRuns"
         ],
-        "summary": "Update Document",
-        "operationId": "update_document",
+        "summary": "Update Classification Run",
+        "description": "Update a specific classification run by ID.\nOnly allows updates to runs belonging to the user.",
+        "operationId": "update_classification_run",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4736,21 +5702,12 @@
         ],
         "parameters": [
           {
-            "name": "workspace_id",
+            "name": "run_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
+              "title": "Run Id"
             }
           }
         ],
@@ -4759,7 +5716,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DocumentUpdate"
+                "$ref": "#/components/schemas/ClassificationRunUpdate"
               }
             }
           }
@@ -4770,7 +5727,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
+                  "$ref": "#/components/schemas/ClassificationRunRead"
                 }
               }
             }
@@ -4789,10 +5746,12 @@
       },
       "delete": {
         "tags": [
-          "documents"
+          "classification-runs",
+          "ClassificationRuns"
         ],
-        "summary": "Delete Document",
-        "operationId": "delete_document",
+        "summary": "Delete Classification Run",
+        "description": "Delete a specific classification run by ID.\nOnly allows deletion of runs belonging to the user.\nNote: This will cascade delete associated ClassificationResults if the DB constraint is active.\n      If not, results might be orphaned. Consider handling orphans separately if needed.",
+        "operationId": "delete_classification_run",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4800,548 +5759,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_id",
+            "name": "run_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
+              "title": "Run Id"
             }
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete Document"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/files": {
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Get Document Files",
-        "operationId": "get_document_files",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/FileRead"
-                  },
-                  "title": "Response Documents-Get Document Files"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/files/{file_id}": {
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete Document File",
-        "operationId": "delete_document_file",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          },
-          {
-            "name": "file_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete Document File"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/files/{file_id}/download": {
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Download File",
-        "operationId": "download_file",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "file_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/transfer": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Transfer Documents",
-        "description": "Transfer or copy documents to another workspace",
-        "operationId": "transfer_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "target_workspace_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Target Workspace Id"
-            }
-          },
-          {
-            "name": "copy",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Copy"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "type": "integer"
-                },
-                "title": "Document Ids"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Transfer Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/extract_pdf_content": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Extract Pdf Content",
-        "description": "Extract text content from a PDF file and update the document using PyMuPDF",
-        "operationId": "extract_pdf_content",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          },
-          {
-            "name": "file_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Extract Pdf Content"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/bulk-upload": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Bulk Upload Documents",
-        "description": "Bulk upload multiple PDF documents with optional metadata autofill.\n\nIf autofill is True, the system will attempt to extract metadata from each PDF.",
-        "operationId": "bulk_upload_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-bulk_upload_documents"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRead"
-                  },
-                  "title": "Response Documents-Bulk Upload Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/extract-pdf-metadata": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Extract Document Metadata From Pdf",
-        "description": "Extract metadata from a PDF file to pre-fill document creation form.\nReturns title, text content, summary, etc. extracted from the PDF.",
-        "operationId": "extract_document_metadata_from_pdf",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-extract_document_metadata_from_pdf"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "title": "Response Documents-Extract Document Metadata From Pdf"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/files/": {
-      "post": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "File Upload",
-        "description": "Upload a file to Minio.\nExpects form-data with a file.",
-        "operationId": "file_upload",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_filestorage-file_upload"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FileUploadResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "File Download",
-        "description": "Download a file from Minio.\nExpects query parameters for storage_id and file_path.\nThe file is saved temporarily and a background task deletes the temp file.",
-        "operationId": "file_download",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "storage_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Storage Id"
-            }
-          },
-          {
-            "name": "file_path",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "File Path"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
+          "204": {
             "description": "Successful Response"
           },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not Found"
-          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -5351,103 +5781,6 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        }
-      }
-    },
-    "/api/v1/files/list": {
-      "get": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "List Files",
-        "description": "List all files in the storage bucket.",
-        "operationId": "list_files",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array",
-                  "title": "Response Filestorage-List Files"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/files/{filename}": {
-      "delete": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "Delete File",
-        "description": "Delete a file from the storage bucket.",
-        "operationId": "delete_file",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "filename",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Filename"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error"
           }
         }
       }
@@ -5468,6 +5801,105 @@
               "type": "string",
               "title": "Event Type"
             }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)",
+              "title": "Start Date"
+            },
+            "description": "ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)",
+              "title": "End Date"
+            },
+            "description": "ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of locations to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of locations to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/geo/geojson": {
+      "get": {
+        "tags": [
+          "geo"
+        ],
+        "summary": "Geojson Raw View",
+        "operationId": "geojson_raw_view",
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)",
+              "title": "Start Date"
+            },
+            "description": "ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)",
+              "title": "End Date"
+            },
+            "description": "ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of locations to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of locations to return"
           }
         ],
         "responses": {
@@ -5656,6 +6088,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ArticleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/articles/by_id": {
+      "get": {
+        "tags": [
+          "articles"
+        ],
+        "summary": "Article By Id",
+        "description": "Fetch a single article by its content ID.",
+        "operationId": "article_by_id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Content ID of the article",
+              "title": "Id"
+            },
+            "description": "Content ID of the article"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Articles-Article By Id"
                 }
               }
             }
@@ -6124,7 +6602,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-03-03",
+              "default": "2025-04-10",
               "title": "Timeframe To"
             }
           }
@@ -6507,10 +6985,6 @@
       },
       "ClassificationResultCreate": {
         "properties": {
-          "run_id": {
-            "type": "integer",
-            "title": "Run Id"
-          },
           "document_id": {
             "type": "integer",
             "title": "Document Id"
@@ -6518,6 +6992,17 @@
           "scheme_id": {
             "type": "integer",
             "title": "Scheme Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "value": {
             "type": "object",
@@ -6534,33 +7019,10 @@
               }
             ],
             "title": "Timestamp"
-          },
-          "run_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Name"
-          },
-          "run_description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Description"
           }
         },
         "type": "object",
         "required": [
-          "run_id",
           "document_id",
           "scheme_id"
         ],
@@ -6568,10 +7030,6 @@
       },
       "ClassificationResultRead": {
         "properties": {
-          "run_id": {
-            "type": "integer",
-            "title": "Run Id"
-          },
           "document_id": {
             "type": "integer",
             "title": "Document Id"
@@ -6579,6 +7037,17 @@
           "scheme_id": {
             "type": "integer",
             "title": "Scheme Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "value": {
             "type": "object",
@@ -6588,28 +7057,6 @@
             "type": "string",
             "format": "date-time",
             "title": "Timestamp"
-          },
-          "run_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Name"
-          },
-          "run_description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Description"
           },
           "id": {
             "type": "integer",
@@ -6624,15 +7071,111 @@
         },
         "type": "object",
         "required": [
-          "run_id",
           "document_id",
           "scheme_id",
-          "timestamp",
           "id",
           "document",
           "scheme"
         ],
         "title": "ClassificationResultRead"
+      },
+      "ClassificationRunCreate": {
+        "properties": {
+          "status": {
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workspace_id"
+        ],
+        "title": "ClassificationRunCreate"
+      },
+      "ClassificationRunRead": {
+        "properties": {
+          "status": {
+            "default": "pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ClassificationRunRead"
+      },
+      "ClassificationRunStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "title": "ClassificationRunStatus",
+        "description": "Defines the possible states of a ClassificationRun."
+      },
+      "ClassificationRunUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClassificationRunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ClassificationRunUpdate"
+      },
+      "ClassificationRunsOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ClassificationRunRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "ClassificationRunsOut"
       },
       "ClassificationSchemeCreate": {
         "properties": {
@@ -6718,6 +7261,14 @@
             "type": "integer",
             "title": "Id"
           },
+          "workspace_id": {
+            "type": "integer",
+            "title": "Workspace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -6763,6 +7314,8 @@
           "name",
           "description",
           "id",
+          "workspace_id",
+          "user_id",
           "created_at",
           "updated_at",
           "fields"
@@ -6772,11 +7325,25 @@
       "ClassificationSchemeUpdate": {
         "properties": {
           "name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Name"
           },
           "description": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Description"
           },
           "model_instructions": {
@@ -6802,19 +7369,21 @@
             "title": "Validation Rules"
           },
           "fields": {
-            "items": {
-              "$ref": "#/components/schemas/ClassificationFieldCreate"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ClassificationFieldCreate"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Fields"
           }
         },
         "type": "object",
-        "required": [
-          "name",
-          "description",
-          "fields"
-        ],
         "title": "ClassificationSchemeUpdate"
       },
       "DictKeyDefinition": {
@@ -6825,6 +7394,12 @@
           },
           "type": {
             "type": "string",
+            "enum": [
+              "str",
+              "int",
+              "float",
+              "bool"
+            ],
             "title": "Type"
           }
         },
@@ -6937,7 +7512,6 @@
         "type": "object",
         "required": [
           "title",
-          "insertion_date",
           "id",
           "workspace_id",
           "user_id"
@@ -6947,7 +7521,14 @@
       "DocumentUpdate": {
         "properties": {
           "title": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Title"
           },
           "url": {
@@ -6970,8 +7551,7 @@
                 "type": "null"
               }
             ],
-            "title": "Content Type",
-            "default": "article"
+            "title": "Content Type"
           },
           "source": {
             "anyOf": [
@@ -7018,23 +7598,23 @@
             "title": "Summary"
           },
           "insertion_date": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Insertion Date"
           }
         },
         "type": "object",
-        "required": [
-          "title"
-        ],
         "title": "DocumentUpdate"
       },
       "EnhancedClassificationResultRead": {
         "properties": {
-          "run_id": {
-            "type": "integer",
-            "title": "Run Id"
-          },
           "document_id": {
             "type": "integer",
             "title": "Document Id"
@@ -7042,6 +7622,17 @@
           "scheme_id": {
             "type": "integer",
             "title": "Scheme Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "value": {
             "type": "object",
@@ -7051,28 +7642,6 @@
             "type": "string",
             "format": "date-time",
             "title": "Timestamp"
-          },
-          "run_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Name"
-          },
-          "run_description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Description"
           },
           "id": {
             "type": "integer",
@@ -7096,6 +7665,10 @@
                 "type": "object"
               },
               {
+                "items": {},
+                "type": "array"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -7104,15 +7677,14 @@
         },
         "type": "object",
         "required": [
-          "run_id",
           "document_id",
           "scheme_id",
-          "timestamp",
           "id",
           "document",
           "scheme"
         ],
-        "title": "EnhancedClassificationResultRead"
+        "title": "EnhancedClassificationResultRead",
+        "description": "Adds a processed 'display_value' based on the raw 'value' and scheme."
       },
       "FieldType": {
         "type": "string",
@@ -7122,7 +7694,8 @@
           "List[str]",
           "List[Dict[str, any]]"
         ],
-        "title": "FieldType"
+        "title": "FieldType",
+        "description": "Defines the data type for a ClassificationField."
       },
       "FileRead": {
         "properties": {
@@ -7997,6 +8570,10 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "user_id_ownership": {
+            "type": "integer",
+            "title": "User Id Ownership"
           }
         },
         "type": "object",
@@ -8004,7 +8581,8 @@
           "name",
           "uid",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "user_id_ownership"
         ],
         "title": "WorkspaceRead"
       },

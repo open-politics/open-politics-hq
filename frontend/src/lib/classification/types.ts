@@ -115,6 +115,7 @@ export interface ClassificationRun {
   documentCount: number;
   schemeCount: number;
   description?: string;
+  status?: 'pending' | 'running' | 'completed' | 'failed';
 }
 
 // Parameters for creating a classification
