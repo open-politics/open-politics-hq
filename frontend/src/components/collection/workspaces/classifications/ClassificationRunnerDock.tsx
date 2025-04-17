@@ -3,10 +3,10 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen } from 'lucide-react';
+import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen, Eye } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ProviderSelector from '@/components/collection/workspaces/management/ProviderSelector';
 import { useToast } from '@/components/ui/use-toast';
@@ -311,6 +311,10 @@ function RunHistoryDialog({
 
   // --- ADDED: Function to handle fetch when dialog opens ---
   const handleOpenChange = (open: boolean) => {
+    // --- Add Detailed Logging ---
+    console.log(`[RunHistoryDialog] handleOpenChange called. Dialog changing to open=${open}. isLoading=${isLoading}, activeWorkspace?.uid=${activeWorkspace?.uid}`);
+    // --- End Logging ---
+
     if (open && !isLoading && activeWorkspace?.uid) {
        // Fetch only when transitioning to open state
        const workspaceId = typeof activeWorkspace.uid === 'string'
@@ -319,13 +323,19 @@ function RunHistoryDialog({
 
        if (!isNaN(workspaceId)) {
          console.log("[RunHistoryDialog] Dialog opening, fetching history...");
+         console.log("[RunHistoryDialog] Conditions met, attempting fetch..."); // Log success case
          fetchRunHistory(workspaceId);
        } else {
          console.warn("[RunHistoryDialog] Workspace ID is invalid, cannot fetch history.");
        }
     } else if (!open) {
        // Call the original onClose handler when closing
+       console.log("[RunHistoryDialog] Dialog closing.");
        onClose();
+    } else {
+      // --- Add Logging for Failure ---
+      console.log(`[RunHistoryDialog] Conditions NOT met for fetch. open=${open}, !isLoading=${!isLoading}, hasWorkspaceId=${!!activeWorkspace?.uid}`);
+      // --- End Logging ---
     }
   };
 
@@ -455,6 +465,7 @@ interface SchemeSelectorForRunProps {
   selectedSchemeIds: number[];
   onToggleScheme: (schemeId: number) => void;
   onSelectAll: (selectAll: boolean) => void;
+  onPreviewScheme: (scheme: ClassificationSchemeRead) => void;
 }
 
 const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
@@ -462,6 +473,7 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
   selectedSchemeIds,
   onToggleScheme,
   onSelectAll,
+  onPreviewScheme,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const areAllSelected = allSchemes.length > 0 && selectedSchemeIds.length === allSchemes.length;
@@ -500,7 +512,7 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
         {filteredSchemes.length > 0 ? (
           <div className="space-y-2">
             {filteredSchemes.map(scheme => (
-              <div key={scheme.id} className="flex items-center space-x-2">
+              <div key={scheme.id} className="flex items-center space-x-2 group">
                 <Checkbox
                   id={`run-scheme-${scheme.id}`}
                   checked={selectedSchemeIds.includes(scheme.id)}
@@ -513,6 +525,14 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
                 >
                   {scheme.name}
                 </label>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => onPreviewScheme(scheme)}
+                >
+                  <Eye className="h-4 w-4 text-muted-foreground" />
+                </Button>
               </div>
             ))}
           </div>
@@ -566,6 +586,11 @@ export default function ClassificationRunnerDock({
   const initialLoadAttemptedRef = useRef(false);
   // Ref to store the workspace ID for which the attempt was made
   const attemptedWorkspaceIdRef = useRef<string | null>(null);
+
+  // --- MODIFICATION: Add state for scheme preview dialog ---
+  const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
+  const [previewScheme, setPreviewScheme] = useState<ClassificationSchemeRead | null>(null);
+  // --- END MODIFICATION ---
 
   const { toast } = useToast();
 
@@ -629,19 +654,21 @@ export default function ClassificationRunnerDock({
             const lastFavorite = sortedFavorites[0];
             console.log('[Dock] Found latest favorite run:', { id: lastFavorite.id, name: lastFavorite.name });
 
-            // Use a timeout to ensure this runs after the initial render cycle settles
-            const timer = setTimeout(() => {
-               // Double-check currentRunId hasn't changed again before loading
-               if (currentRunId === null) {
-                  console.log('[Dock] Timeout complete, calling handleLoadRun for run:', lastFavorite.id);
-                  handleLoadRun(lastFavorite.id, lastFavorite.name, lastFavorite.description);
-               } else {
-                  console.log('[Dock] Auto-load aborted: A run became active before timeout completed.');
-               }
-            }, 100); // Short delay
+            // --- MODIFIED: Call handleLoadRun directly ---
+            console.log('[Dock] Calling handleLoadRun directly for run:', lastFavorite.id);
+            handleLoadRun(lastFavorite.id, lastFavorite.name, lastFavorite.description);
+            // --- END MODIFICATION ---
 
-            // Cleanup function for the timer
-            return () => clearTimeout(timer);
+            // // Use a timeout to ensure this runs after the initial render cycle settles
+            // const timer = setTimeout(() => {
+            //    // --- REMOVED INNER CHECK: Assume if we got here, we should load ---
+            //    console.log('[Dock] Timeout complete, calling handleLoadRun for run:', lastFavorite.id);
+            //    handleLoadRun(lastFavorite.id, lastFavorite.name, lastFavorite.description);
+            //    // --- END REMOVAL ---
+            // }, 100); // Short delay
+
+            // // Cleanup function for the timer
+            // return () => clearTimeout(timer);
           } else {
             console.log('[Dock] No favorites found specifically for this workspace during attempt.');
           }
@@ -691,6 +718,13 @@ export default function ClassificationRunnerDock({
     const allIds = allSchemes.map(s => s.id);
     setSchemesForRun(selectAll ? allIds : []);
   };
+
+  // --- MODIFICATION: Handler for scheme preview button click ---
+  const handlePreviewSchemeClick = (scheme: ClassificationSchemeRead) => {
+    setPreviewScheme(scheme);
+    setIsPreviewDialogOpen(true);
+  };
+  // --- END MODIFICATION ---
 
   return (
     <TooltipProvider>
@@ -823,6 +857,7 @@ export default function ClassificationRunnerDock({
                     selectedSchemeIds={selectedSchemeIdsForRun}
                     onToggleScheme={toggleSchemeInRun}
                     onSelectAll={handleSelectAllSchemesForRun}
+                    onPreviewScheme={handlePreviewSchemeClick}
                 />
            </div>
            {/* --- END NEW Row 3 --- */}
@@ -914,6 +949,61 @@ export default function ClassificationRunnerDock({
         activeRunId={currentRunId}
         onSelectRun={handleLoadRun}
       />
+
+      {/* --- MODIFICATION: Add Scheme Preview Dialog --- */}
+      <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Scheme Preview: {previewScheme?.name}</DialogTitle>
+            <DialogDescription>
+              {previewScheme?.description || "No description available."}
+            </DialogDescription>
+          </DialogHeader>
+          {previewScheme && (
+            <ScrollArea className="max-h-[60vh] mt-4 pr-4">
+              <div className="space-y-3">
+                <h4 className="font-semibold text-sm">Fields:</h4>
+                {previewScheme.fields.map((field, index) => (
+                  <div key={index} className="p-2 border rounded bg-muted/30 text-xs">
+                    <p><span className="font-medium">Name:</span> {field.name}</p>
+                    <p><span className="font-medium">Type:</span> <code className="bg-muted px-1 rounded">{field.type}</code></p>
+                    {field.description && <p><span className="font-medium">Description:</span> {field.description}</p>}
+                    {field.scale_min !== undefined && field.scale_max !== undefined && <p><span className="font-medium">Scale:</span> {field.scale_min} - {field.scale_max}</p>}
+                    {field.is_set_of_labels && field.labels && <p><span className="font-medium">Labels:</span> {field.labels.join(', ')}</p>}
+                    {field.dict_keys && field.dict_keys.length > 0 && (
+                      <div className="mt-1">
+                        <span className="font-medium">Dict Keys:</span>
+                        <ul className="list-disc list-inside pl-2 mt-0.5">
+                          {field.dict_keys.map(dk => <li key={dk.name}>{dk.name} (<code className="bg-muted px-1 rounded text-xs">{dk.type}</code>)</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {/* Optional: Instructions/Rules */}
+                 {previewScheme.model_instructions && (
+                    <div className="mt-3">
+                        <h4 className="font-semibold text-sm">Model Instructions:</h4>
+                        <p className="text-xs whitespace-pre-wrap bg-muted/30 p-2 rounded mt-1">{previewScheme.model_instructions}</p>
+                    </div>
+                 )}
+                 {/* {previewScheme.validation_rules && (
+                    <div className="mt-3">
+                        <h4 className="font-semibold text-sm">Validation Rules:</h4>
+                        <p className="text-xs whitespace-pre-wrap bg-muted/30 p-2 rounded mt-1">
+                            {JSON.stringify(previewScheme.validation_rules, null, 2)}
+                        </p>
+                    </div>
+                 )} */}
+              </div>
+            </ScrollArea>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPreviewDialogOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* --- END MODIFICATION --- */}
     </TooltipProvider>
   );
 }

@@ -32,14 +32,14 @@ export const useRunHistoryStore = create<RunHistoryState>((set) => ({
     try {
       const apiRuns: ClassificationRunRead[] = await ClassificationService.getRunsAPI(workspaceId);
 
-      const runs: RunHistoryItem[] = apiRuns.map(run => ({
+      const runs: RunHistoryItem[] = apiRuns.map((run: any) => ({
         id: run.id,
         name: run.name || `Run ${run.id}`,
         timestamp: run.updated_at ? format(new Date(run.updated_at), 'PPp') : 'N/A',
         documentCount: run.document_count ?? 0,
         schemeCount: run.scheme_count ?? 0,
         description: run.description ?? undefined,
-        status: run.status ?? 'unknown',
+        status: (run.status ?? 'unknown') as string,
         createdAt: run.created_at,
         updatedAt: run.updated_at,
       }));
@@ -50,12 +50,13 @@ export const useRunHistoryStore = create<RunHistoryState>((set) => ({
         return dateB - dateA;
       });
 
-      set({ runs, isLoading: false });
+      set({ runs, isLoading: false, error: null });
     } catch (error: any) {
       console.error('Error fetching run history:', error);
       set({ 
         error: error.message || 'Failed to fetch run history', 
-        isLoading: false 
+        isLoading: false, 
+        runs: []
       });
     }
   },

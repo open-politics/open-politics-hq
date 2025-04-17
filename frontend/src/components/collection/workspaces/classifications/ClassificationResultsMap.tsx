@@ -148,7 +148,9 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
   const popupRef = useRef<mapboxgl.Popup | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const { theme } = useTheme();
-  const [labelData, setLabelData] = useState<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] });
+  // Refs for delayed layer addition logic
+  const prevShouldLabelsBeVisible = useRef<boolean | null>(null);
+  const layerAddTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Use the same ID as the old implementation for consistency
   const pointsSourceId = 'geocoded-locations';
@@ -400,150 +402,182 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
     }
   }, [points, mapLoaded]);
 
-  // --- Process label data based on config ---
+  // --- COMBINED: Calculate Label Data and Manage Map Layer/Source --- (MODIFIED)
   useEffect(() => {
-    // --- ADDED GUARD ---
-    // Exit early if labelConfig is not provided, or if the schemeId within it
-    // isn't found in the currently available schemes for the run.
-    if (!labelConfig || !schemes.some(s => s.id === labelConfig.schemeId)) {
-      // If label data isn't already empty, clear it.
-      if (labelData.features.length > 0) {
-         setLabelData({ type: 'FeatureCollection', features: [] });
-      }
-      return;
+    if (!mapLoaded || !mapRef.current) {
+      return; // Map not ready
     }
-    // --- END GUARD ---
-
-    // Skip if points or schemes aren't ready
-    if (!schemes.length || !points.length) {
-      return;
-    }
-
-    // Map schemes to a lookup object for faster access inside the loop
-    const schemeLookup = new Map(schemes.map(s => [s.id, s]));
-
-    const features: (LabelGeoJsonFeature | null)[] = points.map(point => {
-      const docId = point.documentIds[0];
-      if (!docId) return null;
-
-      const result: FormattedClassificationResult | undefined = results.find(r =>
-        r.document_id === docId &&
-        r.scheme_id === labelConfig.schemeId
-      );
-      const scheme: ClassificationSchemeRead | undefined = schemeLookup.get(labelConfig.schemeId);
-
-      if (!result || !scheme) {
-          return null; // Skip this point if data is missing for the label config
-      }
-
-      const labelTextValue = getLabelValue(result.value, scheme, labelConfig.fieldKey);
-
-      let labelColor = theme === 'dark' ? '#FFFFFF' : '#000000';
-      if (labelConfig.colorField) {
-          const colorValueRaw = getNestedValue(result.value, labelConfig.colorField);
-          if (typeof colorValueRaw === 'string' && (colorValueRaw.startsWith('#') || colorValueRaw.startsWith('rgb'))) {
-             labelColor = colorValueRaw;
-          }
-      }
-
-      return {
-        type: 'Feature' as const,
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [point.coordinates.longitude, point.coordinates.latitude]
-        },
-        properties: {
-          labelText: (labelTextValue ?? 'N/A').substring(0, 50),
-          color: labelColor
-        }
-      } as LabelGeoJsonFeature;
-    });
-
-    const validFeatures = features.filter((feature): feature is LabelGeoJsonFeature => feature !== null);
-
-    if (JSON.stringify(validFeatures) !== JSON.stringify(labelData.features)) {
-       setLabelData({ type: 'FeatureCollection', features: validFeatures } as GeoJSON.FeatureCollection);
-    }
-  }, [points, results, schemes, labelConfig, theme, labelData.features]);
-
-  // --- Add/Update label SOURCE DATA and LAYER VISIBILITY/DEFINITION ---
-  useEffect(() => {
-    if (!mapLoaded || !mapRef.current) return;
-    
     const map = mapRef.current;
-    
-    // Wait for style to be fully loaded before manipulating layers/sources
-    if (!map.isStyleLoaded()) {
-      map.once('styledata', () => {
-        // Re-trigger this effect once style is loaded
-        // A simple way is to update a dummy state, but 
-        // Mapbox usually handles this if sources/layers were defined correctly initially.
-        // For simplicity, we'll rely on the next render cycle.
-        console.log('[Label Layer Effect] Style loaded, effect will re-run.');
+
+    console.log(`[Label Layer/Source Effect] Running. Config:`, labelConfig);
+
+    // --- Feature Calculation Logic --- (as before)
+    let featuresForMap: LabelGeoJsonFeature[] = [];
+    if (labelConfig && schemes.some(s => s.id === labelConfig.schemeId) && schemes.length > 0 && points.length > 0 && results.length > 0) {
+      console.log(`[Label Layer/Source Effect] Calculating features...`);
+      const schemeLookup = new Map(schemes.map(s => [s.id, s]));
+      // Directly calculate features based on current props
+      const calculatedFeatures: (LabelGeoJsonFeature | null)[] = points.map(point => {
+          const docId = point.documentIds[0];
+          if (!docId) return null;
+          // Find the result matching the document and the specific labelConfig scheme
+          const result: FormattedClassificationResult | undefined = results.find(r =>
+            r.document_id === docId && r.scheme_id === labelConfig.schemeId
+          );
+          const scheme: ClassificationSchemeRead | undefined = schemeLookup.get(labelConfig.schemeId);
+          // Ensure we found both result and scheme, and the scheme has fields
+          if (!result || !scheme || !scheme.fields || scheme.fields.length === 0) return null;
+
+          // Use the getLabelValue helper function
+          const labelTextValue = getLabelValue(result.value, scheme, labelConfig.fieldKey);
+
+          // Determine color
+          let labelColor = theme === 'dark' ? '#FFFFFF' : '#000000';
+          if (labelConfig.colorField) {
+              const colorValueRaw = getNestedValue(result.value, labelConfig.colorField);
+              // Basic validation for color string
+              if (typeof colorValueRaw === 'string' && (colorValueRaw.startsWith('#') || colorValueRaw.startsWith('rgb'))) {
+                 labelColor = colorValueRaw;
+              }
+          }
+
+          // Return the feature object if label text is valid
+          return {
+              type: 'Feature' as const,
+              geometry: {
+                type: 'Point' as const,
+                coordinates: [point.coordinates.longitude, point.coordinates.latitude]
+              },
+              properties: {
+                labelText: (labelTextValue ?? 'N/A').substring(0, 50), // Ensure labelText is string
+                color: labelColor
+              }
+          } as LabelGeoJsonFeature;
       });
-      return; 
+      // Filter out any nulls that occurred during mapping
+      featuresForMap = calculatedFeatures.filter((feature): feature is LabelGeoJsonFeature => feature !== null);
+      console.log(`[Label Layer/Source Effect] Calculation complete. Features found: ${featuresForMap.length}`);
+    } else {
+       console.log(`[Label Layer/Source Effect] Conditions not met for feature calculation.`);
+    }
+
+    // --- Map Layer & Source Management Logic --- (Using calculated featuresForMap)
+    const geoJsonData: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: featuresForMap };
+    const shouldLabelsBeVisible = featuresForMap.length > 0;
+    console.log(`[Label Layer/Source Effect] shouldLabelsBeVisible = ${shouldLabelsBeVisible}`);
+
+    // Clear any pending layer add timer at the start of each run
+    if (layerAddTimer.current) {
+      console.log("[Label Layer/Source Effect] Clearing pending layer add timer.");
+      clearTimeout(layerAddTimer.current);
+      layerAddTimer.current = null;
     }
 
     try {
       const labelSource = map.getSource(labelSourceId) as mapboxgl.GeoJSONSource | undefined;
       const labelLayer = map.getLayer(labelLayerId);
-      const shouldLabelsBeVisible = labelData.features.length > 0;
 
-      // Update label source data
+      // 1. Update Source Data or Add Source if Needed
       if (labelSource) {
-        console.log(`[Label Layer Effect] Updating label source data. Features: ${labelData.features.length}`);
-        labelSource.setData(labelData);
-      } else {
-        console.warn(`[Label Layer Effect] Label source '${labelSourceId}' not found.`);
-        // Attempt to re-add if missing (might happen after style change)
-        if (mapLoaded && !map.getSource(labelSourceId)) {
-          map.addSource(labelSourceId, { type: 'geojson', data: labelData });
-          console.log('[Label Layer Effect] Re-added label source');
-        }
+        console.log(`[Label Layer/Source Effect] Updating source '${labelSourceId}' with ${featuresForMap.length} features.`);
+        labelSource.setData(geoJsonData);
+      } else if (shouldLabelsBeVisible) {
+        console.warn(`[Label Layer/Source Effect] Label source '${labelSourceId}' not found. Adding source.`);
+        map.addSource(labelSourceId, { type: 'geojson', data: geoJsonData });
       }
 
-      // Add or remove label layer based on visibility
-      if (shouldLabelsBeVisible && !labelLayer) {
-        console.log(`[Label Layer Effect] Adding label layer '${labelLayerId}'`);
-        map.addLayer({
-          id: labelLayerId,
-          type: 'symbol',
-          source: labelSourceId,
-          layout: {
-            'text-field': ['get', 'labelText'],
-            'text-size': 12,
-            'text-variable-anchor': ['top', 'bottom'],
-            'text-anchor': 'top',
-            'text-offset': [0, 1.5],
-            'text-justify': 'auto',
-            'text-allow-overlap': false,
-            'text-ignore-placement': false
-          },
-          paint: {
-            'text-color': ['get', 'color'],
-            'text-halo-color': theme === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)',
-            'text-halo-width': 1
+      // 2. Manage Layer Existence with Delay Logic
+      if (shouldLabelsBeVisible) {
+        // We need the layer visible
+        if (!labelLayer) {
+          // Layer doesn't exist -> Add it
+          if (map.getSource(labelSourceId)) {
+             // Check if transitioning from hidden to visible
+             if (prevShouldLabelsBeVisible.current === false) {
+                 console.log(`[Label Layer/Source Effect] Transitioning to visible. Delaying layer add...`);
+                 layerAddTimer.current = setTimeout(() => {
+                     console.log(`[Label Layer/Source Effect] Executing delayed layer add...`);
+                     // Check again if layer exists *inside* the timeout
+                     if (map.getLayer && !map.getLayer(labelLayerId)) { // Add getLayer check
+                        map.addLayer({
+                           id: labelLayerId,
+                           type: 'symbol',
+                           source: labelSourceId,
+                           layout: { 'text-field': ['get', 'labelText'],'text-size': 12,'text-variable-anchor': ['top', 'bottom'],'text-anchor': 'top','text-offset': [0, 1.5],'text-justify': 'auto','text-allow-overlap': false,'text-ignore-placement': false },
+                           paint: { 'text-color': ['get', 'color'],'text-halo-color': theme === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)','text-halo-width': 1 }
+                       });
+                       console.log(`[Label Layer/Source Effect] Delayed add complete.`);
+                     } else {
+                         console.log(`[Label Layer/Source Effect] Delayed add skipped, layer check failed or layer already exists.`);
+                     }
+                     layerAddTimer.current = null; // Clear timer ref after execution
+                 }, 50); // 50ms delay
+             } else {
+                 // Not a transition (or first run), add immediately if source ready
+                 if (map.addLayer) { // Check if function exists
+                    map.addLayer({
+                       id: labelLayerId,
+                       type: 'symbol',
+                       source: labelSourceId,
+                       layout: { 'text-field': ['get', 'labelText'],'text-size': 12,'text-variable-anchor': ['top', 'bottom'],'text-anchor': 'top','text-offset': [0, 1.5],'text-justify': 'auto','text-allow-overlap': false,'text-ignore-placement': false },
+                       paint: { 'text-color': ['get', 'color'],'text-halo-color': theme === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)','text-halo-width': 1 }
+                    });
+                    console.log(`[Label Layer/Source Effect] Immediate add complete.`);
+                 }
+             }
+          } else {
+            console.warn(`[Label Layer/Source Effect] Wanted to add layer, but source '${labelSourceId}' missing.`);
           }
-        });
-      } else if (!shouldLabelsBeVisible && labelLayer) {
-        console.log(`[Label Layer Effect] Removing label layer '${labelLayerId}'`);
-        map.removeLayer(labelLayerId);
-      } else if (shouldLabelsBeVisible && labelLayer) {
-        // Ensure layer is visible if it should be (might have been hidden)
-        const currentVisibility = map.getLayoutProperty(labelLayerId, 'visibility');
-        if (currentVisibility !== 'visible') {
-           console.log(`[Label Layer Effect] Setting label layer to visible`);
-           map.setLayoutProperty(labelLayerId, 'visibility', 'visible');
+        } else {
+          // Layer exists -> Update paint properties and ensure visibility
+          // Check methods exist before calling
+          if (map.setPaintProperty && map.getLayoutProperty) {
+            map.setPaintProperty(labelLayerId, 'text-color', ['get', 'color']);
+            map.setPaintProperty(labelLayerId, 'text-halo-color', theme === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)');
+            try {
+                const currentVisibility = map.getLayoutProperty(labelLayerId, 'visibility');
+                if (currentVisibility !== 'visible') {
+                    console.log(`[Label Layer/Source Effect] Setting layer '${labelLayerId}' to visible.`);
+                    map.setLayoutProperty(labelLayerId, 'visibility', 'visible');
+                }
+            } catch (e) {
+                 console.warn(`[Label Layer/Source Effect] Error checking/setting visibility for layer ${labelLayerId}:`, e);
+            }
+          }
         }
-        // Update paint properties if theme changed
-        map.setPaintProperty(labelLayerId, 'text-color', ['get', 'color']);
-        map.setPaintProperty(labelLayerId, 'text-halo-color', theme === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)');
+      } else { // shouldLabelsBeVisible is false
+        // We need the layer hidden/removed
+        if (labelLayer && map.removeLayer) { // Check function exists
+          console.log(`[Label Layer/Source Effect] Trying to remove label layer '${labelLayerId}'...`);
+          try {
+            map.removeLayer(labelLayerId);
+            console.log(`[Label Layer/Source Effect] Removed label layer '${labelLayerId}'.`);
+          } catch (e) {
+             console.warn(`[Label Layer/Source Effect] Error removing layer ${labelLayerId}:`, e);
+          }
+        }
       }
-
     } catch (error) {
-      console.error('[Label Layer Effect] Error:', error);
+      console.error('[Label Layer/Source Effect] Outer Error:', error);
+      // Attempt to clean up layer if error occurred during management
+      if (map.getLayer && map.getLayer(labelLayerId) && map.removeLayer) {
+          try { map.removeLayer(labelLayerId); } catch (e) { /* ignore */ }
+      }
     }
-  }, [mapLoaded, labelData, theme]);
+
+    // Update previous state ref *after* logic runs for the next cycle
+    prevShouldLabelsBeVisible.current = shouldLabelsBeVisible;
+
+  }, [mapLoaded, labelConfig, points, results, schemes, theme]);
+
+  // Add cleanup for the timer when the component unmounts
+  useEffect(() => {
+    return () => {
+      if (layerAddTimer.current) {
+        clearTimeout(layerAddTimer.current);
+      }
+    };
+  }, []); // Empty dependency array ensures this runs only on mount and unmount
 
   // --- Adjust map style based on theme ---
   useEffect(() => {

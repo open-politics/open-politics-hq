@@ -111,7 +111,7 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                       return <Badge variant={num > 0.5 ? "default" : "outline"} className="bg-green-600/75 text-black">{num > 0.5 ? 'True' : 'False'}</Badge>;
                   }
                   // Display integer directly
-                  return <Badge variant="outline" className="bg-green-400/60 text-black">{String(num)}</Badge>; 
+                  return <Badge variant="outline" className="bg-green-200/40 text-black">{String(num)}</Badge>; 
               }
               // Fallback if conversion to number fails
               return <span>{String(valueForField)}</span>;

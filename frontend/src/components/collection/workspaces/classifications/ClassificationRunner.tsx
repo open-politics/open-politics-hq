@@ -119,6 +119,7 @@ export default function ClassificationRunner({
 
   // --- NEW: Determine Initial Map Config ---
   useEffect(() => {
+    console.log('[AutoGeoDebug] Running effect. runSchemes:', runSchemes); // Log available schemes
     if (runSchemes && runSchemes.length > 0) {
       let defaultGeoSchemeId: number | null = null;
       let defaultGeoFieldKey: string | null = null;
@@ -128,17 +129,25 @@ export default function ClassificationRunner({
 
       // Prioritize schemes named 'classification'
       const classificationSchemes = runSchemes.filter(s => s.name.toLowerCase() === 'classification');
-      const schemeToUseForGeo = classificationSchemes.length > 0 ? classificationSchemes[0] : runSchemes[0]; // Fallback to first scheme
+      console.log('[AutoGeoDebug] Found classificationSchemes:', classificationSchemes); // Log filtered schemes
+
+      const schemeToUseForGeo = classificationSchemes.length > 0 ? classificationSchemes[0] : runSchemes[0];
+      console.log('[AutoGeoDebug] schemeToUseForGeo:', schemeToUseForGeo); // Log the chosen scheme
 
       if (schemeToUseForGeo) {
         const geoTargetKeys = getTargetKeysForScheme(schemeToUseForGeo.id, runSchemes);
-        // Prioritize geocode keys containing 'location' or 'address', otherwise take the first string-like field
+        console.log('[AutoGeoDebug] geoTargetKeys for scheme:', schemeToUseForGeo.id, geoTargetKeys); // Log the potential keys
+
         const locationKey = geoTargetKeys.find(k => k.name.toLowerCase().includes('location') || k.name.toLowerCase().includes('address'));
+        console.log('[AutoGeoDebug] Found locationKey:', locationKey); // Log the location key
+
         const firstStringKeyGeo = geoTargetKeys.find(k => k.type === 'str');
+         console.log('[AutoGeoDebug] Found firstStringKeyGeo:', firstStringKeyGeo); // Log the string key
 
         if(locationKey || firstStringKeyGeo || geoTargetKeys.length > 0) {
           defaultGeoSchemeId = schemeToUseForGeo.id;
           defaultGeoFieldKey = locationKey?.key || firstStringKeyGeo?.key || (geoTargetKeys.length > 0 ? geoTargetKeys[0].key : null);
+           console.log('[AutoGeoDebug] Selected defaultGeoFieldKey:', defaultGeoFieldKey); // Log the selected field key
 
            // --- Find default label field (in the SAME scheme if possible) ---
            // Look for first str, List[str], or List[Dict] field in the selected geocode scheme
@@ -164,6 +173,7 @@ export default function ClassificationRunner({
         showLabels: shouldShowLabels, // Set based on whether defaults were found
       });
     } else {
+      console.log('[AutoGeoDebug] No runSchemes available.');
       // Reset if no schemes
       setInitialMapControlsConfig({ geocodeSchemeId: null, geocodeFieldKey: null, labelSchemeId: null, labelFieldKey: null, showLabels: false });
     }
@@ -273,7 +283,6 @@ export default function ClassificationRunner({
     console.log("Finished geocoding.");
   }, [
     activeRunId,
-    currentRunResults,
     extractLocationString,
     geocodeLocation,
     setIsLoadingGeocoding,

@@ -236,41 +236,45 @@ const ClassificationResultsTable: React.FC<ClassificationResultsTableProps> = ({
 
   // Prepare data for the table, applying filters
   const tableData = useMemo((): (DocumentRow | null)[] => {
-    // Group results by document ID first
+    // --- REVERTED: Start with documents prop, filter based on results --- 
+
+    // Group results by document ID first for efficient filtering
     const resultsByDoc = results.reduce((acc, result) => {
-      if (!acc[result.document_id]) {
-        acc[result.document_id] = [];
+      const docId = result.document_id;
+      if (!acc[docId]) {
+        acc[docId] = [];
       }
-      acc[result.document_id].push(result);
+      acc[docId].push(result);
       return acc;
     }, {} as Record<number, FormattedClassificationResult[]>);
 
-    let docIdsToProcess = documents.map(doc => doc.id);
+    // Start with the documents passed via props
+    let filteredDocuments = documents;
 
     // Apply filters if any are active
     if (filters.length > 0) {
-      docIdsToProcess = docIdsToProcess.filter(docId => {
-        const docResults = resultsByDoc[docId] || [];
-        // Document matches if it satisfies ALL active filters
-        return filters.every(filter => checkFilterMatch(filter, docResults, schemes)); // Pass all schemes for definitions
-      });
+        filteredDocuments = documents.filter(doc => {
+            const docResults = resultsByDoc[doc.id] || []; // Get results for this doc
+            // Document matches if it satisfies ALL active filters
+            return filters.every(filter => {
+                 return checkFilterMatch(filter, docResults, schemes);
+            });
+        });
     }
 
     // Create rows for the documents that passed the filters
-    const docsById = new Map(documents.map(doc => [doc.id, doc]));
-    const rows = docIdsToProcess.map(docId => {
-      const doc = docsById.get(docId);
-      if (!doc) return null; // Should not happen if documents are consistent
-      return {
-        document: doc,
-        results: resultsByDoc[docId] || [], // Get results for this doc
-      };
+    const rows = filteredDocuments.map(doc => {
+        return {
+            document: doc,
+            results: resultsByDoc[doc.id] || [], // Get results for this doc
+        };
     });
 
     console.log("[TableData] Final table rows after filters:", rows.length);
-    return rows.filter(row => row !== null); // Ensure no null rows are passed
+    // Filter type assertion remains the same as it expects DocumentRow
+    return rows.filter((row): row is { document: DocumentRead; results: FormattedClassificationResult[] } => row !== null);
 
-  }, [results, documents, schemes, filters]); // Add schemes and filters to dependency array
+  }, [results, documents, schemes, filters]); // Added 'documents' dependency back
 
 
   // Instantiate the table
