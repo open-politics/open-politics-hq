@@ -19,6 +19,7 @@ export default function ClassificationRunnerPage() {
     isLoadingSchemes,
     isLoadingDocuments,
     isCreatingRun,
+    classificationProgress,
     loadRun,
     createRun: createRunHook,
     updateRun,
@@ -230,6 +231,8 @@ export default function ClassificationRunnerPage() {
           onRunClassification={handleRunClassification} // Pass updated handler
           onLoadFromRun={handleLoadFromRun}
           currentRunId={activeRunId}
+          isCreatingRun={isCreatingRun}
+          classificationProgress={classificationProgress}
         />
       )}
     </div>

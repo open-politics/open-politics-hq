@@ -8,9 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader2, MapPin, AlertCircle, Tag, Settings2, Type, Text } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 interface ClassificationMapControlsProps {
   schemes: ClassificationSchemeRead[];
@@ -228,11 +230,13 @@ export const ClassificationMapControls: React.FC<ClassificationMapControlsProps>
                   <SelectValue placeholder="Select scheme..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {geocodeSchemeOptions.map(option => (
-                    <SelectItem key={option.value} value={option.value} className="text-xs">{option.label}</SelectItem>
-                  ))}
-                  {geocodeSchemeOptions.length === 0 &&
-                    <div className="p-2 text-xs text-center italic text-muted-foreground">No schemes in run</div>}
+                  <ScrollArea className="max-h-60 w-full">
+                    {geocodeSchemeOptions.map(option => (
+                      <SelectItem key={option.value} value={option.value} className="text-xs">{option.label}</SelectItem>
+                    ))}
+                    {geocodeSchemeOptions.length === 0 &&
+                      <div className="p-2 text-xs text-center italic text-muted-foreground">No schemes in run</div>}
+                  </ScrollArea>
                 </SelectContent>
               </Select>
             </div>
@@ -249,11 +253,15 @@ export const ClassificationMapControls: React.FC<ClassificationMapControlsProps>
                      <SelectValue placeholder="Select field..." />
                   </SelectTrigger>
                   <SelectContent>
-                     {geocodeFieldOptions.map(option => (
+                    <ScrollArea className="max-h-60 w-full">
+                      {geocodeFieldOptions.map(option => (
                         <SelectItem key={option.value} value={option.value} className="text-xs">{option.label}</SelectItem>
-                     ))}
-                     {geocodeFieldOptions.length === 0 &&
+                      ))}
+                      {geocodeFieldOptions.length === 0 && selectedGeocodeSchemeId &&
                         <div className="p-2 text-xs text-center italic text-muted-foreground">No fields in scheme</div>}
+                      {!selectedGeocodeSchemeId &&
+                        <div className="p-2 text-xs text-center italic text-muted-foreground">Select a scheme first</div>}
+                    </ScrollArea>
                   </SelectContent>
                </Select>
             </div>
@@ -327,10 +335,12 @@ export const ClassificationMapControls: React.FC<ClassificationMapControlsProps>
                      <SelectValue placeholder="Select scheme..." />
                    </SelectTrigger>
                    <SelectContent>
-                     {schemes.map(s => (
-                       <SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>
-                     ))}
-                     {schemes.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No schemes available</div>}
+                     <ScrollArea className="max-h-60 w-full">
+                       {schemes.map(s => (
+                         <SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>
+                       ))}
+                       {schemes.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No schemes available</div>}
+                     </ScrollArea>
                    </SelectContent>
                  </Select>
               </div>
@@ -347,13 +357,16 @@ export const ClassificationMapControls: React.FC<ClassificationMapControlsProps>
                      <SelectValue placeholder="Select field..." />
                    </SelectTrigger>
                    <SelectContent>
-                     {currentMapLabelKeys.map(tk => (
-                       <SelectItem key={tk.key} value={tk.key} className="text-xs">
-                         {tk.name} ({tk.type})
-                       </SelectItem>
-                     ))}
-                     {currentMapLabelKeys.length === 0 &&
-                       <div className="p-2 text-xs text-center italic text-muted-foreground">No text fields</div>}
+                     <ScrollArea className="max-h-60 w-full">
+                       {currentMapLabelKeys.map(tk => (
+                         <SelectItem key={tk.key} value={tk.key} className="text-xs flex items-center gap-2">
+                           <span className="truncate">{tk.name}</span>
+                           <Badge variant="outline" className="text-xs px-1.5 py-0 ml-auto">{tk.type}</Badge>
+                         </SelectItem>
+                       ))}
+                       {currentMapLabelKeys.length === 0 &&
+                         <div className="p-2 text-xs text-center italic text-muted-foreground">No text fields</div>}
+                     </ScrollArea>
                    </SelectContent>
                  </Select>
               </div>

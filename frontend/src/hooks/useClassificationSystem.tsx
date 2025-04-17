@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import { useToast } from '@/components/ui/use-toast';
@@ -91,6 +91,9 @@ interface UseClassificationSystemResult {
   // Error handling
   error: string | null;
   setError: (error: string | null) => void;
+  
+  // Classification Progress State
+  classificationProgress: { current: number; total: number } | null;
 }
 
 /**
@@ -125,6 +128,9 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
   const [isClassifying, setIsClassifying] = useState(false);
   const [isCreatingRun, setIsCreatingRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Classification Progress State
+  const [classificationProgress, setClassificationProgress] = useState<{ current: number; total: number } | null>(null);
   
   // Get workspace ID as a number
   const getWorkspaceId = useCallback(() => {
@@ -694,6 +700,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setIsCreatingRun(true);
     setError(null);
     let createdRunRead: ClassificationRunRead | null = null; // Store the created run (API type)
+    setClassificationProgress(null); // Reset progress at the start
 
     try {
       const workspaceId = getWorkspaceId();
@@ -731,6 +738,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
 
       // Update run status to running
       await ClassificationService.updateRunAPI(workspaceId, runId, { status: 'running' });
+      setClassificationProgress({ current: 0, total: totalTasks }); // Initialize progress
 
       for (const content of contents) {
         for (const schemeId of schemeIds) {
@@ -767,6 +775,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
             completedCount++;
             console.log(`Run progress: Classified ${completedCount}/${totalTasks}`);
             // Optionally update progress toast/state here if needed
+            setClassificationProgress({ current: completedCount, total: totalTasks }); // Update progress state
 
           } catch (individualError: any) {
             console.error(`Error classifying doc ${content.id || 'new'} with scheme ${schemeId} for run ${runId}:`, individualError);
@@ -838,6 +847,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       return null;
     } finally {
       setIsCreatingRun(false);
+      setClassificationProgress(null); // Reset progress on completion or error
     }
   }, [activeWorkspace?.uid, getWorkspaceId, loadRun, toast, selectedProvider, selectedModel, apiKeys, schemes]);
   
@@ -1313,6 +1323,9 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     
     // Add the new functions
     loadResultsByRun,
-    loadResultsByScheme
+    loadResultsByScheme,
+    
+    // Classification Progress State
+    classificationProgress,
   };
 } 

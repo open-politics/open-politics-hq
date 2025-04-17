@@ -6,9 +6,10 @@ import { X, Plus, Info, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { FieldType } from "@/lib/classification/types";
-import { Switch } from "@/components/ui/switch"; // Import Switch component
-import { Label } from "@/components/ui/label";   // Import Label component
-import { cn } from "@/lib/utils"; // Import cn utility
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 // Define the filter interface more formally
 export interface ResultFilter {
@@ -278,227 +279,235 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Filter Results</h3>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="max-w-xs">
-                Filter results based on specific classification values or fields within complex classifications. Documents will be shown only if they match ALL active filters.
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <h3 className="text-sm font-medium text-muted-foreground flex items-center">
+            Filters
+            <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <HelpCircle className="h-3.5 w-3.5 ml-1.5 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent align="start" className="max-w-xs">
+                        <p className="text-xs">
+                            Filter results based on specific criteria. Combine multiple filters to narrow down your view.
+                            Filters apply across the Chart, Table, and Map tabs.
+                        </p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        </h3>
+        <Button variant="outline" size="xs" onClick={addFilter} disabled={schemes.length === 0}>
+          <Plus className="h-3 w-3 mr-1" />
+          Add Filter
+        </Button>
       </div>
 
       {filters.map((filter, index) => {
-        const targetKeys = getTargetKeysForScheme(filter.schemeId, schemes);
-        const { type: fieldType, definition: fieldDefinition } = getTargetFieldDefinition(filter, schemes);
-        // Get operators based on the *actual* field/key type
+        const { type: fieldType, definition } = getTargetFieldDefinition(filter, schemes);
         const operators = getOperatorsForType(fieldType);
-        const showLabelsDropdown = (fieldType === 'bool' || hasLabels(filter)) && filter.operator === 'equals';
-        const labels = getLabelsForField(filter); // Gets labels for bool or List[str] with is_set_of_labels
+        const targetKeys = getTargetKeysForScheme(filter.schemeId, schemes);
+        const hasLabelOptions = hasLabels(filter);
+        const labelOptions = hasLabelOptions ? getLabelsForField(filter) : [];
         const fieldTypeDisplay = getFieldTypeDisplay(filter);
         const filterTooltip = getFilterTooltip(filter);
 
-        // Find the display name for the selected fieldKey
-        const selectedKeyInfo = targetKeys.find(tk => tk.key === filter.fieldKey);
-        const fieldKeyDisplayName = selectedKeyInfo?.name ?? filter.fieldKey ?? 'Select Field/Key';
-
         return (
-          <div
-             key={index}
-             className={cn(
-               "flex flex-col gap-2 p-3 border rounded-md bg-muted/20 transition-opacity",
-               !filter.isActive && "opacity-60" // Dim if inactive
-             )}
-          >
-            {/* Row 1: Activation Switch, Scheme, Field Key (optional), Type, Remove Button */}
-            <div className="flex gap-2 items-center w-full">
-              {/* Activation Switch */}
-              <div className="flex items-center space-x-2 shrink-0 pr-2 border-r mr-2">
-                <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Switch
-                        id={`filter-active-${index}`}
+          <TooltipProvider key={index} delayDuration={100}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                  <div className={cn(
+                      "flex items-center space-x-2 p-2 rounded-md border",
+                      filter.isActive ? "border-border/60 bg-background/30" : "border-dashed border-border/30 bg-muted/20 opacity-60"
+                  )}>
+                    {/* Active Toggle */}
+                     <Switch
                         checked={filter.isActive}
                         onCheckedChange={(checked) => updateFilter(index, { isActive: checked })}
-                        className={filter.isActive ? "bg-green-500" : "bg-red-500"}
-                      />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Toggle filter activity</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                 {/* Optional Label (uncomment if needed) */}
-                 {/* <Label htmlFor={`filter-active-${index}`} className="text-xs text-muted-foreground cursor-pointer">Active</Label> */}
-              </div>
+                        className="h-5 w-9 data-[state=checked]:bg-blue-500 data-[state=unchecked]:bg-gray-300"
+                        thumbClassName="h-4 w-4 data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5"
+                    />
 
-              {/* Scheme Selector */}
-              <Select
-                value={filter.schemeId.toString()}
-                onValueChange={value => updateFilter(index, { schemeId: parseInt(value) })}
-              >
-                <SelectTrigger className="w-[180px] shrink-0">
-                  <SelectValue placeholder="Select scheme" />
-                </SelectTrigger>
-                <SelectContent>
-                  {schemes.map(scheme => (
-                    <SelectItem key={scheme.id} value={scheme.id.toString()}>
-                      {scheme.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    {/* Scheme Select */}
+                    <Select
+                      value={filter.schemeId.toString()}
+                      onValueChange={(value) => updateFilter(index, { schemeId: parseInt(value) })}
+                      disabled={!filter.isActive}
+                    >
+                      <SelectTrigger className="w-[140px] h-8 text-xs">
+                        <SelectValue placeholder="Select Scheme" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <ScrollArea className="max-h-60 w-full">
+                          {schemes.map(scheme => (
+                            <SelectItem key={scheme.id} value={scheme.id.toString()} className="text-xs">
+                              {scheme.name}
+                            </SelectItem>
+                          ))}
+                        </ScrollArea>
+                      </SelectContent>
+                    </Select>
 
-              {/* Field/Key Selector (Show if > 1 potential key) */}
-              {targetKeys.length > 1 && (
-                  <Select
-                    // Use filter.fieldKey which should store the unique key
-                    value={filter.fieldKey || ''}
-                    onValueChange={value => updateFilter(index, { fieldKey: value || undefined })} // Set to undefined if empty string
-                  >
-                    <SelectTrigger className="w-[150px] shrink-0">
-                       {/* Display the potentially different 'name' */}
-                      <SelectValue placeholder="Select field/key">{fieldKeyDisplayName}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {targetKeys.map(tk => (
-                        <SelectItem key={tk.key} value={tk.key}>
-                          {tk.name} ({tk.type})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-              )}
-              {/* Show simplified field name if only one option */}
-              {targetKeys.length === 1 && (
-                 <Badge variant="secondary" className="text-xs whitespace-nowrap px-3 py-2">
-                    {targetKeys[0].name}
-                 </Badge>
-              )}
+                    {/* Field/Key Select */}
+                    <Select
+                      value={filter.fieldKey ?? ""}
+                      onValueChange={(value) => updateFilter(index, { fieldKey: value })}
+                      disabled={!filter.isActive || targetKeys.length <= 1}
+                    >
+                       <SelectTrigger className="w-[140px] h-8 text-xs">
+                         <SelectValue placeholder="Select Field/Key" />
+                       </SelectTrigger>
+                      <SelectContent>
+                         <ScrollArea className="max-h-60 w-full">
+                          {targetKeys.map(tk => (
+                            <SelectItem key={tk.key} value={tk.key} className="text-xs flex items-center justify-between">
+                              <span className="truncate mr-2">{tk.name}</span>
+                              <Badge variant="outline" className="text-xs px-1.5 py-0 shrink-0">{tk.type}</Badge>
+                            </SelectItem>
+                          ))}
+                          {targetKeys.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No keys</div>}
+                         </ScrollArea>
+                      </SelectContent>
+                    </Select>
 
-              {/* Type Badge */}
-              <Badge variant="outline" className="text-xs whitespace-nowrap">
-                {fieldTypeDisplay}
-              </Badge>
+                    {/* Operator Select */}
+                    <Select
+                      value={filter.operator}
+                      onValueChange={(value) => updateFilter(index, { operator: value as ResultFilter['operator'] })}
+                      disabled={!filter.isActive}
+                    >
+                      <SelectTrigger className="w-[100px] h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <ScrollArea className="max-h-60 w-full">
+                          {operators.map(op => (
+                            <SelectItem key={op} value={op} className="text-xs">
+                              {op}
+                            </SelectItem>
+                          ))}
+                        </ScrollArea>
+                      </SelectContent>
+                    </Select>
 
-              {/* Tooltip & Remove Button */}
-               <TooltipProvider>
-                 <Tooltip>
-                   <TooltipTrigger asChild>
-                     <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help shrink-0" />
-                   </TooltipTrigger>
-                   <TooltipContent>
-                     <p className="max-w-xs">{filterTooltip}</p>
-                   </TooltipContent>
-                 </Tooltip>
-               </TooltipProvider>
-               <Button variant="ghost" size="icon" onClick={() => removeFilter(index)} className="ml-auto shrink-0" >
-                 <X className="h-4 w-4" />
-               </Button>
+                    {/* Value Input */}
+                    {renderValueInput(filter, index, fieldType, hasLabelOptions, labelOptions, updateFilter)}
 
-            </div>
+                    {/* Field Type Info */}
+                    <Badge variant="outline" className="text-xs whitespace-nowrap h-6 px-1.5">
+                       {fieldTypeDisplay}
+                    </Badge>
 
-            {/* Row 2: Operator, Value Input */}
-            <div className="flex gap-2 items-center w-full pl-10"> {/* Added padding-left to align with inputs after switch */}
-              {/* Operator Selector */}
-              <Select
-                value={filter.operator}
-                onValueChange={value => updateFilter(index, { operator: value as ResultFilter['operator'] })}
-              >
-                <SelectTrigger className="w-[120px]">
-                  <SelectValue placeholder="Operator" />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* Render only valid operators for the current type */}
-                  {operators.includes('equals') && <SelectItem value="equals">Equals</SelectItem>}
-                  {operators.includes('contains') && <SelectItem value="contains">Contains</SelectItem>}
-                  {operators.includes('range') && <SelectItem value="range">Range</SelectItem>}
-                  {operators.includes('greater_than') && <SelectItem value="greater_than">&gt;</SelectItem>}
-                  {operators.includes('less_than') && <SelectItem value="less_than">&lt;</SelectItem>}
-                </SelectContent>
-              </Select>
-
-              {/* Value Input (Conditional) */}
-              {filter.operator === 'range' && (fieldType === 'int' || fieldType === 'float') ? (
-                // Range Input for Numbers
-                <div className="flex gap-2 flex-1">
-                  <Input
-                    type="number"
-                    value={Array.isArray(filter.value) ? filter.value[0] ?? '' : ''}
-                    onChange={e => updateFilter(index, {
-                      value: [e.target.value === '' ? null : parseFloat(e.target.value), Array.isArray(filter.value) ? filter.value[1] : null]
-                    })}
-                    className="w-full"
-                    placeholder="Min"
-                    step="any"
-                  />
-                  <Input
-                    type="number"
-                    value={Array.isArray(filter.value) ? filter.value[1] ?? '' : ''}
-                    onChange={e => updateFilter(index, {
-                      value: [Array.isArray(filter.value) ? filter.value[0] : null, e.target.value === '' ? null : parseFloat(e.target.value)]
-                    })}
-                    className="w-full"
-                    placeholder="Max"
-                    step="any"
-                  />
+                    {/* Remove Button */}
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-500" onClick={() => removeFilter(index)} disabled={!filter.isActive}>
+                      <X className="h-4 w-4" />
+                    </Button>
                 </div>
-              ) : showLabelsDropdown ? (
-                 // Dropdown for Boolean or List[str] with labels
-                <Select
-                  value={String(filter.value ?? '')} // Handle potential boolean value
-                  onValueChange={value => updateFilter(index, {
-                     value: fieldType === 'bool' ? (value === "True") : value
-                  })}
-                >
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Select value" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {labels.map((label, i) => (
-                      <SelectItem key={i} value={label}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (fieldType === 'int' || fieldType === 'float') && ['equals', 'greater_than', 'less_than'].includes(filter.operator) ? (
-                 // Number Input for specific comparisons
-                 <Input
-                    type="number"
-                    value={filter.value ?? ''}
-                    onChange={e => updateFilter(index, {
-                        value: e.target.value === '' ? null : parseFloat(e.target.value)
-                    })}
-                    className="flex-1"
-                    placeholder="Value"
-                    step="any"
-                 />
-              ) : (
-                // Default Text Input
-                <Input
-                  value={filter.value ?? ''}
-                  onChange={e => updateFilter(index, { value: e.target.value })}
-                  className="flex-1"
-                  placeholder={filter.operator === 'contains' ? "Search text..." : "Value..."}
-                />
-              )}
-            </div>
-          </div>
+              </TooltipTrigger>
+              <TooltipContent align="start" side="bottom" className="max-w-xs">
+                  <p className="text-xs">{filterTooltip}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         );
       })}
 
-      <Button onClick={addFilter} variant="outline" size="sm" className="mt-2">
-        <Plus className="h-4 w-4 mr-2" /> Add Filter
-      </Button>
+      {schemes.length === 0 && filters.length === 0 && (
+        <div className="text-center text-xs text-muted-foreground italic py-2">
+          No classification schemes found in this run to create filters.
+        </div>
+      )}
+      {schemes.length > 0 && filters.length === 0 && (
+         <div className="text-center text-xs text-muted-foreground italic py-2">
+            Click 'Add Filter' to start filtering results.
+         </div>
+      )}
     </div>
+  );
+};
+
+// Helper function to render the correct input based on type and operator
+const renderValueInput = (
+  filter: ResultFilter,
+  index: number,
+  type: FieldType | 'bool' | 'float' | null,
+  hasLabels: boolean,
+  labels: string[],
+  updateFilter: (index: number, updatedFilterData: Partial<ResultFilter>) => void
+) => {
+  const commonProps = { 
+      className: "h-8 text-xs",
+      disabled: !filter.isActive 
+  };
+
+  if (filter.operator === 'range') {
+    return (
+      <div className="flex items-center space-x-1 flex-1 min-w-[150px]">
+        <Input
+          type="number"
+          placeholder="Min"
+          value={filter.value[0] ?? ''}
+          onChange={(e) => updateFilter(index, { value: [e.target.value ? parseFloat(e.target.value) : null, filter.value[1]] })}
+          {...commonProps}
+          className={cn(commonProps.className, "w-1/2")}
+        />
+        <span className="text-xs text-muted-foreground">to</span>
+        <Input
+          type="number"
+          placeholder="Max"
+          value={filter.value[1] ?? ''}
+          onChange={(e) => updateFilter(index, { value: [filter.value[0], e.target.value ? parseFloat(e.target.value) : null] })}
+          {...commonProps}
+          className={cn(commonProps.className, "w-1/2")}
+        />
+      </div>
+    );
+  } else if (type === 'bool' || (hasLabels && filter.operator === 'equals')) {
+    // Use Select for boolean or fields with predefined labels when operator is 'equals'
+    const options = type === 'bool' ? ["True", "False"] : labels;
+    return (
+      <Select
+        value={filter.value.toString()} // Ensure value is string for Select
+        onValueChange={(value) => updateFilter(index, { value: type === 'bool' ? value === 'True' : value })}
+        disabled={!filter.isActive}
+      >
+        <SelectTrigger {...commonProps} className={cn(commonProps.className, "flex-1 min-w-[100px]")}>
+          <SelectValue placeholder="Select Value" />
+        </SelectTrigger>
+        <SelectContent>
+          <ScrollArea className="max-h-60 w-full">
+            {options.map(opt => (
+              <SelectItem key={opt} value={opt} className="text-xs">
+                {opt}
+              </SelectItem>
+            ))}
+          </ScrollArea>
+        </SelectContent>
+      </Select>
+    );
+  } else if (type === 'int' || type === 'float') {
+    // Use Input type="number" for int/float when operator is not 'range'
+    return (
+      <Input
+        type="number"
+        value={filter.value ?? ''}
+        onChange={(e) => updateFilter(index, { value: e.target.value ? parseFloat(e.target.value) : '' })}
+        placeholder="Enter number..."
+        {...commonProps}
+        className={cn(commonProps.className, "flex-1 min-w-[100px]")}
+      />
+    );
+  }
+
+  // Default to Input type="text" for str, List[str], List[Dict], and others
+  return (
+    <Input
+      type="text"
+      value={filter.value ?? ''}
+      onChange={(e) => updateFilter(index, { value: e.target.value })}
+      placeholder="Enter value..."
+      {...commonProps}
+      className={cn(commonProps.className, "flex-1 min-w-[100px]")}
+    />
   );
 }; 

@@ -15,7 +15,6 @@ import { useRunHistoryStore, RunHistoryItem } from '@/zustand_stores/storeRunHis
 import { useFavoriteRunsStore, FavoriteRun } from '@/zustand_stores/storeFavoriteRuns';
 import { ClassificationSchemeRead, DocumentRead } from '@/client/models';
 import { Label } from '@/components/ui/label';
-import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import DocumentManagerOverlay from '../documents/DocumentManagerOverlay';
 import SchemeManagerOverlay from './ClassificationSchemeManagerOverlay';
@@ -26,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from "@/components/ui/progress";
 
 // --- Sub-components ---
 
@@ -271,6 +271,9 @@ function RunHistoryDialog({
   const { runs, isLoading, fetchRunHistory } = useRunHistoryStore();
   const { favoriteRuns, addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
   const { activeWorkspace } = useWorkspaceStore();
+  // --- ADDED: State to track initial fetch per workspace ---
+  const [fetchedWorkspaceId, setFetchedWorkspaceId] = useState<string | number | null>(null);
+  // --- END ADDED ---
 
   // Get favorite run IDs
   const favoriteRunIds = useMemo(() => {
@@ -309,32 +312,37 @@ function RunHistoryDialog({
       }
   }, [activeWorkspace?.uid, fetchRunHistory]);
 
-  // --- ADDED: Function to handle fetch when dialog opens ---
+  // --- MODIFIED: Function to handle fetch when dialog opens ---
   const handleOpenChange = (open: boolean) => {
+    const currentWorkspaceId = activeWorkspace?.uid;
     // --- Add Detailed Logging ---
-    console.log(`[RunHistoryDialog] handleOpenChange called. Dialog changing to open=${open}. isLoading=${isLoading}, activeWorkspace?.uid=${activeWorkspace?.uid}`);
+    console.log(`[RunHistoryDialog] handleOpenChange called. Dialog changing to open=${open}. isLoading=${isLoading}, currentWorkspaceId=${currentWorkspaceId}, fetchedWorkspaceId=${fetchedWorkspaceId}`);
     // --- End Logging ---
 
-    if (open && !isLoading && activeWorkspace?.uid) {
-       // Fetch only when transitioning to open state
-       const workspaceId = typeof activeWorkspace.uid === 'string'
-         ? parseInt(activeWorkspace.uid, 10)
-         : activeWorkspace.uid;
+    // --- MODIFIED: Fetch only if opening, not loading, workspace exists, AND fetch hasn't happened for this workspace yet ---
+    if (open && !isLoading && currentWorkspaceId && currentWorkspaceId !== fetchedWorkspaceId) {
+       const workspaceId = typeof currentWorkspaceId === 'string'
+         ? parseInt(currentWorkspaceId, 10)
+         : currentWorkspaceId;
 
        if (!isNaN(workspaceId)) {
-         console.log("[RunHistoryDialog] Dialog opening, fetching history...");
-         console.log("[RunHistoryDialog] Conditions met, attempting fetch..."); // Log success case
+         console.log(`[RunHistoryDialog] Dialog opening for workspace ${workspaceId} (first time or new workspace), fetching history...`);
          fetchRunHistory(workspaceId);
+         // --- ADDED: Mark fetch as done for this workspace ---
+         setFetchedWorkspaceId(currentWorkspaceId);
+         // --- END ADDED ---
        } else {
          console.warn("[RunHistoryDialog] Workspace ID is invalid, cannot fetch history.");
        }
+    } else if (open && currentWorkspaceId === fetchedWorkspaceId) {
+        console.log(`[RunHistoryDialog] History already fetched for workspace ${currentWorkspaceId}, skipping fetch.`);
     } else if (!open) {
        // Call the original onClose handler when closing
        console.log("[RunHistoryDialog] Dialog closing.");
        onClose();
     } else {
       // --- Add Logging for Failure ---
-      console.log(`[RunHistoryDialog] Conditions NOT met for fetch. open=${open}, !isLoading=${!isLoading}, hasWorkspaceId=${!!activeWorkspace?.uid}`);
+      console.log(`[RunHistoryDialog] Conditions NOT met for fetch. open=${open}, !isLoading=${!isLoading}, hasWorkspaceId=${!!currentWorkspaceId}, workspaceChanged=${currentWorkspaceId !== fetchedWorkspaceId}`);
       // --- End Logging ---
     }
   };
@@ -430,7 +438,7 @@ const DocumentSelectorForRun: React.FC<DocumentSelectorForRunProps> = ({
         onChange={(e) => setSearchTerm(e.target.value)}
         className="h-8"
       />
-      <ScrollArea className="max-h-48 border rounded-md p-2">
+      <ScrollArea className="h-72 border rounded-md p-2">
         {filteredDocuments.length > 0 ? (
           <div className="space-y-2">
             {filteredDocuments.map(doc => (
@@ -508,7 +516,7 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
         onChange={(e) => setSearchTerm(e.target.value)}
         className="h-8"
       />
-      <ScrollArea className="max-h-48 border rounded-md p-2">
+      <ScrollArea className="h-72 border rounded-md p-2">
         {filteredSchemes.length > 0 ? (
           <div className="space-y-2">
             {filteredSchemes.map(scheme => (
@@ -552,6 +560,8 @@ interface ClassificationRunnerDockProps {
   onRunClassification: (runName: string | undefined, runDescription: string | undefined, docIds: number[], schemeIds: number[]) => Promise<void>;
   onLoadFromRun: (runId: number, runName: string, runDescription?: string) => Promise<void>;
   currentRunId: number | null;
+  isCreatingRun: boolean;
+  classificationProgress: { current: number; total: number } | null;
 }
 
 // Renamed Component
@@ -561,9 +571,10 @@ export default function ClassificationRunnerDock({
   onRunClassification,
   onLoadFromRun,
   currentRunId,
+  isCreatingRun,
+  classificationProgress
 }: ClassificationRunnerDockProps) {
   const { activeWorkspace } = useWorkspaceStore();
-  const { isCreatingRun } = useClassificationSystem();
   const { favoriteRuns } = useFavoriteRunsStore();
   const { runs: runHistoryStore } = useRunHistoryStore();
 
@@ -599,6 +610,14 @@ export default function ClassificationRunnerDock({
     const workspaceIdStr = String(activeWorkspace?.uid || '');
     return favoriteRuns.filter(run => String(run.workspaceId) === workspaceIdStr);
   }, [favoriteRuns, activeWorkspace?.uid]);
+
+  // --- Calculate progress percentage ---
+  const progressPercentage = useMemo(() => {
+    if (isCreatingRun && classificationProgress && classificationProgress.total > 0) {
+      return (classificationProgress.current / classificationProgress.total) * 100;
+    }
+    return 0;
+  }, [isCreatingRun, classificationProgress]);
 
   // --- MOVED: Ensure handleLoadRun is memoized BEFORE useEffect ---
   const handleLoadRun = useCallback(async (runId: number, name: string, desc?: string) => {
@@ -689,7 +708,7 @@ export default function ClassificationRunnerDock({
   // Dependencies: Run when workspace changes, favorites change, the load function changes, or currentRunId changes.
   }, [activeWorkspace?.uid, favoriteRuns, onLoadFromRun, currentRunId, handleLoadRun]); // handleLoadRun is dependency
 
-  // --- MODIFIED: handleRunClick uses store state ---
+  // --- MODIFIED: handleRunClick uses store state and checks progress ---
   const handleRunClick = async () => {
     // Use selected IDs from the store
     if (selectedDocIdsForRun.length === 0 || selectedSchemeIdsForRun.length === 0) {
@@ -732,7 +751,7 @@ export default function ClassificationRunnerDock({
       <div className={cn(
         "fixed bottom-4 left-1/2 transform -translate-x-1/2",
         "flex flex-col",
-        "w-auto max-w-[115vw]",
+        "w-auto max-w-[95vw] lg:max-w-[1000px]",
         "border bg-card text-card-foreground rounded-lg shadow-lg",
         "z-20 transition-all duration-200"
       )}>
@@ -761,25 +780,23 @@ export default function ClassificationRunnerDock({
         <div className={cn(
           "grid grid-cols-1 gap-4 p-4",
           "transition-all duration-200 ease-in-out",
-          isExpanded ? "max-h-[70vh] overflow-y-auto opacity-100" : "max-h-0 opacity-0 overflow-hidden p-0"
+          isExpanded ? "max-h-[80vh] overflow-y-auto opacity-100" : "max-h-0 opacity-0 overflow-hidden p-0"
         )}>
           {/* Row 1: Model Selection & Run History */}
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-center gap-4">
+            <div className="flex items-center gap-2 w-full">
               <Label className="text-sm font-medium whitespace-nowrap">Model:</Label>
-              <ProviderSelector className="w-52" />
+              <ProviderSelector className="flex-1" />
             </div>
             
-            <Separator orientation="vertical" className="h-8 hidden sm:block" />
-            
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 justify-start sm:justify-end">
               <Button 
                 variant="outline" 
                 onClick={() => setIsHistoryDialogOpen(true)} 
                 size="sm"
                 className="whitespace-nowrap"
               >
-                <History className="h-4 w-4 mr-2" /> 
+                <History className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">Load Run</span>
               </Button>
               
@@ -797,7 +814,7 @@ export default function ClassificationRunnerDock({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Left side: Run metadata */}
             <div className="space-y-3">
-              <div>
+              <div className="w-full">
                 <Label htmlFor="new-run-name-dock" className="text-xs font-medium">Run Name (Optional)</Label>
                 <Input
                   id="new-run-name-dock"
@@ -808,7 +825,7 @@ export default function ClassificationRunnerDock({
                 />
               </div>
               
-              <div>
+              <div className="w-full">
                 <Label htmlFor="new-run-description-dock" className="text-xs font-medium">Description (Optional)</Label>
                 <Textarea
                   id="new-run-description-dock"
@@ -820,45 +837,60 @@ export default function ClassificationRunnerDock({
               </div>
             </div>
             
-            {/* Right side: Start Button */}
+            {/* Right side: Start Button - MODIFIED */}
             <div className="flex flex-col justify-end gap-3"> 
-              <Button
-                variant="default"
-                onClick={handleRunClick}
-                disabled={isCreatingRun || selectedDocIdsForRun.length === 0 || selectedSchemeIdsForRun.length === 0}
-                className="mt-auto self-end"
-                size="default"
-              >
-                {isCreatingRun ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" /> 
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    Start Classification Run
-                  </>
+              <div className="flex flex-col items-end"> {/* Wrapper for button and progress */} 
+                <Button
+                  variant="default"
+                  onClick={handleRunClick}
+                  disabled={isCreatingRun || selectedDocIdsForRun.length === 0 || selectedSchemeIdsForRun.length === 0}
+                  className="w-full md:w-auto" // Adjust width as needed
+                  size="default"
+                >
+                  {isCreatingRun ? (
+                    <div className="flex items-center justify-center"> {/* Center content */} 
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" /> 
+                      <span> {/* Wrap text */} 
+                        {classificationProgress && classificationProgress.total > 0 
+                          ? `Processing (${classificationProgress.current}/${classificationProgress.total})...` 
+                          : 'Processing...'}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 mr-2" />
+                      Start Classification Run
+                    </>
+                  )}
+                </Button>
+                {/* --- ADDED: Progress Bar --- */} 
+                {isCreatingRun && classificationProgress && classificationProgress.total > 0 && (
+                  <Progress value={progressPercentage} className="mt-2 h-2 w-full md:w-[200px]" /> // Adjust width as needed
                 )}
-              </Button>
+                {/* --- END ADDED --- */} 
+              </div>
             </div>
           </div>
 
           {/* --- NEW: Row 3: Document and Scheme Selection --- */}
            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
-                <DocumentSelectorForRun
-                    allDocuments={allDocuments}
-                    selectedDocIds={selectedDocIdsForRun}
-                    onToggleDoc={toggleDocInRun}
-                    onSelectAll={handleSelectAllDocsForRun}
-                />
-                <SchemeSelectorForRun
-                    allSchemes={allSchemes}
-                    selectedSchemeIds={selectedSchemeIdsForRun}
-                    onToggleScheme={toggleSchemeInRun}
-                    onSelectAll={handleSelectAllSchemesForRun}
-                    onPreviewScheme={handlePreviewSchemeClick}
-                />
+                <div className="flex flex-col overflow-hidden"> {/* Wrapper for Doc Selector */}
+                  <DocumentSelectorForRun
+                      allDocuments={allDocuments}
+                      selectedDocIds={selectedDocIdsForRun}
+                      onToggleDoc={toggleDocInRun}
+                      onSelectAll={handleSelectAllDocsForRun}
+                  />
+                </div>
+                <div className="flex flex-col overflow-hidden"> {/* Wrapper for Scheme Selector */}
+                  <SchemeSelectorForRun
+                      allSchemes={allSchemes}
+                      selectedSchemeIds={selectedSchemeIdsForRun}
+                      onToggleScheme={toggleSchemeInRun}
+                      onSelectAll={handleSelectAllSchemesForRun}
+                      onPreviewScheme={handlePreviewSchemeClick}
+                  />
+                </div>
            </div>
            {/* --- END NEW Row 3 --- */}
         </div>
@@ -932,11 +964,18 @@ export default function ClassificationRunnerDock({
               className="h-8"
             >
               {isCreatingRun ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <> 
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {/* Use prop for progress text */}
+                  {classificationProgress && classificationProgress.total > 0 
+                    ? <span className="ml-1.5 text-xs">({classificationProgress.current}/{classificationProgress.total})</span> 
+                    : null}
+                </>
               ) : (
                 <Play className="h-3.5 w-3.5" />
               )}
-              <span className="ml-1.5">Run</span>
+              {/* Use prop for run state */}
+              {!isCreatingRun && <span className="ml-1.5">Run</span>}
             </Button>
           </div>
         </div>

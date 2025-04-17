@@ -515,7 +515,7 @@ export default function ClassificationRunner({
           <div className="flex-1 flex flex-col overflow-auto">
 
             {/* Analysis Content Area */}
-            <div className="p-4 flex-1 space-y-4 overflow-y-auto">
+            <div className="p-4 flex-1 space-y-4">
 
               {/* Run Details Header */}
               {activeRunId && (
