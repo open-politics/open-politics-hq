@@ -5609,7 +5609,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 200,
+              "maximum": 500,
               "default": 100,
               "title": "Limit"
             }

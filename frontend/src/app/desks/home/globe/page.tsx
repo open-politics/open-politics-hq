@@ -138,7 +138,7 @@ const GlobePage = () => {
   };
 
   return (
-    <div className="h-screen w-full relative">
+    <div className="h-full w-full relative">
       {isLoading ? (
         <div className="flex items-center justify-center h-full">
           <div className="loader"></div>
@@ -148,7 +148,7 @@ const GlobePage = () => {
           {/* Main Content Area */}
           <div className="flex h-full flex-col md:flex-row">
             {/* Globe Section */}
-            <div className="relative flex-1 max-h-screen overflow-hidden">
+            <div className="relative flex-1 overflow-hidden p-2 shadow-lg">
               <div className="h-full">
                 <Globe
                   ref={globeRef}
@@ -158,7 +158,7 @@ const GlobePage = () => {
               </div>
               
               {/* Search Bar */}
-              <div className="fixed bottom-0 md:bottom-2 w-[100vw] md:max-w-[40vw] z-20 md:ml-2">
+              <div className="fixed bottom-0 md:bottom-4 w-[100vw] md:max-w-[40vw] z-20 md:ml-2">
                 <Search
                   setResults={handleSearch}
                   setSummary={handleSummary}
@@ -173,7 +173,7 @@ const GlobePage = () => {
             {hasClicked && isVisible && (
               <motion.div
                 initial={{ opacity: 0 }}
-                className="absolute w-full h-full md:h-[calc(100vh-8.625em)] top-0 left-0 md:left-1/2 inset-2 sm:w-3/4 lg:w-1/2 bg-background/90 backdrop-blur-lg supports-[backdrop-filter]:bg-background/90 z-50 p-2 md:p-6 md:inset-4 rounded-lg right-0 shadow-xl"
+                className="absolute top-0 bottom-0 -left-2 md:right-0 w-full sm:w-3/4 lg:w-1/2 md-0 md:m-4 z-50"
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
@@ -189,7 +189,6 @@ const GlobePage = () => {
                     <LocationDetailPanel
                       key={locationKey}
                       location={location}
-                      isVisible={isVisible}
                       toggleVisibility={toggleVisibility}
                       results={results}
                       summary={summary}

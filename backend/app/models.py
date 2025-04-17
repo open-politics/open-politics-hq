@@ -366,8 +366,8 @@ class ClassificationRun(ClassificationRunBase, table=True):
 
 # API model for ClassificationRun creation
 class ClassificationRunCreate(ClassificationRunBase):
-    # workspace_id is required to link the run on creation
-    workspace_id: int
+    # workspace_id is already provided via the path parameter
+    pass # Inherits necessary fields from ClassificationRunBase
 
 # API model for ClassificationRun update
 class ClassificationRunUpdate(SQLModel):

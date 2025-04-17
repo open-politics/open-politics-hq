@@ -189,7 +189,7 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
     <DocumentDetailProvider>
       <DocumentDetailWrapper onLoadIntoRunner={onLoadIntoRunner}>
         <TooltipProvider delayDuration={0}>
-          <div className="flex flex-col h-full w-full max-w-screen-2xl max-h-[80%] mx-auto px-2 sm:px-4">
+          <div className="flex flex-col h-full w-full max-w-screen-2xl mx-auto px-2 sm:px-4">
             <div className="flex-none p-2 sm:p-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-wrap gap-2">

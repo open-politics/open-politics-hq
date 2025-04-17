@@ -23,16 +23,20 @@ export default function WorkspacesPage({ onEdit }: WorkspacesPageProps) {
     onEdit(workspace);
   };
 
+  // Call the columns function to generate definitions, passing handlers
+  const tableColumns = columns({
+    onEdit: handleEdit, // Pass the function received via props
+    onDelete: (workspace) => deleteWorkspace(workspace.uid), // Pass the delete store action
+  });
+
   return (
     <div className="h-full p-4">
       <div className="flex justify-center items-center">
         <h1 className="text-xl font-semibold text-center mb-8">Workspaces</h1>
       </div>
       <DataTable
-        columns={columns}
+        columns={tableColumns} // Use the generated columns
         data={workspaces as Workspace[]}
-        onEdit={handleEdit}
-        onDelete={(workspace) => deleteWorkspace(workspace.uid)}
       />
       {selectedWorkspace && (
         <EditWorkSpaceOverlay

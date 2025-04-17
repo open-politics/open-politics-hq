@@ -250,15 +250,15 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex justify-between mb-2">
-      <span className="text-green-500 font-medium">{locationName}</span>
+      <div className="flex justify-between mb-2 flex-shrink-0">
+        <span className="text-green-500 font-medium">{locationName}</span>
       </div>
       <Tabs 
         value={activeTab} 
         onValueChange={(value) => {
           setActiveTab(value);
         }} 
-        className="w-full"
+        className="w-full flex flex-col flex-grow"
       >
         <TabsList className="flex-shrink-0 max-w-[80%] md:max-w-[calc(100%-60px)] overflow-x-auto flex justify-start scrollbar-hide bg-transparent">
           <TabsTrigger value="articles" className="scroll-snap-align-start">Articles</TabsTrigger>
@@ -284,13 +284,10 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
             </TabsTrigger>
           )}
         </TabsList>
-        <div className="max-h-[calc(100vh-200px)] overflow-y-auto scrollbar-hide">
+        <div className="flex-grow overflow-y-auto scrollbar-hide mt-2">
           <TabsContent value="articles" className="">
-            <Card className="h-full w-full flex flex-col relative transition-transform duration-200">
-              {/* <CardHeader className="p-4">
-                <CardTitle>Articles</CardTitle>
-              </CardHeader> */}
-              <CardContent className="flex-grow overflow-hidden p-4 px-1 pt-7 relative">
+            <Card className="h-auto w-full flex flex-col relative transition-transform duration-200 bg-transparent shadow-none border-none">
+              <CardContent className="flex-grow p-4 px-1 pt-7 relative">
                 {/* Image Section */}
                 {backgroundImage && (
                   <div className="absolute -top-0 right-1 w-40 h-20">
@@ -319,8 +316,8 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
             </Card>
           </TabsContent>
           {data.locationMetadata.isLegislativeEnabled && (
-            <TabsContent value="legislative">
-              <Card>
+            <TabsContent value="legislative" className="">
+              <Card className="bg-transparent shadow-none border-none">
                 <CardHeader>
                   <CardTitle>Legislation</CardTitle>
                 </CardHeader>
@@ -366,8 +363,8 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
               </Card>
             </TabsContent>
           )}
-          <TabsContent value="economic-data">
-            <Card>
+          <TabsContent value="economic-data" className="">
+            <Card className="bg-transparent shadow-none border-none">
               <CardHeader>
                 <CardTitle>Economic Data</CardTitle>
               </CardHeader>
@@ -402,8 +399,8 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="leader-info">
-            <Card>
+          <TabsContent value="leader-info" className="">
+            <Card className="bg-transparent shadow-none border-none">
               <CardHeader>
                 <CardTitle>Entities</CardTitle>
               </CardHeader>
@@ -424,8 +421,8 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="wikipedia">
-            <Card>
+          <TabsContent value="wikipedia" className="">
+            <Card className="bg-transparent shadow-none border-none">
               <CardHeader>
                 <CardTitle>Wikipedia</CardTitle>
               </CardHeader>
@@ -434,8 +431,8 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="summary">
-            <Card>
+          <TabsContent value="summary" className="">
+            <Card className="bg-transparent shadow-none border-none">
               <CardHeader>
                 <CardTitle>Summary</CardTitle>
               </CardHeader>

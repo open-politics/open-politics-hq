@@ -15,7 +15,7 @@ export default function ClassificationRunnerLayout({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center p-4 border-b">
+      {/* <div className="flex items-center p-4 border-b">
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
@@ -46,7 +46,7 @@ export default function ClassificationRunnerLayout({
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
-      </div>
+      </div> */}
       <div className="flex-1 overflow-auto">
         {children}
       </div>

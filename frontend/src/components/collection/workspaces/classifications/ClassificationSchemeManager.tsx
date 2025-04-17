@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -28,12 +28,14 @@ import { useTutorialStore } from '@/zustand_stores/storeTutorial';
 import { Switch } from "@/components/ui/switch"
 import FixedCard from '@/components/collection/wrapper/fixed-card';
 import ClassificationSchemeEditor from './ClassificationSchemeEditor';
-import { transformFormDataToApi } from '@/lib/classification/service';
+import { transformApiToFormData } from '@/lib/classification/service';
 import { schemesToSchemeReads } from '@/lib/classification/adapters';
-import { Plus } from 'lucide-react';
+import { Plus, Upload, Loader2 } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
 
 export default function ClassificationSchemeManager() {
   const { activeWorkspace } = useWorkspaceStore();
+  const { toast } = useToast();
   const {
     schemes,
     isLoadingSchemes,
@@ -54,6 +56,12 @@ export default function ClassificationSchemeManager() {
     model_instructions: '',
     validation_rules: {}
   });
+
+  // State for import loading
+  const [isImporting, setIsImporting] = useState(false);
+  
+  // Ref for file input
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Add tutorial store
   const { showSchemaBuilderTutorial, toggleSchemaBuilderTutorial } = useTutorialStore();
@@ -88,6 +96,7 @@ export default function ClassificationSchemeManager() {
       alert('Classification scheme created successfully');
     } catch (error) {
       console.error('Error creating classification scheme:', error);
+      alert('Error creating classification scheme. See console for details.');
     }
   };
 
@@ -146,6 +155,78 @@ export default function ClassificationSchemeManager() {
     await deleteScheme(schemeId); // Call original function, ignore boolean return
   }, [deleteScheme]);
 
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    const reader = new FileReader();
+
+    reader.onload = async (e) => {
+      const text = e.target?.result;
+      if (typeof text !== 'string') {
+        toast({ title: 'Error reading file', description: 'Could not read file content.', variant: 'destructive' });
+        setIsImporting(false);
+        return;
+      }
+
+      try {
+        const importedSchemes = JSON.parse(text);
+        if (!Array.isArray(importedSchemes)) {
+          throw new Error('Imported file must contain a JSON array of schemes.');
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const importedScheme of importedSchemes) {
+          try {
+            // Basic validation (can be expanded)
+            if (!importedScheme.name || !Array.isArray(importedScheme.fields)) {
+              throw new Error(`Invalid scheme structure for item: ${JSON.stringify(importedScheme).substring(0, 50)}...`);
+            }
+            
+            // Transform and create
+            const schemeFormData = transformApiToFormData(importedScheme as any); // Assume imported data matches ClassificationSchemeRead
+            await createScheme(schemeFormData);
+            successCount++;
+          } catch (individualError: any) { 
+            console.error('Error importing individual scheme:', individualError);
+            errorCount++;
+            toast({ title: 'Import Error (Individual)', description: `Failed to import scheme '${importedScheme.name || 'Unnamed'}': ${individualError.message}`, variant: 'destructive' });
+          }
+        }
+
+        toast({ 
+          title: 'Import Complete', 
+          description: `${successCount} schemes imported successfully, ${errorCount} failed.`,
+          variant: errorCount > 0 ? 'default' : 'default' // Use default variant even with errors
+        });
+
+      } catch (error: any) {
+        console.error('Error processing imported file:', error);
+        toast({ title: 'Import Failed', description: `Error parsing or processing file: ${error.message}`, variant: 'destructive' });
+      } finally {
+        setIsImporting(false);
+        // Reset file input to allow importing the same file again
+        if (event.target) {
+          event.target.value = '';
+        }
+      }
+    };
+
+    reader.onerror = () => {
+      toast({ title: 'Error reading file', description: 'Failed to read the selected file.', variant: 'destructive' });
+      setIsImporting(false);
+    };
+
+    reader.readAsText(file);
+  };
+
   // --- Conditional Rendering ---
   if (!activeWorkspace) {
     return (
@@ -173,18 +254,40 @@ export default function ClassificationSchemeManager() {
               <p className="text-muted-foreground">Loading schemes...</p>
             </div>
           ) : adaptedSchemes.length === 0 ? (
-            <div className="flex flex-col justify-center items-center h-40 text-center">
-              <p className="text-muted-foreground mb-4">No classification schemes found.</p>
-              <Button onClick={() => setIsSheetOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" /> Create New Scheme
-              </Button>
+            <div className="flex flex-col justify-center items-center h-40 text-center space-y-4">
+              <p className="text-muted-foreground">No classification schemes found.</p>
+              <div className="flex gap-2">
+                <Button onClick={() => setIsSheetOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" /> Create New Scheme
+                </Button>
+                <Button onClick={handleImportClick} variant="secondary" disabled={isImporting}>
+                  {isImporting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 
+                  ) : (
+                    <Upload className="h-4 w-4 mr-2" />
+                  )}
+                  Import Schemes
+                </Button>
+              </div>
             </div>
           ) : (
-            <ClassificationSchemesTablePage 
-              schemes={adaptedSchemes}
-              onCreateClick={() => setIsSheetOpen(true)}
-              onDelete={handleDeleteProp}
-            />
+            <>
+              <div className="flex justify-end mb-4">
+                <Button onClick={handleImportClick} variant="secondary" disabled={isImporting}>
+                  {isImporting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 
+                  ) : (
+                    <Upload className="h-4 w-4 mr-2" />
+                  )}
+                  Import Schemes
+                </Button>
+              </div>
+              <ClassificationSchemesTablePage 
+                schemes={adaptedSchemes}
+                onCreateClick={() => setIsSheetOpen(true)}
+                onDelete={handleDeleteProp}
+              />
+            </>
           )}
         </CardContent>
         <div className="flex justify-end p-4">  
@@ -226,13 +329,16 @@ export default function ClassificationSchemeManager() {
         show={isSheetOpen}
         onClose={() => setIsSheetOpen(false)}
         mode="create"
-        defaultValues={{
-          name: '',
-          description: '',
-          fields: [],
-          model_instructions: '',
-          validation_rules: {}
-        }}
+        defaultValues={formData}
+      />
+
+      {/* Hidden File Input */}
+      <input 
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept=".json"
+        style={{ display: 'none' }}
       />
     </div>
   );

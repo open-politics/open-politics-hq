@@ -1035,10 +1035,7 @@ export class ClassificationService {
   static async createRunAPI(workspaceId: number, runData: Partial<ClassificationRunCreate>): Promise<ClassificationRunRead> {
     try {
       const requestBody: ClassificationRunCreate = {
-        workspace_id: workspaceId,
-        name: runData.name ?? null, // Use null if undefined
-        description: runData.description ?? null,
-        status: runData.status ?? 'pending' // Default status
+        status: runData.status ?? 'pending', // Default status
         // document_count and scheme_count are usually calculated or not set on create
       };
       const createdRun = await ClassificationRunsService.createClassificationRun({

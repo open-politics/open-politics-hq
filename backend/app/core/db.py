@@ -179,13 +179,10 @@ def init_db(session: Session) -> None:
         select(Document).where(Document.workspace_id == workspace.uid)
     ).first()
     if not super_user_document:
-        document_in = DocumentCreate(
+        document = Document(
             title="Default Document",
             text_content="This is a test document for classification.",
-            workspace_id=workspace.uid
-        )
-        document = Document(
-            **document_in.model_dump(),
+            workspace_id=workspace.uid,
             user_id=user.id
         )
         session.add(document)

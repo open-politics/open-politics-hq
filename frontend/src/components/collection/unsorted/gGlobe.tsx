@@ -30,6 +30,36 @@ import ReactDOM from "react-dom";
 import * as GeoJSON from 'geojson';
 import { any } from "@amcharts/amcharts5/.internal/core/util/Array";
 
+// Helper function to format Date object to YYYY-MM-DDTHH:MM:SS
+const formatDateForAPI = (date: Date | null): string | null => {
+  if (!date) return null;
+  // Pad single digits with leading zero
+  const pad = (num: number) => num.toString().padStart(2, '0');
+
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1); // Month is 0-indexed
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+};
+
+// Helper function to get the default date range (last 7 days)
+const getDefaultDateRange = (): { startDate: string, endDate: string } => {
+  const endDate = new Date(); // Now
+  const startDate = new Date();
+  startDate.setDate(endDate.getDate() - 7);
+  startDate.setHours(0, 0, 0, 0); // Start of the day 7 days ago
+  endDate.setHours(23, 59, 59, 999); // End of today
+
+  return {
+    startDate: formatDateForAPI(startDate) as string, // Assert as string since we know input is Date
+    endDate: formatDateForAPI(endDate) as string, // Assert as string
+  };
+};
+
 // Distance used by Mapbox for clustering
 const CLUSTER_RADIUS = 30;
 
@@ -102,8 +132,10 @@ const Globe = forwardRef<any, GlobeProps>(
     const [geojsonLoaded, setGeojsonLoaded] = useState(false);
 
     // Add new state variables for date filtering
-    const [startDate, setStartDate] = useState<string | null>(null);
-    const [endDate, setEndDate] = useState<string | null>(null);
+    // Initialize with the default 21-day range
+    const [defaultDates] = useState(getDefaultDateRange());
+    const [startDate, setStartDate] = useState<string | null>(defaultDates.startDate);
+    const [endDate, setEndDate] = useState<string | null>(defaultDates.endDate);
     const [eventLimit, setEventLimit] = useState<number>(100);
 
     // Modify the eventTypes array to use simpler icon names
@@ -1243,15 +1275,16 @@ const Globe = forwardRef<any, GlobeProps>(
     }, [mapLoaded, dataType, geojsonData, eventGeojsonData, loadGeoJSONData]); // Dependencies
 
     // Create a function to format dates for ISO string
-    const formatDateForAPI = (date: Date | null): string | null => {
-      if (!date) return null;
-      return date.toISOString();
-    };
+    // const formatDateForAPI = (date: Date | null): string | null => {
+    //   if (!date) return null;
+    //   return date.toISOString(); // Removed as we have a new function
+    // };
 
     // Add a function to clear date filters
     const clearDateFilters = () => {
-      setStartDate(null);
-      setEndDate(null);
+      const { startDate: defaultStart, endDate: defaultEnd } = getDefaultDateRange();
+      setStartDate(defaultStart);
+      setEndDate(defaultEnd);
       setEventLimit(100);
       // Force reload data with cleared filters
       if (mapRef.current) {
@@ -1747,7 +1780,7 @@ const Globe = forwardRef<any, GlobeProps>(
                   </Button>
                   <Button 
                     variant="outline" 
-                    onClick={() => fetchGeoJsonData()}
+                    onClick={() => loadGeoJSONData()}
                   >
                     Reload Data
                   </Button>
@@ -1794,13 +1827,17 @@ const Globe = forwardRef<any, GlobeProps>(
                     <Input 
                       type="date" 
                       className="w-full"
-                      value={startDate ? startDate.split('T')[0] : ''} 
+                      value={startDate ? startDate.split('T')[0] : ''} // Display YYYY-MM-DD
                       onChange={(e) => {
-                        const value = e.target.value;
+                        const value = e.target.value; // YYYY-MM-DD
                         if (value) {
-                          setStartDate(`${value}T00:00:00+00:00`);
+                          // Create date object from input, preserving local timezone date
+                          // but setting time to start of day
+                          const dateParts = value.split('-').map(Number);
+                          const newStartDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 0, 0, 0);
+                          setStartDate(formatDateForAPI(newStartDate));
                         } else {
-                          setStartDate(null);
+                          setStartDate(null); // Allow clearing specific date
                         }
                       }}
                     />
@@ -1810,13 +1847,17 @@ const Globe = forwardRef<any, GlobeProps>(
                     <Input 
                       type="date" 
                       className="w-full"
-                      value={endDate ? endDate.split('T')[0] : ''} 
+                      value={endDate ? endDate.split('T')[0] : ''} // Display YYYY-MM-DD
                       onChange={(e) => {
-                        const value = e.target.value;
+                        const value = e.target.value; // YYYY-MM-DD
                         if (value) {
-                          setEndDate(`${value}T23:59:59+00:00`);
+                          // Create date object from input, preserving local timezone date
+                          // but setting time to end of day
+                          const dateParts = value.split('-').map(Number);
+                          const newEndDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 23, 59, 59);
+                          setEndDate(formatDateForAPI(newEndDate));
                         } else {
-                          setEndDate(null);
+                          setEndDate(null); // Allow clearing specific date
                         }
                       }}
                     />
@@ -1889,9 +1930,9 @@ const Globe = forwardRef<any, GlobeProps>(
 
               {/* Update reload button to work with current data type */}
               <button
-                onClick={loadGeoJSONData}
                 className="flex items-center justify-center px-2 py-1 text-xs bg-highlighted text-white rounded shadow hover:bg-highlighted-hover"
                 disabled={isLoading}
+                onClick={loadGeoJSONData}
               >
                 <span>{isLoading ? "Loading..." : "Reload"}</span>
                 {isLoading ? (
@@ -1930,7 +1971,7 @@ const Globe = forwardRef<any, GlobeProps>(
         <div className="absolute top-4 right-4 z-10">
           <button
             className="bg-white dark:bg-gray-800 text-gray-800 dark:text-white p-2 rounded-full shadow-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-            onClick={() => fetchGeoJsonData()}
+            onClick={() => loadGeoJSONData()}
             title="Refresh GeoJSON data"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">

@@ -104,6 +104,8 @@ export default function DesksLayout({ children }: { children: React.ReactNode })
         <AppSidebar className="fixed md:relative h-full md:h-auto" />
         <SidebarInset className="flex-1 flex flex-col pt-16">
           <header className="flex h-12 shrink-0 items-center gap-2 px-4">
+          {/* {user?.is_superuser &&
+            <>
             <div className="flex items-center gap-2">
               <Breadcrumb className="pr-6 md:pr-2">
                 <BreadcrumbList>
@@ -118,6 +120,8 @@ export default function DesksLayout({ children }: { children: React.ReactNode })
             <div className="flex-1 flex justify-end gap-2 h-10">
               <DefaultSchemeSelector />
             </div>
+            </>
+          } */}
           </header>
           <main className="flex-1 overflow-hidden">
             {children}

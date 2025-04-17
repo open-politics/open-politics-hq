@@ -5,7 +5,6 @@ import { CircleX } from 'lucide-react';
 
 interface LocationDetailPanelProps {
   location: string | null;
-  isVisible: boolean;
   toggleVisibility: () => void;
   results: any; // Add appropriate type based on your data structure
   summary: string;
@@ -13,7 +12,6 @@ interface LocationDetailPanelProps {
 
 const LocationDetailPanel: React.FC<LocationDetailPanelProps> = ({
   location,
-  isVisible,
   toggleVisibility,
   results,
   summary,
@@ -26,18 +24,20 @@ const LocationDetailPanel: React.FC<LocationDetailPanelProps> = ({
   }, [location]);
 
   return (
-    <div className="h-full relative z-50 bg-transparent rounded-lg p-2 pt-4 md:pt-0">
-      <Button onClick={toggleVisibility} className="fixed right-2 size-10 p-2">
-        <CircleX size={24} /> 
-      </Button> 
-      { (searchTerm || results) && ( 
-        <IssueAreas 
-          locationName={searchTerm || ''} // Ensure locationName is always defined
-          results={results}
-          summary={summary}
-          includeSummary={true}
-        />
-      )}
+    <div className="h-full bg-background/90 backdrop-blur-lg supports-[backdrop-filter]:bg-background/90 flex flex-col relative z-50 rounded-lg p-2">
+      <Button onClick={toggleVisibility} className="absolute top-2 right-2 size-8 p-2 z-10">
+        <CircleX size={24} />
+      </Button>
+      <div className="flex-1 overflow-hidden md:mt-0">
+        { (searchTerm || results) && ( 
+          <IssueAreas 
+            locationName={searchTerm || ''}
+            results={results}
+            summary={summary}
+            includeSummary={true}
+          />
+        )}
+      </div>
     </div>
   );
 };

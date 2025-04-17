@@ -8,7 +8,8 @@ import {
 import { format } from "date-fns"
 import { Textarea } from '@/components/ui/text-area';
 import { Button } from '@/components/ui/button';
-import { DocumentRead, ClassificationResultRead, ClassificationSchemeRead, EnhancedClassificationResultRead, FieldType } from '@/client/models';
+import { DocumentRead, ClassificationResultRead, ClassificationSchemeRead, FieldType } from '@/client/models';
+import { EnhancedClassificationResultRead } from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
 import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
@@ -86,28 +87,31 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   const { activeWorkspace } = useWorkspaceStore();
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [resultsError, setResultsError] = useState<string | null>(null);
-  const [classificationResults, setClassificationResults] = useState<ClassificationResultRead[]>([]);
+  const [classificationResults, setClassificationResults] = useState<EnhancedClassificationResultRead[]>([]);
   const [isTextLocked, setIsTextLocked] = useState(true);
   const { runs: availableRunsFromStore, isLoading: isLoadingRunsFromStore, fetchRunHistory } = useRunHistoryStore();
   const { toast } = useToast();
 
   const fetchClassificationResults = useCallback(
-    async (documentId: number, workspaceId: string, runName: string | null) => {
+    async (documentId: number, workspaceId: string, runIdFilter: string | null) => {
       setIsLoadingResults(true);
       setResultsError(null);
       try {
-        const results = await ClassificationResultsService.listClassificationResults({
+        const filterParams: any = {
           workspaceId: parseInt(workspaceId),
           documentIds: [documentId],
-          runName: runName || undefined,
-        });
-        setClassificationResults(results);
+        };
         
-        // Extract unique runs from results
-        const uniqueRuns = [...new Set(results
-          .filter(r => r.run_id && r.run_name)
-          .map(r => JSON.stringify({id: r.run_id, name: r.run_name})))]
-          .map(str => JSON.parse(str));
+        // Filter by run ID if a specific run is selected (not "all")
+        if (runIdFilter && runIdFilter !== "all") {
+           filterParams.runId = parseInt(runIdFilter, 10); 
+        }
+
+        const results = await ClassificationResultsService.listClassificationResults(filterParams);
+        
+        // MODIFIED: Cast to EnhancedClassificationResultRead[]
+        setClassificationResults(results as EnhancedClassificationResultRead[]);
+
       } catch (error: any) {
         console.error("Error fetching classification results:", error);
         setResultsError("Failed to load classification results.");
@@ -125,7 +129,10 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
 
   useEffect(() => {
     const loadResults = async () => {
-      if (!selectedDocumentId || !activeWorkspace?.uid) return;
+      if (!selectedDocumentId || !activeWorkspace?.uid) {
+        setClassificationResults([]); // Clear results if no doc selected
+        return;
+      }
 
       setIsLoadingResults(true);
       setResultsError(null);
@@ -134,21 +141,21 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
         if (document && document.id) {
           await fetchClassificationResults(document.id, activeWorkspace.uid.toString(), selectedRun);
         } else {
-          console.warn("Document or document.id is undefined, skipping fetchClassificationResults");
-          return;
+          // Clear results if document context is lost
+          setClassificationResults([]);
         }
       } catch (error: any) {
         console.error("Error fetching classification results:", error);
         setResultsError("Failed to load classification results.");
+        setClassificationResults([]); // Clear on error
       } finally {
         setIsLoadingResults(false);
       }
     };
 
-    if (document) {
-      loadResults();
-    }
-  }, [document, activeWorkspace?.uid, fetchClassificationResults, selectedRun, selectedDocumentId]);
+    loadResults(); // Load results whenever document, workspace, or selected run changes
+
+  }, [document?.id, activeWorkspace?.uid, fetchClassificationResults, selectedRun, selectedDocumentId]);
 
   useEffect(() => {
     if (activeWorkspace?.uid) {
@@ -211,72 +218,17 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   // Check if the current document is newly inserted
   const isNewDocument = selectedDocumentId ? newlyInsertedDocumentIds.includes(selectedDocumentId) : false;
 
-  const formatDisplayValue = (value: any, scheme: ClassificationSchemeRead | undefined) => {
-    if (!scheme || !value) return null;
-
-    // Extract value from scheme-specific field if exists
-    const schemeValue = value[scheme.name] || value?.value || value;
-
-    if (scheme.fields && scheme.fields.length > 0) {
-      const field = scheme.fields[0];
-      
-      switch (field.type) {
-        case 'int':
-          if (field.scale_min === 0 && field.scale_max === 1) {
-            return schemeValue > 0.5 ? 'Positive' : 'Negative';
-          }
-          return typeof schemeValue === 'number' ? schemeValue.toFixed(2) : schemeValue;
-          
-        case 'List[str]':
-          if (Array.isArray(schemeValue)) {
-            return schemeValue.join(', ');
-          }
-          return schemeValue;
-          
-        case 'str':
-          return schemeValue;
-          
-        default:
-          if (typeof schemeValue === 'object' && schemeValue !== null) {
-            try {
-              if (Array.isArray(schemeValue)) {
-                return schemeValue.map((item, index) => {
-                  const key = index;
-                  const val = item;
-                  if (typeof val === 'object' && val !== null) {
-                    return Object.entries(val)
-                      .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-                      .join(', ');
-                  }
-                  return `${key}: ${JSON.stringify(val)}`;
-                }).join(', ');
-              } else {
-                return Object.entries(schemeValue)
-                  .map(([key, val]) => `${key}: ${JSON.stringify(val)}`)
-                  .join(', ');
-              }
-            } catch (error) {
-              console.error("Error stringifying object:", error);
-              return "Error displaying value";
-            }
-          }
-          return JSON.stringify(schemeValue);
-      }
-    }
-    
-    return String(schemeValue);
-  };
-
   const renderClassificationBadges = () => (
     <div className="space-y-4">
       {classificationResults.map((result) => {
         const scheme = schemes.find(s => s.id === result.scheme_id);
+        if (!scheme) return null; // Skip if scheme not found
         return (
           <div key={result.id} className="space-y-2">
             <div className="font-medium">{scheme?.name}</div>
             <ClassificationResultDisplay 
               result={result}
-              scheme={scheme!}
+              scheme={scheme}
             />
           </div>
         );
@@ -359,34 +311,37 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
   };
 
   // Function to handle loading results into the runner
-  const handleLoadIntoRunner = useCallback((result: ClassificationResultRead) => {
-    if (!result.run_id || !result.run_name || !onLoadIntoRunner) return;
-    
-    // Get all results for this run and document to ensure we have the complete context
+  const handleLoadIntoRunner = useCallback((result: EnhancedClassificationResultRead) => {
+    // MODIFIED: Check run_id is not null/undefined
+    const runId = result.run_id;
+    if (runId === null || runId === undefined || !onLoadIntoRunner) return;
+
+    // MODIFIED: Use optional run_name from Enhanced type, provide default
+    const runName = result.run_name || `Run ${runId}`; 
+
     if (activeWorkspace?.uid) {
-      // First show a loading toast
       toast({
         title: "Preparing data",
         description: "Gathering all classification results for this document...",
       });
       
-      // Get all results for this document and run
-      ClassificationResultsService.listClassificationResults({
+      // Get all results for this specific run ID
+      ClassificationResultsService.getResultsByRun({
         workspaceId: typeof activeWorkspace.uid === 'string' 
           ? parseInt(activeWorkspace.uid, 10) 
           : activeWorkspace.uid,
-        documentIds: [result.document_id],
-        runName: result.run_name,
+        runId: runId, // Use the specific run ID
       }).then(results => {
-        // Extract all scheme IDs from the results
-        const schemeIds = [...new Set(results.map(r => r.scheme_id))];
+        // Filter results for the specific document *after* fetching all for the run
+        const resultsForThisDocument = results.filter(r => r.document_id === result.document_id);
+        const schemeIds = [...new Set(resultsForThisDocument.map(r => r.scheme_id))];
         
-        // Now call the onLoadIntoRunner callback with the run ID and name
-        onLoadIntoRunner(result.run_id, result.run_name || '');
+        // Use the confirmed runId and potentially fetched runName
+        onLoadIntoRunner(runId, runName); 
         
         toast({
           title: "Success",
-          description: `Loaded run "${result.run_name}" with ${schemeIds.length} schemes for document ${result.document_id}`,
+          description: `Loaded run "${runName}" with ${schemeIds.length} schemes for document ${result.document_id}`,
         });
       }).catch(error => {
         console.error("Error preparing data for runner:", error);
@@ -397,27 +352,25 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
         });
         
         // Still try to load what we have
-        onLoadIntoRunner(result.run_id, result.run_name || '');
+        onLoadIntoRunner(runId, runName); 
       });
     } else {
       // Fallback if no workspace
-      onLoadIntoRunner(result.run_id, result.run_name || '');
+      onLoadIntoRunner(runId, runName); 
     }
   }, [onLoadIntoRunner, activeWorkspace?.uid, toast]);
 
   // New function to render run selector
   const renderRunSelector = () => {
-    // Filter runs for the current document
-    const documentRuns = availableRunsFromStore.filter(run => {
-      // If we have classification results for this document, check if any belong to this run
-      return classificationResults.some(result => 
-        result.document_id === selectedDocumentId && result.run_id === run.id
-      );
-    });
-    
-    if (documentRuns.length === 0) {
+    // Use availableRunsFromStore directly as it's already filtered by workspace
+    // Filter unique runs that have results for the current document
+    const runsWithResultsForDocument = availableRunsFromStore.filter(run => 
+      classificationResults.some(result => result.document_id === selectedDocumentId && result.run_id === run.id)
+    );
+
+    if (runsWithResultsForDocument.length === 0 && !isLoadingResults && !isLoadingRunsFromStore) {
       return (
-        <div className="mb-4 p-3 bg-muted/20 rounded-lg border  ">
+        <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium">Available Runs</h4>
           </div>
@@ -429,22 +382,22 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
     }
     
     return (
-      <div className="mb-4 p-3 bg-muted/20 rounded-lg border  ">
+      <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
         <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">Available Runs</h4>
-          {isLoadingRunsFromStore && <Loader2 className="h-4 w-4 animate-spin" />}
+          <h4 className="text-sm font-medium">Filter by Run</h4>
+          {(isLoadingResults || isLoadingRunsFromStore) && <Loader2 className="h-4 w-4 animate-spin" />}
         </div>
         <div className="mt-2">
           <Select
-            value={selectedRun || "all"}
+            value={selectedRun || "all"} // "all" or the run ID string
             onValueChange={(value) => setSelectedRun(value === "all" ? null : value)}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a run" />
+              <SelectValue placeholder="Select a run to filter results" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All runs</SelectItem>
-              {documentRuns.map((run) => (
+              <SelectItem value="all">All runs for this document</SelectItem>
+              {runsWithResultsForDocument.map((run) => (
                 <SelectItem key={run.id} value={run.id.toString()}>
                   {run.name} ({run.timestamp})
                 </SelectItem>
@@ -452,92 +405,77 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
             </SelectContent>
           </Select>
         </div>
-        {selectedRun && selectedRun !== "all" && (
-          <div className="mt-2 flex justify-end">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => {
-                const run = documentRuns.find(r => r.id.toString() === selectedRun);
-                if (run && onLoadIntoRunner) {
-                  onLoadIntoRunner(run.id, run.name || '');
-                }
-              }}
-              className="text-xs"
-            >
-              <ExternalLink className="h-3 w-3 mr-1" />
-              Load Selected Run in Runner
-            </Button>
-          </div>
-        )}
       </div>
     );
   };
 
+  // --- Refactored Classification Section ---
   const renderClassificationSection = () => (
-    <div className="p-6 w-full backdrop-blur-md bg-secondary/70 rounded-lg shadow-md relative overflow-hidden  border-results">
-      {/* Run Selector */}
+    <div className="p-6 w-full bg-secondary/70 rounded-lg shadow-md relative overflow-hidden border border-border/30">
+      {/* Run Selector Filter */}
       {renderRunSelector()}
       
       {/* Unified Results List */}
-      <div className="space-y-4">
-        {classificationResults.length === 0 ? (
+      <div className="space-y-3">
+        {isLoadingResults ? (
+           <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading results...
+            </div>
+        ) : classificationResults.length === 0 ? (
           <div className="text-center py-4 text-muted-foreground">
-            No classification results available
+            No classification results available {selectedRun && selectedRun !== 'all' ? 'for the selected run' : ''}.
           </div>
         ) : (
           classificationResults
-            .filter(result => 
-              !selectedRun ||
-              result.run_id?.toString() === selectedRun
-            )
+            // Filtering is now handled by the fetchClassificationResults based on selectedRun
             .map((result) => {
               const scheme = schemes.find(s => s.id === result.scheme_id);
               if (!scheme) {
                 console.warn(`Scheme not found for result ID ${result.id} with scheme ID ${result.scheme_id}`);
-                return null;
+                return null; // Skip rendering if scheme is missing
               }
+
+              const runName = result.run_name || (result.run_id ? `Run ${result.run_id}` : null);
+
               return (
                 <div 
                   key={result.id} 
-                  className="p-4 bg-card rounded-lg shadow-sm hover:shadow-md hover:scale-105 transition-all duration-200 cursor-pointer"
+                  className="p-4 bg-card rounded-lg shadow-sm border border-border/50 hover:shadow-md hover:border-border/80 transition-all duration-200 cursor-pointer"
                   onClick={() => {
                     setSelectedResult(result);
                     setIsResultDialogOpen(true);
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-2 flex-1">
-                      <div className="flex items-center gap-3">
-                        <span className="font-medium text-sm">{scheme.name}</span>
-                        {result.run_name && (
-                          <Badge variant="outline" className="text-xs">
-                            {result.run_name}
-                          </Badge>
-                        )}
-                      </div>
-                      <ClassificationResultDisplay 
-                        result={result}
-                        scheme={scheme}
-                        compact={true}
-                      />
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 space-y-1">
+                       <div className="flex items-center gap-2 mb-1">
+                         <span className="font-medium text-sm">{scheme.name}</span>
+                         {runName && (
+                           <Badge variant="outline" className="text-xs font-normal">{runName}</Badge>
+                         )}
+                       </div>
+                       <ClassificationResultDisplay 
+                         result={result}
+                         scheme={scheme}
+                         compact={false}
+                       />
                     </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className="text-xs text-muted-foreground">
+                    <div className="flex flex-col items-end gap-2 mt-1 shrink-0">
+                      <div className="text-xs text-muted-foreground whitespace-nowrap">
                         {result.timestamp && format(new Date(result.timestamp), "PP · p")}
                       </div>
                       {result.run_id && onLoadIntoRunner && (
                         <Button 
-                          variant="outline" 
+                          variant="ghost"
                           size="sm" 
-                          className="text-xs hover:bg-primary hover:text-primary-foreground"
+                          className="text-xs h-7 px-2 text-primary hover:bg-primary/10"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleLoadIntoRunner(result);
                           }}
                         >
                           <ExternalLink className="h-3 w-3 mr-1" />
-                          Load in Runner
+                          Load Run
                         </Button>
                       )}
                     </div>
@@ -547,9 +485,13 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
             })
             .filter(Boolean)
         )}
+        {resultsError && (
+          <div className="text-center py-4 text-red-600">{resultsError}</div>
+        )}
       </div>
     </div>
   );
+  // --- End Refactored Section ---
 
   const handleExtractPdfContent = async (fileId: number) => {
     if (!document?.id || !activeWorkspace?.uid) return;
@@ -588,43 +530,45 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
               "space-y-2",
               isNewDocument && " border-green-500"
             )}>
-              <div className="flex items-start p-4 border-b   rounded-t-lg">
+              <div className="p-4 border-b border-border/30"> 
                 <div className="flex items-start gap-4 text-sm">
                   <Avatar>
                     <AvatarImage alt={document.title} />
                     <AvatarFallback>
                       {document.title
-                        .split(" ")
-                        .map((chunk) => chunk[0])
-                        .join("")}
+                        ?.split(" ")
+                        ?.map((chunk) => chunk[0])
+                        ?.join("") || 'D'}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="grid gap-1">
+                  <div className="grid gap-1 flex-1">
                     <div className="font-semibold">{document.title}</div>
-                    <div className="line-clamp-1 text-xs">{document.content_type}</div>
+                    <div className="line-clamp-1 text-xs text-muted-foreground">{document.content_type}</div>
                     <div className="line-clamp-1 text-xs">
-                      <span className="font-medium">Source:</span> {document.source}
+                      <span className="font-medium">Source:</span> {document.source || 'N/A'}
                     </div>
                   </div>
+                  {document.insertion_date && (
+                    <div className="ml-auto text-xs text-muted-foreground whitespace-nowrap">
+                      Added: {format(new Date(document.insertion_date), "PPp")}
+                    </div>
+                  )}
                 </div>
-                {document.insertion_date && (
-                  <div className="ml-auto text-xs">
-                    {format(new Date(document.insertion_date), "PPpp")}
-                  </div>
-                )}
               </div>
+
               {document.files && document.files.length > 0 && (
-                <div className="p-4 border-t  ">
+                <div className="p-4 border-b border-border/30">
                   <h4 className="text-sm font-medium mb-2">Files</h4>
                   <div className="flex flex-wrap items-center gap-2">
                   {(document?.files || []).map((file) => (
                     <div key={file.id} className="flex items-center">
-                      <Badge variant="outline" className="truncate max-w-[350px] h-8">
+                      <Badge variant="secondary" className="truncate max-w-[350px] h-8">
                         <a
-                          href={file.url || ''}
+                          href={file.url || '#'}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="truncate text-xs"
+                          title={file.name}
                         >
                           {file.name}
                         </a>
@@ -635,10 +579,13 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
                           size="sm"
                           onClick={() => handleExtractPdfContent(file.id)}
                           className={cn(
-                            "ml-1 text-xs",
-                            useDocumentStore.getState().isExtractedPdf(file.id) && "text-green-500 hover:text-green-600"
+                            "ml-1 text-xs h-7 px-2",
+                            useDocumentStore.getState().isExtractedPdf(file.id) 
+                              ? "text-green-600 hover:text-green-700 hover:bg-green-500/10" 
+                              : "text-primary hover:bg-primary/10"
                           )}
                           disabled={useDocumentStore.getState().isExtractingPdf(file.id)}
+                          title={useDocumentStore.getState().isExtractedPdf(file.id) ? "PDF text already extracted" : "Extract text content from this PDF"}
                         >
                           {useDocumentStore.getState().isExtractingPdf(file.id) ? (
                             <>
@@ -663,121 +610,106 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
                   </div>
                 </div>
               )}
+
               {document.top_image && (
-                <>
-              <Separator />
-              <div className="p-4 relative overflow-hidden border-t  ">
-                {document.top_image && (
-                  <>
-                    <div className="absolute inset-6 cursor-pointer hover:scale-110 transition-transform duration-200" onClick={() => setIsImageOpen(true)}>
-                      <Image
-                        src={document.top_image}
-                        alt={document.title}
-                        className="rounded-lg object-cover w-full h-full"
-                        width={500}
-                        height={200}
-                        style={{ objectFit: 'cover', width: '100%', height: '100%' }}
-                      />
-                      <div className="absolute inset-0 shadow-lg rounded-lg"></div>
-                    </div>
-                    <Dialog open={isImageOpen} onOpenChange={() => setIsImageOpen(false)}>
-                      <DialogContent className="sm:max-w-lg">
-                        <DialogHeader>
-                          <DialogTitle>{document.title}</DialogTitle>
-                        </DialogHeader>
+                <div className="p-4 border-b border-border/30 relative h-[200px] overflow-hidden group">
+                  <Image
+                    src={document.top_image}
+                    alt={document.title || 'Top Image'}
+                    layout="fill"
+                    objectFit="cover"
+                    className="rounded-lg transition-transform duration-300 group-hover:scale-105"
+                  />
+                   <div 
+                      className="absolute inset-0 bg-black/10 hover:bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 cursor-pointer" 
+                      onClick={() => setIsImageOpen(true)}
+                      title="View full image"
+                    >
+                      <ExternalLink className="h-8 w-8 text-white/80" />
+                   </div>
+                  <Dialog open={isImageOpen} onOpenChange={setIsImageOpen}>
+                    <DialogContent className="sm:max-w-3xl">
+                      <DialogHeader>
+                        <DialogTitle>{document.title}</DialogTitle>
+                      </DialogHeader>
+                      <div className="relative w-full h-[70vh]">
                         <Image
                           src={document.top_image}
-                          alt={document.title}
-                          className="rounded-lg object-cover w-full h-full"
-                          width={800}
-                          height={600}
-                          style={{ objectFit: 'contain', width: '100%', height: '100%' }}
+                          alt={document.title || 'Top Image'}
+                          layout="fill"
+                          objectFit="contain"
+                          className="rounded-lg"
                         />
-                      </DialogContent>
-                    </Dialog>
-                  </>
-                )}
-              </div>
-              </>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               )}
 
-              
-
-              <Separator />
-              <div className="p-4 border-t   rounded-b-lg">
+              <div className="p-4 border-b border-border/30">
                 <div className="flex items-center justify-start mb-2">
                   <h4 className="text-sm font-medium">Document Content</h4>
-                  
                 </div>
                 <div 
                   className={cn(
-                    "whitespace-pre-wrap text-sm backdrop-blur-md bg-secondary/70 md:p-2 rounded-lg relative",
-                    isTextLocked ? "line-clamp-6" : "max-h-[300px] overflow-y-auto"
+                    "whitespace-pre-wrap text-sm bg-secondary/30 p-3 rounded-lg relative border border-border/30",
+                    isTextLocked ? "max-h-[150px] overflow-hidden" : "max-h-[400px] overflow-y-auto"
                   )}
                 >
-                  {document.text_content}
-                  {isTextLocked && (
-                    <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-secondary/70 to-transparent"></div>
+                  {document.text_content || <span className="text-muted-foreground italic">No text content available.</span>}
+                  {document.text_content && isTextLocked && (
+                    <div className="absolute bottom-0 left-0 w-full h-16 bg-gradient-to-t from-secondary/30 via-secondary/30 to-transparent pointer-events-none"></div>
                   )}
                 </div>
-                <div className="flex justify-center">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsTextLocked(!isTextLocked)}
-                    className="flex rounded-xl bg-secondary/20 p-2 mt-2 justify-center hover:bg-secondary/70 transition-all duration-200 cursor-pointer"
-                  >
-                    <div className="flex items-center justify-center">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">
-                          {isTextLocked ? "Show More" : "Show Less"}
-                        </span>
-                      </div>
-                      {isTextLocked ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronUp className="h-4 w-4" />
-                      )}
+                 {document.text_content && (
+                    <div className="flex justify-center mt-2">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIsTextLocked(!isTextLocked)}
+                        className="flex items-center gap-1 rounded-full bg-secondary/50 px-3 h-7 text-xs text-muted-foreground hover:bg-secondary/70 transition-all duration-200"
+                    >
+                        {isTextLocked ? (
+                        <>Show More <ChevronDown className="h-4 w-4" /></>
+                        ) : (
+                        <>Show Less <ChevronUp className="h-4 w-4" /></>
+                        )}
+                    </Button>
                     </div>
-                  </Button>
-                </div>
+                 )}
               </div>
 
-              {/* Classification Section - Always visible */}
-              <div className="p-4 pt-0">
-                <div className="flex items-center justify-between">
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
                   <h4 className="text-lg font-semibold">Classification Results</h4>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleRefreshClassificationResults}
                     disabled={isLoadingResults}
-                    className="text-xs"
+                    className="text-xs h-7 px-2"
                   >
                     <RefreshCw className={`h-3 w-3 mr-1 ${isLoadingResults ? 'animate-spin' : ''}`} />
-                    Refresh Results
+                    Refresh
                   </Button>
                 </div>
-              </div>
-              <div className="p-4 pt-0 h-full rounded-lg">
                 {renderClassificationSection()}
               </div>
             </div>
           ) : (
-            <div className="p-8 text-center">
-              No document selected
+            <div className="p-8 text-center text-muted-foreground">
+              Select a document from the list to view its details.
             </div>
           )}
         </div>
 
-        {/* Result Dialog */}
         <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 {selectedResult?.scheme_id && schemes.find(s => s.id === selectedResult.scheme_id)?.name}
                 {selectedResult?.run_name && (
-                  <Badge variant="outline" className="text-sm">
+                  <Badge variant="outline" className="text-sm font-normal">
                     {selectedResult.run_name}
                   </Badge>
                 )}
@@ -788,41 +720,40 @@ const DocumentDetailView: React.FC<DocumentDetailViewProps> = ({ documents, newl
                 </p>
               )}
             </DialogHeader>
-            <div className="space-y-4">
+            <div className="max-h-[60vh] overflow-y-auto pr-2">
               {selectedResult && (
                 <ClassificationResultDisplay 
                   result={selectedResult}
                   scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
+                  renderContext="dialog"
                 />
               )}
-              <div className="mt-4 pt-4 border-t flex justify-between">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    onEdit(documents.find(d => d.id === selectedResult?.document_id) || document!);
-                    setIsResultDialogOpen(false);
-                  }}
-                  className="text-primary"
-                >
-                  View Full Document →
-                </Button>
-                {selectedResult?.run_id && onLoadIntoRunner && (
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => {
-                      handleLoadIntoRunner(selectedResult);
-                      setIsResultDialogOpen(false);
-                    }}
-                    className="bg-primary text-primary-foreground hover:bg-primary/90"
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Load in Classification Runner
-                  </Button>
-                )}
-              </div>
             </div>
+            <DialogFooter className="mt-4 pt-4 border-t flex justify-between sm:justify-between">
+               {selectedResult?.run_id && onLoadIntoRunner && (
+                 <Button
+                   variant="default"
+                   size="sm"
+                   onClick={() => {
+                     if (selectedResult) {
+                       handleLoadIntoRunner(selectedResult);
+                     }
+                     setIsResultDialogOpen(false);
+                   }}
+                   className="bg-primary text-primary-foreground hover:bg-primary/90"
+                 >
+                   <ExternalLink className="h-4 w-4 mr-2" />
+                   Load Run in Runner
+                 </Button>
+               )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsResultDialogOpen(false)}
+              >
+                Close
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

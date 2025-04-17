@@ -18,6 +18,7 @@ import {
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
+
 export function NavMain({
   items,
 }: {
@@ -26,7 +27,6 @@ export function NavMain({
     url: string
     icon?: LucideIcon
     isButton?: boolean
-    color?: string
     isActive?: boolean
     items?: {
       title: string
@@ -37,65 +37,67 @@ export function NavMain({
   }[]
 }) {
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Platform</SidebarGroupLabel>
+    <SidebarGroup className="p-2">
+      <SidebarGroupLabel>Navigation</SidebarGroupLabel>
       <SidebarMenu>
-        {items.map((item) => (
-          <Collapsible
-            key={item.title}
-            asChild
-            defaultOpen={item.isActive}
-            className="group/collapsible"
-          >
-            <SidebarMenuItem>
-              <CollapsibleTrigger asChild>
-                <SidebarMenuButton
-                  tooltip={item.title}
-                  style={{
-                    color: item.color ? `hsl(var(${item.color}))` : undefined,
-                  }}
-                >
-                  {item.icon && (
-                    <item.icon
-                      style={{
-                        color: item.color ? `hsl(var(${item.color}))` : undefined,
-                      }}
-                    />
-                  )}
-                  <span>{item.title}</span>
-                  {item.items && item.items.length > 0 && (
+        {items.map((item) =>
+          item.items && item.items.length > 0 ? (
+            <Collapsible
+              key={item.title}
+              asChild
+              defaultOpen={item.isActive}
+              className="group/collapsible"
+            >
+              <SidebarMenuItem>
+                <CollapsibleTrigger asChild>
+                  <SidebarMenuButton tooltip={item.title}>
+                    {item.icon && <item.icon />}
+                    <span>{item.title}</span>
                     <ChevronRight className="ml-auto transition-transform border-none duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                  )}
-                </SidebarMenuButton>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <SidebarMenuSub>
-                  {item.items?.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.title}>
-                      <SidebarMenuSubButton 
-                        asChild
-                        size="sm"
-                        className="pl-8"
-                      >
-                        {item.isButton ? (
-                          <Button asChild onClick={subItem.onClick}>
-                            {subItem.icon && <subItem.icon className="size-4" />}
-                            <span>{subItem.title}</span>
-                          </Button>
-                        ) : (
-                          <a href={subItem.url}>
-                            {subItem.icon && <subItem.icon className="size-4" />}
-                            <span>{subItem.title}</span>
-                          </a>
-                        )}
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              </CollapsibleContent>
+                  </SidebarMenuButton>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <SidebarMenuSub>
+                    {item.items?.map((subItem) => (
+                      <SidebarMenuSubItem key={subItem.title}>
+                        <SidebarMenuSubButton
+                          asChild
+                          size="sm"
+                          className="pl-8"
+                        >
+                          {item.isButton ? (
+                            <Button asChild onClick={subItem.onClick}>
+                              {subItem.icon && <subItem.icon className="size-4" />}
+                              <span>{subItem.title}</span>
+                            </Button>
+                          ) : (
+                            <a href={subItem.url}>
+                              {subItem.icon && <subItem.icon className="size-4" />}
+                              <span>{subItem.title}</span>
+                            </a>
+                          )}
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                </CollapsibleContent>
+              </SidebarMenuItem>
+            </Collapsible>
+          ) : (
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton
+                asChild
+                isActive={item.isActive}
+                tooltip={item.title}
+              >
+                <a href={item.url}>
+                  {item.icon && <item.icon />}
+                  <span>{item.title}</span>
+                </a>
+              </SidebarMenuButton>
             </SidebarMenuItem>
-          </Collapsible>
-        ))}
+          )
+        )}
       </SidebarMenu>
     </SidebarGroup>
   )

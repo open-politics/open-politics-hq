@@ -71,6 +71,10 @@ export default function WorkspaceManager({ activeWorkspace }: WorkspaceManagerPr
     setIsEditDialogOpen(true);
   };
 
+  const handleView = (workspace: Workspace) => {
+    console.log('Viewing workspace:', workspace);
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-5 gap-4 w-full">
       {/* Create Workspace Card */}

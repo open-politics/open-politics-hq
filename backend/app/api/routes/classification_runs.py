@@ -43,8 +43,8 @@ def create_classification_run(
 
     # Convert Pydantic model to dict
     obj_in_data = run_in.model_dump()
-    # Create DB model instance, adding user_id
-    run = ClassificationRun(**obj_in_data, user_id=current_user.id) # Directly create the ClassificationRun object
+    # Create DB model instance, adding user_id and workspace_id from path
+    run = ClassificationRun(**obj_in_data, user_id=current_user.id, workspace_id=workspace_id)
     session.add(run)
     session.commit()
     session.refresh(run)

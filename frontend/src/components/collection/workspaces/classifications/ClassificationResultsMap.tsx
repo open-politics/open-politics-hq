@@ -402,20 +402,25 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
 
   // --- Process label data based on config ---
   useEffect(() => {
-    if (!labelConfig) {
-      // If no label config, ensure label data is empty
+    // --- ADDED GUARD ---
+    // Exit early if labelConfig is not provided, or if the schemeId within it
+    // isn't found in the currently available schemes for the run.
+    if (!labelConfig || !schemes.some(s => s.id === labelConfig.schemeId)) {
+      // If label data isn't already empty, clear it.
       if (labelData.features.length > 0) {
          setLabelData({ type: 'FeatureCollection', features: [] });
       }
       return;
     }
+    // --- END GUARD ---
 
-    // Skip if points or schemes aren't ready (avoids unnecessary processing)
+    // Skip if points or schemes aren't ready
     if (!schemes.length || !points.length) {
       return;
     }
-    
-    console.log("[Label Data Effect] Running. Config:", labelConfig);
+
+    // Map schemes to a lookup object for faster access inside the loop
+    const schemeLookup = new Map(schemes.map(s => [s.id, s]));
 
     const features: (LabelGeoJsonFeature | null)[] = points.map(point => {
       const docId = point.documentIds[0];
@@ -425,21 +430,20 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
         r.document_id === docId &&
         r.scheme_id === labelConfig.schemeId
       );
-      const scheme: ClassificationSchemeRead | undefined = schemes.find(s => s.id === labelConfig.schemeId);
+      const scheme: ClassificationSchemeRead | undefined = schemeLookup.get(labelConfig.schemeId);
 
-      // Use the new helper to get the specific field value for the label
-      const labelTextValue = result && scheme ?
-        getLabelValue(result.value, scheme, labelConfig.fieldKey) : 'N/A';
+      if (!result || !scheme) {
+          return null; // Skip this point if data is missing for the label config
+      }
 
-      // Handle color field if configured
-      let labelColor = theme === 'dark' ? '#FFFFFF' : '#000000'; // Theme-aware default
-      if (labelConfig.colorField && result && scheme) {
+      const labelTextValue = getLabelValue(result.value, scheme, labelConfig.fieldKey);
+
+      let labelColor = theme === 'dark' ? '#FFFFFF' : '#000000';
+      if (labelConfig.colorField) {
           const colorValueRaw = getNestedValue(result.value, labelConfig.colorField);
-          // Basic attempt to use the value as color
           if (typeof colorValueRaw === 'string' && (colorValueRaw.startsWith('#') || colorValueRaw.startsWith('rgb'))) {
              labelColor = colorValueRaw;
           }
-          // Potential extension: map specific text values ('True', 'False') to colors
       }
 
       return {
@@ -452,18 +456,15 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
           labelText: (labelTextValue ?? 'N/A').substring(0, 50),
           color: labelColor
         }
-      } as LabelGeoJsonFeature; // Explicit cast to the specific type
+      } as LabelGeoJsonFeature;
     });
 
-    // Filter for the specific type
     const validFeatures = features.filter((feature): feature is LabelGeoJsonFeature => feature !== null);
 
-    // Only update state if the features actually change
     if (JSON.stringify(validFeatures) !== JSON.stringify(labelData.features)) {
-       console.log(`[Label Data Effect] Updating label state with ${validFeatures.length} features.`);
-       setLabelData({ type: 'FeatureCollection', features: validFeatures } as GeoJSON.FeatureCollection); // Explicitly cast to the expected type
+       setLabelData({ type: 'FeatureCollection', features: validFeatures } as GeoJSON.FeatureCollection);
     }
-  }, [points, results, schemes, labelConfig, theme]);
+  }, [points, results, schemes, labelConfig, theme, labelData.features]);
 
   // --- Add/Update label SOURCE DATA and LAYER VISIBILITY/DEFINITION ---
   useEffect(() => {

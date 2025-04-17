@@ -839,7 +839,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, documen
   return (
     <div>
       {/* --- Chart Controls --- */}
-      <div className="flex flex-wrap items-center gap-4 mb-4 p-3 border rounded-md bg-muted/10">
+      <div className="flex flex-wrap items-center gap-4 mb-4 p-3 rounded-md ">
         {/* Group Toggle */}
         <div className="flex items-center gap-2">
           <Switch

@@ -237,7 +237,12 @@ def list_classification_results(
     if not workspace or workspace.user_id_ownership != current_user.id:
         raise HTTPException(status_code=404, detail="Workspace not found")
     
-    base_stmt = select(ClassificationResult).where(
+    # MODIFIED: Eagerly load run, document, and scheme relationships
+    base_stmt = select(ClassificationResult).options(
+        joinedload(ClassificationResult.run),
+        joinedload(ClassificationResult.document),
+        joinedload(ClassificationResult.scheme).joinedload(ClassificationScheme.fields) # Also load scheme fields
+    ).where(
         ClassificationResult.document_id.in_(
             select(Document.id).where(Document.workspace_id == workspace_id)
         )
@@ -251,20 +256,26 @@ def list_classification_results(
         base_stmt = base_stmt.where(ClassificationResult.run_name == run_name)
 
     statement = base_stmt.offset(skip).limit(limit)
-    results = session.exec(statement).all()
+    
+    # MODIFIED: Add .unique() to handle joined eager loading of collections
+    results = session.exec(statement).unique().all()
     
     enhanced_results = []
     for result in results:
+        # MODIFIED: Access run attributes safely via result.run
+        run_name = result.run.name if result.run else None
+        run_description = result.run.description if result.run else None
+
         result_data = {
             'id': result.id,
             'document_id': result.document_id,
             'scheme_id': result.scheme_id,
             'value': result.value,
             'timestamp': result.timestamp,
-            'run_name': result.run_name,
-            'run_description': result.run_description,
-            'document': result.document,
-            'scheme': result.scheme,
+            'run_name': run_name, # Use fetched run_name
+            'run_description': run_description, # Use fetched run_description
+            'document': result.document, # Use eagerly loaded document
+            'scheme': result.scheme, # Use eagerly loaded scheme
             'run_id': result.run_id
         }
         

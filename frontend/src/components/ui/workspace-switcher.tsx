@@ -88,7 +88,7 @@ export function WorkspaceSwitcher() {
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 border-none rounded-lg"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-72 border-none rounded-lg"
             align="start"
             side={isMobile ? "bottom" : "right"}
             sideOffset={4}
@@ -116,12 +116,12 @@ export function WorkspaceSwitcher() {
                   <Plus className="size-4" />
                 </div>
                 <div className="font-medium text-muted-foreground">
-                  Create & Switch to New Workspace
+                  Create & Use New Workspace
                 </div>
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2 p-2">
-              <Link href="/desks/home/workspaces" className="w-full flex items-center gap-2">
+              <Link href="/desks/home/workspaces/workspace-manager" className="w-full flex items-center gap-2">
                 <div className="flex size-6 items-center justify-center rounded-md bg-background">
                   <Settings className="size-4" />
                 </div>

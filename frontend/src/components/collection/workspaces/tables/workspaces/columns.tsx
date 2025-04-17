@@ -1,6 +1,8 @@
 'use client';
 
 import { ColumnDef } from '@tanstack/react-table';
+import { Button } from '@/components/ui/button';
+import { Pencil, Trash } from 'lucide-react';
 
 export type Workspace = {
   uid: number;
@@ -12,7 +14,14 @@ export type Workspace = {
   updated_at: string;
 };
 
-export const columns: ColumnDef<Workspace>[] = [
+// Define props for the columns function
+interface ColumnProps {
+  onEdit: (workspace: Workspace) => void;
+  onDelete: (workspace: Workspace) => void;
+}
+
+// Export a function that generates the columns
+export const columns = ({ onEdit, onDelete }: ColumnProps): ColumnDef<Workspace>[] => [
   {
     accessorKey: 'name',
     header: 'Name',
@@ -38,5 +47,37 @@ export const columns: ColumnDef<Workspace>[] = [
     cell: ({ row }) =>
       new Date(row.original.updated_at).toLocaleString(),
   },
-  // Add action columns if needed
+  {
+    id: 'actions',
+    header: 'Actions',
+    cell: ({ row }) => {
+      const workspace = row.original;
+
+      return (
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent row click event
+              onEdit(workspace); // Use the passed-in onEdit directly
+            }}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-red-500 hover:text-red-700"
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent row click event
+              onDelete(workspace); // Use the passed-in onDelete directly
+            }}
+          >
+            <Trash className="h-4 w-4" />
+          </Button>
+        </div>
+      );
+    },
+  },
 ];

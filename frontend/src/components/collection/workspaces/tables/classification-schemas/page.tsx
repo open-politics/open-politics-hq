@@ -14,7 +14,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { flexRender } from '@tanstack/react-table';
+import { flexRender, Row } from '@tanstack/react-table';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { FormattedClassificationResult } from '@/lib/classification/types';
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,6 +23,8 @@ import DocumentLink from '../../documents/DocumentLink';
 import { Loader2 } from 'lucide-react';
 import { schemesToSchemeReads } from '@/lib/classification/adapters';
 import { resultToResultRead } from '@/lib/classification/adapters';
+import { Checkbox } from "@/components/ui/checkbox";
+import { TableCell } from "@/components/ui/table";
 
 interface ClassificationSchemesTablePageProps {
   schemes: ClassificationSchemeRead[];
@@ -33,6 +35,8 @@ interface ClassificationSchemesTablePageProps {
 export default function ClassificationSchemesTablePage({ schemes: adaptedSchemes, onCreateClick, onDelete }: ClassificationSchemesTablePageProps) {
   const { activeWorkspace } = useWorkspaceStore();
   const { loadResultsByScheme, isLoadingResults, schemes: fullSchemes } = useClassificationSystem();
+
+  const [selectedSchemeIds, setSelectedSchemeIds] = useState<number[]>([]);
 
   const [editorState, setEditorState] = useState<{
     isOpen: boolean;
@@ -49,6 +53,13 @@ export default function ClassificationSchemesTablePage({ schemes: adaptedSchemes
   const [popoverSchemeResults, setPopoverSchemeResults] = useState<FormattedClassificationResult[]>([]);
   const [isPopoverResultsLoading, setIsPopoverResultsLoading] = useState(false);
   const [selectedPopoverSchemeId, setSelectedPopoverSchemeId] = useState<number | null>(null);
+
+  const handleRowSelect = (rowId: number) => {
+    const newSelection = selectedSchemeIds.includes(rowId)
+      ? selectedSchemeIds.filter(id => id !== rowId)
+      : [...selectedSchemeIds, rowId];
+    setSelectedSchemeIds(newSelection);
+  };
 
   const handleEdit = (scheme: ClassificationSchemeRead) => {
     setEditorState({
@@ -123,9 +134,37 @@ export default function ClassificationSchemesTablePage({ schemes: adaptedSchemes
     return undefined;
   };
 
+  const handleExportSelected = () => {
+    const selectedSchemesData = adaptedSchemes.filter(scheme => selectedSchemeIds.includes(scheme.id));
+    
+    if (selectedSchemesData.length === 0) {
+      alert('No schemes selected for export.');
+      return;
+    }
+    
+    const jsonString = JSON.stringify(selectedSchemesData, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'classification_schemes.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setSelectedSchemeIds([]); // Clear selection after export
+  };
+
   return (
     <div>
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-end mb-4 gap-2">
+        <Button 
+          variant="outline" 
+          onClick={handleExportSelected} 
+          disabled={selectedSchemeIds.length === 0}
+        >
+          Export Selected ({selectedSchemeIds.length})
+        </Button>
         <Button onClick={onCreateClick}>
           Create New Scheme
         </Button>
@@ -135,15 +174,29 @@ export default function ClassificationSchemesTablePage({ schemes: adaptedSchemes
         <DataTable<ClassificationSchemeRead, any>
           columns={tableColumns}
           data={adaptedSchemes}
+          enableRowSelection={true}
+          selectedRows={selectedSchemeIds}
+          onRowSelectionChange={setSelectedSchemeIds}
           renderRow={(row) => (
             <Popover onOpenChange={(open) => { if (!open) { setPopoverSchemeResults([]); setSelectedPopoverSchemeId(null); } }}>
               <PopoverTrigger asChild>
-                <tr
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => handleViewInPopover(row.original)}
+                <tr 
+                  key={row.id} 
+                  className={`cursor-pointer hover:bg-muted/50 ${selectedSchemeIds.includes(row.original.id) ? 'bg-muted/30' : ''}`}
                 >
+                  <TableCell className="w-12" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedSchemeIds.includes((row.original as any).id)}
+                      onCheckedChange={() => handleRowSelect((row.original as any).id)}
+                      aria-label="Select row"
+                    />
+                  </TableCell>
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="p-2 border-b">
+                    <td 
+                      key={cell.id} 
+                      className="p-2 border-b" 
+                      onClick={() => handleViewInPopover(row.original)}
+                    >
                       {flexRender(
                         cell.column.columnDef.cell,
                         cell.getContext()
@@ -158,7 +211,7 @@ export default function ClassificationSchemesTablePage({ schemes: adaptedSchemes
                 side="bottom"
                 sideOffset={5}
               >
-                <ScrollArea className="h-[calc(60vh-4rem)]">
+                <ScrollArea className="h-full">
                   <div className="p-4 space-y-4">
                     <h4 className="font-medium text-lg">Scheme Preview: {row.original.name}</h4>
                     <SchemePreview 

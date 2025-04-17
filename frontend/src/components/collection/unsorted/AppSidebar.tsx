@@ -65,57 +65,44 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
   
   const navMain = React.useMemo(() => [
     {
-      title: "Tools",
-      url: "/desks/home/",
-      icon: Blocks,
+      title: "Overview",
+      url: "/desks/home",
+      icon: Home,
       isActive: true,
-      items: [
-        {
-          title: "Overview",
-          url: "/desks/home",
-          icon: Home,
-        },
-        {
-          title: "Globe",
-          url: "/desks/home/globe",
-          icon: Globe,
-        },
-        {
-        title: "Schemes",
-        url: "/desks/home/workspaces/classification-schemes",
-          icon: Microscope,
-        },
-        {
-          title: "Documents",
-          url: "/desks/home/workspaces/document-manager",
-          icon: FileText,
-        },
-        {
-          title: "Analyser",
-          url: "/desks/home/workspaces/classification-runner",
-          icon: SquareTerminal,
-        },
-        // {
-        //   title: "Chat",
-        //   url: "/desks/home/chat",
-        //   icon: MessageSquare,
-        // },
-      ],
     },
     {
-      title: "Workspace",
-      url: "#",
-      icon: FolderCog,
-      items: workspaceItems,
+      title: "Globe",
+      url: "/desks/home/globe",
+      icon: Globe,
+      isActive: true,
     },
+    {
+    title: "Schemes",
+    url: "/desks/home/workspaces/classification-schemes",
+      icon: Microscope,
+      isActive: true,
+    },
+    {
+      title: "Documents",
+      url: "/desks/home/workspaces/document-manager",
+      icon: FileText,
+      isActive: true,
+    },
+    {
+      title: "Analyser",
+      url: "/desks/home/workspaces/classification-runner",
+      icon: SquareTerminal,
+      isActive: true,
+    },
+    {
+      title: "Workspace Config",
+      url: "/desks/home/workspaces",
+      icon: FolderCog,
+      isActive: true,
+    }
   ], [])
   
   const projects = React.useMemo(() => [
-    {
-      name: "workspaces",
-      url: "/desks/home/workspaces",
-      icon: FolderCog,
-    }
   ], [])
 
   return (
@@ -124,9 +111,9 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
         <WorkspaceSwitcher />
       </SidebarHeader>
       <NavMain items={navMain} />
-      {user?.is_superuser && (
+      {/* {user?.is_superuser && (
         <NavProjects projects={projects} />
-      )}
+      )} */}
       <SidebarContent>
          {/* <HistoryList userId={user?.id} /> */}
       </SidebarContent>

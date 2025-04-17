@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ClassificationResultRead, ClassificationSchemeRead } from '@/client';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +17,8 @@ interface ClassificationResultDisplayProps {
   scheme: ClassificationSchemeRead | ClassificationSchemeRead[];
   /** If true, renders a more compact version suitable for previews. Defaults to false. */
   compact?: boolean;
+  /** Optional: Key of the specific field to display, overriding compact view logic for which field. */
+  targetFieldKey?: string | null;
   /** If true and multiple results are provided, renders them in tabs (unless overridden by context). Defaults to false. */
   useTabs?: boolean;
   /** Optional context for rendering adjustments */
@@ -27,6 +29,7 @@ interface SingleClassificationResultProps {
   result: ClassificationResultRead | EnhancedClassificationResultRead;
   scheme: ClassificationSchemeRead;
   compact?: boolean;
+  targetFieldKey?: string | null;
   renderContext?: 'dialog' | 'table' | 'default';
 }
 
@@ -34,22 +37,34 @@ interface ConsolidatedSchemesViewProps {
   results: (ClassificationResultRead | EnhancedClassificationResultRead)[];
   schemes: ClassificationSchemeRead[];
   compact?: boolean;
+  targetFieldKey?: string | null;
   useTabs?: boolean;
   renderContext?: 'dialog' | 'table' | 'default';
 }
 
 // Add missing EnhancedClassificationResultRead type if not globally defined
-interface EnhancedClassificationResultRead extends ClassificationResultRead {
+export interface EnhancedClassificationResultRead extends ClassificationResultRead {
   display_value?: string | number | Record<string, any> | null;
+  // MODIFIED: Add optional run fields to match backend updates
+  run_name?: string | null;
+  run_description?: string | null;
 }
 
 
 /**
  * Component for displaying a single classification result based on its scheme.
  */
-const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({ result, scheme, compact = false, renderContext = 'default' }) => {
+const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({ result, scheme, compact = false, targetFieldKey = null, renderContext = 'default' }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const isPotentiallyLong = scheme.fields.some(f => f.type === 'List[Dict[str, any]]');
+  // Check if the *specific* target field (if any) or *any* field (if no target) is potentially long
+  const isPotentiallyLong = useMemo(() => {
+      if (targetFieldKey) {
+          const targetField = scheme.fields.find(f => f.name === targetFieldKey);
+          return targetField?.type === 'List[Dict[str, any]]';
+      } else {
+          return scheme.fields.some(f => f.type === 'List[Dict[str, any]]');
+      }
+  }, [scheme.fields, targetFieldKey]);
 
   /**
    * Adapts an API field definition (like ClassificationFieldCreate) to the internal SchemeField type.
@@ -219,9 +234,9 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
 
   return (
       <div className={containerClasses}>
-          {/* Only show scheme name if not compact OR if context is not dialog (to avoid repetition) */}
-          {(!compact || renderContext !== 'dialog') && (
-             <div className="font-medium text-base mb-2">{scheme.name}</div>
+          {/* Only show scheme name if not compact OR if context is not dialog OR table (to avoid repetition) */}
+          {(!compact || (renderContext !== 'dialog' && renderContext !== 'table')) && (
+             <div className="font-medium text-base text-yellow-500 mb-2">{scheme.name}</div>
           )}
           {/* Add scheme name specifically for dialog if it's the compact view (might be redundant if title already shows) */}
           {/* {compact && renderContext === 'dialog' && (
@@ -239,15 +254,28 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
             <div className={'space-y-3'}>
               {scheme.fields.map((apiField, idx) => {
                   const schemeField = adaptFieldToSchemeField(apiField);
-                  if (compact && idx > 0) return null;
+                  // --- MODIFIED: Field Filtering/Selection Logic ---
+                  // If a specific targetFieldKey is provided, only render that field
+                  if (targetFieldKey) {
+                      if (schemeField.name !== targetFieldKey) {
+                          return null; // Skip rendering fields that don't match the target key
+                      }
+                      // Proceed to render the single targeted field below
+                  }
+                  // Original compact logic: Only show first field if compact AND no targetFieldKey is set
+                  else if (compact && idx > 0) {
+                      return null; // Skip other fields in compact mode when no specific key is targeted
+                  }
+                  // --- END MODIFICATION ---
 
                   return (
                       <div key={idx} className={'space-y-1'}>
                           {/* Only show field name if not compact OR if scheme has multiple fields */}
-                          {(!compact || scheme.fields.length > 1) && (
-                             <div className="text-sm font-medium">{schemeField.name}</div>
+                          {/* --- MODIFIED: Show field name only if not in table context AND (either not compact OR target field is set) --- */}
+                          {renderContext !== 'table' && (!compact || targetFieldKey) && (
+                             <div className="text-sm font-medium text-blue-400 italic inline-block mr-2">{schemeField.name}</div>
                           )}
-                          {formatFieldValue(result.value, schemeField)}
+                          <div className="inline-block">{formatFieldValue(result.value, schemeField)}</div>
                       </div>
                   );
               })}
@@ -274,7 +302,7 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
 /**
  * Component to display multiple classification results, potentially in tabs or a consolidated list.
  */
-const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ results, schemes, compact = false, useTabs = false, renderContext = 'default' }) => {
+const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ results, schemes, compact = false, targetFieldKey = null, useTabs = false, renderContext = 'default' }) => {
   // --- MODIFIED: Force useTabs to false if context is dialog ---
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
 
@@ -294,7 +322,7 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ resul
           return (
             <TabsContent key={s.id} value={s.id?.toString() || "0"}>
               {schemeResult ? (
-                <SingleClassificationResult result={schemeResult} scheme={s} compact={compact} renderContext={renderContext} />
+                <SingleClassificationResult result={schemeResult} scheme={s} compact={compact} targetFieldKey={targetFieldKey} renderContext={renderContext} />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this scheme</div>
               )}
@@ -319,6 +347,7 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ resul
             result={schemeResult} 
             scheme={scheme} 
             compact={compact} 
+            targetFieldKey={targetFieldKey}
             renderContext={renderContext}
           />
         );
@@ -332,7 +361,7 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ resul
  * Main component to display one or more classification results.
  * It handles routing to SingleClassificationResult or ConsolidatedSchemesView.
  */
-const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = ({ result, scheme, compact = false, useTabs = false, renderContext = 'default' }) => {
+const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = ({ result, scheme, compact = false, targetFieldKey = null, useTabs = false, renderContext = 'default' }) => {
     
   /**
    * Finds the matching ClassificationSchemeRead object for a given result's scheme_id.
@@ -367,7 +396,7 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
       const { result: singleResult, scheme: singleScheme } = validResultsWithSchemes[0];
       // singleScheme is guaranteed non-null here due to the filter
       return (
-        <SingleClassificationResult result={singleResult} scheme={singleScheme} compact={compact} renderContext={renderContext} />
+        <SingleClassificationResult result={singleResult} scheme={singleScheme} compact={compact} targetFieldKey={targetFieldKey} renderContext={renderContext} />
       );
     }
     
@@ -378,6 +407,7 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
         results={validResultsWithSchemes.map(item => item.result)} 
         schemes={validResultsWithSchemes.map(item => item.scheme)} 
         compact={compact} 
+        targetFieldKey={targetFieldKey}
         useTabs={useTabs} 
         renderContext={renderContext}
       />
@@ -390,7 +420,13 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
     if (matchingScheme) {
       // matchingScheme is non-null here
       return (
-        <SingleClassificationResult result={result} scheme={matchingScheme} compact={compact} renderContext={renderContext} />
+        <SingleClassificationResult
+          result={result}
+          scheme={matchingScheme}
+          compact={compact}
+          targetFieldKey={targetFieldKey}
+          renderContext={renderContext}
+        />
       );
     }
     return <div className="text-sm text-gray-500 italic">No matching scheme found for this result. Scheme ID: {result.scheme_id}</div>;

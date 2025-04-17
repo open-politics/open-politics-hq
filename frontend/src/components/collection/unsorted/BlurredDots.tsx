@@ -1,16 +1,29 @@
 'use client';
 import { usePathname } from 'next/navigation';
-import { motion, useScroll, useTransform, useAnimation } from 'framer-motion';
+import { motion, useScroll, useTransform, useAnimation, MotionValue } from 'framer-motion';
 import { useEffect, useState, useRef } from 'react';
 
-const BlurredDot = ({ color, x, y, size }) => {
+interface DotConfig {
+  color: string;
+  width: string;
+  height: string;
+  position?: 'topLeft' | 'bottomRight' | 'center';
+}
+
+const BlurredDot = ({ color, x, y, width, height }: {
+  color: string,
+  x: MotionValue<string> | string,
+  y: MotionValue<string> | string,
+  width: string,
+  height: string
+}) => {
   return (
     <motion.div
-      className="fixed rounded-full blur-[100px] opacity-40 dark:opacity-20"
+      className="fixed rounded-full blur-[150px] opacity-40 dark:opacity-20"
       style={{
         backgroundColor: color,
-        width: size,
-        height: size,
+        width: width,
+        height: height,
         left: x,
         top: y,
         zIndex: 10,
@@ -20,34 +33,43 @@ const BlurredDot = ({ color, x, y, size }) => {
   );
 };
 
-const dotsConfig = {
+const dotsConfig: { [key: string]: DotConfig[] } = {
   '/': [
-    { color: 'var(--dot-color-1)', size: '30vw' }, // Light blue at 0%
-    { color: 'var(--dot-color-2)', size: '40vw' }, // Light green at 18%
+    { color: 'var(--dot-color-1)', width: '30vw', height: '30vw' },
+    { color: 'var(--dot-color-2)', width: '40vw', height: '40vw' },
   ],
   '/blog': [
-    { color: 'var(--dot-color-3)', size: '35vw' }, // Light yellow at 40%
-    { color: 'var(--dot-color-4)', size: '30vw' }, // Light orange at 60%
+    { color: 'var(--dot-color-3)', width: '35vw', height: '35vw' },
+    { color: 'var(--dot-color-4)', width: '30vw', height: '30vw' },
   ],
   '/webpages/about': [
-    { color: 'var(--dot-color-5)', size: '35vw' }, // Light purple at 92%
-    { color: 'var(--dot-color-1)', size: '30vw' }, // Light blue at 0%
+    { color: 'var(--dot-color-5)', width: '35vw', height: '35vw' },
+    { color: 'var(--dot-color-1)', width: '30vw', height: '30vw' },
   ],
   '/accounts/login': [
-    { color: 'var(--dot-color-2)', size: '40vw' }, // Light green at 18%
-    { color: 'var(--dot-color-3)', size: '20vw' }, // Light yellow at 40%
+    { color: 'var(--dot-color-2)', width: '40vw', height: '40vw' },
+    { color: 'var(--dot-color-3)', width: '20vw', height: '20vw' },
   ],
   '/documentation': [
-    { color: 'var(--dot-color-4)', size: '40vw' }, // Light orange at 60%
-    { color: 'var(--dot-color-5)', size: '20vw' }, // Light purple at 92%
+    { color: 'var(--dot-color-4)', width: '40vw', height: '40vw' },
+    { color: 'var(--dot-color-5)', width: '20vw', height: '20vw' },
   ],
-  '/desk_synthese': [
-    { color: 'var(--dot-color-1)', size: '40vw' }, // Light blue at 0%
-    { color: 'var(--dot-color-2)', size: '20vw' }, // Light green at 18%
+  '/workspaces': [
+    { color: 'var(--dot-color-1)', width: '40vw', height: '40vw' },
+    { color: 'var(--dot-color-2)', width: '20vw', height: '20vw' },
+  ],
+  '/desks/*': [
+    { color: 'var(--dot-color-1)', width: '40vw', height: '40vw' },
+    { color: 'var(--dot-color-2)', width: '20vw', height: '20vw' },
   ],
   '/webpages/*': [
-    { color: 'var(--dot-color-3)', size: '40vw' }, // Light yellow at 40%
-    { color: 'var(--dot-color-4)', size: '20vw' }, // Light orange at 60%
+    { color: 'var(--dot-color-3)', width: '40vw', height: '40vw' },
+    { color: 'var(--dot-color-4)', width: '20vw', height: '20vw' },
+  ],
+  '/desks/home/workspaces/classification-runner': [
+    { color: 'var(--dot-color-1)', width: '45vw', height: '40vw', position: 'topLeft' },
+    { color: 'var(--dot-color-2)', width: '30vw', height: '35vw', position: 'bottomRight' },
+    { color: 'var(--dot-color-3)', width: '75vw', height: '20vh', position: 'center' },
   ],
 };
 
@@ -73,17 +95,30 @@ const BlurredDots = () => {
         setDots(dotsConfig['/']);
       }
     }
-  }, [pathname, controls]);
+  }, [pathname]);
 
-  const topLeftX = useTransform(scrollYProgress, [0, 1], ['-20vw', '-20vw']);
-  const topLeftY = useTransform(scrollYProgress, [0, 1], ['-10vh', '80vh']);
-  const bottomRightX = useTransform(scrollYProgress, [0, 1], ['90vw', '90vw']);
-  const bottomRightY = useTransform(scrollYProgress, [0, 1], ['80vh', '-40vh']);
+  const topLeftX = useTransform(scrollYProgress, [0, 1], ['-25vw', '-15vw']);
+  const topLeftY = useTransform(scrollYProgress, [0, 1], ['-20vh', '100vh']);
+  const bottomRightX = useTransform(scrollYProgress, [0, 1], ['100vw', '85vw']);
+  const bottomRightY = useTransform(scrollYProgress, [0, 1], ['90vh', '-50vh']);
+
+  // Define positions based on keys
+  const positions: { [key: string]: { x: MotionValue<string> | string, y: MotionValue<string> | string } } = {
+    topLeft: { x: topLeftX, y: topLeftY },
+    bottomRight: { x: bottomRightX, y: bottomRightY },
+    center: { x: '12.5vw', y: '40vh' },
+  };
 
   return (
     <>
-      <BlurredDot {...dots[0]} x={topLeftX} y={topLeftY} />
-      <BlurredDot {...dots[1]} x={bottomRightX} y={bottomRightY} />
+      {dots.map((dot, index) => {
+        const posKey = dot.position || (index === 0 ? 'topLeft' : 'bottomRight'); // Determine the position key
+        const pos = positions[posKey];
+        // Ensure pos is defined before accessing properties
+        if (!pos) return null; // Or handle the error/default case appropriately
+        // Pass dot properties including width and height using spread operator
+        return <BlurredDot key={index} {...dot} x={pos.x} y={pos.y} />;
+      })}
     </>
   );
 };

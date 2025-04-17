@@ -498,7 +498,7 @@ export function ContentsView({
   }
 
   return (
-    <div className="space-y-4 flex flex-col h-full">
+    <div className="space-y-4 flex flex-col">
       <svg width="0" height="0" className="absolute">
         <linearGradient id="shimmer" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#7AEFFF" />
@@ -609,15 +609,15 @@ export function ContentsView({
           </div>
           
           <TabsContent value="search" className="p-4 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="flex-1 flex items-center gap-2">
-                <Search className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-2 mb-4">
+              <div className="flex-1 relative">
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={`Search ${locationName}`}
-                  className="flex-1"
+                  placeholder={`Search ${locationName} articles...`}
+                  className="pl-8"
                 />
+                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               </div>
               <Button 
                 variant="default" 
@@ -625,70 +625,35 @@ export function ContentsView({
                   resetContents();
                   fetchContents(searchQuery);
                 }}
+                size="icon"
               >
-                Search
+                <Search className="h-4 w-4" />
+                <span className="sr-only">Search</span>
               </Button>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Date Range</label>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDateRangeChange({
-                      from: addDays(new Date(), -3),
-                      to: new Date()
-                    })}
-                  >
-                    Last 3 days
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDateRangeChange({
-                      from: addDays(new Date(), -7),
-                      to: new Date()
-                    })}
-                  >
-                    Last 7 days
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDateRangeChange({
-                      from: addDays(new Date(), -30),
-                      to: new Date()
-                    })}
-                  >
-                    Last month
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDateRangeChange(undefined)}
-                  >
-                    All
-                  </Button>
-                </div>
-                
+                <label className="text-sm font-medium flex items-center gap-1.5">
+                  <CalendarDays className="h-4 w-4" />
+                  Date Range
+                </label>
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="gap-2 mt-2"
+                      className="w-full justify-start text-left font-normal gap-2"
                     >
                       <CalendarDays className="h-4 w-4" />
                       <span>
                         {dateRange?.from ? (
                           dateRange.to ? (
                             <>
-                              {format(dateRange.from, "MMM dd, yyyy")} - {format(dateRange.to, "MMM dd, yyyy")}
+                              {format(dateRange.from, "LLL dd, y")} - {format(dateRange.to, "LLL dd, y")}
                             </>
                           ) : (
-                            format(dateRange.from, "MMM dd, yyyy")
+                            format(dateRange.from, "LLL dd, y")
                           )
                         ) : (
                           "Select date range"
@@ -697,63 +662,73 @@ export function ContentsView({
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-auto p-0" align="start">
+                    <div className="flex p-2 border-b">
+                      <Button size="sm" variant="ghost" className="flex-1 justify-start" onClick={() => handleDateRangeChange({ from: addDays(new Date(), -3), to: new Date() })}>3 days</Button>
+                      <Button size="sm" variant="ghost" className="flex-1 justify-start" onClick={() => handleDateRangeChange({ from: addDays(new Date(), -7), to: new Date() })}>7 days</Button>
+                      <Button size="sm" variant="ghost" className="flex-1 justify-start" onClick={() => handleDateRangeChange({ from: addDays(new Date(), -30), to: new Date() })}>Month</Button>
+                      <Button size="sm" variant="ghost" className="flex-1 justify-start" onClick={() => handleDateRangeChange(undefined)}>All</Button>
+                    </div>
                     <Calendar
                       mode="range"
                       defaultMonth={dateRange?.from}
                       selected={dateRange}
                       onSelect={handleDateRangeChange}
-                      numberOfMonths={2}
+                      numberOfMonths={1}
                     />
                   </PopoverContent>
                 </Popover>
               </div>
-              
+
               <div className="space-y-2">
-                <label className="text-sm font-medium">Sort & Filter</label>
-                <div className="flex flex-col gap-2">
-                  <Select
-                    value={selectedEventType}
-                    onValueChange={(value) => {
-                      setSelectedEventType(value);
-                      resetContents();
-                      fetchContents(searchQuery);
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <div className="flex items-center gap-2">
-                        <BrainCircuit className="h-4 w-4" />
-                        <span>{selectedEventType === 'all' ? 'All Event Types' : selectedEventType}</span>
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Event Types</SelectItem>
-                      {availableEventTypes.map((eventType) => (
-                        <SelectItem key={eventType} value={eventType}>
-                          {eventType}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  
-                  <Select
-                    value={sortBy}
-                    onValueChange={setSortBy}
-                  >
-                    <SelectTrigger className="w-full">
-                      <div className="flex items-center gap-2">
-                        <SlidersHorizontal className="h-4 w-4" />
-                        <span>Sort by: {sortBy}</span>
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="date">Date</SelectItem>
-                      <SelectItem value="title">Title</SelectItem>
-                      <SelectItem value="source">Source</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                 <label className="text-sm font-medium flex items-center gap-1.5">
+                  <BrainCircuit className="h-4 w-4" />
+                  Event Type
+                </label>
+                <Select
+                  value={selectedEventType}
+                  onValueChange={(value) => {
+                    setSelectedEventType(value);
+                    resetContents();
+                    fetchContents(searchQuery);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Filter by event type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Event Types</SelectItem>
+                    {availableEventTypes.map((eventType) => (
+                      <SelectItem key={eventType} value={eventType}>
+                        {eventType}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
+
+            <div className="pt-2">
+               <label className="text-sm font-medium flex items-center gap-1.5 mb-2">
+                  <SlidersHorizontal className="h-4 w-4" />
+                  Sort By
+                </label>
+                <Select
+                  value={sortBy}
+                  onValueChange={setSortBy}
+                >
+                  <SelectTrigger className="w-full">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="h-4 w-4" />
+                      <span>Sort by: {sortBy}</span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="date">Date</SelectItem>
+                    <SelectItem value="title">Title</SelectItem>
+                    <SelectItem value="source">Source</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
           </TabsContent>
           
           <TabsContent value="filters" className="p-4 space-y-4">
@@ -1086,7 +1061,7 @@ export function ContentsView({
                   : groupedContents
               ).map(([date, groupContents]) => (
                 <div key={date} className="space-y-2">
-                  <h2 className="text-lg font-medium sticky top-0 bg-background/80 backdrop-blur-sm p-2 z-10">
+                  <h2 className="text-lg font-medium sticky top-0 p-2 z-10">
                     {date}
                   </h2>
                   <div className="grid grid-cols-1 gap-4">
