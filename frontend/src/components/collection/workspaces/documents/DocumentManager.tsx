@@ -189,8 +189,8 @@ export default function DocumentManager({ onLoadIntoRunner }: DocumentManagerPro
     <DocumentDetailProvider>
       <DocumentDetailWrapper onLoadIntoRunner={onLoadIntoRunner}>
         <TooltipProvider delayDuration={0}>
-          <div className="flex flex-col h-full w-full max-w-screen-2xl mx-auto px-2 sm:px-4">
-            <div className="flex-none p-2 sm:p-4">
+          <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-2 sm:px-4">
+            <div className="flex-none">
               <div className="flex items-center justify-between">
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" onClick={() => openCreateDocument('single')} className="h-9 flex items-center">
