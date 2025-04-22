@@ -2,18 +2,7 @@ from sqlmodel import Session, create_engine, select, text
 
 from app import crud
 from app.core.config import settings
-from app.models import (
-    User, 
-    UserCreate, 
-    SQLModel, 
-    WorkspaceCreate, 
-    ClassificationScheme, 
-    Document, 
-    DocumentCreate, 
-    Workspace,
-    ClassificationField,
-    FieldType 
-)
+from app.models import *
 from app.core.security import get_password_hash
 import os
 import logging
@@ -33,14 +22,14 @@ def init_db(session: Session) -> None:
     # But if you don't want to use migrations, create
     # the tables un-commenting the next lines
 
-    # SQLModel.metadata.create_all(engine)
 
     if os.environ.get("WIPE_DB") == "True":
         logger.info("Wiping DB")
         # Wipe DB table "alembic_version"
         session.exec(text("DROP TABLE IF EXISTS alembic_version"))
         SQLModel.metadata.drop_all(engine)
-        
+        SQLModel.metadata.create_all(engine)
+        logger.info("DB wiped")
 
         # from app.core.engine import engine
         # This works because the models are already imported and registered from app.models
@@ -81,7 +70,7 @@ def init_db(session: Session) -> None:
 
     # Create a classification scheme for the workspace if not exists
     super_user_scheme = session.exec(
-        select(ClassificationScheme).where(ClassificationScheme.workspace_id == workspace.uid)
+        select(ClassificationScheme).where(ClassificationScheme.workspace_id == workspace.id)
     ).first()
     if not super_user_scheme:
         # First create the scheme without fields
@@ -89,7 +78,7 @@ def init_db(session: Session) -> None:
             name="Default Text Classifier",
             description="A simple text classifier that returns 'Works!' when called",
             model_instructions="Return 'Works!' for any input text",
-            workspace_id=workspace.uid,
+            workspace_id=workspace.id,
             user_id=user.id
         )
         session.add(scheme)
@@ -109,7 +98,7 @@ def init_db(session: Session) -> None:
     # Create a categories classification scheme with list of labels
     categories_scheme = session.exec(
         select(ClassificationScheme).where(
-            ClassificationScheme.workspace_id == workspace.uid,
+            ClassificationScheme.workspace_id == workspace.id,
             ClassificationScheme.name == "Political Categories"
         )
     ).first()
@@ -119,7 +108,7 @@ def init_db(session: Session) -> None:
             name="Political Categories",
             description="Categorize political content into predefined categories",
             model_instructions="Analyze the text and select all applicable political categories that the content belongs to.",
-            workspace_id=workspace.uid,
+            workspace_id=workspace.id,
             user_id=user.id
         )
         session.add(categories_scheme)
@@ -142,7 +131,7 @@ def init_db(session: Session) -> None:
     # Create an entity-statement classification scheme
     entity_statement_scheme = session.exec(
         select(ClassificationScheme).where(
-            ClassificationScheme.workspace_id == workspace.uid,
+            ClassificationScheme.workspace_id == workspace.id,
             ClassificationScheme.name == "Entity Statements"
         )
     ).first()
@@ -152,7 +141,7 @@ def init_db(session: Session) -> None:
             name="Entity Statements",
             description="Extract entities and their associated statements from political text",
             model_instructions="Identify key political entities mentioned in the text and extract the main statements or claims made about them.",
-            workspace_id=workspace.uid,
+            workspace_id=workspace.id,
             user_id=user.id
         )
         session.add(entity_statement_scheme)
@@ -174,17 +163,3 @@ def init_db(session: Session) -> None:
         session.commit()
         session.refresh(entity_statement_scheme)
 
-    # Create a document for the workspace if not exists
-    super_user_document = session.exec(
-        select(Document).where(Document.workspace_id == workspace.uid)
-    ).first()
-    if not super_user_document:
-        document = Document(
-            title="Default Document",
-            text_content="This is a test document for classification.",
-            workspace_id=workspace.uid,
-            user_id=user.id
-        )
-        session.add(document)
-        session.commit()
-        session.refresh(document)

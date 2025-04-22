@@ -29,30 +29,30 @@ function DefaultSchemeSelector() {
   const [selectedSchemeId, setSelectedSchemeId] = useState<string | null>(null);
   
   useEffect(() => {
-    if (!activeWorkspace?.uid) return;
+    if (!activeWorkspace?.id) return;
     
-    const workspaceId = typeof activeWorkspace.uid === 'string' 
-      ? parseInt(activeWorkspace.uid) 
-      : activeWorkspace.uid;
+    const workspaceId = typeof activeWorkspace.id === 'string' 
+      ? parseInt(activeWorkspace.id) 
+      : activeWorkspace.id;
     
     loadSchemes().then(() => {
       const defaultId = getDefaultSchemeId(workspaceId, schemes);
       setSelectedSchemeId(defaultId?.toString() || '');
     });
-  }, [activeWorkspace?.uid, schemes, loadSchemes, getDefaultSchemeId]);
+  }, [activeWorkspace?.id, schemes, loadSchemes, getDefaultSchemeId]);
   
   const handleSchemeChange = (value: string) => {
-    if (!activeWorkspace?.uid) return;
+    if (!activeWorkspace?.id) return;
     
-    const workspaceId = typeof activeWorkspace.uid === 'string' 
-      ? parseInt(activeWorkspace.uid) 
-      : activeWorkspace.uid;
+    const workspaceId = typeof activeWorkspace.id === 'string' 
+      ? parseInt(activeWorkspace.id) 
+      : activeWorkspace.id;
     
     setSelectedSchemeId(value);
     setDefaultSchemeId(workspaceId, parseInt(value));
   };
   
-  if (!activeWorkspace?.uid || schemes.length === 0) {
+  if (!activeWorkspace?.id || schemes.length === 0) {
     return null;
   }
   

@@ -6,7 +6,8 @@ python /app/app/backend_pre_start.py
 # Create initial data in DB
 python /app/app/initial_data.py
 
-# alembic revision --autogenerate -m "Add run_id to classification_result"
+# alembic stamp head
+# alembic revision --autogenerate -m "Initial migration for new datastructure"
 
 # # Run migrations
 alembic upgrade head

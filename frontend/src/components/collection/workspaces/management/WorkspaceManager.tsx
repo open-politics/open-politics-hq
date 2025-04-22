@@ -41,7 +41,6 @@ export default function WorkspaceManager({ activeWorkspace }: WorkspaceManagerPr
       await createWorkspace({
         name,
         description,
-        sources: sources ? sources.split(',').map(s => s.trim()) : [],
         icon,
       });
       setName('');
@@ -153,7 +152,6 @@ export default function WorkspaceManager({ activeWorkspace }: WorkspaceManagerPr
         workspaceId={selectedWorkspaceId ?? 0}
         defaultName={activeWorkspace?.name ?? ''}
         defaultDescription={activeWorkspace?.description ?? ''}
-        defaultSources={activeWorkspace?.sources ?? []}
         defaultIcon={activeWorkspace?.icon ?? ''}
       />
     </div>

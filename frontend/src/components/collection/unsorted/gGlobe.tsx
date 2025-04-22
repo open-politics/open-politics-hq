@@ -46,17 +46,19 @@ const formatDateForAPI = (date: Date | null): string | null => {
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
 };
 
-// Helper function to get the default date range (last 7 days)
+// Memoize the default date range to prevent redundant calculations
 const getDefaultDateRange = (): { startDate: string, endDate: string } => {
-  const endDate = new Date(); // Now
-  const startDate = new Date();
-  startDate.setDate(endDate.getDate() - 7);
-  startDate.setHours(0, 0, 0, 0); // Start of the day 7 days ago
-  endDate.setHours(23, 59, 59, 999); // End of today
-
+  // Get current date
+  const now = new Date();
+  
+  // Create date 21 days ago
+  const pastDate = new Date(now);
+  pastDate.setDate(now.getDate() - 21);
+  
+  // Format dates for API
   return {
-    startDate: formatDateForAPI(startDate) as string, // Assert as string since we know input is Date
-    endDate: formatDateForAPI(endDate) as string, // Assert as string
+    startDate: formatDateForAPI(pastDate) || '',
+    endDate: formatDateForAPI(now) || ''
   };
 };
 
@@ -131,11 +133,10 @@ const Globe = forwardRef<any, GlobeProps>(
     // To avoid reloading geoJSON on every theme change, keep a flag
     const [geojsonLoaded, setGeojsonLoaded] = useState(false);
 
-    // Add new state variables for date filtering
-    // Initialize with the default 21-day range
-    const [defaultDates] = useState(getDefaultDateRange());
-    const [startDate, setStartDate] = useState<string | null>(defaultDates.startDate);
-    const [endDate, setEndDate] = useState<string | null>(defaultDates.endDate);
+    // In the component body, use useMemo for the date range:
+    const defaultDateRange = useMemo(() => getDefaultDateRange(), []);
+    const [startDate, setStartDate] = useState<string | null>(defaultDateRange.startDate);
+    const [endDate, setEndDate] = useState<string | null>(defaultDateRange.endDate);
     const [eventLimit, setEventLimit] = useState<number>(100);
 
     // Modify the eventTypes array to use simpler icon names
@@ -301,28 +302,16 @@ const Globe = forwardRef<any, GlobeProps>(
     // Replace loadGeoJSONEventsData with a more generic function that handles both endpoints
     const loadGeoJSONData = useCallback(async () => {
       if (!mapRef.current || !mapLoaded) return;
-      setIsLoading(true);
-
+      
       try {
-        // Clear existing sources first
-        eventTypes.forEach((eventType) => {
-          const sourceId = `geojson-events-${eventType.type}`;
-          if (mapRef.current?.getSource(sourceId)) {
-            ["clusters-", "unclustered-point-", "cluster-count-"].forEach((prefix) => {
-              const layerId = `${prefix}${eventType.type}`;
-              if (mapRef.current?.getLayer(layerId)) {
-                mapRef.current.removeLayer(layerId);
-              }
-            });
-            mapRef.current.removeSource(sourceId);
-          }
-        });
-
-        // For articles data, we'll use a single source
-        const articlesSourceId = "geojson-articles";
+        setIsLoading(true);
+        
+        // Define source ID for articles
+        const articlesSourceId = "opol-globe-articles";
+        
+        // Clear any existing layers and sources first
         if (mapRef.current.getSource(articlesSourceId)) {
-          ["clusters-", "unclustered-point-", "cluster-count-"].forEach((prefix) => {
-            const layerId = `${prefix}articles`;
+          ["clusters-articles", "unclustered-point-articles", "cluster-count-articles"].forEach((layerId) => {
             if (mapRef.current?.getLayer(layerId)) {
               mapRef.current.removeLayer(layerId);
             }
@@ -331,16 +320,29 @@ const Globe = forwardRef<any, GlobeProps>(
         }
 
         if (dataType === "events") {
-          // Load data for each event type in parallel with updated parameters
-          const promises = eventTypes.map((eventType) => {
-            return fetchEventGeoJson(
-              eventType.type,
-              startDate ?? undefined,
-              endDate ?? undefined,
-              eventLimit
-            );
-          });
-          const results = await Promise.all(promises);
+          console.log(`[Globe] Loading event GeoJSON data for ${eventTypes.length} event types`);
+          
+          // Process each event type sequentially instead of in parallel
+          const results: any[] = [];
+          for (const eventType of eventTypes) {
+            console.log(`[Globe] Loading event data for ${eventType.type}`);
+            try {
+              // Use the store's fetch method which already has caching built in
+              const result = await fetchEventGeoJson(
+                eventType.type,
+                startDate ?? undefined,
+                endDate ?? undefined,
+                eventLimit
+              );
+              results.push(result);
+              
+              // Add a small delay between requests to reduce server load
+              await new Promise(resolve => setTimeout(resolve, 300));
+            } catch (error) {
+              console.error(`Error fetching ${eventType.type} data:`, error);
+              results.push(null);
+            }
+          }
           
           // Process results, handling null values
           eventTypes.forEach((eventType, index) => {
@@ -363,9 +365,10 @@ const Globe = forwardRef<any, GlobeProps>(
             const iconOffset = offsets[index % offsets.length]; // Calculate offset based on index
 
             // Adjust the feature properties for easier usage
+            const typedResult = result as any;
             const adjustedData = {
-              ...result,
-              features: result.features.map((feature: any) => {
+              ...typedResult,
+              features: typedResult.features.map((feature: any) => {
                 let contents;
                 try {
                   contents =
@@ -384,7 +387,7 @@ const Globe = forwardRef<any, GlobeProps>(
                 };
               }),
             };
-
+            
             // Add as a cluster source
             mapRef.current.addSource(sourceId, {
               type: "geojson",
@@ -523,9 +526,9 @@ const Globe = forwardRef<any, GlobeProps>(
             clusterRadius: CLUSTER_RADIUS,
           });
 
-          // Add the cluster layer for articles
+          // Add a single layer for articles clusters
           mapRef.current.addLayer({
-            id: `clusters-articles`,
+            id: "clusters-articles",
             type: "circle",
             source: articlesSourceId,
             filter: ["has", "point_count"],
@@ -542,58 +545,15 @@ const Globe = forwardRef<any, GlobeProps>(
                 200,
                 40,
               ],
-              "circle-opacity": 1,
-              "circle-stroke-width": 2,
+              "circle-opacity": 0.8,
+              "circle-stroke-width": 1,
               "circle-stroke-color": "#fff",
             },
           });
 
-          // Single unclustered points for articles
+          // Add text count for article clusters
           mapRef.current.addLayer({
-            id: `unclustered-point-articles`,
-            type: "symbol",
-            source: articlesSourceId,
-            filter: ["!", ["has", "point_count"]],
-            layout: {
-              "icon-image": "social", // Use an existing icon
-              "icon-size": 1,
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-              "symbol-placement": "point",
-              "symbol-spacing": 50,
-              "icon-padding": 5,
-              "symbol-sort-key": ["get", "content_count"],
-              "icon-pitch-alignment": "viewport",
-              "icon-rotation-alignment": "viewport",
-              "text-size": 18,
-              "text-offset": [0, 0],
-              "text-allow-overlap": true,
-              "text-ignore-placement": true,
-              "text-anchor": "top",
-            },
-            paint: {
-              "icon-opacity": [
-                'case',
-                ['boolean', ['feature-state', 'selected'], false],
-                1.0, // Full opacity if selected
-                0.7 // Default opacity otherwise
-              ],
-              "icon-color": articlesColor,
-              // Optional: Add halo effect when selected
-              "icon-halo-width": [
-                'case',
-                ['boolean', ['feature-state', 'selected'], false],
-                2, // Halo width when selected
-                0 // No halo otherwise
-              ],
-              "icon-halo-color": "#ffffff",
-              "icon-halo-blur": 1
-            },
-          });
-
-          // Cluster count label for articles
-          mapRef.current.addLayer({
-            id: `cluster-count-articles`,
+            id: "cluster-count-articles",
             type: "symbol",
             source: articlesSourceId,
             filter: ["has", "point_count"],
@@ -606,6 +566,24 @@ const Globe = forwardRef<any, GlobeProps>(
               "text-color": "#ffffff",
             },
           });
+
+          // Add unclustered article points
+          mapRef.current.addLayer({
+            id: "unclustered-point-articles",
+            type: "symbol",
+            source: articlesSourceId,
+            filter: ["!", ["has", "point_count"]],
+            layout: {
+              "icon-image": "article",
+              "icon-size": 1.2,
+              "icon-allow-overlap": true,
+              "symbol-placement": "point",
+            },
+            paint: {
+              "icon-color": articlesColor,
+              "icon-opacity": 0.8,
+            },
+          });
         }
 
         setGeojsonLoaded(true);
@@ -614,7 +592,7 @@ const Globe = forwardRef<any, GlobeProps>(
       } finally {
         setIsLoading(false);
       }
-    }, [eventTypes, startDate, endDate, eventLimit, mapLoaded, dataType, theme, fetchEventGeoJson, fetchBaselineGeoJson, onLocationClick]);
+    }, [eventTypes, startDate, endDate, eventLimit, mapLoaded, dataType, theme, onLocationClick]);
 
     /**
      * CREATE A SIMPLE SPIKE CHART USING D3
@@ -1246,38 +1224,37 @@ const Globe = forwardRef<any, GlobeProps>(
       });
     }, [mapLoaded, visibleLayers, eventTypes, toggleLayerVisibility]);
 
-    // Effect to load initial GeoJSON data or ensure layers are present after map load
+    // Optimize the useEffect that watches map loading conditions:
     useEffect(() => {
       if (!mapLoaded) {
         return; // Don't proceed until map is loaded
       }
 
-      console.log(`Globe: MapLoaded: ${mapLoaded}, GeojsonLoaded: ${geojsonLoaded}, DataType: ${dataType}`);
+      // Debounce data loading to prevent multiple rapid calls
+      const loadTimer = setTimeout(() => {
+        console.log(`Globe: MapLoaded: ${mapLoaded}, GeojsonLoaded: ${geojsonLoaded}, DataType: ${dataType}`);
 
-      const shouldLoadArticles = dataType === 'articles' && !geojsonData;
-      const shouldLoadEvents = dataType === 'events' && !eventGeojsonData;
+        const shouldLoadArticles = dataType === 'articles' && !geojsonData;
+        const shouldLoadEvents = dataType === 'events' && !eventGeojsonData;
 
-      if (shouldLoadArticles || shouldLoadEvents) {
-        console.log(`Globe: Attempting initial load for ${dataType}...`);
-        loadGeoJSONData(); // Calls store fetch actions
-        setGeojsonLoaded(true); // Assume loading started, prevent re-triggering within this effect cycle
-      } else if (geojsonData || eventGeojsonData) {
-        // Data exists, but map might have just loaded.
-        // Ensure layers are added if they weren't during initial map load.
-        if (!geojsonLoaded) { // Check internal state first
-          console.log("Globe: Data exists, map loaded, ensuring layers are present...");
-          loadGeoJSONData(); // This should add sources/layers without fetching if data exists
-          setGeojsonLoaded(true); // Mark layers as loaded/loading
+        if (shouldLoadArticles || shouldLoadEvents) {
+          console.log(`Globe: Loading data for ${dataType}...`);
+          loadGeoJSONData(); // Calls store fetch actions
+          setGeojsonLoaded(true); // Prevent re-triggering 
+        } else if ((geojsonData || eventGeojsonData) && !geojsonLoaded) {
+          console.log("Globe: Adding layers for existing data...");
+          loadGeoJSONData(); // Add sources/layers without fetching
+          setGeojsonLoaded(true);
         }
-      } else {
-        console.log("Globe: Initial load conditions not met, or data/layers already loaded.");
-      }
-    }, [mapLoaded, dataType, geojsonData, eventGeojsonData, loadGeoJSONData]); // Dependencies
+      }, 300); // 300ms debounce
+
+      return () => clearTimeout(loadTimer);
+    }, [mapLoaded, dataType, geojsonData, eventGeojsonData, geojsonLoaded]);
 
     // Create a function to format dates for ISO string
     // const formatDateForAPI = (date: Date | null): string | null => {
     //   if (!date) return null;
-    //   return date.toISOString(); // Removed as we have a new function
+    //   return date.toISOString(); Removed as we have a new function
     // };
 
     // Add a function to clear date filters
@@ -1568,7 +1545,7 @@ const Globe = forwardRef<any, GlobeProps>(
       // Determine sources based on current data type
       const sourcesToUpdate = dataType === 'events' 
         ? eventTypes.map(et => `geojson-events-${et.type}`) 
-        : ["geojson-articles"];
+        : ["opol-globe-articles"];
 
       let foundAndSelected = false;
 

@@ -3,7 +3,6 @@ import {
   WorkspacesService,
 } from '@/client/services';
 import { WorkspaceRead, WorkspaceCreate, WorkspaceUpdate } from '@/client/models';
-import { useDocumentStore } from './storeDocuments';
 
 interface WorkspaceState {
   workspaces: WorkspaceRead[];
@@ -17,8 +16,6 @@ interface WorkspaceState {
   fetchWorkspaceById: (workspaceId: number) => Promise<void>;
 }
 
-const isEqual = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
-
 export const useWorkspaceStore = create<WorkspaceState>()(
     (set, get) => ({
       workspaces: [],
@@ -29,7 +26,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         try {
           const response = await WorkspacesService.readWorkspaces();
           const storedId = localStorage.getItem('activeWorkspaceId');
-          const active = response.find(w => w.uid === Number(storedId)) || response[0] || null;
+          const active = response.find(w => w.id === Number(storedId)) || response[0] || null;
           
           set(state => ({
             ...state,
@@ -39,7 +36,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           }));
 
           if (active) {
-            localStorage.setItem('activeWorkspaceId', String(active.uid));
+            localStorage.setItem('activeWorkspaceId', String(active.id));
           } else {
             localStorage.removeItem('activeWorkspaceId');
           }
@@ -68,9 +65,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         try {
           const response = await WorkspacesService.createWorkspace({ requestBody: workspace });
           await get().fetchWorkspaces();
-          // Set newly created workspace as active
           if (response) {
-            get().setActiveWorkspace(response.uid);
+            get().setActiveWorkspace(response.id);
           }
         } catch (error: any) {
           set(state => ({ ...state, error: "Error creating workspace" }));
@@ -81,9 +77,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       updateWorkspace: async (workspaceId: number, data: WorkspaceUpdate) => {
         try {
           await WorkspacesService.updateWorkspace({ workspaceId, requestBody: data });
-          await get().fetchWorkspaces(); // Refresh workspaces after updating
-          // Update active workspace if it was the one updated
-          if (get().activeWorkspace?.uid === workspaceId) {
+          await get().fetchWorkspaces();
+          if (get().activeWorkspace?.id === workspaceId) {
             const updatedWorkspace = await WorkspacesService.readWorkspaceById({ workspaceId });
             if (updatedWorkspace) {
               set(state => ({ ...state, activeWorkspace: updatedWorkspace }));
@@ -98,9 +93,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       deleteWorkspace: async (workspaceId: number) => {
         try {
           await WorkspacesService.deleteWorkspace({ workspaceId });
-          await get().fetchWorkspaces(); // Refresh workspaces after deleting
-          // Clear active workspace if it was the one deleted
-          if (get().activeWorkspace?.uid === workspaceId) {
+          await get().fetchWorkspaces();
+          if (get().activeWorkspace?.id === workspaceId) {
             set(state => ({ ...state, activeWorkspace: null }));
           }
         } catch (error: any) {
@@ -110,7 +104,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       setActiveWorkspace: (workspaceId: number) => {
-        const workspace = get().workspaces.find(w => w.uid === workspaceId);
+        const workspace = get().workspaces.find(w => w.id === workspaceId);
         if (workspace) {
           localStorage.setItem('activeWorkspaceId', String(workspaceId));
           set(state => ({ ...state, activeWorkspace: workspace }));

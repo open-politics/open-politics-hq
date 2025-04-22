@@ -14,42 +14,17 @@ export const $ArticleResponse = {
 	},
 } as const;
 
-export const $Body_documents_bulk_upload_documents = {
+export const $Body_datasources_create_datasource = {
 	properties: {
-		autofill: {
-	type: 'boolean',
-	default: false,
-},
-		files: {
-	type: 'array',
-	contains: {
-	type: 'binary',
-	format: 'binary',
-},
-	isRequired: true,
-},
-		content_type: {
-	type: 'string',
-	default: 'Document',
-},
-		source: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $Body_documents_create_document = {
-	properties: {
-		title: {
+		name: {
 	type: 'string',
 	isRequired: true,
 },
-		url: {
+		type: {
+	type: 'DataSourceType',
+	isRequired: true,
+},
+		origin_details: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -57,72 +32,14 @@ export const $Body_documents_create_document = {
 	type: 'null',
 }],
 },
-		content_type: {
-	type: 'string',
-	default: 'article',
-},
-		source: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		text_content: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		summary: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		top_image: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		insertion_date: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-	format: 'date-time',
-}, {
-	type: 'null',
-}],
-},
-		files: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'binary',
-	format: 'binary',
-},
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $Body_documents_extract_document_metadata_from_pdf = {
-	properties: {
 		file: {
+	type: 'any-of',
+	contains: [{
 	type: 'binary',
-	isRequired: true,
 	format: 'binary',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -263,17 +180,101 @@ export const $ClassificationFieldCreate = {
 	},
 } as const;
 
-export const $ClassificationResultCreate = {
+export const $ClassificationJobCreate = {
 	properties: {
-		document_id: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ClassificationJobRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		status: {
+	type: 'ClassificationJobStatus',
+	default: 'pending',
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		id: {
 	type: 'number',
 	isRequired: true,
 },
-		scheme_id: {
+		workspace_id: {
 	type: 'number',
 	isRequired: true,
 },
-		run_id: {
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		target_scheme_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	default: [],
+},
+		target_datasource_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	default: [],
+},
+		result_count: {
 	type: 'any-of',
 	contains: [{
 	type: 'number',
@@ -281,18 +282,10 @@ export const $ClassificationResultCreate = {
 	type: 'null',
 }],
 },
-		value: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		timestamp: {
+		datarecord_count: {
 	type: 'any-of',
 	contains: [{
-	type: 'string',
-	format: 'date-time',
+	type: 'number',
 }, {
 	type: 'null',
 }],
@@ -300,9 +293,55 @@ export const $ClassificationResultCreate = {
 	},
 } as const;
 
+export const $ClassificationJobStatus = {
+	type: 'Enum',
+	enum: ['pending','running','completed','completed_with_errors','failed',],
+} as const;
+
+export const $ClassificationJobUpdate = {
+	properties: {
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'ClassificationJobStatus',
+}, {
+	type: 'null',
+}],
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		updated_at: {
+	type: 'string',
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $ClassificationJobsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'ClassificationJobRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $ClassificationResultRead = {
 	properties: {
-		document_id: {
+		datarecord_id: {
 	type: 'number',
 	isRequired: true,
 },
@@ -310,13 +349,9 @@ export const $ClassificationResultRead = {
 	type: 'number',
 	isRequired: true,
 },
-		run_id: {
-	type: 'any-of',
-	contains: [{
+		job_id: {
 	type: 'number',
-}, {
-	type: 'null',
-}],
+	isRequired: true,
 },
 		value: {
 	type: 'dictionary',
@@ -330,82 +365,6 @@ export const $ClassificationResultRead = {
 	format: 'date-time',
 },
 		id: {
-	type: 'number',
-	isRequired: true,
-},
-		document: {
-	type: 'DocumentRead',
-	isRequired: true,
-},
-		scheme: {
-	type: 'ClassificationSchemeRead',
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $ClassificationRunCreate = {
-	properties: {
-		status: {
-	properties: {
-	},
-},
-	},
-} as const;
-
-export const $ClassificationRunRead = {
-	properties: {
-		status: {
-	properties: {
-	},
-},
-	},
-} as const;
-
-export const $ClassificationRunStatus = {
-	type: 'Enum',
-	enum: ['pending','running','completed','failed',],
-} as const;
-
-export const $ClassificationRunUpdate = {
-	properties: {
-		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		status: {
-	type: 'any-of',
-	contains: [{
-	type: 'ClassificationRunStatus',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $ClassificationRunsOut = {
-	properties: {
-		data: {
-	type: 'array',
-	contains: {
-		type: 'ClassificationRunRead',
-	},
-	isRequired: true,
-},
-		count: {
 	type: 'number',
 	isRequired: true,
 },
@@ -519,7 +478,7 @@ export const $ClassificationSchemeRead = {
 	type: 'null',
 }],
 },
-		document_count: {
+		job_count: {
 	type: 'any-of',
 	contains: [{
 	type: 'number',
@@ -568,16 +527,169 @@ export const $ClassificationSchemeUpdate = {
 	type: 'null',
 }],
 },
-		fields: {
-	type: 'any-of',
-	contains: [{
+	},
+} as const;
+
+export const $CsvRowData = {
+	properties: {
+		row_data: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		row_number: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $CsvRowsOut = {
+	properties: {
+		data: {
 	type: 'array',
 	contains: {
-		type: 'ClassificationFieldCreate',
+		type: 'CsvRowData',
 	},
+	isRequired: true,
+},
+		total_rows: {
+	type: 'number',
+	isRequired: true,
+},
+		columns: {
+	type: 'array',
+	contains: {
+	type: 'string',
+},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $DataRecordRead = {
+	properties: {
+		text_content: {
+	type: 'string',
+	isRequired: true,
+},
+		source_metadata: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		datasource_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $DataSourceRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		type: {
+	type: 'DataSourceType',
+	isRequired: true,
+},
+		origin_details: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		source_metadata: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		status: {
+	type: 'DataSourceStatus',
+	default: 'pending',
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
 }, {
 	type: 'null',
 }],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		workspace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		data_record_count: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $DataSourceStatus = {
+	type: 'Enum',
+	enum: ['pending','processing','complete','failed',],
+} as const;
+
+export const $DataSourceType = {
+	type: 'Enum',
+	enum: ['csv','pdf','url_list','text_block',],
+} as const;
+
+export const $DataSourcesOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'DataSourceRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
 },
 	},
 } as const;
@@ -596,160 +708,10 @@ export const $DictKeyDefinition = {
 	},
 } as const;
 
-export const $DocumentRead = {
-	properties: {
-		title: {
-	type: 'string',
-	isRequired: true,
-},
-		url: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		content_type: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		source: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		top_image: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		text_content: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		summary: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		insertion_date: {
-	type: 'string',
-	format: 'date-time',
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		workspace_id: {
-	type: 'number',
-	isRequired: true,
-},
-		user_id: {
-	type: 'number',
-	isRequired: true,
-},
-		files: {
-	type: 'array',
-	contains: {
-		type: 'FileRead',
-	},
-	default: [],
-},
-	},
-} as const;
-
-export const $DocumentUpdate = {
-	properties: {
-		title: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		url: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		content_type: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		source: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		top_image: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		text_content: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		summary: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		insertion_date: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-	format: 'date-time',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
 export const $EnhancedClassificationResultRead = {
-	description: `Adds a processed 'display_value' based on the raw 'value' and scheme.`,
+	description: `Adds a processed 'display_value' based on the raw 'value'.`,
 	properties: {
-		document_id: {
+		datarecord_id: {
 	type: 'number',
 	isRequired: true,
 },
@@ -757,13 +719,9 @@ export const $EnhancedClassificationResultRead = {
 	type: 'number',
 	isRequired: true,
 },
-		run_id: {
-	type: 'any-of',
-	contains: [{
+		job_id: {
 	type: 'number',
-}, {
-	type: 'null',
-}],
+	isRequired: true,
 },
 		value: {
 	type: 'dictionary',
@@ -778,14 +736,6 @@ export const $EnhancedClassificationResultRead = {
 },
 		id: {
 	type: 'number',
-	isRequired: true,
-},
-		document: {
-	type: 'DocumentRead',
-	isRequired: true,
-},
-		scheme: {
-	type: 'ClassificationSchemeRead',
 	isRequired: true,
 },
 		display_value: {
@@ -816,71 +766,6 @@ export const $EnhancedClassificationResultRead = {
 export const $FieldType = {
 	type: 'Enum',
 	enum: ['int','str','List[str]','List[Dict[str, any]]',],
-} as const;
-
-export const $FileRead = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		filetype: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		size: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		url: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		caption: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		media_type: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		top_image: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		document_id: {
-	type: 'number',
-	isRequired: true,
-},
-	},
 } as const;
 
 export const $FileUploadResponse = {
@@ -1041,76 +926,6 @@ export const $Request = {
 		query_type: {
 	type: 'QueryType',
 	isRequired: true,
-},
-	},
-} as const;
-
-export const $SavedResultSetCreate = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		document_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	default: [],
-},
-		scheme_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	default: [],
-},
-	},
-} as const;
-
-export const $SavedResultSetRead = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		document_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	default: [],
-},
-		scheme_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	default: [],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		workspace_id: {
-	type: 'number',
-	isRequired: true,
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		results: {
-	type: 'array',
-	contains: {
-		type: 'ClassificationResultRead',
-	},
 },
 	},
 } as const;
@@ -1408,17 +1223,6 @@ export const $WorkspaceCreate = {
 	type: 'null',
 }],
 },
-		sources: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'string',
-},
-}, {
-	type: 'null',
-}],
-},
 		icon: {
 	type: 'any-of',
 	contains: [{
@@ -1444,17 +1248,6 @@ export const $WorkspaceRead = {
 	type: 'null',
 }],
 },
-		sources: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'string',
-},
-}, {
-	type: 'null',
-}],
-},
 		icon: {
 	type: 'any-of',
 	contains: [{
@@ -1463,7 +1256,7 @@ export const $WorkspaceRead = {
 	type: 'null',
 }],
 },
-		uid: {
+		id: {
 	type: 'number',
 	isRequired: true,
 },
@@ -1487,10 +1280,6 @@ export const $WorkspaceRead = {
 export const $WorkspaceUpdate = {
 	properties: {
 		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1498,13 +1287,10 @@ export const $WorkspaceUpdate = {
 	type: 'null',
 }],
 },
-		sources: {
+		description: {
 	type: 'any-of',
 	contains: [{
-	type: 'array',
-	contains: {
 	type: 'string',
-},
 }, {
 	type: 'null',
 }],

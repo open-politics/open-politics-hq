@@ -42,6 +42,7 @@ interface Entity {
 
 interface Content {
   id: string;
+  datasource_id?: number;
   url: string;
   title: string | null;
   content_type: string;

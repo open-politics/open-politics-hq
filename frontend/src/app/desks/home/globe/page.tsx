@@ -11,8 +11,6 @@ import { useLayoutStore } from '@/zustand_stores/storeLayout';
 import { useArticleTabNameStore } from '@/hooks/useArticleTabNameStore';
 import { Announcement } from '@/components/collection/unsorted/announcement';
 import { FileText } from 'lucide-react';
-import DocumentsOverlay from '@/components/collection/workspaces/documents/DocumentsOverlay';
-import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 
 const GlobePage = () => {
   const geojsonUrl = '/api/v1/locations/geojson/';
@@ -32,8 +30,8 @@ const GlobePage = () => {
   const { setActiveTab: layoutSetActiveTab } = useLayoutStore();
   const { setActiveTab: articleSetActiveTab } = useArticleTabNameStore();
   const [isLoading, setIsLoading] = useState(true);
-  const [isDocumentsOpen, setIsDocumentsOpen] = useState(false);
-  const { documents } = useDocumentStore();
+  const documents: any[] = []; // Placeholder
+  const [previousLocation, setPreviousLocation] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -82,7 +80,13 @@ const GlobePage = () => {
   }, []);
 
   const handleLocationClick = async (locationName: string) => {
+    // Skip if it's the same location being clicked repeatedly
+    if (locationName === previousLocation && isVisible) {
+      return;
+    }
+    
     setLocation(locationName);
+    setPreviousLocation(locationName);
     setIsVisible(true);
     setHasClicked(true);
     setLocationKey(prevKey => prevKey + 1);
@@ -173,13 +177,13 @@ const GlobePage = () => {
             {hasClicked && isVisible && (
               <motion.div
                 initial={{ opacity: 0 }}
-                className="absolute top-0 bottom-0 -left-2 md:right-0 w-full sm:w-3/4 lg:w-1/2 md-0 md:m-4 z-50"
+                className="absolute top-0 bottom-0 right-0 md:right-0 w-full sm:w-3/4 lg:w-1/2 md-0 md:m-4 z-50"
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
               >
                 <motion.div
-                  className="rounded-lg w-full h-full shadow-lg"
+                  className="rounded-xl w-full h-full shadow-lg"
                   initial={{ scale: 0.9 }}
                   animate={{ scale: 1 }}
                   exit={{ scale: 0.9 }}
@@ -198,26 +202,6 @@ const GlobePage = () => {
               </motion.div>
             )}
           </AnimatePresence>
-
-          {/* Add the DocumentsOverlay component */}
-          <DocumentsOverlay
-            open={isDocumentsOpen}
-            onClose={() => setIsDocumentsOpen(false)}
-            onDocumentSelect={() => {}}
-          />
-
-          {/* Add a button to open the documents overlay */}
-          <button
-            onClick={() => setIsDocumentsOpen(true)}
-            className="fixed bottom-4 right-4 p-3 bg-highlighted rounded-full shadow-lg transition-colors flex items-center gap-2"
-          >
-            <FileText className="w-6 h-6" />
-            {documents.length > 0 && (
-              <span className="bg-highlighted text-white text-xs px-1.5 py-0.5 rounded-full">
-                {documents.length}
-              </span>
-            )}
-          </button>
         </>
       )}
     </div>

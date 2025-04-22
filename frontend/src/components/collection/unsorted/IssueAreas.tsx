@@ -251,7 +251,7 @@ export function IssueAreas({ locationName, results, summary, includeSummary, hig
   return (
     <div className="h-full flex flex-col">
       <div className="flex justify-between mb-2 flex-shrink-0">
-        <span className="text-green-500 font-medium">{locationName}</span>
+        <span className="text-green-500 font-medium ml-2">{locationName}</span>
       </div>
       <Tabs 
         value={activeTab} 

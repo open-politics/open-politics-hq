@@ -19,7 +19,7 @@ interface GeoDataState {
   invalidateCache: () => void;
 }
 
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 const sanitizeIsoDate = (date: string | undefined) => {
   if (!date) return undefined;
@@ -42,11 +42,12 @@ export const useGeoDataStore = create<GeoDataState>()(
         const now = Date.now();
 
         if (!forceRefresh && cachedData && (now - cachedData.timestamp) < CACHE_DURATION) {
-          console.log('Using cached baseline GeoJSON data');
+          console.log(`[GeoDataStore] Using cached baseline GeoJSON data (age: ${Math.round((now - cachedData.timestamp)/1000)}s)`);
           set({ geojsonData: cachedData.data });
           return;
         }
 
+        console.log(`[GeoDataStore] Fetching fresh baseline GeoJSON data (limit: ${limit})`);
         set({ isLoading: true, error: null });
         try {
           const response = await axios.get(`/api/geojson/baseline?limit=${limit}`);
@@ -59,6 +60,7 @@ export const useGeoDataStore = create<GeoDataState>()(
             isLoading: false
           });
         } catch (error) {
+          console.error('[GeoDataStore] Failed to fetch baseline GeoJSON data:', error);
           set({ error: 'Failed to fetch baseline GeoJSON data', isLoading: false });
         }
       },
@@ -71,11 +73,12 @@ export const useGeoDataStore = create<GeoDataState>()(
         const now = Date.now();
 
         if (!forceRefresh && cachedData && (now - cachedData.timestamp) < CACHE_DURATION) {
-          console.log('Using cached event GeoJSON data');
+          console.log(`[GeoDataStore] Using cached ${eventType} GeoJSON data (age: ${Math.round((now - cachedData.timestamp)/1000)}s)`);
           set({ eventGeojsonData: cachedData.data });
           return;
         }
 
+        console.log(`[GeoDataStore] Fetching fresh ${eventType} GeoJSON data`);
         set({ isLoading: true, error: null });
         try {
           const params = new URLSearchParams({
@@ -95,11 +98,13 @@ export const useGeoDataStore = create<GeoDataState>()(
             isLoading: false
           });
         } catch (error) {
-          set({ error: 'Failed to fetch event GeoJSON data', isLoading: false });
+          console.error(`[GeoDataStore] Failed to fetch ${eventType} GeoJSON data:`, error);
+          set({ error: `Failed to fetch ${eventType} GeoJSON data`, isLoading: false });
         }
       },
 
       invalidateCache: () => {
+        console.log('[GeoDataStore] Invalidating all GeoJSON caches');
         set({
           baselineGeoJsonCache: {},
           eventGeoJsonCache: {}

@@ -45,12 +45,11 @@ export function WorkspaceSwitcher() {
   }, [workspaces.length, fetchWorkspaces])
 
   // Handle create and switch
-  const handleCreateWorkspace = async (name: string, description: string, sources: string[], icon: string) => {
+  const handleCreateWorkspace = async (name: string, description: string, icon: string) => {
     try {
       await createWorkspace({
         name,
         description,
-        sources,
         icon,
       });
       // The createWorkspace function in the store already sets the new workspace as active
@@ -98,15 +97,15 @@ export function WorkspaceSwitcher() {
             </DropdownMenuLabel>
             {workspaces.map((workspace) => (
               <DropdownMenuItem
-                key={workspace.uid}
-                onClick={() => setActiveWorkspace(workspace.uid)}
+                key={workspace.id}
+                onClick={() => setActiveWorkspace(workspace.id)}
                 className="gap-2 p-2 flex items-center"
               >
                 {workspace.icon && (
                   <IconRenderer className="size-4 text-secondary-500" icon={workspace.icon} />
                 )}
                 <span>{workspace.name}</span>
-                <DropdownMenuShortcut>⌘{workspace.uid}</DropdownMenuShortcut>
+                <DropdownMenuShortcut>⌘{workspace.id}</DropdownMenuShortcut>
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />

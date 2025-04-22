@@ -1,23 +1,43 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import { useToast } from '@/components/ui/use-toast';
-import { 
-  ClassifiableContent, 
-  ClassificationResult, 
-  ClassificationScheme,
-  ClassificationRun,
-  FormattedClassificationResult,
-  ClassifiableDocument
-} from '@/lib/classification/types';
-import { ClassificationService } from '@/lib/classification/service';
-import { ClassificationRunRead, ClassificationRunUpdate } from '@/client/models';
+import { toast as sonnerToast } from 'sonner';
+import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
+import { useClassificationJobsStore, useClassificationJobsActions } from '@/zustand_stores/storeClassificationJobs';
+import {
+  ClassificationSchemeRead,
+  ClassificationSchemeCreate,
+  ClassificationSchemeUpdate,
+  ClassificationJobRead,
+  ClassificationJobCreate,
+  ClassificationJobUpdate,
+  DataSourceRead,
+  EnhancedClassificationResultRead,
+  ClassificationJobStatus,
+  WorkspaceRead,
+  DataRecordRead,
+} from '@/client/models';
+import { FormattedClassificationResult, SchemeFormData, ClassificationJobParams, ClassificationScheme } from '@/lib/classification/types';
 import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
+import {
+  ClassificationSchemesService,
+  ClassificationJobsService,
+  ClassificationResultsService,
+  DataSourcesService,
+  DataRecordsService,
+} from '@/client/services';
+import {
+  adaptEnhancedResultReadToFormattedResult,
+  adaptSchemeReadToSchemeFormData,
+  adaptSchemeFormDataToSchemeCreate,
+  adaptSchemeReadToScheme,
+} from '@/lib/classification/adapters';
 
 // Global cache for schemes to prevent redundant API calls
 const schemesCache = new Map<number, {
   timestamp: number;
-  schemes: ClassificationScheme[];
+  schemes: ClassificationSchemeRead[];
 }>();
 
 // Cache expiration time (5 minutes)
@@ -26,147 +46,288 @@ const SCHEMES_CACHE_EXPIRATION = 5 * 60 * 1000;
 // Define the options for the hook
 interface UseClassificationSystemOptions {
   autoLoadSchemes?: boolean;
-  autoLoadDocuments?: boolean;
-  autoLoadRuns?: boolean;
-  contentId?: number;
-  runId?: number;
-  useCache?: boolean; // New option to control caching behavior
+  autoLoadDataSources?: boolean;
+  autoLoadJobs?: boolean;
+  dataSourceId?: number;
+  jobId?: number;
+  useCache?: boolean;
 }
 
 // Define the return type for the hook
 interface UseClassificationSystemResult {
   // Schemes
-  schemes: ClassificationScheme[];
+  schemes: ClassificationSchemeRead[];
   isLoadingSchemes: boolean;
-  loadSchemes: () => Promise<void>;
-  createScheme: (schemeData: any) => Promise<ClassificationScheme | null>;
-  updateScheme: (schemeId: number, schemeData: any) => Promise<ClassificationScheme | null>;
+  loadSchemes: (forceRefresh?: boolean) => Promise<void>;
+  createScheme: (schemeData: SchemeFormData) => Promise<ClassificationSchemeRead | null>;
+  updateScheme: (schemeId: number, schemeData: SchemeFormData) => Promise<ClassificationSchemeRead | null>;
   deleteScheme: (schemeId: number) => Promise<boolean>;
-  
-  // Documents
-  documents: ClassifiableDocument[];
-  selectedDocument: ClassifiableDocument | null;
-  isLoadingDocuments: boolean;
-  loadDocuments: () => Promise<void>;
-  loadDocument: (documentId: number) => Promise<ClassifiableDocument | null>;
-  createDocument: (documentData: Partial<ClassifiableDocument>) => Promise<ClassifiableDocument | null>;
-  setSelectedDocument: (document: ClassifiableDocument | null) => void;
-  
+
+  // DataSources
+  dataSources: DataSourceRead[];
+  selectedDataSource: DataSourceRead | null;
+  isLoadingDataSources: boolean;
+  loadDataSources: () => Promise<void>;
+  loadDataSource: (dataSourceId: number) => Promise<DataSourceRead | null>;
+  setSelectedDataSource: (dataSource: DataSourceRead | null) => void;
+
   // Results
   results: FormattedClassificationResult[];
   isLoadingResults: boolean;
-  loadResults: (contentId?: number, runId?: number) => Promise<void>;
-  loadResultsByRun: (runId: number, workspaceId?: number) => Promise<FormattedClassificationResult[]>;
-  clearResultsCache: (contentId: number, runId?: number) => void;
+  loadResults: (options?: { datarecordId?: number; schemeId?: number; jobId?: number; useCache?: boolean }) => Promise<void>;
+  loadResultsByJob: (jobId: number, workspaceId?: number) => Promise<FormattedClassificationResult[]>;
+  clearResultsCache: (key: string) => void;
   loadResultsByScheme: (schemeId: number) => Promise<FormattedClassificationResult[]>;
-  
+
   // Classification
   isClassifying: boolean;
-  classifyContent: (content: ClassifiableContent, schemeId: number, runId?: number, runName?: string, runDescription?: string) => Promise<FormattedClassificationResult | null>;
-  batchClassify: (contents: ClassifiableContent[], schemeId: number, runName?: string, runDescription?: string) => Promise<FormattedClassificationResult[]>;
-  
-  // Runs
-  runs: ClassificationRunRead[];
-  activeRun: ClassificationRunRead | null;
-  isLoadingRuns: boolean;
-  isCreatingRun: boolean;
-  loadRuns: () => Promise<void>;
-  loadRun: (runId: number) => Promise<{
-    run: ClassificationRunRead;
-    results: FormattedClassificationResult[];
-    schemes: ClassificationScheme[];
-  } | null>;
-  createRun: (contents: ClassifiableContent[], schemeIds: number[], options?: {
-    name?: string;
-    description?: string;
-  }) => Promise<ClassificationRunRead | null>;
-  setActiveRun: (run: ClassificationRunRead | null) => void;
-  updateRun: (runId: number, data: ClassificationRunUpdate) => Promise<ClassificationRunRead | null>;
-  deleteRun: (runId: number) => Promise<boolean>;
-  
+  startClassificationJob: (jobId: number) => Promise<boolean>;
+  pollJobStatus: (jobId: number, workspaceId: number) => void;
+
+  // Jobs
+  jobs: ClassificationJobRead[];
+  activeJob: ClassificationJobRead | null;
+  activeJobDataRecords: DataRecordRead[];
+  isLoadingJobs: boolean;
+  isCreatingJob: boolean;
+  loadJobs: () => Promise<void>;
+  loadJob: (jobId: number) => Promise<void>;
+  createJob: (params: ClassificationJobParams) => Promise<ClassificationJobRead | null>;
+  setActiveJob: (job: ClassificationJobRead | null) => void;
+  updateJob: (jobId: number, data: ClassificationJobUpdate) => Promise<ClassificationJobRead | null>;
+  deleteJob: (jobId: number) => Promise<boolean>;
+
   // Default scheme management
   getDefaultSchemeId: () => number | null;
   setDefaultSchemeId: (schemeId: number) => void;
-  
+
   // Error handling
   error: string | null;
   setError: (error: string | null) => void;
-  
+
   // Classification Progress State
   classificationProgress: { current: number; total: number } | null;
+
+  // *** ADD isLoadingJobData to the interface ***
+  isLoadingJobData: boolean;
 }
 
 /**
  * A consolidated hook for all classification operations
- * Replaces useClassification, useClassificationRun, useDocuments, and useClassify
  */
 export function useClassificationSystem(options: UseClassificationSystemOptions = {}): UseClassificationSystemResult {
   const { activeWorkspace } = useWorkspaceStore();
   const { apiKeys, selectedProvider, selectedModel } = useApiKeysStore();
+  const {
+    dataSources,
+    fetchDataSources: loadStoreDataSources,
+    isLoading: isLoadingDataSourcesStore,
+  } = useDataSourceStore();
+  const {
+    classificationJobs,
+    isLoading: isLoadingJobsStore,
+    error: jobsError,
+  } = useClassificationJobsStore();
+  const {
+    fetchClassificationJobs: loadStoreJobs,
+    addClassificationJob: createStoreJob,
+    updateClassificationJob: updateStoreJob,
+    deleteClassificationJob: deleteStoreJob,
+    getClassificationJobById: getJobById,
+  } = useClassificationJobsActions();
   const { toast } = useToast();
   const classificationSettings = useClassificationSettingsStore();
-  
+
   // State for schemes
-  const [schemes, setSchemes] = useState<ClassificationScheme[]>([]);
+  const [schemes, setSchemes] = useState<ClassificationSchemeRead[]>([]);
   const [isLoadingSchemes, setIsLoadingSchemes] = useState(false);
-  
-  // State for documents
-  const [documents, setDocuments] = useState<ClassifiableDocument[]>([]);
-  const [selectedDocument, setSelectedDocument] = useState<ClassifiableDocument | null>(null);
-  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
-  
-  // State for runs
-  const [runs, setRuns] = useState<ClassificationRunRead[]>([]);
-  const [activeRun, setActiveRun] = useState<ClassificationRunRead | null>(null);
-  const [isLoadingRuns, setIsLoadingRuns] = useState(false);
-  
+
+  // State for DataSources
+  const [selectedDataSource, setSelectedDataSourceState] = useState<DataSourceRead | null>(null);
+
+  // State for Jobs
+  const [activeJobState, setActiveJobState] = useState<ClassificationJobRead | null>(null);
+  const [isLoadingJobsState, setIsLoadingJobsState] = useState(false);
+  const [isLoadingJobDataState, setIsLoadingJobDataState] = useState(false);
+  const [activeJobDataRecords, setActiveJobDataRecords] = useState<DataRecordRead[]>([]);
+
   // State for results
   const [results, setResults] = useState<FormattedClassificationResult[]>([]);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
-  
+
   // State for operations
-  const [isClassifying, setIsClassifying] = useState(false);
-  const [isCreatingRun, setIsCreatingRun] = useState(false);
+  const [isClassifyingState, setIsClassifyingState] = useState(false);
+  const [isCreatingJob, setIsCreatingJob] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Classification Progress State
   const [classificationProgress, setClassificationProgress] = useState<{ current: number; total: number } | null>(null);
-  
+
+  // Polling state
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const activePollingJobIdRef = useRef<number | null>(null);
+
   // Get workspace ID as a number
   const getWorkspaceId = useCallback(() => {
-    if (!activeWorkspace?.uid) {
+    if (!activeWorkspace?.id) {
       throw new Error('No active workspace');
     }
-    
-    return typeof activeWorkspace.uid === 'string' 
-      ? parseInt(activeWorkspace.uid) 
-      : activeWorkspace.uid;
-  }, [activeWorkspace?.uid]);
-  
-  // Load classification schemes
-  const loadSchemes = useCallback(async () => {
-    if (!activeWorkspace?.uid) return;
-    
+
+    return activeWorkspace.id;
+  }, [activeWorkspace?.id]);
+
+  // --- Polling Logic ---
+  // *** Declare stopPolling BEFORE pollJobStatus ***
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+      activePollingJobIdRef.current = null;
+      setIsClassifyingState(false);
+      console.log("[Polling] Polling stopped.");
+    }
+  }, []); // Empty dependency array as it doesn't depend on component state
+
+  // *** Declare loadResultsByJob BEFORE pollJobStatus ***
+  const loadResultsByJob = useCallback(async (jobId: number, workspaceId?: number): Promise<FormattedClassificationResult[]> => {
+    const targetWorkspaceId = workspaceId ?? activeWorkspace?.id;
+    if (!targetWorkspaceId) {
+      setError("Workspace ID needed to load job results.");
+      return [];
+    }
+    setIsLoadingResults(true);
+    setError(null);
     try {
-      const workspaceId = getWorkspaceId();
-      
-      // Check if we should use cache and if there's a valid cached entry
-      if (options.useCache !== false) {
-        const cachedData = schemesCache.get(workspaceId);
-        
-        if (cachedData && (Date.now() - cachedData.timestamp < SCHEMES_CACHE_EXPIRATION)) {
-          console.log('Using cached schemes for workspace:', workspaceId);
-          setSchemes(cachedData.schemes);
-          return;
+      const apiResults = await ClassificationResultsService.getJobResults({ workspaceId: targetWorkspaceId, jobId, limit: 5000 });
+      const formatted = apiResults.map(r => ({
+          id: r.id,
+          datarecord_id: r.datarecord_id,
+          scheme_id: r.scheme_id,
+          job_id: r.job_id,
+          value: r.value,
+          timestamp: r.timestamp || new Date().toISOString(),
+          displayValue: (r as any).display_value ?? null,
+      }));
+      setResults(formatted); // Update main results state
+      return formatted;
+    } catch (err: any) {
+      console.error(`Error loading results for job ${jobId}:`, err);
+      const detail = err.body?.detail || 'Failed to load job results.';
+      setError(detail);
+      toast({ title: 'Error Loading Job Results', description: detail, variant: 'destructive' });
+      return [];
+    } finally {
+      setIsLoadingResults(false);
+    }
+  }, [activeWorkspace?.id, toast, setError]); // Keep activeWorkspace?.id dependency, add setError
+
+  const pollJobStatus = useCallback((jobId: number, workspaceId: number) => {
+    // Prevent multiple polls
+    if (pollingIntervalRef.current && activePollingJobIdRef.current === jobId) {
+      console.log(`[Polling] Polling already active for job ${jobId}`);
+      return;
+    }
+
+    // Stop any existing poll before starting a new one
+    stopPolling(); // Now declared above
+
+    console.log(`[Polling] Starting polling for job ${jobId} in workspace ${workspaceId}...`);
+    activePollingJobIdRef.current = jobId;
+    setIsClassifyingState(true); // Indicate polling is active
+
+    const poll = async () => {
+      try {
+        console.log(`[Polling] Fetching status for job ${jobId}...`);
+        // Use getClassificationJob from the service to get the latest status
+        const currentJob = await ClassificationJobsService.getClassificationJob({ workspaceId, jobId });
+
+        // Update job in the zustand store AND local activeJobState
+        updateStoreJob(workspaceId, jobId, currentJob);
+        setActiveJobState(currentJob); // Keep local state in sync
+
+        // Check status and stop polling if terminal state reached
+        const status = currentJob.status; // Use local variable for comparison
+        if (status === 'completed' || status === 'failed' || status === 'completed_with_errors')
+        {
+          console.log(`[Polling] Job ${jobId} reached terminal state: ${status}. Stopping poll.`);
+          stopPolling();
+          // Load results for completed jobs
+          if (status === 'completed' || status === 'completed_with_errors') {
+             await loadResultsByJob(jobId, workspaceId);
+          }
+          // Show toast based on final status
+          if (status === 'completed') {
+            sonnerToast.success(`Job "${currentJob.name}" completed successfully.`);
+          } else if (status === 'failed') {
+            sonnerToast.error(`Job "${currentJob.name}" failed.`, { description: currentJob.error_message });
+          } else if (status === 'completed_with_errors') {
+            sonnerToast.warning(`Job "${currentJob.name}" completed with errors.`, { description: currentJob.error_message || "Some classifications may have failed." });
+          }
+        } else {
+          console.log(`[Polling] Job ${jobId} status is ${status}. Continuing poll...`);
         }
+      } catch (err: any) {
+        console.error(`[Polling] Error polling job ${jobId}:`, err);
+        const detail = err.body?.detail || err.message || 'Polling failed';
+        setError(detail); // Set error state
+        // Stop polling on error to prevent repeated failures
+        stopPolling();
+        sonnerToast.error('Polling Error', { description: `Could not fetch job status: ${detail}` });
       }
-      
-      setIsLoadingSchemes(true);
-      setError(null);
-      
-      const loadedSchemes = await ClassificationService.getSchemes(workspaceId);
+    };
+
+    // Initial poll immediately, then set interval
+    poll();
+    pollingIntervalRef.current = setInterval(poll, 5000); // Poll every 5 seconds
+
+  }, [stopPolling, updateStoreJob, sonnerToast, loadResultsByJob, setError]); // Add setError to dependencies
+
+  // Ensure polling stops on unmount or workspace change
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, [stopPolling, activeWorkspace?.id]);
+  // --- End Polling Logic ---
+
+  // Load classification schemes
+  const loadSchemes = useCallback(async (forceRefresh = false) => {
+    if (!activeWorkspace?.id) return;
+
+    const workspaceId = getWorkspaceId();
+
+    // *** START EDIT: Add check for existing schemes in local state ***
+    // If not forcing refresh and schemes for this workspace are already loaded, return early.
+    if (!forceRefresh && schemes.length > 0) {
+        // Optional: Add a check here to ensure the loaded schemes actually belong
+        // to the current workspace if that becomes an issue, but for now,
+        // assume the state is correctly tied to the activeWorkspace.
+        // console.log('Schemes already loaded in state for workspace:', workspaceId);
+        return;
+    }
+    // *** END EDIT ***
+
+    // Cache check
+    if (!forceRefresh && options.useCache !== false) {
+      const cachedData = schemesCache.get(workspaceId);
+
+      if (cachedData && (Date.now() - cachedData.timestamp < SCHEMES_CACHE_EXPIRATION)) {
+        console.log('Using cached schemes for workspace:', workspaceId);
+        setSchemes(cachedData.schemes);
+        return;
+      }
+    }
+
+    setIsLoadingSchemes(true);
+    setError(null);
+
+    try {
+      const loadedSchemes = await ClassificationSchemesService.readClassificationSchemes({
+        workspaceId,
+        limit: 1000
+      });
       setSchemes(loadedSchemes);
-      
+
       // Cache the schemes for future use
       if (options.useCache !== false) {
         schemesCache.set(workspaceId, {
@@ -176,1104 +337,566 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       }
     } catch (err: any) {
       console.error('Error loading schemes:', err);
-      setError('Failed to load classification schemes');
-      toast({
-        title: 'Error',
-        description: 'Failed to load classification schemes',
-        variant: 'destructive',
-      });
+      const detail = err.body?.detail || 'Failed to load classification schemes';
+      setError(detail);
+      toast({ title: 'Error Loading Schemes', description: detail, variant: 'destructive' });
     } finally {
       setIsLoadingSchemes(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast, options.useCache]);
-  
+  }, [activeWorkspace?.id, getWorkspaceId, toast, options.useCache, schemes]);
+
   // Clear schemes cache
   const clearSchemesCache = useCallback((workspaceId?: number) => {
-    if (workspaceId) {
-      schemesCache.delete(workspaceId);
+    const idToClear = workspaceId ?? activeWorkspace?.id;
+    if (idToClear) {
+      schemesCache.delete(idToClear);
     } else {
       schemesCache.clear();
     }
-  }, []);
-  
-  // Load documents
-  const loadDocuments = useCallback(async () => {
-    if (!activeWorkspace?.uid) return;
-    
-    setIsLoadingDocuments(true);
-    setError(null);
-    
+  }, [activeWorkspace?.id]);
+
+  // Load DataSources
+  const loadDataSources = useCallback(async () => {
+    if (!activeWorkspace?.id) return;
+
     try {
-      const workspaceId = getWorkspaceId();
-      const loadedDocuments = await ClassificationService.getDocuments(workspaceId);
-      setDocuments(loadedDocuments);
-    } catch (err: any) {
-      console.error('Error loading documents:', err);
-      setError('Failed to load documents');
-      toast({
-        title: 'Error',
-        description: 'Failed to load documents',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoadingDocuments(false);
+      await loadStoreDataSources();
+    } catch (err) {
+      console.error("Error loading data sources via store:", err);
+      setError("Failed to load data sources");
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Load a specific document
-  const loadDocument = useCallback(async (documentId: number) => {
-    if (!activeWorkspace?.uid) return null;
-    
-    setIsLoadingDocuments(true);
+  }, [activeWorkspace?.id, loadStoreDataSources]);
+
+  // Load a specific DataSource
+  const loadDataSource = useCallback(async (dataSourceId: number): Promise<DataSourceRead | null> => {
+    const dataSource = dataSources.find(ds => ds.id === dataSourceId);
+    if (dataSource) {
+        setSelectedDataSourceState(dataSource);
+        return dataSource;
+    } else {
+        console.warn(`DataSource ${dataSourceId} not found in store. Triggering store load.`);
+        await loadDataSources();
+        const reloadedDataSource = useDataSourceStore.getState().dataSources.find(ds => ds.id === dataSourceId);
+        if(reloadedDataSource) {
+            setSelectedDataSourceState(reloadedDataSource);
+            return reloadedDataSource;
+        } else {
+            setError(`Data Source ${dataSourceId} not found.`);
+            setSelectedDataSourceState(null);
+            return null;
+        }
+    }
+  }, [dataSources, loadDataSources]);
+
+  // === Define all callback functions here ===
+
+  const loadJobs = useCallback(async () => {
+    if (!activeWorkspace?.id) return;
+    setIsLoadingJobsState(true);
     setError(null);
-    
     try {
-      const workspaceId = getWorkspaceId();
-      const document = await ClassificationService.getDocument(workspaceId, documentId);
-      setSelectedDocument(document);
-      return document;
+      await loadStoreJobs(activeWorkspace.id);
     } catch (err: any) {
-      console.error('Error loading document:', err);
-      setError('Failed to load document');
-      toast({
-        title: 'Error',
-        description: 'Failed to load document',
-        variant: 'destructive',
-      });
-      return null;
+      console.error('Error loading classification jobs:', err);
+      setError('Failed to load classification jobs');
     } finally {
-      setIsLoadingDocuments(false);
+      setIsLoadingJobsState(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Load classification runs
-  const loadRuns = useCallback(async () => {
-    if (!activeWorkspace?.uid) return;
-    
-    setIsLoadingRuns(true);
-    setError(null);
-    
-    try {
-      const workspaceId = getWorkspaceId();
-      const loadedRuns = await ClassificationService.getRunsAPI(workspaceId);
-      setRuns(loadedRuns);
-    } catch (err: any) {
-      console.error('Error loading runs:', err);
-      setError('Failed to load classification runs');
-      toast({
-        title: 'Error',
-        description: 'Failed to load classification runs',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoadingRuns(false);
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Load a specific run
-  const loadRun = useCallback(async (runId: number) => {
-    if (!activeWorkspace?.uid) return null;
-    
-    setIsLoadingRuns(true);
-    setIsLoadingResults(true);
-    setError(null);
-    
-    try {
-      const workspaceId = getWorkspaceId();
-      
-      // Fetch run details and results separately
-      // 1. Fetch Run Details
-      const runDetailsRead = await ClassificationService.getRunAPI(workspaceId, runId);
+  }, [activeWorkspace?.id, loadStoreJobs]);
 
-      // 2. Fetch Results by Run ID
-      const runResults = await ClassificationService.getResultsByRunAPI(workspaceId, runId);
-
-      if (runResults.length === 0) {
-        console.warn(`No results found for run ID ${runId}, but run exists.`);
-        // Still set the active run, but results will be empty
-        setActiveRun(runDetailsRead);
-        setResults([]);
-        // Since there are no results, we can't infer schemes reliably. Return empty schemes array.
-        return { run: runDetailsRead, results: [], schemes: [] };
-      }
-
-      // 3. Extract unique scheme IDs
-      const schemeIds = [...new Set(runResults.map(r => r.scheme_id))].filter(id => typeof id === 'number') as number[];
-
-      // 4. Fetch Schemes (ensure they are loaded or fetch missing ones)
-      const currentSchemesMap = new Map(schemes.map(s => [s.id, s]));
-      const schemesToFetch = schemeIds.filter(id => !currentSchemesMap.has(id));
-
-      if (schemesToFetch.length > 0) {
-        const fetchedSchemes = await Promise.all(
-          schemesToFetch.map(id => ClassificationService.getScheme(workspaceId, id))
-        );
-        fetchedSchemes.forEach(s => currentSchemesMap.set(s.id, s));
-        // Update global schemes state if new ones were fetched
-        setSchemes(Array.from(currentSchemesMap.values()));
-      }
-      const runSchemes = schemeIds.map(id => currentSchemesMap.get(id)).filter(Boolean) as ClassificationScheme[];
-
-      // 5. Format Results
-      const formattedResults = runResults
-        .map(result => {
-          const scheme = runSchemes.find(s => s.id === result.scheme_id);
-          // Adapt ClassificationResultRead to internal ClassificationResult type for formatting
-          const resultToFormat: ClassificationResult = {
-              id: result.id,
-              document_id: result.document_id,
-              scheme_id: result.scheme_id,
-              value: result.value || {},
-              timestamp: result.timestamp || new Date().toISOString(),
-              run_id: result.run_id || runId,
-              // Use name/description from runDetailsRead (assuming they exist despite TS error)
-              run_name: (runDetailsRead as any).name || `Run ${runId}`, 
-              run_description: (runDetailsRead as any).description || undefined, 
-          };
-          return scheme ? ClassificationService.formatResult(resultToFormat, scheme) : null;
-        })
-        .filter(Boolean) as FormattedClassificationResult[];
-
-      // 6. Update State
-      setActiveRun(runDetailsRead);
-      setResults(formattedResults);
-
-      return { run: runDetailsRead, results: formattedResults, schemes: runSchemes };
-    } catch (err: any) {
-      console.error('Error loading run:', err);
-      setError('Failed to load classification run');
-      toast({
-        title: 'Error',
-        description: 'Failed to load classification run',
-        variant: 'destructive',
-      });
-      return null;
-    } finally {
-      setIsLoadingRuns(false);
-      setIsLoadingResults(false);
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast, schemes]);
-  
-  // Load classification results
-  const loadResults = useCallback(async (contentId?: number, runId?: number) => {
-    if (!activeWorkspace?.uid) return;
-    
-    setIsLoadingResults(true);
-    setError(null);
-    
-    try {
-      const workspaceId = getWorkspaceId();
-      
-      // Use getResultsAPI which should return ClassificationResultRead[]
-      const apiResults = await ClassificationService.getResults(workspaceId, {
-        documentId: contentId,
-        runId
-      });
-      
-      // Fetch run details if runId is provided to get accurate name/description
-      let runDetailsRead: ClassificationRunRead | null = null;
-      if (runId && apiResults.length > 0) {
-          runDetailsRead = activeRun === runId ? activeRun : await ClassificationService.getRunAPI(workspaceId, runId);
-      }
-
-      // Format results with their display values
-      const formattedResults = await Promise.all(
-        apiResults.map(async result => {
-          // Find the scheme for this result
-          const schemeId = result.scheme_id;
-          let scheme = schemes.find(s => s.id === schemeId);
-          
-          // If scheme not found in local state, fetch it
-          if (!scheme) {
-            try {
-              scheme = await ClassificationService.getScheme(workspaceId, schemeId);
-              
-              // Update schemes state with the new scheme
-              setSchemes(prevSchemes => [...prevSchemes, scheme!]);
-            } catch (err) {
-              console.error(`Error fetching scheme ${schemeId}:`, err);
-              return null;
-            }
-          }
-          
-          if (!scheme) return null;
-          
-          // Adapt ClassificationResultRead to internal ClassificationResult type for formatting
-          const resultToFormat: ClassificationResult = {
-            id: result.id,
-            document_id: result.document_id,
-            scheme_id: result.scheme_id,
-            value: result.value || {},
-            timestamp: result.timestamp || new Date().toISOString(),
-            run_id: result.run_id || runId || 0,
-            // Use run details if available, otherwise fallback
-            run_name: (runDetailsRead as any)?.name || (result.run_id ? `Run ${result.run_id}` : 'Unknown Run'),
-            run_description: (runDetailsRead as any)?.description || undefined,
-          };
-
-          return ClassificationService.formatResult(resultToFormat, scheme);
-        })
-      );
-      
-      // Filter out null results
-      const validResults = formattedResults.filter(Boolean) as FormattedClassificationResult[];
-      
-      setResults(validResults);
-    } catch (err: any) {
-      console.error('Error loading results:', err);
-      setError('Failed to load classification results');
-      toast({
-        title: 'Error',
-        description: 'Failed to load classification results',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoadingResults(false);
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, schemes, toast, activeRun]);
-  
-  // Clear cache for a specific content
-  const clearResultsCache = useCallback((contentId: number, runId?: number) => {
-    if (!activeWorkspace?.uid) return;
-    
-    const workspaceId = getWorkspaceId();
-    ClassificationService.clearResultsCache(contentId, runId, workspaceId);
-  }, [activeWorkspace?.uid, getWorkspaceId]);
-  
-  // Classify a content item
-  const classifyContent = useCallback(async (
-    content: ClassifiableContent,
-    schemeId: number,
-    runId?: number,
-    runName?: string,
-    runDescription?: string
-  ) => {
-    if (!activeWorkspace?.uid) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace',
-        variant: 'destructive',
-      });
+  const createScheme = useCallback(async (schemeData: SchemeFormData): Promise<ClassificationSchemeRead | null> => {
+    if (!activeWorkspace?.id) {
+      setError('No active workspace selected');
       return null;
     }
-    
-    setIsClassifying(true);
+    setIsLoadingSchemes(true);
     setError(null);
-    
-    // Add optimistic update - ensure it conforms to FormattedClassificationResult
-    const tempId = Date.now(); // Use a temporary ID for the optimistic result
-    const tempResult: FormattedClassificationResult = {
-      id: tempId, 
-      document_id: content.id || 0, // Use content id or 0
-      scheme_id: schemeId,
-      timestamp: new Date().toISOString(),
-      run_id: runId || 0, // Use provided runId or 0
-      run_name: runName || 'Optimistic Classification',
-      run_description: runDescription,
-      value: {}, // Placeholder value, ensure it's a dict
-      scheme: schemes.find(s => s.id === schemeId),
-      displayValue: 'Classifying...', // Indicate loading state
-      isOptimistic: true
-    };
-    
-    // Add the optimistic result to the state
-    setResults(prev => [tempResult, ...prev.filter(r => !r.isOptimistic)]);
-
     try {
       const workspaceId = getWorkspaceId();
-      
-      // Get the API provider and model
-      const provider = selectedProvider || undefined;
-      const model = selectedModel || undefined;
-      
-      if (provider && !apiKeys[provider]) {
-        throw new Error('API key not found for selected provider');
-      }
-      
-      // Get the API key if a provider is selected
-      const apiKey = provider ? apiKeys[provider] : undefined;
-      
-      // Use our service to classify (this should hit the V2 endpoint)
-      const result = await ClassificationService.classifyContent(
-        content,
-        schemeId,
+      const newScheme = await ClassificationSchemesService.createClassificationScheme({
         workspaceId,
-        {
-          runId,
-          runName,
-          runDescription,
-          provider,
-          model,
-          apiKey,
-          onProgress: (status) => {
-            console.log(`Classification progress: ${status}`);
-          }
-        }
-      );
-      
-      // Find the scheme
-      let scheme = schemes.find(s => s.id === schemeId);
-      
-      // If scheme not found in local state, fetch it
-      if (!scheme) {
-        try {
-          scheme = await ClassificationService.getScheme(workspaceId, schemeId);
-          
-          // Update schemes state with the new scheme
-          setSchemes(prevSchemes => [...prevSchemes, scheme!]);
-        } catch (err) {
-          console.error(`Error fetching scheme ${schemeId}:`, err);
-          throw new Error(`Scheme with ID ${schemeId} not found`);
-        }
-      }
-      
-      // Remove optimistic result after completion (success or failure)
-      setResults(prev => prev.filter(r => r.id !== tempId));
-
-      // The result from classifyContent might be ClassificationResultRead, adapt it
-      const resultToFormat: ClassificationResult = {
-        id: result.id,
-        document_id: result.document_id,
-        scheme_id: result.scheme_id,
-        value: result.value || {}, // Ensure value is a dict
-        timestamp: result.timestamp || new Date().toISOString(), // Provide fallback timestamp
-        run_id: result.run_id || runId || 0, // Use passed runId if available
-        run_name: runName || (result.run_id ? `Run ${result.run_id}` : 'Classified Item'), // Use runName from function scope
-        run_description: runDescription || undefined, // Use runDescription from function scope
-      };
-      const formattedResult = ClassificationService.formatResult(resultToFormat, scheme);
-      
-      // Update results list with the actual result
-      setResults(prev => [formattedResult, ...prev]);
-      
-      toast({
-        title: 'Success',
-        description: `Classified with scheme: ${scheme.name}`,
+        requestBody: schemeData,
       });
-      
-      return formattedResult;
-    } catch (err: any) {
-      console.error('Classification error:', err);
-      setError(`Classification failed: ${err.message}`);
-      toast({
-        title: 'Classification failed',
-        description: err.message,
-        variant: 'destructive',
-      });
-      // Ensure optimistic result is removed on error
-      setResults(prev => prev.filter(r => r.id !== tempId));
-      return null;
-    } finally {
-      setIsClassifying(false);
-      // This filter might be redundant now as it's handled in try/catch, but keep for safety
-      // setResults(prev => prev.filter(r => r.id !== tempId)); 
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, schemes, toast, selectedProvider, selectedModel, apiKeys]);
-  
-  // Batch classify multiple content items
-  const batchClassify = useCallback(async (
-    contents: ClassifiableContent[],
-    schemeId: number,
-    runName?: string,
-    runDescription?: string
-  ) => {
-    if (!activeWorkspace?.uid || contents.length === 0) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace or no content to classify',
-        variant: 'destructive',
-      });
-      return [];
-    }
-    
-    setIsClassifying(true);
-    setError(null);
-    
-    try {
-      const workspaceId = getWorkspaceId();
-      
-      // Get the API provider and model
-      const provider = selectedProvider || undefined;
-      const model = selectedModel || undefined;
-      
-      if (provider && !apiKeys[provider]) {
-        throw new Error('API key not found for selected provider');
-      }
-      
-      // Get the API key if a provider is selected
-      const apiKey = provider ? apiKeys[provider] : undefined;
-      
-      // Show a toast that we're starting batch classification
-      toast({
-        title: 'Starting batch classification',
-        description: `Classifying ${contents.length} items`,
-      });
-      
-      // Use our service to batch classify (this likely calls classifyContent internally)
-      const results = await ClassificationService.batchClassify(
-        contents,
-        schemeId,
-        workspaceId,
-        {
-          runName,
-          runDescription,
-          provider,
-          model,
-          apiKey
-        }
-      );
-      
-      // Find the scheme
-      let scheme = schemes.find(s => s.id === schemeId);
-      
-      // If scheme not found in local state, fetch it
-      if (!scheme) {
-        try {
-          scheme = await ClassificationService.getScheme(workspaceId, schemeId);
-          
-          // Update schemes state with the new scheme
-          setSchemes(prevSchemes => [...prevSchemes, scheme!]);
-        } catch (err) {
-          console.error(`Error fetching scheme ${schemeId}:`, err);
-          throw new Error(`Scheme with ID ${schemeId} not found`);
-        }
-      }
-      
-      // Format the results
-      const formattedResults = results.map(result => {
-        const resultToFormat: ClassificationResult = {
-            id: result.id,
-            document_id: result.document_id,
-            scheme_id: result.scheme_id,
-            value: result.value || {},
-            timestamp: result.timestamp || new Date().toISOString(),
-            run_id: result.run_id || 0,
-            run_name: runName || (result.run_id ? `Run ${result.run_id}` : 'Classified Item'),
-            run_description: runDescription || undefined,
-        };
-        return ClassificationService.formatResult(resultToFormat, scheme!)
-      });
-      
-      // Update results list
-      setResults(prev => [...formattedResults, ...prev]);
-      
-      // Show a toast with the results
-      toast({
-        title: 'Classification complete',
-        description: `Successfully classified ${results.length} items`,
-      });
-      
-      return formattedResults;
-    } catch (err: any) {
-      console.error('Error during batch classification:', err);
-      const errorMessage = err.message || 'Failed to classify content';
-      setError(errorMessage);
-      toast({
-        title: 'Error',
-        description: errorMessage,
-        variant: 'destructive',
-      });
-      return [];
-    } finally {
-      setIsClassifying(false);
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, schemes, toast, selectedProvider, selectedModel, apiKeys]);
-  
-  // Create a new classification run
-  const createRun = useCallback(async (
-    contents: ClassifiableContent[],
-    schemeIds: number[],
-    options: {
-      name?: string;
-      description?: string;
-    } = {}
-  ) => {
-    if (!activeWorkspace?.uid || contents.length === 0 || schemeIds.length === 0) {
-      toast({
-        title: 'Error',
-        description: 'Missing required data for classification run',
-        variant: 'destructive',
-      });
-      return null;
-    }
-    
-    setIsCreatingRun(true);
-    setError(null);
-    let createdRunRead: ClassificationRunRead | null = null; // Store the created run (API type)
-    setClassificationProgress(null); // Reset progress at the start
-
-    try {
-      const workspaceId = getWorkspaceId();
-      const runName = options.name || `Run - ${new Date().toLocaleString()}`;
-      const runDescription = options.description;
-
-      // Call new API flow
-      // 1. Create the ClassificationRun record via API
-      toast({ title: 'Creating run record...' });
-      // Pass data according to backend expectations (fixed in service.ts)
-      createdRunRead = await ClassificationService.createRunAPI(workspaceId, {
-        status: 'pending', // Start as pending
-      });
-      
-      if (!createdRunRead) {
-        throw new Error('Failed to create run record in the backend.');
-      }
-      // Access ID from createdRunRead (expect TS error)
-      const runId = (createdRunRead as any).id;
-      setActiveRun(createdRunRead); // Optimistically set active run (API type)
-
-      // 2. Get API provider and model details
-      const provider = selectedProvider || undefined;
-      const model = selectedModel || undefined;
-      const apiKey = provider ? apiKeys[provider] : undefined;
-      if (provider && !apiKey) {
-        throw new Error('API key not found for selected provider');
-      }
-
-      // 3. Iterate and classify each document with each scheme using V2 endpoint
-      toast({ title: `Classifying ${contents.length * schemeIds.length} items for Run ${runId}` });
-      const allClassificationResults: ClassificationResult[] = [];
-      let completedCount = 0;
-      const totalTasks = contents.length * schemeIds.length;
-
-      // Update run status to running
-      await ClassificationService.updateRunAPI(workspaceId, runId, { status: 'running' });
-      setClassificationProgress({ current: 0, total: totalTasks }); // Initialize progress
-
-      for (const content of contents) {
-        for (const schemeId of schemeIds) {
-          try {
-            // Ensure document exists before classifying
-            const documentId = await ClassificationService.ensureDocumentExists(content, workspaceId);
-
-            // Call classify service (which should hit V2 endpoint)
-            // classify returns ClassificationResultRead
-            const classificationResultRead = await ClassificationService.classify(workspaceId, {
-                documentId: documentId,
-                schemeId: schemeId,
-                runId: runId,
-                runName: runName, // Pass run name/desc here
-                runDescription: runDescription,
-                provider: provider,
-                model: model,
-                apiKey: apiKey,
-                // No content needed here as classify uses documentId
-            });
-
-            // Adapt ClassificationResultRead to internal ClassificationResult before pushing
-            const resultToPush: ClassificationResult = {
-              id: classificationResultRead.id,
-              document_id: classificationResultRead.document_id,
-              scheme_id: classificationResultRead.scheme_id,
-              value: classificationResultRead.value || {}, // Ensure value is a dict
-              timestamp: classificationResultRead.timestamp || new Date().toISOString(), // Provide fallback timestamp
-              run_id: classificationResultRead.run_id || runId, // Use runId from function scope
-              run_name: runName, // Use runName from function scope (options)
-              run_description: runDescription, // Use runDescription from function scope (options)
-            };
-            allClassificationResults.push(resultToPush);
-            completedCount++;
-            console.log(`Run progress: Classified ${completedCount}/${totalTasks}`);
-            // Optionally update progress toast/state here if needed
-            setClassificationProgress({ current: completedCount, total: totalTasks }); // Update progress state
-
-          } catch (individualError: any) {
-            console.error(`Error classifying doc ${content.id || 'new'} with scheme ${schemeId} for run ${runId}:`, individualError);
-            // Decide how to handle partial failures: continue, stop, mark run as failed?
-            // For now, we log and continue.
-            setError(`Partial failure during run: ${individualError.message}`);
-            toast({
-              title: 'Partial Run Failure',
-              description: `Error classifying doc ${content.id || 'new'} with scheme ${schemeId}. Check console.`,
-              variant: 'default'
-            });
-          }
-        }
-      }
-
-      // 4. Update Run Status (e.g., completed)
-      const finalRunStatus = completedCount === totalTasks ? 'completed' : 'failed'; // Mark failed if not all tasks completed
-      await ClassificationService.updateRunAPI(workspaceId, runId, { status: finalRunStatus });
-      // Update local object (expect TS error on status access)
-      if (createdRunRead) {
-        (createdRunRead as any).status = finalRunStatus;
-      }
-
-      // 5. Update State and Return
-      // Update global runs list
-      setRuns(prev => {
-          const existingRunIndex = prev.findIndex(r => (r as any).id === runId);
-          if (existingRunIndex > -1) {
-              const updatedRuns = [...prev];
-              updatedRuns[existingRunIndex] = createdRunRead!;
-              return updatedRuns;
-          } else {
-              return [createdRunRead!, ...prev];
-          }
-      });
-      // Set active run and results (loadRun might be better for consistency)
-      setActiveRun(createdRunRead);
-      // Optionally format and set results directly, or rely on loadRun to be called after
-      // const formattedResults = allClassificationResults.map(r => ... format ...);
-      // setResults(formattedResults);
-
-      // For more robust state, call loadRun to fetch the complete picture
-      await loadRun(runId);
-
-      toast({
-        title: 'Classification run complete',
-        description: `Finished Run ${runId}: ${runName}. Classified ${completedCount}/${totalTasks} items.`,
-      });
-
-      return createdRunRead; // Return API type
-
-    } catch (err: any) {
-      console.error('Error creating run:', err);
-      setError(`Failed to create run: ${err.message}`);
-      toast({
-        title: 'Error Creating Run',
-        description: err.message,
-        variant: 'destructive',
-      });
-      // Optionally update run status to failed if createdRun exists
-       if (createdRunRead) {
-          try {
-              const workspaceId = getWorkspaceId();
-              await ClassificationService.updateRunAPI(workspaceId, (createdRunRead as any).id, { status: 'failed' });
-          } catch (updateError) {
-              console.error("Failed to update run status to failed:", updateError);
-          }
-       }
-      return null;
-    } finally {
-      setIsCreatingRun(false);
-      setClassificationProgress(null); // Reset progress on completion or error
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, loadRun, toast, selectedProvider, selectedModel, apiKeys, schemes]);
-  
-  // Create a new document
-  const createDocument = useCallback(async (documentData: Partial<ClassifiableDocument>) => {
-    if (!activeWorkspace?.uid) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace',
-        variant: 'destructive',
-      });
-      return null;
-    }
-    
-    setError(null);
-    
-    try {
-      const workspaceId = getWorkspaceId();
-      const createdDocument = await ClassificationService.createDocument(workspaceId, documentData);
-      
-      // Update documents list
-      setDocuments(prev => [createdDocument, ...prev]);
-      
-      toast({
-        title: 'Success',
-        description: 'Document created successfully',
-      });
-      
-      return createdDocument;
-    } catch (err: any) {
-      console.error('Error creating document:', err);
-      setError(`Failed to create document: ${err.message}`);
-      toast({
-        title: 'Error',
-        description: `Failed to create document: ${err.message}`,
-        variant: 'destructive',
-      });
-      return null;
-    }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Create a new classification scheme
-  const createScheme = useCallback(async (schemeData: any) => {
-    if (!activeWorkspace?.uid) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace',
-        variant: 'destructive',
-      });
-      return null;
-    }
-    
-    setError(null);
-    
-    try {
-      const workspaceId = getWorkspaceId();
-      const createdScheme = await ClassificationService.createScheme(workspaceId, schemeData);
-      
-      // Update schemes list
-      setSchemes(prev => [...prev, createdScheme]);
-      
-      toast({
-        title: 'Success',
-        description: `Created scheme: ${createdScheme.name}`,
-      });
-      
-      return createdScheme;
+      setSchemes((prev) => [...prev, newScheme]);
+      clearSchemesCache(workspaceId);
+      sonnerToast.success(`Scheme \"${newScheme.name}\" created.`);
+      return newScheme;
     } catch (err: any) {
       console.error('Error creating scheme:', err);
-      setError(`Failed to create scheme: ${err.message}`);
-      toast({
-        title: 'Error',
-        description: `Failed to create scheme: ${err.message}`,
-        variant: 'destructive',
-      });
+      const errorMsg = err.body?.detail || 'Failed to create scheme';
+      setError(errorMsg);
+      sonnerToast.error('Error Creating Scheme', { description: errorMsg });
+      return null;
+    } finally {
+      setIsLoadingSchemes(false);
+    }
+  }, [activeWorkspace?.id, getWorkspaceId, sonnerToast, clearSchemesCache]);
+
+  const updateScheme = useCallback(async (schemeId: number, schemeData: SchemeFormData): Promise<ClassificationSchemeRead | null> => {
+    if (!activeWorkspace?.id) {
+      setError('No active workspace selected');
       return null;
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Update an existing classification scheme
-  const updateScheme = useCallback(async (schemeId: number, schemeData: any) => {
-    if (!activeWorkspace?.uid) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace',
-        variant: 'destructive',
-      });
-      return null;
-    }
-    
+    setIsLoadingSchemes(true);
     setError(null);
-    
     try {
       const workspaceId = getWorkspaceId();
-      const updatedScheme = await ClassificationService.updateScheme(workspaceId, schemeId, schemeData);
-      
-      // Update schemes list
-      setSchemes(prev => prev.map(scheme => 
-        scheme.id === schemeId ? updatedScheme : scheme
-      ));
-      
-      toast({
-        title: 'Success',
-        description: `Updated scheme: ${updatedScheme.name}`,
+      const updatedScheme = await ClassificationSchemesService.updateClassificationScheme({
+        workspaceId,
+        schemeId,
+        requestBody: schemeData,
       });
-      
+      setSchemes((prev) => prev.map(s => s.id === schemeId ? updatedScheme : s));
+      clearSchemesCache(workspaceId);
+      sonnerToast.success(`Scheme \"${updatedScheme.name}\" updated.`);
       return updatedScheme;
     } catch (err: any) {
-      console.error('Error updating scheme:', err);
-      setError(`Failed to update scheme: ${err.message}`);
-      toast({
-        title: 'Error',
-        description: `Failed to update scheme: ${err.message}`,
-        variant: 'destructive',
-      });
+      console.error(`Error updating scheme ${schemeId}:`, err);
+      const errorMsg = err.body?.detail || 'Failed to update scheme';
+      setError(errorMsg);
+      sonnerToast.error('Error Updating Scheme', { description: errorMsg });
       return null;
+    } finally {
+      setIsLoadingSchemes(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Delete a classification scheme
-  const deleteScheme = useCallback(async (schemeId: number) => {
-    if (!activeWorkspace?.uid) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace',
-        variant: 'destructive',
-      });
+  }, [activeWorkspace?.id, getWorkspaceId, sonnerToast, clearSchemesCache]);
+
+  const deleteScheme = useCallback(async (schemeId: number): Promise<boolean> => {
+    if (!activeWorkspace?.id) {
+      setError('No active workspace selected');
       return false;
     }
-    
+    const schemeToDelete = schemes.find(s => s.id === schemeId);
+    const schemeName = schemeToDelete?.name || `ID ${schemeId}`;
+
+    setIsLoadingSchemes(true);
     setError(null);
-    
     try {
       const workspaceId = getWorkspaceId();
-      await ClassificationService.deleteScheme(workspaceId, schemeId);
-      
-      // Update schemes list
-      setSchemes(prev => prev.filter(scheme => scheme.id !== schemeId));
-      
-      toast({
-        title: 'Success',
-        description: 'Deleted scheme',
+      await ClassificationSchemesService.deleteClassificationScheme({
+        workspaceId,
+        schemeId,
       });
-      
+      setSchemes((prev) => prev.filter(s => s.id !== schemeId));
+      clearSchemesCache(workspaceId);
+      sonnerToast.success(`Scheme \"${schemeName}\" deleted.`);
       return true;
     } catch (err: any) {
-      console.error('Error deleting scheme:', err);
-      setError(`Failed to delete scheme: ${err.message}`);
-      toast({
-        title: 'Error',
-        description: `Failed to delete scheme: ${err.message}`,
-        variant: 'destructive',
-      });
+      console.error(`Error deleting scheme ${schemeId}:`, err);
+      const errorMsg = err.body?.detail || 'Failed to delete scheme';
+      setError(errorMsg);
+      sonnerToast.error('Error Deleting Scheme', { description: errorMsg });
+      return false;
+    } finally {
+      setIsLoadingSchemes(false);
+    }
+  }, [activeWorkspace?.id, getWorkspaceId, sonnerToast, clearSchemesCache, schemes]);
+
+  const loadResultsByScheme = useCallback(async (schemeId: number): Promise<FormattedClassificationResult[]> => {
+      if (!activeWorkspace?.id) {
+         setError("Workspace ID needed to load scheme results.");
+         return [];
+      }
+      setIsLoadingResults(true);
+      setError(null);
+      try {
+         const apiResults = await ClassificationResultsService.listClassificationResults({
+           workspaceId: activeWorkspace.id,
+           schemeIds: [schemeId],
+           limit: 5000
+         });
+         const formatted = apiResults.map(r => ({
+             id: r.id,
+             datarecord_id: r.datarecord_id,
+             scheme_id: r.scheme_id,
+             job_id: r.job_id,
+             value: r.value,
+             timestamp: r.timestamp || new Date().toISOString(),
+             displayValue: (r as any).display_value ?? null,
+         }));
+         setResults(formatted);
+         return formatted;
+      } catch (err: any) {
+        console.error(`Error loading results for scheme ${schemeId}:`, err);
+        const detail = err.body?.detail || 'Failed to load scheme results.';
+        setError(detail);
+        toast({ title: 'Error Loading Scheme Results', description: detail, variant: 'destructive' });
+        return [];
+      } finally {
+         setIsLoadingResults(false);
+      }
+  }, [activeWorkspace?.id, toast, getWorkspaceId, setError]);
+
+  const startClassificationJob = useCallback(async (jobId: number): Promise<boolean> => {
+    const workspaceId = getWorkspaceId();
+    // Find the job in the store to get its current status
+    const job = getJobById(jobId);
+
+    if (!job) {
+      setError(`Job ${jobId} not found.`);
+      toast({ title: 'Error', description: `Job ${jobId} not found.`, variant: 'destructive' });
       return false;
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast]);
-  
-  // Get the default scheme ID for the current workspace
-  const getDefaultSchemeId = useCallback(() => {
-    if (!activeWorkspace?.uid || schemes.length === 0) return null;
-    
-    const workspaceId = getWorkspaceId();
-    return classificationSettings.getDefaultSchemeId(workspaceId, schemes);
-  }, [activeWorkspace?.uid, getWorkspaceId, schemes, classificationSettings]);
-  
-  // Set the default scheme ID for the current workspace
-  const setDefaultSchemeId = useCallback((schemeId: number) => {
-    if (!activeWorkspace?.uid) return;
-    
-    const workspaceId = getWorkspaceId();
-    classificationSettings.setDefaultSchemeId(workspaceId, schemeId);
-    
-    const scheme = schemes.find(s => s.id === schemeId);
-    if (scheme) {
-      toast({
-        title: 'Default scheme updated',
-        description: `Set "${scheme.name}" as the default classification scheme.`,
-      });
+
+    // Prevent starting if already running or completed
+    if (job.status === 'running') {
+      toast({ title: 'Job Already Running', description: `Job \"${job.name}\" is already processing.`, variant: 'default' });
+      return false;
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, schemes, classificationSettings, toast]);
-  
-  // Add the loadResultsByRun function
-  const loadResultsByRun = useCallback(async (runId: number, workspaceId?: number) => {
-    if (!activeWorkspace?.uid && !workspaceId) {
-      console.error('No active workspace');
-      return [];
+    if (job.status === 'completed' || job.status === 'completed_with_errors') {
+      toast({ title: 'Job Already Completed', description: `Job \"${job.name}\" has already finished. Create a new job to re-run.`, variant: 'default' });
+      return false;
     }
-    
+
+    setIsClassifyingState(true);
+    setClassificationProgress(null);
+    setError(null);
+
+    try {
+      console.log(`Attempting to update job ${jobId} status to PENDING before polling...`);
+      // Ensure the job is marked as pending (or trigger logic if needed)
+      // You might need a specific API endpoint to \"retry\" or \"start\" a job if it's not automatic on creation
+      const updatedJob = await updateStoreJob(workspaceId, jobId, { status: 'pending' });
+      if (!updatedJob) {
+        throw new Error("Failed to mark job as pending.");
+      }
+      console.log(`Job ${jobId} status set to PENDING.`);
+
+      // Start polling for status changes
+      pollJobStatus(jobId, workspaceId);
+      return true;
+    } catch (err: any) {
+      console.error(`Error starting classification for job ${jobId}:`, err);
+      const detail = err.message || err.body?.detail || 'Failed to start classification job';
+      setError(detail);
+      toast({ title: 'Error Starting Job', description: detail, variant: 'destructive' });
+      return false;
+    } finally {
+      setIsClassifyingState(false);
+    }
+  }, [getWorkspaceId, getJobById, updateStoreJob, pollJobStatus, toast]);
+
+  const setSelectedDataSource = useCallback((dataSource: DataSourceRead | null) => {
+    setSelectedDataSourceState(dataSource);
+  }, []);
+
+  // Load classification results
+  const loadResults = useCallback(async (options: { datarecordId?: number; schemeId?: number; jobId?: number; useCache?: boolean } = {}) => {
+    if (!activeWorkspace?.id) return;
+
     setIsLoadingResults(true);
     setError(null);
-    
-    try {
-      // Use provided workspaceId or get it from activeWorkspace
-      const wsId = workspaceId || (activeWorkspace && typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid) 
-        : activeWorkspace?.uid);
-      
-      if (!wsId) {
-        throw new Error('No valid workspace ID');
-      }
-      
-      console.log(`Loading results for run ID: ${runId} in workspace: ${wsId}`);
-      
-      // Use the specific service method for loading results by run
-      const results = await ClassificationService.getResultsByRunAPI(wsId, runId);
 
-      // Format the results with their display values
-      // Need run details to properly format run_name/description
-      let runDetailsRead: ClassificationRunRead | null = null;
-      if (results.length > 0) {
-          // Try to find run details from the active run or fetch if necessary
-          const currentActiveRun = activeRun; // This is now ClassificationRunRead | null
-          if (currentActiveRun && (currentActiveRun as any).id === runId) {
-              runDetailsRead = currentActiveRun;
-          } else {
-              try {
-                  runDetailsRead = await ClassificationService.getRunAPI(wsId, runId);
-              } catch (runFetchError) {
-                  console.warn(`Could not fetch run details for run ${runId}:`, runFetchError);
-              }
-          }
-      }
+    const workspaceId = getWorkspaceId();
+    const { datarecordId, schemeId, jobId, useCache = true } = options;
 
-      const formattedResults = results.map(result => {
-        const scheme = schemes.find(s => s.id === result.scheme_id);
-        // Adapt ClassificationResultRead to ClassificationResult
-        const resultToFormat: ClassificationResult = {
-            id: result.id,
-            document_id: result.document_id,
-            scheme_id: result.scheme_id,
-            value: result.value || {},
-            timestamp: result.timestamp || new Date().toISOString(),
-            run_id: result.run_id || runId,
-            // Access name/description from runDetailsRead (expect TS error)
-            run_name: (runDetailsRead as any)?.name || `Run ${runId}`, 
-            run_description: (runDetailsRead as any)?.description || undefined,
-        };
-        if (!scheme) return resultToFormat as FormattedClassificationResult; // Return adapted result if scheme missing
-        return ClassificationService.formatResult(resultToFormat, scheme);
-      });
+    const cacheKey = `ws${workspaceId}-dr${datarecordId ?? 'all'}-sc${schemeId ?? 'all'}-job${jobId ?? 'all'}`;
 
-      setResults(formattedResults); // This sets the main results state, might need adjustment depending on component usage
-      return formattedResults;
-    } catch (error: any) {
-      console.error('Error loading results by run:', error);
-      setError(`Failed to load results: ${error.message}`);
-      return [];
-    } finally {
+    if (useCache && resultsCache.current.has(cacheKey)) {
+      setResults(resultsCache.current.get(cacheKey)!);
       setIsLoadingResults(false);
+      return;
     }
-  }, [activeWorkspace, schemes, activeRun, getWorkspaceId, toast]);
-  
-  // Add a function to load results filtered by scheme ID
-  const loadResultsByScheme = useCallback(async (schemeId: number) => {
-    if (!activeWorkspace?.uid) {
-      toast({
-        title: 'Error',
-        description: 'No active workspace',
-        variant: 'destructive',
-      });
-      return [];
-    }
-
-    setIsLoadingResults(true); // Use the existing loading state for simplicity
-    setError(null);
 
     try {
-      const workspaceId = getWorkspaceId();
-      
-      // Use getResultsAPI
-      const apiResults = await ClassificationService.getResults(workspaceId, {
-        schemeId,
-        limit: 50 // Add a limit to avoid loading too many results initially
+      const loadedApiResults: EnhancedClassificationResultRead[] = await ClassificationResultsService.listClassificationResults({
+        workspaceId,
+        datarecordIds: datarecordId ? [datarecordId] : undefined,
+        schemeIds: schemeId ? [schemeId] : undefined,
+        jobId: jobId,
+        limit: 2000
       });
 
-      // Fetch the specific scheme details (needed for formatting)
-      let scheme = schemes.find(s => s.id === schemeId);
-      if (!scheme) {
-        scheme = await ClassificationService.getScheme(workspaceId, schemeId);
-        // Add the fetched scheme to the state if it wasn't there
-        if (scheme) {
-          setSchemes(prev => {
-            // Ensure scheme exists and isn't already in the state before adding
-            if (scheme && !prev.some(s => s.id === schemeId)) {
-              return [...prev, scheme]; 
-            }
-            return prev;
-          });
-        }
-      }
-      
-      if (!scheme) {
-         throw new Error(`Scheme with ID ${schemeId} not found`);
-      }
+      const formattedResults: FormattedClassificationResult[] = loadedApiResults.map(r => ({
+         id: r.id,
+         datarecord_id: r.datarecord_id,
+         scheme_id: r.scheme_id,
+         job_id: r.job_id,
+         value: r.value,
+         timestamp: r.timestamp || new Date().toISOString(),
+         displayValue: (r.display_value as string | number | string[] | null) ?? null,
+      }));
 
-      // Format results
-      const formattedResults = apiResults
-        .map(result => {
-            // result here is ClassificationResultRead
-            const resultToFormat: ClassificationResult = {
-                id: result.id,
-                document_id: result.document_id,
-                scheme_id: result.scheme_id,
-                value: result.value || {}, // Ensure value is dict
-                timestamp: result.timestamp || new Date().toISOString(), // Fallback timestamp
-                run_id: result.run_id || 0,
-                // Use placeholders as run details aren't readily available here
-                // Corrected: Do not access result.run_name or result.run_description
-                run_name: (result.run_id ? `Run ${result.run_id}` : 'Unknown Run'), 
-                run_description: undefined, 
-            };
-            return ClassificationService.formatResult(resultToFormat, scheme!) // scheme is guaranteed here
-        })
-        .filter(Boolean) as FormattedClassificationResult[];
-        
-      // Unlike loadResults, we don't automatically set the main `results` state here,
-      // as this is specific to the scheme being viewed in the table context.
-      // We return the results for the calling component to manage.
-      
-      return formattedResults;
+      setResults(formattedResults);
+      if (useCache) resultsCache.current.set(cacheKey, formattedResults);
 
     } catch (err: any) {
-      console.error('Error loading results by scheme:', err);
-      setError(`Failed to load results for scheme ${schemeId}`);
-      toast({
-        title: 'Error',
-        description: `Failed to load results for scheme: ${err.message}`,
-        variant: 'destructive',
-      });
-      return []; // Return empty array on error
+      console.error('Error loading results:', err);
+      const detail = err.body?.detail || 'Failed to load results';
+      setError(detail);
+      toast({ title: 'Error Loading Results', description: detail, variant: 'destructive' });
     } finally {
       setIsLoadingResults(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, schemes, toast]); // Added schemes to dependencies
-  
-  // Load initial data based on options
-  useEffect(() => {
-    if (activeWorkspace?.uid) {
-      if (options.autoLoadSchemes) {
-        loadSchemes();
+  }, [activeWorkspace?.id, getWorkspaceId, toast]);
+
+  // Clear cache for a specific content
+  const clearResultsCache = useCallback((key: string) => {
+    resultsCache.current.delete(key);
+    console.log('Cleared results cache for key:', key);
+  }, []);
+
+  // Load Job
+  const loadJob = useCallback(async (jobId: number): Promise<void> => {
+    const workspaceId = getWorkspaceId();
+    console.log(`[loadJob] Starting for Job ID: ${jobId}`);
+    stopPolling(); // Stop any previous polling
+    setIsLoadingJobDataState(true); // Start loading indicator for job data
+    setActiveJobDataRecords([]);
+    setError(null);
+    setActiveJobState(null);
+    setResults([]);
+
+    try {
+      let job = getJobById(jobId);
+      if (!job) {
+        console.log(`[loadJob] Job ${jobId} not in store, fetching from API...`);
+        job = await ClassificationJobsService.getClassificationJob({ workspaceId, jobId });
+        if (!job) throw new Error(`Job with ID ${jobId} not found.`);
+        // Add/update job in the store after fetching
+        updateStoreJob(workspaceId, jobId, job);
       }
-      
-      if (options.autoLoadDocuments) {
-        loadDocuments();
+      console.log(`[loadJob] Fetched/found job: ${job.name} (Status: ${job.status})`);
+      setActiveJobState(job);
+
+      // Load associated data (results, schemes, sources, records) in parallel
+      const [jobResults, /*schemesLoaded*/, /*sourcesLoaded*/, dataRecords] = await Promise.all([
+         loadResultsByJob(jobId, workspaceId),
+         loadSchemes(false), // Ensure schemes are loaded (uses cache/state check)
+         loadDataSources(), // Ensure data sources are loaded (uses store)
+         (async () => { // Fetch data records
+            let jobDataSourceIds: number[] = [];
+            if (job?.configuration && typeof job.configuration === 'object' && job.configuration !== null) {
+                // Check if datasource_ids exists and is an array
+                const dsIds = job.configuration.datasource_ids;
+                if (Array.isArray(dsIds)) {
+                    // Further check if elements are numbers (optional but safer)
+                    jobDataSourceIds = dsIds.filter((id): id is number => typeof id === 'number');
+                }
+            }
+
+            if (jobDataSourceIds.length > 0) {
+                console.log("[loadJob] Fetching data records for data source IDs:", jobDataSourceIds);
+                try {
+                    const recordFetchPromises = jobDataSourceIds.map(dsId =>
+                        DataRecordsService.listDataRecordsForDatasource({ workspaceId, datasourceId: dsId, limit: 5000 }) // Adjust limit
+                    );
+                    const resultsArrays = await Promise.all(recordFetchPromises);
+                    const allDataRecords = resultsArrays.flat();
+                    console.log(`[loadJob] Fetched ${allDataRecords.length} total data records.`);
+                    setActiveJobDataRecords(allDataRecords); // Update state
+                    return allDataRecords;
+                } catch (recordErr: any) {
+                    console.error("[loadJob] Error fetching data records:", recordErr);
+                    const detail = recordErr.body?.detail || 'Failed to load data records for the job.';
+                    setError((prev) => prev ? `${prev}; ${detail}` : detail);
+                    toast({ title: 'Warning', description: 'Could not load all data records for the job.', variant: 'default' });
+                    setActiveJobDataRecords([]);
+                    return [];
+                }
+            }
+            return [];
+         })()
+      ]);
+
+       console.log(`[loadJob] Associated data loaded (Results: ${jobResults.length}, Records: ${dataRecords.length})`);
+
+      // IMPORTANT: Check job status and start polling if necessary
+      if (job.status === 'pending' || job.status === 'running') {
+        console.log(`[loadJob] Job ${jobId} is ${job.status}. Starting polling.`);
+        pollJobStatus(jobId, workspaceId);
+      } else {
+         console.log(`[loadJob] Job ${jobId} is in terminal state (${job.status}). Not starting polling.`);
+         setIsClassifyingState(false); // Ensure classifying state is false if job is terminal
       }
-      
-      if (options.autoLoadRuns) {
-        loadRuns();
-      }
-      
-      if (options.contentId) {
-        loadResults(options.contentId, options.runId);
-      }
-      
-      if (options.runId) {
-        loadRun(options.runId);
-      }
+
+    } catch (err: any) {
+      console.error(`[loadJob] Error loading job ${jobId}:`, err);
+      const detail = err.body?.detail || err.message || `Failed to load job ${jobId}`;
+      setError(detail);
+      toast({ title: 'Error Loading Job', description: detail, variant: 'destructive' });
+      setActiveJobState(null);
+      setResults([]);
+      setActiveJobDataRecords([]);
+      stopPolling(); // Ensure polling is stopped on error
+    } finally {
+      setIsLoadingJobDataState(false); // Stop loading indicator for job data
+      console.log(`[loadJob] Finished for Job ID: ${jobId}`);
     }
   }, [
-    activeWorkspace?.uid,
-    options.autoLoadSchemes,
-    options.autoLoadDocuments,
-    options.autoLoadRuns,
-    options.contentId,
-    options.runId,
+    getWorkspaceId,
+    getJobById,
+    updateStoreJob,
+    loadResultsByJob,
     loadSchemes,
-    loadDocuments,
-    loadRuns,
-    loadResults,
-    loadRun
+    loadDataSources,
+    toast,
+    stopPolling,
+    pollJobStatus,
   ]);
-  
-  // Update a classification run
-  const updateRun = useCallback(async (runId: number, data: ClassificationRunUpdate): Promise<ClassificationRunRead | null> => {
-    if (!activeWorkspace?.uid) return null;
-    setIsLoadingRuns(true);
+
+  // Create Job
+  const createJob = useCallback(async (params: ClassificationJobParams): Promise<ClassificationJobRead | null> => {
+    const workspaceId = getWorkspaceId();
+    setIsCreatingJob(true);
     setError(null);
+    stopPolling(); // Stop any polling from previous job
+
     try {
-      const workspaceId = getWorkspaceId();
-      const updatedRunRead = await ClassificationService.updateRunAPI(workspaceId, runId, data);
-      // REMOVED conversion to internal type
-      // const updatedRun: ClassificationRun = { ... }
-      
-      // Update local state
-      setRuns(prev => prev.map(r => (r as any).id === runId ? updatedRunRead : r));
-      if (activeRun && (activeRun as any).id === runId) {
-        setActiveRun(updatedRunRead);
+      const jobData: ClassificationJobCreate = {
+        name: params.name || `Analysis @ ${new Date().toLocaleString()}`,
+        description: params.description || '',
+        configuration: {
+          datasource_ids: params.datasourceIds,
+          scheme_ids: params.schemeIds,
+          ...(params.configuration || {}) // Include any extra config
+        },
+      };
+
+      // Use the API service directly, as the store might not immediately trigger polling
+      const newJob = await ClassificationJobsService.createClassificationJob({ workspaceId, requestBody: jobData });
+
+      if (newJob) {
+        // Add to store AFTER successful API call
+        updateStoreJob(workspaceId, newJob.id, newJob); // Add/update in store
+
+        setActiveJobState(newJob); // Set as active immediately
+        setResults([]); // Clear previous results
+        setActiveJobDataRecords([]); // Clear previous records
+        sonnerToast.success(`Job \"${newJob.name}\" created and started.`);
+
+        // Start polling for the new job
+        pollJobStatus(newJob.id, workspaceId);
+      } else {
+        throw new Error("API did not return the created job.");
       }
-      toast({ title: 'Run Updated', description: `Run "${(updatedRunRead as any).name || runId}" details saved.` }); // Access name (expect TS error)
-      return updatedRunRead; // Return API type
+      return newJob;
     } catch (err: any) {
-      console.error('Error updating run:', err);
-      setError(`Failed to update run: ${err.message}`);
-      toast({ title: 'Error Updating Run', description: err.message, variant: 'destructive' });
+      console.error('Error creating classification job:', err);
+      const detail = err.body?.detail || `Failed to create job: ${err.message || 'Unknown error'}`;
+      setError(detail);
+      sonnerToast.error('Error Creating Job', { description: detail });
       return null;
     } finally {
-      setIsLoadingRuns(false);
+      setIsCreatingJob(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast, activeRun]);
+  }, [getWorkspaceId, updateStoreJob, stopPolling, pollJobStatus, sonnerToast]); // Removed createStoreJob
 
-  // Delete a classification run
-  const deleteRun = useCallback(async (runId: number): Promise<boolean> => {
-    if (!activeWorkspace?.uid) return false;
-    setIsLoadingRuns(true); // Reuse loading state
+  // Set Active Job
+  const setActiveJob = useCallback((job: ClassificationJobRead | null) => {
+    // This is now mostly used to CLEAR the active job or handle initial loading effects
+    if (job === null) {
+        stopPolling();
+        setActiveJobState(null);
+        setResults([]);
+        setActiveJobDataRecords([]);
+        setError(null);
+        console.log("[setActiveJob] Active job cleared.");
+    } else {
+        // Setting an active job *object* directly should be rare.
+        // Prefer using loadJob(job.id) to ensure all data is loaded and polling starts.
+        // However, we might set it during loadJob itself.
+        setActiveJobState(job);
+        console.log(`[setActiveJob] Active job set programmatically to ${job.id}`);
+    }
+  }, [stopPolling]);
+
+  // Update Job
+  const updateJob = useCallback(async (jobId: number, data: ClassificationJobUpdate): Promise<ClassificationJobRead | null> => {
+    const workspaceId = getWorkspaceId();
     setError(null);
     try {
-      const workspaceId = getWorkspaceId();
-      await ClassificationService.deleteRunAPI(workspaceId, runId);
-      // Update local state
-      setRuns(prev => prev.filter(r => (r as any).id !== runId)); // Access id (expect TS error)
-      if ((activeRun as any)?.id === runId) { // Access id (expect TS error)
-        setActiveRun(null);
-        setResults([]); // Clear results if the active run was deleted
+      // Call the store action which should call the API
+      const updatedJob = await updateStoreJob(workspaceId, jobId, data);
+
+      if (updatedJob) {
+        // Keep local active job state in sync if it's the one being updated
+        if (activeJobState?.id === jobId) {
+          setActiveJobState(updatedJob);
+        }
+        // Avoid noisy toasts for frequent status updates from polling
+        // Only show toast for explicit user actions or significant changes if needed
+        // sonnerToast.info('Classification job updated.');
+      } else {
+        throw new Error("Store did not return the updated job after update.");
       }
-      toast({ title: 'Run Deleted', description: `Run ${runId} successfully deleted.` });
+      return updatedJob;
+    } catch (err: any) {
+      console.error('Error updating job:', err);
+      const detail = err.body?.detail || `Failed to update job: ${err.message || 'Unknown error'}`;
+      setError(detail);
+      sonnerToast.error('Error Updating Job', { description: detail });
+      return null;
+    }
+  }, [getWorkspaceId, activeJobState, updateStoreJob, sonnerToast]);
+
+  // Delete Job
+  const deleteJob = useCallback(async (jobId: number): Promise<boolean> => {
+    const workspaceId = getWorkspaceId();
+    setError(null);
+    const jobToDelete = getJobById(jobId); // Get name before deleting
+    const jobName = jobToDelete?.name || `ID ${jobId}`;
+    try {
+      if (activeJobState?.id === jobId) {
+        stopPolling(); // Stop polling if deleting the active job
+        setActiveJobState(null);
+        setResults([]);
+        setActiveJobDataRecords([]);
+      }
+      await deleteStoreJob(workspaceId, jobId); // Calls API via store action
+      sonnerToast.success(`Classification job \"${jobName}\" deleted.`);
       return true;
     } catch (err: any) {
-      console.error('Error deleting run:', err);
-      setError(`Failed to delete run: ${err.message}`);
-      toast({ title: 'Error Deleting Run', description: err.message, variant: 'destructive' });
+      console.error('Error deleting job:', err);
+      const detail = err.body?.detail || `Failed to delete job: ${err.message || 'Unknown error'}`;
+      setError(detail);
+      sonnerToast.error('Error Deleting Job', { description: detail });
       return false;
-    } finally {
-      setIsLoadingRuns(false);
     }
-  }, [activeWorkspace?.uid, getWorkspaceId, toast, activeRun]);
-  
+  }, [getWorkspaceId, activeJobState, deleteStoreJob, stopPolling, getJobById, sonnerToast]);
+
+  // Default scheme management
+  const getDefaultSchemeId = useCallback(() => {
+    if (!activeWorkspace?.id || schemes.length === 0) return null;
+    return classificationSettings.getDefaultSchemeId(activeWorkspace.id, schemes);
+  }, [activeWorkspace?.id, schemes, classificationSettings]);
+
+  const setDefaultSchemeId = useCallback((schemeId: number) => {
+    if (!activeWorkspace?.id) return;
+    classificationSettings.setDefaultSchemeId(activeWorkspace.id, schemeId);
+    const scheme = schemes.find(s => s.id === schemeId);
+    if (scheme) {
+      sonnerToast.info(`Set \"${scheme.name}\" as the default scheme.`);
+    }
+  }, [activeWorkspace?.id, schemes, classificationSettings, sonnerToast]);
+
+  // Placeholder for results cache (may need adjustment based on final data structure)
+  const resultsCache = useRef<Map<string, FormattedClassificationResult[]>>(new Map());
+
+  // Load initial data based on options
+  useEffect(() => {
+    if (activeWorkspace?.id) {
+      if (options.autoLoadSchemes) loadSchemes();
+      if (options.autoLoadDataSources) loadDataSources();
+      if (options.autoLoadJobs) loadJobs();
+      if (options.dataSourceId) loadDataSource(options.dataSourceId);
+      if (options.jobId) loadJob(options.jobId);
+    }
+  }, [
+    activeWorkspace?.id,
+    options.autoLoadSchemes,
+    options.autoLoadDataSources,
+    options.autoLoadJobs,
+    options.dataSourceId,
+    options.jobId,
+    loadSchemes,
+    loadDataSources,
+    loadJobs,
+    loadDataSource,
+    loadJob
+  ]);
+
+  // Return all the state and functions
   return {
     // Schemes
     schemes,
@@ -1282,50 +905,53 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     createScheme,
     updateScheme,
     deleteScheme,
-    getDefaultSchemeId,
-    setDefaultSchemeId,
-    
-    // Documents
-    documents,
-    selectedDocument,
-    isLoadingDocuments,
-    loadDocuments,
-    loadDocument,
-    createDocument,
-    setSelectedDocument,
-    
-    // Runs
-    runs, // Now ClassificationRunRead[]
-    activeRun, // Now ClassificationRunRead | null
-    isLoadingRuns,
-    isCreatingRun,
-    loadRuns,
-    loadRun,
-    createRun, // Returns ClassificationRunRead | null
-    setActiveRun, // Accepts ClassificationRunRead | null
-    updateRun, // Returns ClassificationRunRead | null
-    deleteRun,
-    
+
+    // DataSources
+    dataSources,
+    selectedDataSource,
+    isLoadingDataSources: isLoadingDataSourcesStore,
+    loadDataSources,
+    loadDataSource,
+    setSelectedDataSource,
+
     // Results
     results,
     isLoadingResults,
     loadResults,
+    loadResultsByJob,
     clearResultsCache,
-    
+    loadResultsByScheme,
+
     // Classification
-    isClassifying,
-    classifyContent,
-    batchClassify,
-    
+    isClassifying: isClassifyingState,
+    startClassificationJob,
+    pollJobStatus,
+
+    // Jobs
+    jobs: Object.values(classificationJobs),
+    activeJob: activeJobState,
+    activeJobDataRecords,
+    isLoadingJobs: isLoadingJobsState,
+    isCreatingJob,
+    loadJobs,
+    loadJob,
+    createJob,
+    setActiveJob,
+    updateJob,
+    deleteJob,
+
+    // Default scheme management
+    getDefaultSchemeId,
+    setDefaultSchemeId,
+
     // Error handling
     error,
     setError,
-    
-    // Add the new functions
-    loadResultsByRun,
-    loadResultsByScheme,
-    
+
     // Classification Progress State
     classificationProgress,
+
+    // *** ADD isLoadingJobData to the returned object ***
+    isLoadingJobData: isLoadingJobDataState,
   };
-} 
+}

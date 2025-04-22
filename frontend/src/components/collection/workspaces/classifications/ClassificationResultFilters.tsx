@@ -297,7 +297,7 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
                 </Tooltip>
             </TooltipProvider>
         </h3>
-        <Button variant="outline" size="xs" onClick={addFilter} disabled={schemes.length === 0}>
+        <Button variant="outline" size="sm" onClick={addFilter} disabled={schemes.length === 0}>
           <Plus className="h-3 w-3 mr-1" />
           Add Filter
         </Button>
@@ -325,7 +325,6 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
                         checked={filter.isActive}
                         onCheckedChange={(checked) => updateFilter(index, { isActive: checked })}
                         className="h-5 w-9 data-[state=checked]:bg-blue-500 data-[state=unchecked]:bg-gray-300"
-                        thumbClassName="h-4 w-4 data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5"
                     />
 
                     {/* Scheme Select */}

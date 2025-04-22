@@ -1,24 +1,25 @@
 import { create } from 'zustand';
-import {
-  ClassificationSchemesService,
-  DocumentsService,
-  ClassificationResultsService,
-} from '@/client/services';
+// Commented out unused services
+// import {
+//   ClassificationSchemesService,
+//   ClassificationResultsService,
+// } from '@/client/services';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import { useDocumentStore } from '@/zustand_stores/storeDocuments';
-import {
-  ClassificationSchemeRead,
-  DocumentRead,
-  SavedResultSetRead,
-  SavedResultSetCreate,
-  ClassificationResultRead
-} from '@/client/models';
+// Commented out unused models
+// import {
+//   ClassificationSchemeRead,
+//   ClassificationResultRead
+// } from '@/client/models';
+
+// Define placeholder types if SavedResultSet is removed from client
+type SavedResultSetRead = any; 
+type SavedResultSetCreate = any;
 
 interface SavedResultSetState {
   savedResults: SavedResultSetRead[];
   error: string | null;
   fetchSavedResults: () => Promise<void>;
-  saveResultSet: (name: string, runId: number) => Promise<void>;
+  saveResultSet: (name: string, jobId: number) => Promise<void>; // Updated runId to jobId
   loadResultSet: (resultSetId: number) => Promise<void>;
 }
 
@@ -27,75 +28,81 @@ export const useSavedResultSetStore = create<SavedResultSetState>((set, get) => 
   error: null,
 
   fetchSavedResults: async () => {
-    const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    if (!activeWorkspace) return;
-    try {
-      // Assuming there's no direct method to fetch saved result sets, you might need to adjust this part
-      // const response = await SavedResultsService.readSavedResultSets({ // Assuming such method exists
-      //   workspaceId: activeWorkspace.uid,
-      //   skip: 0,
-      //   limit: 100,
-      // });
-      const response: any[] = []; // Placeholder, replace with actual data fetching
-      set({ savedResults: response, error: null });
-    } catch (error: any) {
-      set({ error: "Error fetching saved result sets", savedResults: [] });
-      console.error(error);
-    }
+    console.warn("DEPRECATED: fetchSavedResults is likely obsolete. Consider using Job history/export.");
+    // const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
+    // if (!activeWorkspace) return;
+    // try {
+    //   // Assuming there's no direct method to fetch saved result sets
+    //   const response: any[] = []; // Placeholder
+    //   set({ savedResults: response, error: null });
+    // } catch (error: any) {
+    //   set({ error: "Error fetching saved result sets", savedResults: [] });
+    //   console.error(error);
+    // }
+    set({ savedResults: [], error: 'Functionality deprecated.' });
   },
 
-  saveResultSet: async (name: string, runId: number) => {
-    const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    if (!activeWorkspace) return;
-    
-    try {
-      const results = await ClassificationResultsService.getResultsByRun({
-        workspaceId: activeWorkspace.uid,
-        runId,
-      });
-      
-      const documentIds = [...new Set(results.map(r => r.document_id))];
-      const schemeIds = [...new Set(results.map(r => r.scheme_id))];
-      
-      const resultSetData: SavedResultSetCreate = {
-        name,
-        document_ids: documentIds,
-        scheme_ids: schemeIds,
-      };
-
-      await ClassificationSchemesService.createSavedResultSet({
-        workspaceId: activeWorkspace.uid,
-        requestBody: resultSetData
-      });
-      
-      await get().fetchSavedResults();
-    } catch (error: any) {
-      set({ error: "Error saving result set" });
-      console.error(error);
-    }
+  saveResultSet: async (name: string, jobId: number) => { // Updated runId to jobId
+    console.warn("DEPRECATED: saveResultSet is likely obsolete. Consider using Job export features.");
+    // const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
+    // if (!activeWorkspace) return;
+    //
+    // try {
+    //   /*
+    //   // This needs to use jobId and likely fetch results via listClassificationResults or getJobResults
+    //   const results = await ClassificationResultsService.getJobResults({ // Needs correct service method
+    //     workspaceId: activeWorkspace.id, // Use id
+    //     jobId, // Use jobId
+    //   });
+    //
+    //   // This logic assumes results have datarecord_id
+    //   const datarecordIds = [...new Set(results.map(r => r.datarecord_id))];
+    //   const schemeIds = [...new Set(results.map(r => r.scheme_id))];
+    //
+    //   const resultSetData: SavedResultSetCreate = {
+    //     name,
+    //     datarecord_ids: datarecordIds,
+    //     scheme_ids: schemeIds,
+    //     // Add job_id reference?
+    //     job_id: jobId
+    //   };
+    //
+    //   // This service/method likely doesn't exist - need a new mechanism
+    //   // await SomeNewService.createSavedResultSet({ ... });
+    //
+    //   // await get().fetchSavedResults(); // This fetch is also likely deprecated
+    //   */
+    // } catch (error: any) {
+    //   set({ error: "Error saving result set" });
+    //   console.error(error);
+    // }
+     set({ error: 'Functionality deprecated.' });
   },
 
   loadResultSet: async (resultSetId: number) => {
-    const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    if (!activeWorkspace) return;
-    
-    try {
-      const resultSet = await ClassificationSchemesService.getSavedResultSet({
-        workspaceId: activeWorkspace.uid,
-        resultSetId,
-      });
-      
-      // Update stores with the loaded data
-      useDocumentStore.getState().fetchDocuments();
-      // useClassificationSchemeStore.getState().fetchClassificationSchemes(activeWorkspace.uid); // Remove this line
-      
-      // Set the run ID in the classification results store
-      // if (resultSet.results?.[0]?.run_id) { // Remove this block
-      //   useClassificationResultStore.getState().setSelectedRunId(resultSet.results[0].run_id);
-      // }
-    } catch (error: any) {
-      set({ error: "Error loading result set" });
-      console.error(error);
-    }
+     console.warn("DEPRECATED: loadResultSet is likely obsolete. Consider loading from Job history/import.");
+    // const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
+    // if (!activeWorkspace) return;
+    //
+    // try {
+    //   /*
+    //   // This service/method likely doesn't exist
+    //   const resultSet = await SomeNewService.getSavedResultSet({ ... });
+    //
+    //   // Update stores with the loaded data - Needs update for new stores
+    //   // useDataSourceStore.getState().fetchDataSources();
+    //   // useClassificationJobsStore.getState().fetchClassificationJobs(activeWorkspace.id);
+    //   // useClassificationSchemeStore? Or handled by useClassificationSystem hook?
+    //
+    //   // Set the active job based on the loaded set?
+    //   // if (resultSet.job_id) {
+    //   //   useClassificationSystem.getState().setActiveJob(resultSet.job_id); // Example
+    //   // }
+    //   */
+    // } catch (error: any) {
+    //   set({ error: "Error loading result set" });
+    //   console.error(error);
+    // }
+     set({ error: 'Functionality deprecated.' });
   },
 }));

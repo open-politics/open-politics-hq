@@ -19,6 +19,8 @@ build_and_push() {
 declare -A services=(
   ["backend"]="./backend/Dockerfile ./backend"
   ["frontend"]="./frontend/Dockerfile ./frontend"
+  ["celery_worker"]="./backend/Dockerfile ./backend"
+
 )
 
 # Function to get tags for selected items

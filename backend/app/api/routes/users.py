@@ -28,9 +28,8 @@ from app.utils import generate_new_account_email, send_email
 router = APIRouter()
 
 
-@router.get(
-    "/", dependencies=[Depends(get_current_active_superuser)], response_model=UsersOut
-)
+@router.get("", dependencies=[Depends(get_current_active_superuser)], response_model=UsersOut)
+@router.get("/", dependencies=[Depends(get_current_active_superuser)], response_model=UsersOut)
 def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
     """
     Retrieve users.
@@ -45,9 +44,8 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
     return UsersOut(data=users, count=count)
 
 
-@router.post(
-    "/", dependencies=[Depends(get_current_active_superuser)], response_model=UserOut
-)
+@router.post("", dependencies=[Depends(get_current_active_superuser)], response_model=UserOut)
+@router.post("/", dependencies=[Depends(get_current_active_superuser)], response_model=UserOut)
 def create_user(*, session: SessionDep, user_in: UserCreate) -> Any:
     """
     Create new user.

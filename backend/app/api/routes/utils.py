@@ -137,9 +137,16 @@ async def scrape_article(url: str):
     try:
         article_data = opol.scraping.url(url)
 
-        print(article_data)
-        
-        return article_data
+        # Assuming article_data is dict-like or has attributes
+        title = getattr(article_data, 'title', article_data.get('title', '')) if article_data else ''
+        text_content = getattr(article_data, 'text', article_data.get('text', '')) if article_data else ''
+
+        # Return a standardized structure
+        return {
+            "title": title,
+            "text_content": text_content,
+            "original_data": article_data
+        }
 
     except Exception as e:
         raise HTTPException(

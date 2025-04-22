@@ -37,7 +37,7 @@ import {
   BrainCircuit
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ClassifiableContent, ClassificationScheme } from '@/lib/classification/types';
+import { ClassificationSchemeRead } from '@/client/models';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { ContentCardProps } from './ContentCard';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
@@ -50,6 +50,8 @@ import {
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
+import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
+import { CoreContentModel } from '@/lib/content';
 
 interface ContentsViewProps {
   locationName: string;
@@ -92,6 +94,7 @@ interface Content {
   evaluation?: ContentEvaluation | null;
   entities?: any[];
   tags?: string[];
+  datasource_id?: number;
   [key: string]: any; 
 }
 
@@ -118,18 +121,19 @@ export function ContentsView({
     to: new Date()
   });
   const [sortBy, setSortBy] = useState<string>("date");
-  const { bookmarks, addBookmark, removeBookmark } = useBookMarkStore();
+  const { addBookmark, removeBookmark, isOperationPending } = useBookMarkStore();
   const [selectedEventType, setSelectedEventType] = useState(highlightedEventType || 'all');
   const [selectedContents, setSelectedContents] = useState<Content[]>([]);
   const [selectedSchemeId, setSelectedSchemeId] = useState<number | null>(null);
   const { activeWorkspace } = useWorkspaceStore();
   
   // Use the consolidated classification system hook to load schemes once
-  const { 
+  const {
     schemes,
     isLoadingSchemes,
-    isClassifying, 
-    batchClassify,
+    isClassifying,
+    createJob,
+    startClassificationJob,
     loadSchemes
   } = useClassificationSystem({
     autoLoadSchemes: true, // Load schemes automatically on mount
@@ -143,6 +147,9 @@ export function ContentsView({
   const [activeTab, setActiveTab] = useState<'search' | 'filters' | 'actions'>('search');
 
   const selectedContentRef = useRef<HTMLDivElement>(null);
+
+  // Get DataSources for checking bookmark status
+  const { dataSources } = useDataSourceStore();
 
   useEffect(() => {
     setSelectedEventType(highlightedEventType || 'all');
@@ -160,11 +167,11 @@ export function ContentsView({
   }, [selectedContents.length]);
 
   useEffect(() => {
-    if (activeWorkspace?.uid) {
+    if (activeWorkspace?.id) {
       // Load schemes using the new hook
       loadSchemes();
     }
-  }, [activeWorkspace?.uid, loadSchemes]);
+  }, [activeWorkspace?.id, loadSchemes]);
 
   useEffect(() => {
     if (selectedContentId && selectedContentRef.current) {
@@ -242,34 +249,64 @@ export function ContentsView({
     fetchContents(searchQuery);
   };
 
-  const handleBookmarkAll = () => {
-    contents.forEach(content => {
-      addBookmark({
-        id: content.id,
-        title: content.title,
-        text_content: content.text_content?.slice(0, 350) || '',
-        url: content.url,
-        source: content.source,
-        insertion_date: content.insertion_date,
-        content_type: content.content_type || 'article',
-        content_language: content.content_language || null,
-        author: content.author || null,
-        publication_date: content.publication_date || null,
-        top_image: content.top_image || null,
-        entities: content.entities || [],
-        tags: content.tags || [],
-        evaluation: content.evaluation || null,
-      }, activeWorkspace?.uid);
-    });
+  const handleBookmarkAll = async () => {
+    if (!activeWorkspace?.id) {
+      toast({ title: "Error", description: "No active workspace selected.", variant: "destructive" });
+      return;
+    }
+    const workspaceId = activeWorkspace.id;
+    let addedCount = 0;
+    for (const content of filteredAndSortedContents) { // Iterate over currently filtered/visible contents
+      const identifier = content.url;
+      if (identifier && findDataSourceByIdentifier(identifier, dataSources) === null) {
+        // Item is not bookmarked, add it
+        if (workspaceId) {
+          await addBookmark(content as CoreContentModel, workspaceId);
+          addedCount++;
+        }
+      }
+    }
+    if (addedCount > 0) {
+      toast({ title: "Bulk Import", description: `${addedCount} items imported successfully.`, variant: "default" });
+    } else {
+       toast({ title: "Bulk Import", description: `No new items to import.`, variant: "default" });
+    }
   };
 
-  const handleUnbookmarkAll = () => {
-    contents.forEach(content => {
-      removeBookmark(content.url);
-    });
+  const handleUnbookmarkAll = async () => {
+     if (!activeWorkspace?.id) {
+      toast({ title: "Error", description: "No active workspace selected.", variant: "destructive" });
+      return;
+    }
+    const workspaceId = activeWorkspace.id;
+    let removedCount = 0;
+    for (const content of filteredAndSortedContents) { // Iterate over currently filtered/visible contents
+       const identifier = content.url;
+       if (identifier) {
+         const dataSourceId = findDataSourceByIdentifier(identifier, dataSources);
+         if (dataSourceId !== null) {
+           if (workspaceId) {
+             await removeBookmark(identifier, workspaceId);
+             removedCount++;
+           }
+         }
+       }
+    }
+    if (removedCount > 0) {
+      toast({ title: "Bulk Remove", description: `${removedCount} items removed successfully.`, variant: "default" });
+    } else {
+       toast({ title: "Bulk Remove", description: `No items found to remove.`, variant: "default" });
+    }
   };
 
-  const allBookmarked = contents.every(content => bookmarks.some(bookmark => bookmark.url === content.url));
+  // Check if all *visible* (filtered) contents are bookmarked
+  const allVisibleBookmarked = useMemo(() => {
+    if (filteredAndSortedContents.length === 0) return false; // Can't be all bookmarked if none are visible
+    return filteredAndSortedContents.every(content => {
+      const identifier = content.url;
+      return identifier ? findDataSourceByIdentifier(identifier, dataSources) !== null : false;
+    });
+  }, [filteredAndSortedContents, dataSources]);
 
   const handleDatePreset = (days: number) => {
     setDateRange({
@@ -301,70 +338,84 @@ export function ContentsView({
       return;
     }
 
-    const classifiableContents: ClassifiableContent[] = selectedContents.map(content => {
-      let contentId = 0;
-      try {
-        if (content.id) {
-          const parsed = parseInt(content.id);
-          if (!isNaN(parsed) && parsed > 0) {
-            contentId = parsed;
-          }
+    // Map selected contents to DataRecord IDs and group by DataSource ID
+    const recordsByDataSource: { [key: number]: number[] } = {};
+    let skippedCount = 0;
+
+    selectedContents.forEach(content => {
+      const dataRecordId = parseInt(content.id);
+      const dataSourceId = content.datasource_id;
+
+      if (!isNaN(dataRecordId) && dataRecordId > 0 && dataSourceId && dataSourceId > 0) {
+        if (!recordsByDataSource[dataSourceId]) {
+          recordsByDataSource[dataSourceId] = [];
         }
-      } catch (e) {
-        console.warn(`Invalid content ID: ${content.id}, will create new document`);
+        recordsByDataSource[dataSourceId].push(dataRecordId);
+      } else {
+        skippedCount++;
+        console.warn(`Skipping item for classification due to missing ID or DataSource ID:`, content);
+      }
+    });
+
+    if (skippedCount > 0) {
+      toast({ title: "Warning", description: `${skippedCount} selected items lack necessary IDs and were skipped.`, variant: "default" });
+    }
+
+    const totalRecordsToClassify = Object.values(recordsByDataSource).reduce((sum, ids) => sum + ids.length, 0);
+
+    if (totalRecordsToClassify === 0) {
+      toast({ title: "Error", description: "No valid items selected for classification.", variant: "destructive" });
+      return;
+    }
+
+    const dataSourceIds = Object.keys(recordsByDataSource).map(Number);
+    const allDataRecordIds = Object.values(recordsByDataSource).flat();
+
+    console.log(`Starting batch classification for ${totalRecordsToClassify} items across ${dataSourceIds.length} DataSources with scheme ID ${selectedSchemeId}`);
+
+    try {
+      // Generate a unique run name
+      const runName = `Batch classification - ${new Date().toLocaleString()}`;
+      const workspaceId = activeWorkspace?.id;
+
+      if (!workspaceId) {
+         toast({ title: "Error", description: "No active workspace found.", variant: "destructive" });
+         return;
       }
 
-      return {
-        id: contentId,
-        title: content.title || 'Untitled Content',
-        text_content: content.text_content || '',
-        url: content.url || '',
-        source: content.source || '',
-        content_type: content.content_type || 'article',
-        insertion_date: content.insertion_date || new Date().toISOString(),
-        author: content.author || null,
-        publication_date: content.publication_date || null,
-        top_image: content.top_image || null
+      // Prepare job parameters
+      const jobParams /*: ClassificationJobParams */ = {
+        workspaceId: workspaceId,
+        name: runName,
+        schemeIds: [selectedSchemeId],
+        datasourceIds: dataSourceIds, // All involved DataSource IDs
+        configuration: {
+          // Target specific records across potentially multiple sources
+          target_datarecord_ids: allDataRecordIds
+        }
       };
-    });
-    
-    console.log(`Starting batch classification of ${classifiableContents.length} items with scheme ID ${selectedSchemeId}`);
-    
-    try {
-      // Generate a unique run name with timestamp for better tracking
-      const runName = `Batch classification - ${new Date().toLocaleString()}`;
-      
-      // Use the batchClassify method from the hook
-      const results = await batchClassify(
-        classifiableContents,
-        selectedSchemeId,
-        runName
-      );
-      
-      console.log(`Batch classification completed with ${results.length} results`);
-      
-      // Show a more detailed success message
-      toast({
-        title: "Classification Complete",
-        description: `Successfully classified ${results.length} of ${classifiableContents.length} items with run name: "${runName}"`,
-        variant: "default",
-      });
-      
-      // If we have results, clear the selections and notify the user they can view the results
-      if (results.length > 0) {
-        clearAllSelections();
-        
-        // Add a second toast with instructions on how to view the results
+
+      console.log("Creating job with params:", jobParams);
+
+      const newJob = await createJob(jobParams);
+
+      if (newJob) {
+        console.log(`Batch classification job created with ID: ${newJob.id}`);
         toast({
-          title: "View Classification Results",
-          description: "You can view the classification results by opening each content item or using the Classification Results page.",
+          title: "Classification Job Created",
+          description: `Job "${runName}" (ID: ${newJob.id}) created for ${totalRecordsToClassify} items. It will start processing shortly.`,
           variant: "default",
-          duration: 5000,
         });
+        clearAllSelections();
+        // Optionally start the job or rely on backend
+        // await startClassificationJob(newJob.id);
+      } else {
+         toast({ title: "Error", description: "Failed to create classification job.", variant: "destructive" });
       }
+
     } catch (error: any) {
-      console.error("Error during batch classification:", error);
-      
+      console.error("Error during batch classification job creation:", error);
+
       toast({
         title: "Classification Failed",
         description: error instanceof Error ? error.message : "An unknown error occurred during classification.",
@@ -429,7 +480,7 @@ export function ContentsView({
         entities: content.entities || [],
         tags: formattedTags,
         evaluation: formattedEvaluation,
-      }, activeWorkspace?.uid);
+      }, activeWorkspace?.id || 0);
     }
     
     setSelectedContents([]);
@@ -507,7 +558,7 @@ export function ContentsView({
         </linearGradient>
       </svg>
       
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-0">
         {/* <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">{locationName}</h2>
           
@@ -958,11 +1009,11 @@ export function ContentsView({
                           </Button>
                           
                           <Button 
-                            variant={allBookmarked ? "destructive" : "outline"}
+                            variant={allVisibleBookmarked ? "destructive" : "outline"}
                             className="w-full"
-                            onClick={allBookmarked ? handleUnbookmarkAll : handleBookmarkAll}
+                            onClick={allVisibleBookmarked ? handleUnbookmarkAll : handleBookmarkAll}
                           >
-                            {allBookmarked ? (
+                            {allVisibleBookmarked ? (
                               <>
                                 <X className="h-4 w-4 mr-2" />
                                 Remove All
@@ -1124,6 +1175,7 @@ export function ContentsView({
                         <ContentCard
                           key={content.url}
                           {...content as unknown as ContentCardProps}
+                          dataSourceId={content.datasource_id}
                           isHighlighted={content.id === selectedContentId}
                           preloadedSchemes={schemes}
                         />
@@ -1148,5 +1200,18 @@ export function ContentsView({
     </div>
   );
 }
+
+// Helper function copied/adapted from storeBookmark.tsx
+// TODO: Consider moving this to a shared utility file
+const findDataSourceByIdentifier = (identifier: string, dataSources: any[]): number | null => {
+  const found = dataSources.find(ds => {
+    if (ds.type === "url_list" && Array.isArray(ds.origin_details?.urls) && ds.origin_details.urls.includes(identifier)) {
+      return true;
+    }
+    // Add checks for other types if needed (e.g., text block hash)
+    return false;
+  });
+  return found ? found.id : null;
+};
 
 export default ContentsView;

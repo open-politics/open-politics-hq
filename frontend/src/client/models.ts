@@ -4,31 +4,11 @@ export type ArticleResponse = {
 
 
 
-export type Body_documents_bulk_upload_documents = {
-	autofill?: boolean;
-	files: Array<Blob | File>;
-	content_type?: string;
-	source?: string | null;
-};
-
-
-
-export type Body_documents_create_document = {
-	title: string;
-	url?: string | null;
-	content_type?: string;
-	source?: string | null;
-	text_content?: string | null;
-	summary?: string | null;
-	top_image?: string | null;
-	insertion_date?: string | null;
-	files?: Array<Blob | File> | null;
-};
-
-
-
-export type Body_documents_extract_document_metadata_from_pdf = {
-	file: Blob | File;
+export type Body_datasources_create_datasource = {
+	name: string;
+	type: DataSourceType;
+	origin_details?: string | null;
+	file?: Blob | File | null;
 };
 
 
@@ -78,59 +58,62 @@ export type ClassificationFieldCreate = {
 
 
 
-export type ClassificationResultCreate = {
-	document_id: number;
-	scheme_id: number;
-	run_id?: number | null;
-	value?: Record<string, unknown>;
-	timestamp?: string | null;
+export type ClassificationJobCreate = {
+	name: string;
+	description?: string | null;
+	configuration: Record<string, unknown>;
 };
 
 
 
-export type ClassificationResultRead = {
-	document_id: number;
-	scheme_id: number;
-	run_id?: number | null;
-	value?: Record<string, unknown>;
-	timestamp?: string;
+export type ClassificationJobRead = {
+	name: string;
+	description?: string | null;
+	configuration?: Record<string, unknown>;
+	status?: ClassificationJobStatus;
+	error_message?: string | null;
 	id: number;
-	document: DocumentRead;
-	scheme: ClassificationSchemeRead;
-};
-
-
-
-export type ClassificationRunCreate = {
-	status?: unknown;
-};
-
-
-
-export type ClassificationRunRead = {
-	status?: unknown;
+	workspace_id: number;
+	user_id: number;
+	created_at: string;
+	updated_at: string;
+	target_scheme_ids?: Array<number>;
+	target_datasource_ids?: Array<number>;
+	result_count?: number | null;
+	datarecord_count?: number | null;
 };
 
 
 
 /**
- * Defines the possible states of a ClassificationRun.
+ * Defines the execution status of a ClassificationJob.
  */
-export type ClassificationRunStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type ClassificationJobStatus = 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed';
 
 
 
-export type ClassificationRunUpdate = {
-	name?: string | null;
-	description?: string | null;
-	status?: ClassificationRunStatus | null;
+export type ClassificationJobUpdate = {
+	status?: ClassificationJobStatus | null;
+	error_message?: string | null;
+	updated_at?: string;
 };
 
 
 
-export type ClassificationRunsOut = {
-	data: Array<ClassificationRunRead>;
+export type ClassificationJobsOut = {
+	data: Array<ClassificationJobRead>;
 	count: number;
+};
+
+
+
+export type ClassificationResultRead = {
+	datarecord_id: number;
+	scheme_id: number;
+	job_id: number;
+	value?: Record<string, unknown>;
+	timestamp?: string;
+	id: number;
 };
 
 
@@ -157,7 +140,7 @@ export type ClassificationSchemeRead = {
 	updated_at: string;
 	fields: Array<ClassificationFieldCreate>;
 	classification_count?: number | null;
-	document_count?: number | null;
+	job_count?: number | null;
 };
 
 
@@ -167,7 +150,69 @@ export type ClassificationSchemeUpdate = {
 	description?: string | null;
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
-	fields?: Array<ClassificationFieldCreate> | null;
+};
+
+
+
+export type CsvRowData = {
+	row_data: Record<string, unknown>;
+	row_number: number;
+};
+
+
+
+export type CsvRowsOut = {
+	data: Array<CsvRowData>;
+	total_rows: number;
+	columns: Array<string>;
+};
+
+
+
+export type DataRecordRead = {
+	text_content: string;
+	source_metadata?: Record<string, unknown>;
+	id: number;
+	datasource_id: number;
+	created_at: string;
+};
+
+
+
+export type DataSourceRead = {
+	name: string;
+	type: DataSourceType;
+	origin_details?: Record<string, unknown>;
+	source_metadata?: Record<string, unknown>;
+	status?: DataSourceStatus;
+	error_message?: string | null;
+	id: number;
+	workspace_id: number;
+	user_id: number;
+	created_at: string;
+	updated_at: string;
+	data_record_count?: number | null;
+};
+
+
+
+/**
+ * Defines the processing status of a DataSource.
+ */
+export type DataSourceStatus = 'pending' | 'processing' | 'complete' | 'failed';
+
+
+
+/**
+ * Defines the type of data source.
+ */
+export type DataSourceType = 'csv' | 'pdf' | 'url_list' | 'text_block';
+
+
+
+export type DataSourcesOut = {
+	data: Array<DataSourceRead>;
+	count: number;
 };
 
 
@@ -180,48 +225,16 @@ export type DictKeyDefinition = {
 
 
 
-export type DocumentRead = {
-	title: string;
-	url?: string | null;
-	content_type?: string | null;
-	source?: string | null;
-	top_image?: string | null;
-	text_content?: string | null;
-	summary?: string | null;
-	insertion_date?: string;
-	id: number;
-	workspace_id: number;
-	user_id: number;
-	files?: Array<FileRead>;
-};
-
-
-
-export type DocumentUpdate = {
-	title?: string | null;
-	url?: string | null;
-	content_type?: string | null;
-	source?: string | null;
-	top_image?: string | null;
-	text_content?: string | null;
-	summary?: string | null;
-	insertion_date?: string | null;
-};
-
-
-
 /**
- * Adds a processed 'display_value' based on the raw 'value' and scheme.
+ * Adds a processed 'display_value' based on the raw 'value'.
  */
 export type EnhancedClassificationResultRead = {
-	document_id: number;
+	datarecord_id: number;
 	scheme_id: number;
-	run_id?: number | null;
+	job_id: number;
 	value?: Record<string, unknown>;
 	timestamp?: string;
 	id: number;
-	document: DocumentRead;
-	scheme: ClassificationSchemeRead;
 	display_value?: number | string | Record<string, unknown> | Array<unknown> | null;
 };
 
@@ -231,20 +244,6 @@ export type EnhancedClassificationResultRead = {
  * Defines the data type for a ClassificationField.
  */
 export type FieldType = 'int' | 'str' | 'List[str]' | 'List[Dict[str, any]]';
-
-
-
-export type FileRead = {
-	name: string;
-	filetype?: string | null;
-	size?: number | null;
-	url?: string | null;
-	caption?: string | null;
-	media_type?: string | null;
-	top_image?: string | null;
-	id: number;
-	document_id: number;
-};
 
 
 
@@ -328,27 +327,6 @@ export type QueryType = {
 export type Request = {
 	query: string;
 	query_type: QueryType;
-};
-
-
-
-export type SavedResultSetCreate = {
-	name: string;
-	document_ids?: Array<number>;
-	scheme_ids?: Array<number>;
-};
-
-
-
-export type SavedResultSetRead = {
-	name: string;
-	document_ids?: Array<number>;
-	scheme_ids?: Array<number>;
-	id: number;
-	workspace_id: number;
-	created_at: string;
-	updated_at: string;
-	results?: Array<ClassificationResultRead>;
 };
 
 
@@ -462,7 +440,6 @@ export type ValidationError = {
 export type WorkspaceCreate = {
 	name: string;
 	description?: string | null;
-	sources?: Array<string> | null;
 	icon?: string | null;
 };
 
@@ -471,9 +448,8 @@ export type WorkspaceCreate = {
 export type WorkspaceRead = {
 	name: string;
 	description?: string | null;
-	sources?: Array<string> | null;
 	icon?: string | null;
-	uid: number;
+	id: number;
 	created_at: string;
 	updated_at: string;
 	user_id_ownership: number;
@@ -482,9 +458,8 @@ export type WorkspaceRead = {
 
 
 export type WorkspaceUpdate = {
-	name: string;
+	name?: string | null;
 	description?: string | null;
-	sources?: Array<string> | null;
 	icon?: string | null;
 };
 

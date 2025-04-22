@@ -1,193 +1,215 @@
-import { 
-  ClassificationResult, 
-  ClassificationScheme, 
+import {
+  DataSource, DataRecord, ClassificationJob,
+  ClassificationResult,
+  ClassificationScheme,
   FormattedClassificationResult,
-  ClassifiableDocument,
-  SchemeFormData
+  SchemeFormData,
+  SchemeField,
+  FieldType,
+  DictKeyDefinition,
+  DataSourceType,
+  DataSourceStatus,
+  ClassificationJobStatus
 } from './types';
-import { 
-  ClassificationResultRead, 
+import {
+  ClassificationResultRead as ClientClassificationResultRead,
+  ClassificationSchemeRead as ClientClassificationSchemeRead,
+  ClassificationJobRead as ClientClassificationJobRead,
+  DataSourceRead as ClientDataSourceRead,
+  EnhancedClassificationResultRead as ClientEnhancedClassificationResultRead,
+  ClassificationSchemeCreate,
+  ClassificationFieldCreate,
+  DictKeyDefinition as ClientDictKeyDefinition,
+  ClassificationResultRead,
   ClassificationSchemeRead,
-  DocumentRead,
-  FileRead,
-  ClassificationSchemeCreate
 } from '@/client/models';
 
 /**
- * Adapters to convert between our new types and the old API types
- * These are temporary and will be removed once the migration is complete
+ * Adapters to convert between backend API types (from `@/client/models`)
+ * and internal frontend types (from `./types`).
  */
 
-/**
- * Convert a ClassificationScheme to a ClassificationSchemeRead
- */
-export function schemeToSchemeRead(scheme: ClassificationScheme): ClassificationSchemeRead {
-  return {
-    id: scheme.id,
-    name: scheme.name,
-    description: scheme.description || '',
-    fields: scheme.fields.map(field => ({
-      name: field.name,
-      type: field.type,
-      description: field.description || '',
-      scale_min: field.config.scale_min || null,
-      scale_max: field.config.scale_max || null,
-      is_set_of_labels: field.config.is_set_of_labels || null,
-      labels: field.config.labels || null,
-      dict_keys: field.config.dict_keys || null
-    })),
-    model_instructions: scheme.model_instructions || '',
-    validation_rules: scheme.validation_rules || {},
-    created_at: scheme.created_at || new Date().toISOString(),
-    updated_at: scheme.updated_at || new Date().toISOString(),
-    classification_count: scheme.classification_count || 0,
-    document_count: scheme.document_count || 0
-  } as ClassificationSchemeRead;
-}
+// Convert API ClassificationSchemeRead[] to frontend ClassificationSchemeRead[]
+// NOTE: Assuming ClientClassificationSchemeRead and ClassificationSchemeRead are compatible for now
+// If they diverge significantly, a more complex mapping is needed.
+export const schemesToSchemeReads = (schemes: ClientClassificationSchemeRead[]): ClassificationSchemeRead[] => {
+    // Assuming ClientClassificationSchemeRead is structurally compatible with the needed ClassificationSchemeRead
+    // If not, map properties explicitly here.
+    // This is a basic cast, refine if needed.
+    return schemes as unknown as ClassificationSchemeRead[];
+};
 
-/**
- * Convert an array of ClassificationScheme to ClassificationSchemeRead[]
- */
-export function schemesToSchemeReads(schemes: ClassificationScheme[]): ClassificationSchemeRead[] {
-  return schemes.map(schemeToSchemeRead);
-}
 
-/**
- * Convert a ClassificationResult to a ClassificationResultRead
- */
-export function resultToResultRead(result: ClassificationResult | FormattedClassificationResult): ClassificationResultRead {
-  // Create a minimal document if needed
-  const document: DocumentRead = {
-    id: result.document_id,
-    title: result.document?.title || '',
-    insertion_date: result.document?.insertion_date || new Date().toISOString(),
-    files: result.document?.files?.map(f => ({ ...f, document_id: result.document_id })) || [],
-    workspace_id: 0,
-    user_id: 0
-  } as DocumentRead;
-  
-  // Create a placeholder scheme object
-  const schemePlaceholder: ClassificationSchemeRead = {
-    id: result.scheme_id,
-    name: result.scheme?.name || '',
-    description: result.scheme?.description || '',
-    fields: result.scheme?.fields?.map(field => ({
-      name: field.name,
-      type: field.type,
-      description: field.description || '',
-      scale_min: field.config.scale_min ?? null,
-      scale_max: field.config.scale_max ?? null,
-      is_set_of_labels: field.config.is_set_of_labels ?? null,
-      labels: field.config.labels ?? null,
-      dict_keys: field.config.dict_keys ?? null
-    })) || [],
-    model_instructions: result.scheme?.model_instructions || null,
-    validation_rules: result.scheme?.validation_rules || null,
-    created_at: result.scheme?.created_at || new Date().toISOString(),
-    updated_at: result.scheme?.updated_at || new Date().toISOString(),
-    workspace_id: 0,
-    user_id: 0,
-    classification_count: result.scheme?.classification_count ?? null,
-    document_count: result.scheme?.document_count ?? null
-  };
+// Convert FormattedClassificationResult to ClassificationResultRead
+// This might be lossy or require assumptions if types differ significantly.
+export const resultToResultRead = (result: FormattedClassificationResult): ClassificationResultRead => {
+    // Assuming FormattedClassificationResult has compatible structure for basic Read model
+    // This might need refinement based on exact type differences.
+    return {
+        id: result.id,
+        datarecord_id: result.datarecord_id,
+        scheme_id: result.scheme_id,
+        job_id: result.job_id,
+        value: result.value || {},
+        timestamp: result.timestamp,
+        // ClassificationResultRead doesn't have displayValue, isOptimistic or nested objects
+    };
+};
 
-  return {
-    id: result.id,
-    document_id: result.document_id,
-    scheme_id: result.scheme_id,
-    value: result.value,
-    timestamp: result.timestamp,
-    run_id: result.run_id || null,
-    document: document,
-    scheme: schemePlaceholder
-  } as ClassificationResultRead;
-}
+// Helper to convert API DictKeyDefinition to our frontend type
+const adaptApiDictKeyDefinition = (apiDictKey: ClientDictKeyDefinition): DictKeyDefinition => ({
+  name: apiDictKey.name,
+  type: apiDictKey.type as "str" | "int" | "float" | "bool" // Assert frontend type
+});
 
-/**
- * Convert an array of ClassificationResult to ClassificationResultRead[]
- */
-export function resultsToResultReads(results: (ClassificationResult | FormattedClassificationResult)[]): ClassificationResultRead[] {
-  return results.map(resultToResultRead);
-}
-
-/**
- * Convert a ClassificationResultRead to a ClassificationResult
- */
-export function resultReadToResult(resultRead: ClassificationResultRead): ClassificationResult {
-  return {
-    id: resultRead.id,
-    document_id: resultRead.document_id,
-    scheme_id: resultRead.scheme_id,
-    value: resultRead.value,
-    timestamp: resultRead.timestamp || new Date().toISOString(),
-    run_id: resultRead.run_id ?? 0,
-    run_name: `Run ${resultRead.run_id ?? 'Unknown'}`,
-    run_description: undefined,
-    document: resultRead.document ? {
-        id: resultRead.document.id,
-        title: resultRead.document.title,
-    } as ClassifiableDocument : undefined,
-    scheme: resultRead.scheme ? schemeReadToScheme(resultRead.scheme) : undefined
-  };
-}
-
-/**
- * Convert a ClassifiableDocument to a DocumentRead
- */
-export function documentToDocumentRead(doc: ClassifiableDocument): DocumentRead {
-  // Convert files to FileRead[]
-  const files: FileRead[] = (doc.files || []).map(file => ({
-    ...file,
-    document_id: doc.id,
-    workspace_id: 0
-  } as FileRead));
-  
-  return {
-    id: doc.id,
-    title: doc.title,
-    text_content: doc.text_content || null,
-    url: doc.url || null,
-    source: doc.source || null,
-    content_type: doc.content_type || null,
-    insertion_date: doc.insertion_date,
-    summary: doc.summary || null,
-    top_image: doc.top_image || null,
-    files: files,
-    workspace_id: 0,
-    user_id: 0
-  } as DocumentRead;
-}
-
-/**
- * Convert an array of ClassifiableDocument to DocumentRead[]
- */
-export function documentsToDocumentReads(docs: ClassifiableDocument[]): DocumentRead[] {
-  return docs.map(documentToDocumentRead);
-}
-
-// Helper function to convert ClassificationSchemeRead back to ClassificationScheme (if needed)
-export function schemeReadToScheme(schemeRead: ClassificationSchemeRead): ClassificationScheme {
+// Convert API ClassificationSchemeRead to frontend ClassificationScheme
+export function adaptSchemeReadToScheme(schemeRead: ClientClassificationSchemeRead): ClassificationScheme {
     return {
         id: schemeRead.id,
         name: schemeRead.name,
         description: schemeRead.description,
-        fields: schemeRead.fields.map(field => ({
+        fields: schemeRead.fields.map((field: ClassificationFieldCreate): SchemeField => ({
             name: field.name,
-            type: field.type,
+            type: field.type as FieldType,
             description: field.description,
             config: {
                 scale_min: field.scale_min ?? undefined,
                 scale_max: field.scale_max ?? undefined,
                 is_set_of_labels: field.is_set_of_labels ?? undefined,
                 labels: field.labels ?? undefined,
-                dict_keys: field.dict_keys ? field.dict_keys.map(dk => ({ name: dk.name, type: dk.type as "str" | "int" | "float" | "bool" })) : undefined
+                dict_keys: field.dict_keys ? field.dict_keys.map(adaptApiDictKeyDefinition) : undefined
             }
         })),
         model_instructions: schemeRead.model_instructions ?? undefined,
         validation_rules: schemeRead.validation_rules ?? undefined,
         created_at: schemeRead.created_at,
         updated_at: schemeRead.updated_at,
-        classification_count: schemeRead.classification_count ?? 0,
-        document_count: schemeRead.document_count ?? 0,
+        job_count: schemeRead.job_count ?? schemeRead.classification_count ?? 0,
+    };
+}
+
+// Convert frontend SchemeFormData to API ClassificationSchemeCreate
+export const adaptSchemeFormDataToSchemeCreate = (formData: SchemeFormData): ClassificationSchemeCreate => ({
+  name: formData.name,
+  description: formData.description,
+  fields: formData.fields.map((field): ClassificationFieldCreate => ({
+    name: field.name,
+    type: field.type,
+    description: field.description,
+    scale_min: field.config.scale_min ?? null,
+    scale_max: field.config.scale_max ?? null,
+    is_set_of_labels: field.config.is_set_of_labels ?? null,
+    labels: field.config.labels ?? null,
+    dict_keys: field.config.dict_keys?.map((dk): ClientDictKeyDefinition => ({
+      name: dk.name,
+      type: dk.type
+    })) ?? null
+  })),
+  model_instructions: formData.model_instructions ?? undefined,
+  validation_rules: formData.validation_rules ?? undefined
+});
+
+// Convert API ClassificationSchemeRead to frontend SchemeFormData (for editing)
+export const adaptSchemeReadToSchemeFormData = (apiData: ClientClassificationSchemeRead): SchemeFormData => ({
+  name: apiData.name,
+  description: apiData.description,
+  fields: apiData.fields.map((field: ClassificationFieldCreate): SchemeField => ({
+    name: field.name,
+    type: field.type as FieldType,
+    description: field.description,
+    config: {
+      scale_min: field.scale_min ?? undefined,
+      scale_max: field.scale_max ?? undefined,
+      is_set_of_labels: field.is_set_of_labels ?? undefined,
+      labels: field.labels ?? undefined,
+      dict_keys: field.dict_keys ? field.dict_keys.map(adaptApiDictKeyDefinition) : undefined
+    }
+  })),
+  model_instructions: apiData.model_instructions ?? undefined,
+  validation_rules: apiData.validation_rules ?? undefined
+});
+
+// Convert API ClassificationResultRead to frontend ClassificationResult
+export function adaptResultReadToResult(resultRead: ClientClassificationResultRead): ClassificationResult {
+  return {
+    id: resultRead.id,
+    datarecord_id: resultRead.datarecord_id,
+    scheme_id: resultRead.scheme_id,
+    job_id: resultRead.job_id,
+    value: resultRead.value,
+    timestamp: resultRead.timestamp || new Date().toISOString(),
+    datarecord: undefined,
+    scheme: undefined,
+    job: undefined
+  };
+}
+
+// Convert API EnhancedClassificationResultRead to frontend FormattedClassificationResult
+export function adaptEnhancedResultReadToFormattedResult(enhancedRead: ClientEnhancedClassificationResultRead): FormattedClassificationResult {
+  return {
+    id: enhancedRead.id,
+    datarecord_id: enhancedRead.datarecord_id,
+    scheme_id: enhancedRead.scheme_id,
+    job_id: enhancedRead.job_id,
+    value: enhancedRead.value || {},
+    timestamp: enhancedRead.timestamp || new Date().toISOString(),
+    displayValue: (enhancedRead.display_value as string | number | string[] | Record<string, any> | null) ?? null,
+    isOptimistic: false,
+    datarecord: undefined,
+    scheme: undefined,
+    job: undefined,
+  };
+}
+
+// Convert API DataSourceRead to frontend DataSource
+export function adaptDataSourceReadToDataSource(dataSourceRead: ClientDataSourceRead): DataSource {
+    return {
+        id: dataSourceRead.id,
+        workspace_id: dataSourceRead.workspace_id,
+        user_id: dataSourceRead.user_id,
+        name: dataSourceRead.name,
+        type: dataSourceRead.type as DataSourceType,
+        origin_details: (dataSourceRead.origin_details as Record<string, any>) || {},
+        source_metadata: (dataSourceRead.source_metadata as Record<string, any>) || {},
+        status: dataSourceRead.status as DataSourceStatus,
+        error_message: dataSourceRead.error_message,
+        created_at: dataSourceRead.created_at,
+        updated_at: dataSourceRead.updated_at,
+        data_record_count: dataSourceRead.data_record_count
+    };
+}
+
+// Convert API DataRecordRead to frontend DataRecord
+// Commented out as ClientDataRecordRead is not exported
+/*
+export function adaptDataRecordReadToDataRecord(dataRecordRead: ClientDataRecordRead): DataRecord {
+    return {
+        id: dataRecordRead.id,
+        datasource_id: dataRecordRead.datasource_id,
+        text_content: dataRecordRead.text_content,
+        source_metadata: dataRecordRead.source_metadata,
+        created_at: dataRecordRead.created_at,
+        datasource: undefined
+    };
+}
+*/
+
+// Convert API ClassificationJobRead to frontend ClassificationJob
+export function adaptJobReadToJob(jobRead: ClientClassificationJobRead): ClassificationJob {
+    return {
+        id: jobRead.id,
+        workspace_id: jobRead.workspace_id,
+        user_id: jobRead.user_id,
+        name: jobRead.name,
+        description: jobRead.description,
+        configuration: (jobRead.configuration as Record<string, any>) || {},
+        status: jobRead.status as ClassificationJobStatus,
+        error_message: jobRead.error_message,
+        created_at: jobRead.created_at,
+        updated_at: jobRead.updated_at,
+        result_count: jobRead.result_count,
+        datarecord_count: jobRead.datarecord_count,
+        target_scheme_ids: jobRead.target_scheme_ids || [],
+        target_datasource_ids: jobRead.target_datasource_ids || []
     };
 } 

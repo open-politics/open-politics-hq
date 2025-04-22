@@ -45,6 +45,13 @@ services:
       - SENTRY_DSN=${SENTRY_DSN}
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_SECURE=${MINIO_SECURE}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
     build:
       context: ./backend
       args:
@@ -93,6 +100,35 @@ services:
     networks:
       - default
 
+  celery_worker:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    restart: always
+    networks:
+      - default
+      - opol-app-stack
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_SECURE=${MINIO_SECURE}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "solo"]
+    volumes:
+      - ./backend:/app
+
 volumes:
   app-db-data:
   redis_data:
@@ -102,4 +138,3 @@ networks:
     external: false
   opol-app-stack:
     external: true
-  

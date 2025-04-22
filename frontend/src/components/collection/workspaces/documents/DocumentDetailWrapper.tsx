@@ -1,7 +1,6 @@
 'use client';
 
-import React from 'react';
-import { useDocumentStore } from '@/zustand_stores/storeDocuments';
+import React, { useState } from 'react';
 import DocumentDetailOverlay from './DocumentDetailOverlay';
 
 interface DocumentDetailWrapperProps {
@@ -13,12 +12,13 @@ export default function DocumentDetailWrapper({
   children,
   onLoadIntoRunner
 }: DocumentDetailWrapperProps) {
-  const { isDetailOpen, selectedDocumentId, closeDocumentDetail } = useDocumentStore();
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
 
   const handleLoadIntoRunner = (runId: number, runName: string) => {
     if (onLoadIntoRunner) {
       onLoadIntoRunner(runId, runName);
-      closeDocumentDetail(); // Close the document detail after loading into runner
+      setIsDetailOpen(false);
     }
   };
 
@@ -27,7 +27,7 @@ export default function DocumentDetailWrapper({
       {children}
       <DocumentDetailOverlay
         open={isDetailOpen}
-        onClose={closeDocumentDetail}
+        onClose={() => setIsDetailOpen(false)}
         documentId={selectedDocumentId}
         onLoadIntoRunner={handleLoadIntoRunner}
       />

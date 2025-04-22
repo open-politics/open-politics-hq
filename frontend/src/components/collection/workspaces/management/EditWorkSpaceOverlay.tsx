@@ -15,7 +15,7 @@ interface EditWorkSpaceOverlayProps {
   defaultSources?: string[] | undefined;
   defaultIcon?: string | undefined;
   isCreating?: boolean;
-  onCreateWorkspace?: (name: string, description: string, sources: string[], icon: string) => Promise<void>;
+  onCreateWorkspace?: (name: string, description: string, icon: string) => Promise<void>;
 }
 
 /**
@@ -61,14 +61,12 @@ export default function EditWorkSpaceOverlay({
         await onCreateWorkspace(
           name,
           description,
-          sources.split(",").map((s) => s.trim()).filter(s => s),
           icon
         );
       } else if (workspaceId) {
         await updateWorkspace(workspaceId, {
           name,
           description,
-          sources: sources.split(",").map((s) => s.trim()).filter(s => s),
           icon,
         });
       }

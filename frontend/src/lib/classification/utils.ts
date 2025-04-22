@@ -1,8 +1,7 @@
 import { ClassificationSchemeRead, DictKeyDefinition as ClientDictKeyDefinition } from "@/client/models";
 import { ResultFilter } from "@/components/collection/workspaces/classifications/ClassificationResultFilters"; 
-import { FieldType, DictKeyDefinition, FormattedClassificationResult, ClassifiableDocument } from "./types"; 
+import { FieldType, DictKeyDefinition, FormattedClassificationResult, DataRecord } from "./types"; 
 import { ClassificationResultRead } from "@/client/models";
-import { ClassificationService } from "./service";
 
 // --- getTargetFieldDefinition (from ResultFilters.tsx) ---
 export const getTargetFieldDefinition = (
@@ -152,7 +151,8 @@ export const compareValues = (actual: any, filterVal: any, operator: ResultFilte
 
 export const checkFilterMatch = (
     filter: ResultFilter,
-    docResults: (ClassificationResultRead | FormattedClassificationResult)[],
+    // Results for a SINGLE datarecord (previously document)
+    datarecordResults: (ClassificationResultRead | FormattedClassificationResult)[],
     allSchemes: ClassificationSchemeRead[]
 ): boolean => {
     // If the filter is not active, it should always match (effectively skipping it)
@@ -160,9 +160,10 @@ export const checkFilterMatch = (
         return true;
     }
 
-    const targetSchemeResult = docResults.find(r => r.scheme_id === filter.schemeId);
+    // Find the result within this datarecord's results that matches the filter's scheme
+    const targetSchemeResult = datarecordResults.find(r => r.scheme_id === filter.schemeId);
 
-    // Handle case where document lacks results for the filtered scheme
+    // Handle case where datarecord lacks results for the filtered scheme
     if (!targetSchemeResult || targetSchemeResult.value === null || targetSchemeResult.value === undefined) {
         // Match only if filter is 'equals' N/A or null/empty
         return filter.operator === 'equals' && (filter.value === 'N/A' || filter.value === null || filter.value === undefined || filter.value === '');
@@ -179,24 +180,30 @@ export const checkFilterMatch = (
     let actualValue: any;
 
     // Value Extraction Logic
-    if ('dict_keys' in fieldDefinition && fieldDefinition.type === 'List[Dict[str, any]]' && filter.fieldKey) {
+    // Check if fieldDefinition is a dict key definition (has 'name' and 'type', but not other Field props)
+    const isDictKeyDef = fieldDefinition && 'name' in fieldDefinition && 'type' in fieldDefinition && !('scale_min' in fieldDefinition);
+
+    if (isDictKeyDef && filter.fieldKey) {
         // Case 1: Filtering on a specific dict_key within List[Dict]
-        if (!Array.isArray(targetSchemeResult.value)) return false; // Value must be an array
+        // This assumes the result value corresponding to the scheme is an array of dicts
+        if (!Array.isArray(targetSchemeResult.value)) return false; // Value must be an array for List[Dict]
 
         // Check if *any* item in the list matches the filter for the specified key
         return targetSchemeResult.value.some(item => {
             if (typeof item === 'object' && item !== null && filter.fieldKey! in item) {
                  const dictKeyValue = item[filter.fieldKey!];
                  // Use the type derived from the dict_key definition for comparison
-                 return compareValues(dictKeyValue, filter.value, filter.operator, fieldType as any);
+                 return compareValues(dictKeyValue, filter.value, filter.operator, fieldType as any); // Type assertion needed here
             }
             return false;
         });
-    } else if ('name' in fieldDefinition) {
-         // Case 2: Filtering on a top-level field
-        const fieldValue = (typeof targetSchemeResult.value === 'object' && targetSchemeResult.value !== null && !Array.isArray(targetSchemeResult.value))
-            ? targetSchemeResult.value[fieldDefinition.name] // Extract from object if field name exists
-            : targetSchemeResult.value; // Use raw value for simple types or lists (or object if field name not present)
+    } else if (fieldDefinition && 'name' in fieldDefinition && !isDictKeyDef) {
+         // Case 2: Filtering on a top-level field (fieldDefinition is a ClassificationField)
+        const topLevelFieldName = fieldDefinition.name;
+        // Check if the result value itself is the value (simple types, lists) or if it's an object containing the field name
+        const fieldValue = (typeof targetSchemeResult.value === 'object' && targetSchemeResult.value !== null && !Array.isArray(targetSchemeResult.value) && topLevelFieldName in targetSchemeResult.value)
+            ? targetSchemeResult.value[topLevelFieldName] // Extract from object if field name exists
+            : targetSchemeResult.value; // Use raw value for simple types or lists, or if value is object but doesn't contain the key
 
         actualValue = fieldValue;
 
@@ -284,75 +291,52 @@ export const extractLocationString = (value: any, fieldKey: string | null): stri
 /**
  * Formats a classification value based on its scheme for display purposes.
  * @param value - The raw classification value.
- * @param scheme - The corresponding classification scheme.
+ * @param scheme - The corresponding **client** classification scheme.
  * @returns A formatted string or the original value if formatting fails.
  */
 export const formatDisplayValue = (value: any, scheme: ClassificationSchemeRead): string | number | null => {
-  if (!value) return null;
+  if (value === null || value === undefined) return null;
+
+  const field = scheme.fields?.[0];
+  if (!field) {
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+  }
 
   try {
-    // Create a temporary result structure expected by ClassificationService.getFormattedValue
-    // It expects a ClassificationResult-like structure, so we mock it minimally.
-    const tempResult = {
-        id: 0, // Mock ID
-        document_id: 0, // Mock document ID
-        scheme_id: scheme.id,
-        value: value,
-        timestamp: new Date().toISOString(), // Mock timestamp
-        run_id: 0, // Mock run ID
-    };
-
-    // Adapt the ClassificationSchemeRead to the ClassificationScheme type expected by the service
-    // This involves converting nested structures like fields and dict_keys if necessary.
-    const adaptedScheme = {
-        id: scheme.id,
-        name: scheme.name,
-        description: scheme.description,
-        fields: scheme.fields.map(f => ({
-            name: f.name,
-            type: f.type as FieldType, // Assert type
-            description: f.description,
-            config: {
-                scale_min: f.scale_min ?? undefined,
-                scale_max: f.scale_max ?? undefined,
-                is_set_of_labels: f.is_set_of_labels ?? undefined,
-                labels: f.labels ?? undefined,
-                dict_keys: f.dict_keys ? f.dict_keys.map((dk: any) => ({ name: dk.name, type: dk.type as "str" | "int" | "float" | "bool" })) : undefined
-            }
-        })),
-        model_instructions: scheme.model_instructions ?? undefined,
-        validation_rules: scheme.validation_rules ?? undefined,
-        created_at: scheme.created_at,
-        updated_at: scheme.updated_at,
-        classification_count: scheme.classification_count ?? 0,
-        document_count: scheme.document_count ?? 0
-    };
-
-    // Use the service's formatting function
-    return ClassificationService.getFormattedValue(tempResult, adaptedScheme) as string | number | null;
-
-  } catch (error) {
-    console.error('Error formatting value:', error);
-
-    // Fallback formatting logic (simplified)
-    const field = scheme.fields[0];
-    if (!field) return String(value);
-
-    switch (field.type) {
+    switch (field.type as FieldType) { 
       case 'int':
         const numVal = Number(value);
-        if (isNaN(numVal)) return String(value);
+        if (isNaN(numVal)) return String(value); 
         if (field.scale_min === 0 && field.scale_max === 1) {
-          return numVal > 0.5 ? 'Positive' : 'Negative'; // Simplified fallback display
+          return numVal > 0.5 ? 'True' : 'False'; 
         }
         return typeof numVal === 'number' ? Number(numVal.toFixed(2)) : numVal;
 
+      case 'str':
+        return String(value);
+
       case 'List[str]':
-         if (Array.isArray(value)) return value.join(', ');
-         return String(value);
+        if (Array.isArray(value)) {
+          return value.filter(item => typeof item === 'string').join(', ');
+        }
+        return String(value); 
+
+      case 'List[Dict[str, any]]':
+        if (Array.isArray(value)) {
+          return value.length > 0 ? `${value.length} item(s)` : 'Empty list';
+        }
+        if (typeof value === 'object' && value !== null) {
+           return Object.keys(value).length > 0 ? 'Complex Object' : 'Empty object';
+        }
+        return 'Complex Data'; 
 
       default:
-        return String(value); // Basic string conversion as fallback
+        if (typeof value === 'object') return JSON.stringify(value);
+        return String(value);
     }
+  } catch (error) {
+    console.error('Error formatting display value:', error);
+    return typeof value === 'string' ? value : JSON.stringify(value);
   }
 };

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   ColumnDef,
   flexRender,
@@ -8,6 +8,7 @@ import {
   getPaginationRowModel,
   useReactTable,
   Row,
+  RowSelectionState,
 } from '@tanstack/react-table';
 
 import {
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -31,8 +33,8 @@ interface DataTableProps<TData, TValue> {
   onRowClick?: (row: TData) => void;
   renderRow?: (row: Row<TData>) => React.ReactNode;
   enableRowSelection?: boolean;
-  onRowSelectionChange?: (selectedRows: number[]) => void;
-  selectedRows?: number[];
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: React.Dispatch<React.SetStateAction<RowSelectionState>>;
 }
 
 export function DataTable<TData, TValue>({
@@ -44,52 +46,64 @@ export function DataTable<TData, TValue>({
   onCreate,
   onRowClick,
   renderRow,
-  enableRowSelection,
+  enableRowSelection = false,
+  rowSelection = {},
   onRowSelectionChange,
-  selectedRows = [],
 }: DataTableProps<TData, TValue>) {
+
+  const tableColumns = React.useMemo(() => {
+    if (!enableRowSelection) {
+      return columns;
+    }
+    return [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Select all"
+            className="translate-y-[2px]"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Select row"
+            className="translate-y-[2px]"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
+      ...columns,
+    ];
+  }, [columns, enableRowSelection]);
+
   const table = useReactTable({
     data,
-    columns,
+    columns: tableColumns,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    state: {
+      rowSelection,
+    },
+    enableRowSelection: enableRowSelection,
+    onRowSelectionChange: onRowSelectionChange,
+    getRowId: (row: TData) => (row as any).id.toString(),
   });
 
-  const handleRowSelect = (rowId: number) => {
-    if (!onRowSelectionChange) return;
-    
-    const newSelection = selectedRows.includes(rowId)
-      ? selectedRows.filter(id => id !== rowId)
-      : [...selectedRows, rowId];
-    
-    onRowSelectionChange(newSelection);
-  };
-
   return (
-    <div>
-      <div className="rounded-md border-bg max-h-[3000px] md:max-h-[700px] overflow-y-auto">
+    <div className="flex flex-col">
+      <div className="flex-1 rounded-md overflow-auto">
         <Table>
-          <TableHeader>
-            <TableRow>
-              {enableRowSelection && (
-                <TableHead className="w-12">
-                  <Checkbox
-                    checked={selectedRows.length === data.length}
-                    onCheckedChange={(checked) => {
-                      if (onRowSelectionChange) {
-                        onRowSelectionChange(
-                          checked 
-                            ? data.map((row: any) => row.id)
-                            : []
-                        );
-                      }
-                    }}
-                  />
-                </TableHead>
-              )}
-              {table.getHeaderGroups().map((headerGroup) => (
-                headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
+          <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead key={header.id} style={{ width: header.id === 'select' ? '3rem' : undefined }} className="whitespace-nowrap">
                     {header.isPlaceholder
                       ? null
                       : flexRender(
@@ -97,9 +111,9 @@ export function DataTable<TData, TValue>({
                           header.getContext()
                         )}
                   </TableHead>
-                ))
-              ))}
-            </TableRow>
+                ))}
+              </TableRow>
+            ))}
           </TableHeader>
           <TableBody>
             {table.getRowModel().rows.length ? (
@@ -109,25 +123,20 @@ export function DataTable<TData, TValue>({
                     {renderRow(row)}
                   </React.Fragment>
                 ) : (
-                  <TableRow 
-                    key={row.id} 
+                  <TableRow
+                    key={row.id}
+                    data-state={row.getIsSelected() && "selected"}
                     onClick={() => onRowClick?.(row.original)}
-                    className={onRowClick ? "cursor-pointer hover:bg-muted/50" : ""}
-                  >
-                    {enableRowSelection && (
-                      <TableCell className="w-12">
-                        <Checkbox
-                          checked={selectedRows.includes((row.original as any).id)}
-                          onCheckedChange={() => handleRowSelect((row.original as any).id)}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </TableCell>
+                    className={cn(
+                       onRowClick ? "cursor-pointer" : "",
+                       row.getIsSelected() ? "" : "hover:bg-muted/50"
                     )}
+                  >
                     {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
+                      <TableCell key={cell.id} className="whitespace-nowrap">
                         {flexRender(
                           cell.column.columnDef.cell,
-                          cell.getContext(),
+                          cell.getContext()
                         )}
                       </TableCell>
                     ))}
@@ -137,7 +146,7 @@ export function DataTable<TData, TValue>({
             ) : (
               <TableRow>
                 <TableCell
-                  colSpan={columns.length}
+                  colSpan={tableColumns.length}
                   className="h-24 text-center"
                 >
                   No results.
@@ -147,7 +156,11 @@ export function DataTable<TData, TValue>({
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-end space-x-2 py-4">
+      <div className="flex-none flex items-center justify-end space-x-2 py-2 border-t">
+        <div className="flex-1 text-sm text-muted-foreground">
+            {table.getFilteredSelectedRowModel().rows.length} of{" "}
+            {table.getFilteredRowModel().rows.length} row(s) selected.
+        </div>
         <Button
           variant="outline"
           size="sm"

@@ -5,16 +5,17 @@ FROM oven/bun:alpine
 WORKDIR /app
 
 # Copy package.json and package-lock.json (or yarn.lock)
+# Note: We copy these first to leverage Docker cache for dependencies
 COPY package.json package-lock.json* ./
 
-# Install dependencies
+# Copy the rest of your app's source code BEFORE installing dependencies
+COPY . .
+
+# Install dependencies based on the copied package.json and lock file
 RUN bun install
 
-# Install bash
+# Install bash (needed for some potential scripts or debugging)
 RUN apk add --no-cache bash
-
-# Copy the rest of your app's source code
-COPY . .
 
 # Expose the port the app runs on
 EXPOSE 3000

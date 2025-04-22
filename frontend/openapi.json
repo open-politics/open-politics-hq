@@ -3158,926 +3158,6 @@
         ]
       }
     },
-    "/api/v1/workspaces/{workspace_id}/documents/": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Create Document",
-        "operationId": "create_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-create_document"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Read Documents",
-        "operationId": "read_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRead"
-                  },
-                  "title": "Response Documents-Read Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete All Documents",
-        "operationId": "delete_all_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete All Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Create Document",
-        "operationId": "create_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-create_document"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Read Documents",
-        "operationId": "read_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRead"
-                  },
-                  "title": "Response Documents-Read Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete All Documents",
-        "operationId": "delete_all_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete All Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}": {
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Read Document",
-        "operationId": "read_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Update Document",
-        "operationId": "update_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DocumentUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DocumentRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete Document",
-        "operationId": "delete_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete Document"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/files": {
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Get Document Files",
-        "operationId": "get_document_files",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/FileRead"
-                  },
-                  "title": "Response Documents-Get Document Files"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/files/{file_id}": {
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete Document File",
-        "operationId": "delete_document_file",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          },
-          {
-            "name": "file_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Delete Document File"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/files/{file_id}/download": {
-      "get": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Download File",
-        "operationId": "download_file",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "file_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/transfer": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Transfer Documents",
-        "description": "Transfer or copy documents to another workspace",
-        "operationId": "transfer_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "target_workspace_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Target Workspace Id"
-            }
-          },
-          {
-            "name": "copy",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Copy"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "type": "integer"
-                },
-                "title": "Document Ids"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Transfer Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/{document_id}/extract_pdf_content": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Extract Pdf Content",
-        "description": "Extract text content from a PDF file and update the document using PyMuPDF",
-        "operationId": "extract_pdf_content",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          },
-          {
-            "name": "file_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "File Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Documents-Extract Pdf Content"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/bulk-upload": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Bulk Upload Documents",
-        "description": "Bulk upload multiple PDF documents with optional metadata autofill.\n\nIf autofill is True, the system will attempt to extract metadata from each PDF.",
-        "operationId": "bulk_upload_documents",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-bulk_upload_documents"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentRead"
-                  },
-                  "title": "Response Documents-Bulk Upload Documents"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/documents/extract-pdf-metadata": {
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Extract Document Metadata From Pdf",
-        "description": "Extract metadata from a PDF file to pre-fill document creation form.\nReturns title, text content, summary, etc. extracted from the PDF.",
-        "operationId": "extract_document_metadata_from_pdf",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_documents-extract_document_metadata_from_pdf"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "title": "Response Documents-Extract Document Metadata From Pdf"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/files/": {
       "post": {
         "tags": [
@@ -4280,134 +3360,6 @@
           },
           "500": {
             "description": "Internal Server Error"
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results": {
-      "post": {
-        "tags": [
-          "classification-schemes"
-        ],
-        "summary": "Create Saved Result Set",
-        "operationId": "create_saved_result_set",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SavedResultSetCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedResultSetRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "classification-schemes"
-        ],
-        "summary": "Read Saved Result Sets",
-        "operationId": "read_saved_result_sets",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SavedResultSetRead"
-                  },
-                  "title": "Response Classification-Schemes-Read Saved Result Sets"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
         }
       }
@@ -4928,297 +3880,6 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}/classify/{document_id}": {
-      "post": {
-        "tags": [
-          "classification-schemes"
-        ],
-        "summary": "Classify Document",
-        "operationId": "classify_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "scheme_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Scheme Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClassificationResultRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/classification_schemes/saved_results/{result_set_id}": {
-      "get": {
-        "tags": [
-          "classification-schemes"
-        ],
-        "summary": "Get Saved Result Set",
-        "operationId": "get_saved_result_set",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "result_set_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Result Set Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedResultSetRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/classification_results": {
-      "post": {
-        "tags": [
-          "classification-results",
-          "ClassificationResults"
-        ],
-        "summary": "Create Classification Result",
-        "description": "Create (store) an individual classification result.\nVerifies that the workspace exists and that the referenced document and scheme belong to that workspace.",
-        "operationId": "create_classification_result",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClassificationResultCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClassificationResultRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "classification-results",
-          "ClassificationResults"
-        ],
-        "summary": "List Classification Results",
-        "description": "List all classification results for the given workspace.",
-        "operationId": "list_classification_results",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          },
-          {
-            "name": "document_ids",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "title": "Document Ids"
-            }
-          },
-          {
-            "name": "scheme_ids",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "title": "Scheme Ids"
-            }
-          },
-          {
-            "name": "run_name",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Run Name"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/EnhancedClassificationResultRead"
-                  },
-                  "title": "Response Classification-Results-List Classification Results"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/workspaces/{workspace_id}/classification_results/{result_id}": {
       "get": {
         "tags": [
@@ -5226,7 +3887,7 @@
           "ClassificationResults"
         ],
         "summary": "Get Classification Result",
-        "description": "Load (retrieve) an individual classification result by its ID.\nVerifies that this result's document and scheme belong to the workspace.",
+        "description": "Load (retrieve) an individual classification result by its ID.\nVerifies that the result belongs to the specified workspace via its job.",
         "operationId": "get_classification_result",
         "security": [
           {
@@ -5284,7 +3945,7 @@
           "ClassificationResults"
         ],
         "summary": "List Classification Results",
-        "description": "List all classification results for the given workspace.",
+        "description": "List classification results for the workspace, with optional filters.\nRequires workspace ownership verification.\nReturns enhanced results with calculated display_value.",
         "operationId": "list_classification_results",
         "security": [
           {
@@ -5302,44 +3963,64 @@
             }
           },
           {
-            "name": "document_ids",
+            "name": "job_id",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "title": "Document Ids"
-            }
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter results by ClassificationJob ID",
+              "title": "Job Id"
+            },
+            "description": "Filter results by ClassificationJob ID"
+          },
+          {
+            "name": "datarecord_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter results by DataRecord IDs",
+              "title": "Datarecord Ids"
+            },
+            "description": "Filter results by DataRecord IDs"
           },
           {
             "name": "scheme_ids",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              },
-              "title": "Scheme Ids"
-            }
-          },
-          {
-            "name": "run_name",
-            "in": "query",
-            "required": false,
-            "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
                 },
                 {
                   "type": "null"
                 }
               ],
-              "title": "Run Name"
-            }
+              "description": "Filter results by ClassificationScheme IDs",
+              "title": "Scheme Ids"
+            },
+            "description": "Filter results by ClassificationScheme IDs"
           },
           {
             "name": "skip",
@@ -5390,15 +4071,15 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/classification_results/by_run/{run_id}": {
+    "/api/v1/workspaces/{workspace_id}/classification_results": {
       "get": {
         "tags": [
           "classification-results",
           "ClassificationResults"
         ],
-        "summary": "Get Results By Run",
-        "description": "Retrieve all classification results for a specific run ID.",
-        "operationId": "get_results_by_run",
+        "summary": "List Classification Results",
+        "description": "List classification results for the workspace, with optional filters.\nRequires workspace ownership verification.\nReturns enhanced results with calculated display_value.",
+        "operationId": "list_classification_results",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5415,12 +4096,83 @@
             }
           },
           {
-            "name": "run_id",
-            "in": "path",
-            "required": true,
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter results by ClassificationJob ID",
+              "title": "Job Id"
+            },
+            "description": "Filter results by ClassificationJob ID"
+          },
+          {
+            "name": "datarecord_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter results by DataRecord IDs",
+              "title": "Datarecord Ids"
+            },
+            "description": "Filter results by DataRecord IDs"
+          },
+          {
+            "name": "scheme_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter results by ClassificationScheme IDs",
+              "title": "Scheme Ids"
+            },
+            "description": "Filter results by ClassificationScheme IDs"
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
-              "title": "Run Id"
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
             }
           }
         ],
@@ -5432,9 +4184,9 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/ClassificationResultRead"
+                    "$ref": "#/components/schemas/EnhancedClassificationResultRead"
                   },
-                  "title": "Response Classification-Results-Get Results By Run"
+                  "title": "Response Classification-Results-List Classification Results"
                 }
               }
             }
@@ -5452,15 +4204,97 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/classification_runs/": {
+    "/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/results": {
+      "get": {
+        "tags": [
+          "classification-results",
+          "ClassificationResults"
+        ],
+        "summary": "Get Job Results",
+        "description": "Retrieve all classification results for a specific ClassificationJob.\nVerifies job ownership and workspace context.\nReturns enhanced results with calculated display_value.",
+        "operationId": "get_job_results",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EnhancedClassificationResultRead"
+                  },
+                  "title": "Response Classification-Results-Get Job Results"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/classification_jobs/": {
       "post": {
         "tags": [
-          "classification-runs",
-          "ClassificationRuns"
+          "classification-jobs",
+          "ClassificationJobs"
         ],
-        "summary": "Create Classification Run",
-        "description": "Create a new classification run.\nWorkspace must exist and belong to the current user.",
-        "operationId": "create_classification_run",
+        "summary": "Create Classification Job",
+        "description": "Create a new Classification Job.\n\nValidates workspace ownership and required configuration fields.\nAssociates the job with target DataSources and ClassificationSchemes.\nTriggers a background task to perform the classification.",
+        "operationId": "create_classification_job",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5482,7 +4316,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClassificationRunCreate"
+                "$ref": "#/components/schemas/ClassificationJobCreate"
               }
             }
           }
@@ -5493,66 +4327,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClassificationRunRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspace_id}/classification_runs": {
-      "post": {
-        "tags": [
-          "classification-runs",
-          "ClassificationRuns"
-        ],
-        "summary": "Create Classification Run",
-        "description": "Create a new classification run.\nWorkspace must exist and belong to the current user.",
-        "operationId": "create_classification_run",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Workspace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClassificationRunCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClassificationRunRead"
+                  "$ref": "#/components/schemas/ClassificationJobRead"
                 }
               }
             }
@@ -5571,12 +4346,12 @@
       },
       "get": {
         "tags": [
-          "classification-runs",
-          "ClassificationRuns"
+          "classification-jobs",
+          "ClassificationJobs"
         ],
-        "summary": "Read Classification Runs",
-        "description": "Retrieve classification runs for a specific workspace",
-        "operationId": "read_classification_runs",
+        "summary": "List Classification Jobs",
+        "description": "Retrieve Classification Jobs for the workspace.\nOptionally includes counts of results and targeted data records.",
+        "operationId": "list_classification_jobs",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5598,7 +4373,6 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0,
               "default": 0,
               "title": "Skip"
             }
@@ -5609,10 +4383,21 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 500,
               "default": 100,
               "title": "Limit"
             }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include counts of results and data records",
+              "default": true,
+              "title": "Include Counts"
+            },
+            "description": "Include counts of results and data records"
           }
         ],
         "responses": {
@@ -5621,7 +4406,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClassificationRunsOut"
+                  "$ref": "#/components/schemas/ClassificationJobsOut"
                 }
               }
             }
@@ -5639,15 +4424,15 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_id}/classification_runs/{run_id}": {
-      "get": {
+    "/api/v1/workspaces/{workspace_id}/classification_jobs": {
+      "post": {
         "tags": [
-          "classification-runs",
-          "ClassificationRuns"
+          "classification-jobs",
+          "ClassificationJobs"
         ],
-        "summary": "Read Classification Run",
-        "description": "Get a specific classification run by ID.\nOnly returns runs belonging to the user.",
-        "operationId": "read_classification_run",
+        "summary": "Create Classification Job",
+        "description": "Create a new Classification Job.\n\nValidates workspace ownership and required configuration fields.\nAssociates the job with target DataSources and ClassificationSchemes.\nTriggers a background task to perform the classification.",
+        "operationId": "create_classification_job",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5655,13 +4440,102 @@
         ],
         "parameters": [
           {
-            "name": "run_id",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Run Id"
+              "title": "Workspace Id"
             }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassificationJobCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassificationJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "classification-jobs",
+          "ClassificationJobs"
+        ],
+        "summary": "List Classification Jobs",
+        "description": "Retrieve Classification Jobs for the workspace.\nOptionally includes counts of results and targeted data records.",
+        "operationId": "list_classification_jobs",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include counts of results and data records",
+              "default": true,
+              "title": "Include Counts"
+            },
+            "description": "Include counts of results and data records"
           }
         ],
         "responses": {
@@ -5670,7 +4544,77 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClassificationRunRead"
+                  "$ref": "#/components/schemas/ClassificationJobsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "classification-jobs",
+          "ClassificationJobs"
+        ],
+        "summary": "Get Classification Job",
+        "description": "Retrieve a specific Classification Job by its ID.",
+        "operationId": "get_classification_job",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include counts of results and data records",
+              "default": true,
+              "title": "Include Counts"
+            },
+            "description": "Include counts of results and data records"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassificationJobRead"
                 }
               }
             }
@@ -5689,12 +4633,12 @@
       },
       "patch": {
         "tags": [
-          "classification-runs",
-          "ClassificationRuns"
+          "classification-jobs",
+          "ClassificationJobs"
         ],
-        "summary": "Update Classification Run",
-        "description": "Update a specific classification run by ID.\nOnly allows updates to runs belonging to the user.",
-        "operationId": "update_classification_run",
+        "summary": "Update Classification Job",
+        "description": "Update a Classification Job (primarily status or error message).\nUsed internally by background tasks or potentially for manual status changes.",
+        "operationId": "update_classification_job",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5702,12 +4646,21 @@
         ],
         "parameters": [
           {
-            "name": "run_id",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Run Id"
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
             }
           }
         ],
@@ -5716,7 +4669,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClassificationRunUpdate"
+                "$ref": "#/components/schemas/ClassificationJobUpdate"
               }
             }
           }
@@ -5727,7 +4680,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClassificationRunRead"
+                  "$ref": "#/components/schemas/ClassificationJobRead"
                 }
               }
             }
@@ -5746,12 +4699,12 @@
       },
       "delete": {
         "tags": [
-          "classification-runs",
-          "ClassificationRuns"
+          "classification-jobs",
+          "ClassificationJobs"
         ],
-        "summary": "Delete Classification Run",
-        "description": "Delete a specific classification run by ID.\nOnly allows deletion of runs belonging to the user.\nNote: This will cascade delete associated ClassificationResults if the DB constraint is active.\n      If not, results might be orphaned. Consider handling orphans separately if needed.",
-        "operationId": "delete_classification_run",
+        "summary": "Delete Classification Job",
+        "description": "Delete a Classification Job and its associated results (due to cascade).",
+        "operationId": "delete_classification_job",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5759,18 +4712,647 @@
         ],
         "parameters": [
           {
-            "name": "run_id",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Run Id"
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
             }
           }
         ],
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasources/": {
+      "post": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Create Datasource",
+        "description": "Create a new DataSource.\n\nBased on the type, this might involve uploading a file or providing\ndetails like URLs or text content via form fields.\nTriggers a background task to process the source and create DataRecords.",
+        "operationId": "create_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_datasources-create_datasource"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Read Datasources",
+        "description": "Retrieve DataSources for the workspace.\nOptionally include the count of associated DataRecords.",
+        "operationId": "read_datasources",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include count of data records for each source",
+              "default": false,
+              "title": "Include Counts"
+            },
+            "description": "Include count of data records for each source"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourcesOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasources": {
+      "post": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Create Datasource",
+        "description": "Create a new DataSource.\n\nBased on the type, this might involve uploading a file or providing\ndetails like URLs or text content via form fields.\nTriggers a background task to process the source and create DataRecords.",
+        "operationId": "create_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_datasources-create_datasource"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Read Datasources",
+        "description": "Retrieve DataSources for the workspace.\nOptionally include the count of associated DataRecords.",
+        "operationId": "read_datasources",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include count of data records for each source",
+              "default": false,
+              "title": "Include Counts"
+            },
+            "description": "Include count of data records for each source"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourcesOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}": {
+      "get": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Read Datasource",
+        "description": "Retrieve a specific DataSource by its ID.",
+        "operationId": "read_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include count of data records",
+              "default": false,
+              "title": "Include Counts"
+            },
+            "description": "Include count of data records"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Delete Datasource",
+        "description": "Delete a DataSource and its associated DataRecords (due to cascade).",
+        "operationId": "delete_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/rows": {
+      "get": {
+        "tags": [
+          "datasources",
+          "DataSources"
+        ],
+        "summary": "Read Datasource Rows",
+        "description": "Retrieve rows from a CSV DataSource, with pagination.\nDirectly streams and parses the CSV file from storage.",
+        "operationId": "read_datasource_rows",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of rows to skip",
+              "default": 0,
+              "title": "Skip"
+            },
+            "description": "Number of rows to skip"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Number of rows to return",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Number of rows to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvRowsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}": {
+      "get": {
+        "tags": [
+          "datarecords",
+          "DataRecords"
+        ],
+        "summary": "Get Data Record",
+        "description": "Retrieve a specific DataRecord by its ID.\nVerifies workspace ownership by checking the associated DataSource.",
+        "operationId": "get_data_record",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datarecord_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datarecord Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataRecordRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}": {
+      "get": {
+        "tags": [
+          "datarecords",
+          "DataRecords"
+        ],
+        "summary": "List Data Records For Datasource",
+        "description": "Retrieve DataRecords associated with a specific DataSource.\nVerifies workspace ownership by checking the DataSource.",
+        "operationId": "list_data_records_for_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1000,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataRecordRead"
+                  },
+                  "title": "Response Datarecords-List Data Records For Datasource"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -6133,6 +5715,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Articles-Article By Id"
                 }
               }
@@ -6164,265 +5747,6 @@
             "content": {
               "application/json": {
                 "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/classification/location_from_query": {
-      "get": {
-        "tags": [
-          "classification"
-        ],
-        "summary": "Get Location From Query",
-        "operationId": "get_location_from_query",
-        "parameters": [
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Query"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/classification/{scheme_id}/classify/{document_id}": {
-      "post": {
-        "tags": [
-          "classification"
-        ],
-        "summary": "Classify Document",
-        "operationId": "classify_document",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "scheme_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Scheme Id"
-            }
-          },
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Document Id"
-            }
-          },
-          {
-            "name": "provider",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": "Google",
-              "title": "Provider"
-            }
-          },
-          {
-            "name": "model",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": "gemini-2.0-flash",
-              "title": "Model"
-            }
-          },
-          {
-            "name": "run_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Run Id"
-            }
-          },
-          {
-            "name": "run_name",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Run Name"
-            }
-          },
-          {
-            "name": "run_description",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Run Description"
-            }
-          },
-          {
-            "name": "X-API-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClassificationResultRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/classification/classify": {
-      "post": {
-        "tags": [
-          "classification"
-        ],
-        "summary": "Classify",
-        "operationId": "classify",
-        "parameters": [
-          {
-            "name": "text",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Text"
-            }
-          },
-          {
-            "name": "scheme_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Scheme Id"
-            }
-          },
-          {
-            "name": "X-API-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
               }
             }
           }
@@ -6602,7 +5926,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-04-10",
+              "default": "2025-04-21",
               "title": "Timeframe To"
             }
           }
@@ -6636,6 +5960,7 @@
         "properties": {
           "contents": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -6648,27 +5973,16 @@
         ],
         "title": "ArticleResponse"
       },
-      "Body_documents-bulk_upload_documents": {
+      "Body_datasources-create_datasource": {
         "properties": {
-          "autofill": {
-            "type": "boolean",
-            "title": "Autofill",
-            "default": false
-          },
-          "files": {
-            "items": {
-              "type": "string",
-              "format": "binary"
-            },
-            "type": "array",
-            "title": "Files"
-          },
-          "content_type": {
+          "name": {
             "type": "string",
-            "title": "Content Type",
-            "default": "Document"
+            "title": "Name"
           },
-          "source": {
+          "type": {
+            "$ref": "#/components/schemas/DataSourceType"
+          },
+          "origin_details": {
             "anyOf": [
               {
                 "type": "string"
@@ -6677,128 +5991,28 @@
                 "type": "null"
               }
             ],
-            "title": "Source"
-          }
-        },
-        "type": "object",
-        "required": [
-          "files"
-        ],
-        "title": "Body_documents-bulk_upload_documents"
-      },
-      "Body_documents-create_document": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "title": "Title"
+            "title": "Origin Details",
+            "default": "{}"
           },
-          "url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Url"
-          },
-          "content_type": {
-            "type": "string",
-            "title": "Content Type",
-            "default": "article"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source"
-          },
-          "text_content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text Content"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
-          "top_image": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Top Image"
-          },
-          "insertion_date": {
+          "file": {
             "anyOf": [
               {
                 "type": "string",
-                "format": "date-time"
+                "format": "binary"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Insertion Date"
-          },
-          "files": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string",
-                  "format": "binary"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Files"
-          }
-        },
-        "type": "object",
-        "required": [
-          "title"
-        ],
-        "title": "Body_documents-create_document"
-      },
-      "Body_documents-extract_document_metadata_from_pdf": {
-        "properties": {
-          "file": {
-            "type": "string",
-            "format": "binary",
             "title": "File"
           }
         },
         "type": "object",
         "required": [
-          "file"
+          "name",
+          "type"
         ],
-        "title": "Body_documents-extract_document_metadata_from_pdf"
+        "title": "Body_datasources-create_datasource"
       },
       "Body_filestorage-file_upload": {
         "properties": {
@@ -6983,152 +6197,10 @@
         ],
         "title": "ClassificationFieldCreate"
       },
-      "ClassificationResultCreate": {
-        "properties": {
-          "document_id": {
-            "type": "integer",
-            "title": "Document Id"
-          },
-          "scheme_id": {
-            "type": "integer",
-            "title": "Scheme Id"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "value": {
-            "type": "object",
-            "title": "Value"
-          },
-          "timestamp": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timestamp"
-          }
-        },
-        "type": "object",
-        "required": [
-          "document_id",
-          "scheme_id"
-        ],
-        "title": "ClassificationResultCreate"
-      },
-      "ClassificationResultRead": {
-        "properties": {
-          "document_id": {
-            "type": "integer",
-            "title": "Document Id"
-          },
-          "scheme_id": {
-            "type": "integer",
-            "title": "Scheme Id"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "value": {
-            "type": "object",
-            "title": "Value"
-          },
-          "timestamp": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Timestamp"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "document": {
-            "$ref": "#/components/schemas/DocumentRead"
-          },
-          "scheme": {
-            "$ref": "#/components/schemas/ClassificationSchemeRead"
-          }
-        },
-        "type": "object",
-        "required": [
-          "document_id",
-          "scheme_id",
-          "id",
-          "document",
-          "scheme"
-        ],
-        "title": "ClassificationResultRead"
-      },
-      "ClassificationRunCreate": {
-        "properties": {
-          "status": {
-            "default": "pending"
-          }
-        },
-        "type": "object",
-        "required": [
-          "workspace_id"
-        ],
-        "title": "ClassificationRunCreate"
-      },
-      "ClassificationRunRead": {
-        "properties": {
-          "status": {
-            "default": "pending"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "workspace_id",
-          "user_id",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "ClassificationRunRead"
-      },
-      "ClassificationRunStatus": {
-        "type": "string",
-        "enum": [
-          "pending",
-          "running",
-          "completed",
-          "failed"
-        ],
-        "title": "ClassificationRunStatus",
-        "description": "Defines the possible states of a ClassificationRun."
-      },
-      "ClassificationRunUpdate": {
+      "ClassificationJobCreate": {
         "properties": {
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Name"
           },
           "description": {
@@ -7142,25 +6214,177 @@
             ],
             "title": "Description"
           },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "configuration"
+        ],
+        "title": "ClassificationJobCreate"
+      },
+      "ClassificationJobRead": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClassificationJobStatus",
+            "default": "pending"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "type": "integer",
+            "title": "Workspace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "target_scheme_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Target Scheme Ids",
+            "default": []
+          },
+          "target_datasource_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Target Datasource Ids",
+            "default": []
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "datarecord_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Datarecord Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id",
+          "workspace_id",
+          "user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ClassificationJobRead"
+      },
+      "ClassificationJobStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "completed_with_errors",
+          "failed"
+        ],
+        "title": "ClassificationJobStatus",
+        "description": "Defines the execution status of a ClassificationJob."
+      },
+      "ClassificationJobUpdate": {
+        "properties": {
           "status": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ClassificationRunStatus"
+                "$ref": "#/components/schemas/ClassificationJobStatus"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
           }
         },
         "type": "object",
-        "title": "ClassificationRunUpdate"
+        "title": "ClassificationJobUpdate"
       },
-      "ClassificationRunsOut": {
+      "ClassificationJobsOut": {
         "properties": {
           "data": {
             "items": {
-              "$ref": "#/components/schemas/ClassificationRunRead"
+              "$ref": "#/components/schemas/ClassificationJobRead"
             },
             "type": "array",
             "title": "Data"
@@ -7175,7 +6399,45 @@
           "data",
           "count"
         ],
-        "title": "ClassificationRunsOut"
+        "title": "ClassificationJobsOut"
+      },
+      "ClassificationResultRead": {
+        "properties": {
+          "datarecord_id": {
+            "type": "integer",
+            "title": "Datarecord Id"
+          },
+          "scheme_id": {
+            "type": "integer",
+            "title": "Scheme Id"
+          },
+          "job_id": {
+            "type": "integer",
+            "title": "Job Id"
+          },
+          "value": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Value"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "datarecord_id",
+          "scheme_id",
+          "job_id",
+          "id"
+        ],
+        "title": "ClassificationResultRead"
       },
       "ClassificationSchemeCreate": {
         "properties": {
@@ -7201,6 +6463,7 @@
           "validation_rules": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -7249,6 +6512,7 @@
           "validation_rules": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -7297,7 +6561,7 @@
             ],
             "title": "Classification Count"
           },
-          "document_count": {
+          "job_count": {
             "anyOf": [
               {
                 "type": "integer"
@@ -7306,7 +6570,7 @@
                 "type": "null"
               }
             ],
-            "title": "Document Count"
+            "title": "Job Count"
           }
         },
         "type": "object",
@@ -7360,6 +6624,7 @@
           "validation_rules": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -7367,24 +6632,215 @@
               }
             ],
             "title": "Validation Rules"
+          }
+        },
+        "type": "object",
+        "title": "ClassificationSchemeUpdate"
+      },
+      "CsvRowData": {
+        "properties": {
+          "row_data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Row Data"
           },
-          "fields": {
+          "row_number": {
+            "type": "integer",
+            "title": "Row Number"
+          }
+        },
+        "type": "object",
+        "required": [
+          "row_data",
+          "row_number"
+        ],
+        "title": "CsvRowData"
+      },
+      "CsvRowsOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/CsvRowData"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total_rows": {
+            "type": "integer",
+            "title": "Total Rows"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Columns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total_rows",
+          "columns"
+        ],
+        "title": "CsvRowsOut"
+      },
+      "DataRecordRead": {
+        "properties": {
+          "text_content": {
+            "type": "string",
+            "title": "Text Content"
+          },
+          "source_metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Source Metadata"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "datasource_id": {
+            "type": "integer",
+            "title": "Datasource Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text_content",
+          "id",
+          "datasource_id",
+          "created_at"
+        ],
+        "title": "DataRecordRead"
+      },
+      "DataSourceRead": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "$ref": "#/components/schemas/DataSourceType"
+          },
+          "origin_details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Origin Details"
+          },
+          "source_metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Source Metadata"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DataSourceStatus",
+            "default": "pending"
+          },
+          "error_message": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/ClassificationFieldCreate"
-                },
-                "type": "array"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Fields"
+            "title": "Error Message"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "type": "integer",
+            "title": "Workspace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "data_record_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Record Count"
           }
         },
         "type": "object",
-        "title": "ClassificationSchemeUpdate"
+        "required": [
+          "name",
+          "type",
+          "id",
+          "workspace_id",
+          "user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DataSourceRead"
+      },
+      "DataSourceStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "processing",
+          "complete",
+          "failed"
+        ],
+        "title": "DataSourceStatus",
+        "description": "Defines the processing status of a DataSource."
+      },
+      "DataSourceType": {
+        "type": "string",
+        "enum": [
+          "csv",
+          "pdf",
+          "url_list",
+          "text_block"
+        ],
+        "title": "DataSourceType",
+        "description": "Defines the type of data source."
+      },
+      "DataSourcesOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DataSourceRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "DataSourcesOut"
       },
       "DictKeyDefinition": {
         "properties": {
@@ -7410,231 +6866,22 @@
         ],
         "title": "DictKeyDefinition"
       },
-      "DocumentRead": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Url"
-          },
-          "content_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content Type",
-            "default": "article"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source"
-          },
-          "top_image": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Top Image"
-          },
-          "text_content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text Content"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
-          "insertion_date": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Insertion Date"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "workspace_id": {
-            "type": "integer",
-            "title": "Workspace Id"
-          },
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "files": {
-            "items": {
-              "$ref": "#/components/schemas/FileRead"
-            },
-            "type": "array",
-            "title": "Files",
-            "default": []
-          }
-        },
-        "type": "object",
-        "required": [
-          "title",
-          "id",
-          "workspace_id",
-          "user_id"
-        ],
-        "title": "DocumentRead"
-      },
-      "DocumentUpdate": {
-        "properties": {
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Url"
-          },
-          "content_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content Type"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source"
-          },
-          "top_image": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Top Image"
-          },
-          "text_content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text Content"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
-          "insertion_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Insertion Date"
-          }
-        },
-        "type": "object",
-        "title": "DocumentUpdate"
-      },
       "EnhancedClassificationResultRead": {
         "properties": {
-          "document_id": {
+          "datarecord_id": {
             "type": "integer",
-            "title": "Document Id"
+            "title": "Datarecord Id"
           },
           "scheme_id": {
             "type": "integer",
             "title": "Scheme Id"
           },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
+          "job_id": {
+            "type": "integer",
+            "title": "Job Id"
           },
           "value": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Value"
           },
@@ -7647,12 +6894,6 @@
             "type": "integer",
             "title": "Id"
           },
-          "document": {
-            "$ref": "#/components/schemas/DocumentRead"
-          },
-          "scheme": {
-            "$ref": "#/components/schemas/ClassificationSchemeRead"
-          },
           "display_value": {
             "anyOf": [
               {
@@ -7662,6 +6903,7 @@
                 "type": "string"
               },
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -7677,14 +6919,13 @@
         },
         "type": "object",
         "required": [
-          "document_id",
+          "datarecord_id",
           "scheme_id",
-          "id",
-          "document",
-          "scheme"
+          "job_id",
+          "id"
         ],
         "title": "EnhancedClassificationResultRead",
-        "description": "Adds a processed 'display_value' based on the raw 'value' and scheme."
+        "description": "Adds a processed 'display_value' based on the raw 'value'."
       },
       "FieldType": {
         "type": "string",
@@ -7696,95 +6937,6 @@
         ],
         "title": "FieldType",
         "description": "Defines the data type for a ClassificationField."
-      },
-      "FileRead": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "filetype": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filetype"
-          },
-          "size": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size"
-          },
-          "url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Url"
-          },
-          "caption": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Caption"
-          },
-          "media_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Media Type"
-          },
-          "top_image": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Top Image"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "document_id": {
-            "type": "integer",
-            "title": "Document Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "id",
-          "document_id"
-        ],
-        "title": "FileRead"
       },
       "FileUploadResponse": {
         "properties": {
@@ -8003,93 +7155,6 @@
         ],
         "title": "Request",
         "description": "Request object for search synthesizer"
-      },
-      "SavedResultSetCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "document_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Document Ids",
-            "default": []
-          },
-          "scheme_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Scheme Ids",
-            "default": []
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "SavedResultSetCreate"
-      },
-      "SavedResultSetRead": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "document_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Document Ids",
-            "default": []
-          },
-          "scheme_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Scheme Ids",
-            "default": []
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "workspace_id": {
-            "type": "integer",
-            "title": "Workspace Id"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/ClassificationResultRead"
-            },
-            "type": "array",
-            "title": "Results"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "id",
-          "workspace_id",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "SavedResultSetRead"
       },
       "SearchHistoriesOut": {
         "properties": {
@@ -8483,20 +7548,6 @@
             ],
             "title": "Description"
           },
-          "sources": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sources"
-          },
           "icon": {
             "anyOf": [
               {
@@ -8532,20 +7583,6 @@
             ],
             "title": "Description"
           },
-          "sources": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sources"
-          },
           "icon": {
             "anyOf": [
               {
@@ -8557,9 +7594,9 @@
             ],
             "title": "Icon"
           },
-          "uid": {
+          "id": {
             "type": "integer",
-            "title": "Uid"
+            "title": "Id"
           },
           "created_at": {
             "type": "string",
@@ -8579,7 +7616,7 @@
         "type": "object",
         "required": [
           "name",
-          "uid",
+          "id",
           "created_at",
           "updated_at",
           "user_id_ownership"
@@ -8589,7 +7626,14 @@
       "WorkspaceUpdate": {
         "properties": {
           "name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Name"
           },
           "description": {
@@ -8602,20 +7646,6 @@
               }
             ],
             "title": "Description"
-          },
-          "sources": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sources"
           },
           "icon": {
             "anyOf": [
@@ -8630,9 +7660,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "name"
-        ],
         "title": "WorkspaceUpdate"
       },
       "app__api__v1__entities__routes__SearchType": {

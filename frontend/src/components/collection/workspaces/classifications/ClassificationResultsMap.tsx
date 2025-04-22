@@ -1,15 +1,15 @@
 // frontend/src/components/collection/workspaces/classifications/LocationMap.tsx
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
-import mapboxgl, { Map as MapboxMap, LngLatLike, Popup } from 'mapbox-gl';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import mapboxgl, { Map as MapboxMap, LngLatLike, Popup, Marker, LngLatBounds } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useTheme } from 'next-themes';
-import { DocumentRead } from '@/client'; // Import DocumentRead if needed for popups
-import { ClassificationResultRead, ClassificationSchemeRead } from '@/client'; // Import DocumentRead if needed for popups
+import { ClassificationResultRead, ClassificationSchemeRead, DataRecordRead, DataSourceRead } from '@/client'; // Correctly imports DataRecordRead
 import { FormattedClassificationResult } from '@/lib/classification/types';
-import { ClassificationService } from '@/lib/classification/service';
-import DocumentLink from '../documents/DocumentLink'; // Assuming DocumentLink can be rendered to string or we adapt
+import { formatDisplayValue } from '@/lib/classification/utils'; // Import utility
+import { debounce } from 'lodash';
+import { ClassificationService } from '@/lib/classification/service'; // Import ClassificationService
 
 // Define the structure for points passed to the map
 export interface MapPoint {
@@ -24,7 +24,7 @@ export interface MapPoint {
 
 interface LocationMapProps {
   points: MapPoint[];
-  documents: DocumentRead[]; // Pass all relevant documents for popup context
+  dataSources?: DataSourceRead[]; // Accept DataSources instead of DataRecords
   results: FormattedClassificationResult[];
   schemes: ClassificationSchemeRead[];
   onPointClick?: (point: MapPoint) => void; // Optional click handler
@@ -55,76 +55,57 @@ interface LabelGeoJsonFeature extends GeoJSON.Feature {
 // --- Helper to format value (similar to ClassificationResultsChart) ---
 // You might want to move this to a shared utility if used elsewhere
 const getFormattedValueForPopup = (resultValue: any, scheme: ClassificationSchemeRead): string => {
-    if (!resultValue) return 'N/A';
-    const field = scheme.fields[0];
-    if (!field) return 'N/A';
-
-    let fieldValue = resultValue;
-    if (typeof resultValue === 'object' && resultValue !== null && !Array.isArray(resultValue)) {
-        fieldValue = resultValue[field.name] ?? resultValue[scheme.name] ?? Object.values(resultValue)[0] ?? resultValue;
-    }
-
-    // Simple formatting, adapt ClassificationService.getFormattedValue if needed
-    switch (field.type) {
-        case 'int':
-            const num = Number(fieldValue);
-            if (!isNaN(num)) {
-                if ((field.scale_min === 0) && (field.scale_max === 1)) {
-                    return num > 0.5 ? 'True' : 'False';
-                }
-                return String(Number(num.toFixed(2)));
-            }
-            return String(fieldValue);
-        case 'List[str]':
-            return Array.isArray(fieldValue) ? fieldValue.join(', ') : String(fieldValue);
-        case 'List[Dict[str, any]]':
-             // Use compact entity formatting for popups
-            const formatted = ClassificationService.formatEntityStatements(fieldValue, { compact: true, maxItems: 2 });
-            if (Array.isArray(formatted)) return formatted.join('; ');
-            return String(formatted);
-        default:
-            return String(fieldValue);
-    }
+    // Use the utility function
+    const display = formatDisplayValue(resultValue, scheme);
+    // Convert complex types to string for popup
+    if (typeof display === 'object' && display !== null) return JSON.stringify(display);
+    return String(display ?? 'N/A');
 };
 
 // --- NEW HELPER: Get specific field value for labels ---
 const getLabelValue = (resultValue: any, scheme: ClassificationSchemeRead | undefined, fieldKey: string): string => {
-    if (!resultValue || !scheme || !fieldKey) return 'N/A';
+    if (!resultValue || !scheme || !scheme.fields) return 'N/A';
 
     const fieldDefinition = scheme.fields.find(f => f.name === fieldKey);
     let actualValue: any;
 
-    // Extract value based on fieldKey
-    if (typeof resultValue === 'object' && resultValue !== null && !Array.isArray(resultValue)) {
-        // If result.value is an object, try accessing by fieldKey
+    // Extract value based on structure
+    if (fieldDefinition && fieldDefinition.type === 'List[Dict[str, any]]' && Array.isArray(resultValue)) {
+         // For List[Dict], try to find the first item with the key
+         const firstItem = resultValue.find(item => typeof item === 'object' && item !== null && fieldKey in item);
+         actualValue = firstItem ? firstItem[fieldKey] : 'N/A';
+    } else if (typeof resultValue === 'object' && resultValue !== null && !Array.isArray(resultValue) && fieldKey in resultValue) {
         actualValue = resultValue[fieldKey];
     } else {
-        // If result.value is a simple type (or array, though less common for single labels)
-        // and the fieldKey matches the *first* field's name (common for simple schemes), use it
-        if (fieldKey === scheme.fields[0]?.name) {
-           actualValue = resultValue;
+        // Fallback: If the fieldKey doesn't match an object key, or if resultValue is simple
+        // Use the primary field if fieldKey matches or only one field exists
+        const primaryField = scheme.fields[0];
+        if (primaryField?.name === fieldKey || scheme.fields.length === 1) {
+            actualValue = resultValue; // Use raw value
         } else {
-            // Cannot reliably extract specific field if value isn't an object with that key
-            actualValue = 'N/A';
+            actualValue = 'N/A'; // Can't determine value for the specified fieldKey
         }
     }
 
+    // Format the extracted value
     if (actualValue === null || actualValue === undefined) return 'N/A';
 
-    // Basic formatting (can enhance later)
+    // Special formatting for List[Dict] if necessary (handled differently here for brevity)
+    if (fieldDefinition?.type === 'List[Dict[str, any]]' && Array.isArray(actualValue)) {
+        // Use ClassificationService if needed, otherwise basic stringify
+        const formatted = ClassificationService.formatEntityStatements(actualValue, { compact: true, maxItems: 1 }); // Use ClassificationService
+        return Array.isArray(formatted) ? formatted.join('; ') : String(formatted);
+    }
+
+    // Formatting for other types
+    if (fieldDefinition?.type === 'int' && fieldDefinition.scale_min === 0 && fieldDefinition.scale_max === 1) {
+        return Number(actualValue) > 0.5 ? 'True' : 'False';
+    }
+    if (Array.isArray(actualValue)) {
+        return actualValue.map(v => String(v)).join(', ');
+    }
     if (typeof actualValue === 'object') {
-        // Use compact entity formatting if it's an array of dicts, otherwise stringify
-        if (fieldDefinition?.type === 'List[Dict[str, any]]' && Array.isArray(actualValue)) {
-            const formatted = ClassificationService.formatEntityStatements(actualValue, { compact: true, maxItems: 1 });
-            // Ensure the result is a string
-            return Array.isArray(formatted) ? formatted.join('; ') : String(formatted);
-        }
-        // Special handling for List[str] is in the next condition
-        if (Array.isArray(actualValue)) {
-            // If it's a plain array (usually strings), join with commas
-            return actualValue.map(v => String(v)).join(', ');
-        }
-        return ClassificationService.safeStringify(actualValue); // Use safe stringify for general objects
+         return ClassificationService.safeStringify(actualValue); // Use ClassificationService
     }
 
     return String(actualValue); // Ensure result is always a string
@@ -142,7 +123,7 @@ const getNestedValue = (obj: any, path: string): any => {
     );
 };
 
-const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, schemes, onPointClick, labelConfig }) => {
+const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, results, schemes, onPointClick, labelConfig }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
@@ -158,7 +139,7 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
   const labelSourceId = 'label-source';
   const labelLayerId = 'label-layer';
 
-  const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoiamltdnciLCJhIjoiY20xd2U3Z2pqMGprdDJqczV2OXJtMTBoayJ9.hlSx0Nc19j_Z1NRgyX7HHg';
+  const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoiamltdmluY2VudHdhZ25lciIsImEiOiJjbHhlbGJ5ZWcwYmJ4MmtxemxpeTNvYWpzIn0.wB1B9zQPb3z670auYgMEWA';
 
   // --- Initialize Map ---
   useEffect(() => {
@@ -259,18 +240,19 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
 
           // Add document previews with first classification result
           const docsToShow = docIds
-            .map(id => documents.find(d => d.id === id))
-            .filter((doc): doc is DocumentRead => !!doc) // Type guard
+            .map(id => dataSources?.find(d => d.id === id))
+            .filter((doc): doc is DataSourceRead => !!doc) // Type guard
             .slice(0, 4); 
 
           if (docsToShow.length > 0) {
             popupHtml += `<hr style="margin: 4px 0;"/>`; // Simple separator
             docsToShow.forEach(doc => {
               popupHtml += `<div>`;
-              popupHtml += `<em>${doc.title || `Doc #${doc.id}`}</em>`;
+              // Use source_metadata or ID for title
+              popupHtml += `<em>${String(doc.source_metadata?.filename || `Record ${doc.id}`)}</em>`; 
 
               // Find the first classification result for this document
-              const firstResult = results.find(r => r.document_id === doc.id);
+              const firstResult = results.find(r => r.datarecord_id === doc.id);
               if (firstResult) {
                 const scheme = schemes.find(s => s.id === firstResult.scheme_id);
                 if (scheme) {
@@ -422,7 +404,7 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, documents, results, s
           if (!docId) return null;
           // Find the result matching the document and the specific labelConfig scheme
           const result: FormattedClassificationResult | undefined = results.find(r =>
-            r.document_id === docId && r.scheme_id === labelConfig.schemeId
+            r.datarecord_id === docId && r.scheme_id === labelConfig.schemeId
           );
           const scheme: ClassificationSchemeRead | undefined = schemeLookup.get(labelConfig.schemeId);
           // Ensure we found both result and scheme, and the scheme has fields

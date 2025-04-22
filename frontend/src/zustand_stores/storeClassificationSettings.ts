@@ -39,6 +39,12 @@ export const useClassificationSettingsStore = create<ClassificationSettingsState
   defaultSchemeIds: loadSettings(),
   
   getDefaultSchemeId: (workspaceId, schemes) => {
+    // Ensure workspaceId is a number
+    if (typeof workspaceId !== 'number' || isNaN(workspaceId)) {
+      console.warn('[ClassificationSettingsStore] Invalid workspaceId provided to getDefaultSchemeId:', workspaceId);
+      return null;
+    }
+    
     const { defaultSchemeIds } = get();
     
     // If we have a saved default scheme ID for this workspace, use it
@@ -63,6 +69,12 @@ export const useClassificationSettingsStore = create<ClassificationSettingsState
   },
   
   setDefaultSchemeId: (workspaceId, schemeId) => {
+    // Ensure workspaceId is a number
+    if (typeof workspaceId !== 'number' || isNaN(workspaceId)) {
+      console.warn('[ClassificationSettingsStore] Invalid workspaceId provided to setDefaultSchemeId:', workspaceId);
+      return;
+    }
+    
     set(state => {
       const newDefaultSchemeIds = {
         ...state.defaultSchemeIds,

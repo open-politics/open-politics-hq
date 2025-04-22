@@ -7,23 +7,24 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
+  CardFooter,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle } from 'lucide-react';
 import {
   ClassificationSchemeRead,
-  ClassificationResultRead,
-  DocumentRead,
-  ClassificationResultCreate,
-  ClassificationRunRead,
-  ClassificationRunUpdate
+  DataSourceRead,
+  EnhancedClassificationResultRead,
+  ClassificationJobRead,
+  DataRecordRead,
+  ClassificationJobStatus
 } from '@/client/models';
 import { FormattedClassificationResult, ClassificationScheme } from '@/lib/classification/types';
 import ClassificationResultsChart from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
 import { format } from 'date-fns';
-import { getTargetFieldDefinition, ResultFilters, getTargetKeysForScheme } from './ClassificationResultFilters';
-import { schemesToSchemeReads, resultsToResultReads, resultReadToResult, resultToResultRead, schemeToSchemeRead, documentToDocumentRead } from '@/lib/classification/adapters';
+import { getTargetFieldDefinition, ResultFilters, getTargetKeysForScheme, ResultFilter } from './ClassificationResultFilters';
+import { checkFilterMatch, formatDisplayValue, extractLocationString } from '@/lib/classification/utils';
 import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -40,61 +41,56 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { HelpCircle } from 'lucide-react';
-import useGeocode, { GeocodeResult } from '@/hooks/useGeocder'; // Import hook and its result type
-import type { GeocodeResult as GeocodeResultType } from '@/hooks/useGeocder'; // Explicit type import & Corrected path
-import ClassificationResultsMap, { MapPoint } from './ClassificationResultsMap'; // Renamed from LocationMap
+import useGeocode, { GeocodeResult } from '@/hooks/useGeocder';
+import type { GeocodeResult as GeocodeResultType } from '@/hooks/useGeocder';
+import ClassificationResultsMap, { MapPoint } from './ClassificationResultsMap';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
-import ClassificationSchemeEditor from './ClassificationSchemeEditor'; // Import the new component
-import { useGeocodingCacheStore } from '@/zustand_stores/storeGeocodingCache'; // Import the new store
-import { checkFilterMatch, extractLocationString, formatDisplayValue } from '@/lib/classification/utils';
-import { ResultFilter } from './ClassificationResultFilters';
+import ClassificationSchemeEditor from './ClassificationSchemeEditor';
+import { useGeocodingCacheStore } from '@/zustand_stores/storeGeocodingCache';
 import ClassificationResultsTable from './ClassificationResultsTable';
 import { Switch } from '@/components/ui/switch';
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { ClassificationMapControls } from './ClassificationMapControls'; // Import the new component
+import { ClassificationMapControls } from './ClassificationMapControls';
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
+import { adaptEnhancedResultReadToFormattedResult, adaptDataSourceReadToDataSource } from '@/lib/classification/adapters';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
-// Main component props
 interface ClassificationRunnerProps {
-  activeRunId: number | null;
-  activeRunName: string;
-  activeRunDescription: string;
-  activeRunResults: FormattedClassificationResult[];
-  activeRunSchemes: ClassificationSchemeRead[];
-  activeRunDocuments: DocumentRead[];
-  isLoadingRunDetails: boolean;
-  onClearRun: () => void;
-  onUpdateRunName: (newName: string) => void; // Add prop for updating name
-  onUpdateRunDescription: (newDescription: string) => void; // Add prop for updating description
+  allSchemes: ClassificationSchemeRead[];
+  allDataSources: DataSourceRead[];
+  activeJob: ClassificationJobRead | null;
+  isClassifying: boolean;
+  results: FormattedClassificationResult[];
+  activeJobDataRecords: DataRecordRead[];
+  retryJob: (jobId: number) => Promise<boolean>;
+  onClearJob: () => void;
 }
 
 export default function ClassificationRunner({
-  activeRunId,
-  activeRunName,
-  activeRunDescription,
-  activeRunResults,
-  activeRunSchemes,
-  activeRunDocuments,
-  isLoadingRunDetails,
-  onClearRun,
-  onUpdateRunName,
-  onUpdateRunDescription,
+  allSchemes,
+  allDataSources,
+  activeJob,
+  isClassifying,
+  results: currentRunResults,
+  activeJobDataRecords: currentRunDataRecords,
+  retryJob,
+  onClearJob,
 }: ClassificationRunnerProps) {
 
-  // State needed for result display and interaction
   const [activeFilters, setActiveFilters] = useState<ResultFilter[]>([]);
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
+  const [selectedDataRecordId, setSelectedDataRecordId] = useState<number | null>(null);
   const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
   const [filteredGeocodedPoints, setFilteredGeocodedPoints] = useState<MapPoint[]>([]);
   const [isLoadingGeocoding, setIsLoadingGeocoding] = useState(false);
   const [geocodingError, setGeocodingError] = useState<string | null>(null);
-  // State to hold the config passed up from MapControls
   const [currentMapLabelConfig, setCurrentMapLabelConfig] = useState<{ schemeId: number; fieldKey: string } | undefined>(undefined);
-  // NEW: State to hold initial config for MapControls
   const [initialMapControlsConfig, setInitialMapControlsConfig] = useState<{
     geocodeSchemeId: number | null;
     geocodeFieldKey: string | null;
@@ -106,61 +102,57 @@ export default function ClassificationRunner({
   const { toast } = useToast();
   const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
   const { getCache, setCache } = useGeocodingCacheStore();
-  const { activeWorkspace } = useWorkspaceStore(); // Needed for cache key
+  const { activeWorkspace } = useWorkspaceStore();
 
-  // Editable Name/Description state
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
 
-  // --- Memoized Data for Views (based on props) ---
-  const runSchemes = useMemo(() => activeRunSchemes, [activeRunSchemes]);
-  const currentRunResults = useMemo(() => activeRunResults, [activeRunResults]);
-  const currentRunDocuments = useMemo(() => activeRunDocuments, [activeRunDocuments]);
+  const runSchemes = useMemo(() => {
+    if (!activeJob?.target_scheme_ids) return [];
+    const schemeIds = activeJob.target_scheme_ids;
+    return allSchemes.filter(s => schemeIds.includes(s.id));
+  }, [activeJob, allSchemes]);
 
-  // --- NEW: Determine Initial Map Config ---
+  const runDataSources = useMemo(() => {
+    if (!activeJob?.target_datasource_ids) return [];
+    const dataSourceIds = activeJob.target_datasource_ids;
+    return allDataSources.filter(ds => dataSourceIds.includes(ds.id));
+  }, [activeJob, allDataSources]);
+
+  const formattedRunResults = currentRunResults;
+
   useEffect(() => {
-    console.log('[AutoGeoDebug] Running effect. runSchemes:', runSchemes); // Log available schemes
     if (runSchemes && runSchemes.length > 0) {
       let defaultGeoSchemeId: number | null = null;
       let defaultGeoFieldKey: string | null = null;
       let defaultLabelSchemeId: number | null = null;
       let defaultLabelFieldKey: string | null = null;
-      let shouldShowLabels = false; // Flag to enable labels if defaults are found
+      let shouldShowLabels = false;
 
-      // Prioritize schemes named 'classification'
       const classificationSchemes = runSchemes.filter(s => s.name.toLowerCase() === 'classification');
-      console.log('[AutoGeoDebug] Found classificationSchemes:', classificationSchemes); // Log filtered schemes
 
       const schemeToUseForGeo = classificationSchemes.length > 0 ? classificationSchemes[0] : runSchemes[0];
-      console.log('[AutoGeoDebug] schemeToUseForGeo:', schemeToUseForGeo); // Log the chosen scheme
 
       if (schemeToUseForGeo) {
-        const geoTargetKeys = getTargetKeysForScheme(schemeToUseForGeo.id, runSchemes);
-        console.log('[AutoGeoDebug] geoTargetKeys for scheme:', schemeToUseForGeo.id, geoTargetKeys); // Log the potential keys
+        const geoTargetKeys = getTargetKeysForScheme(schemeToUseForGeo.id, allSchemes);
 
         const locationKey = geoTargetKeys.find(k => k.name.toLowerCase().includes('location') || k.name.toLowerCase().includes('address'));
-        console.log('[AutoGeoDebug] Found locationKey:', locationKey); // Log the location key
 
         const firstStringKeyGeo = geoTargetKeys.find(k => k.type === 'str');
-         console.log('[AutoGeoDebug] Found firstStringKeyGeo:', firstStringKeyGeo); // Log the string key
 
         if(locationKey || firstStringKeyGeo || geoTargetKeys.length > 0) {
           defaultGeoSchemeId = schemeToUseForGeo.id;
           defaultGeoFieldKey = locationKey?.key || firstStringKeyGeo?.key || (geoTargetKeys.length > 0 ? geoTargetKeys[0].key : null);
-           console.log('[AutoGeoDebug] Selected defaultGeoFieldKey:', defaultGeoFieldKey); // Log the selected field key
 
-           // --- Find default label field (in the SAME scheme if possible) ---
-           // Look for first str, List[str], or List[Dict] field in the selected geocode scheme
            const firstSuitableLabelField = schemeToUseForGeo.fields.find(f =>
               f.type === 'str' || f.type === 'List[str]' || f.type === 'List[Dict[str, any]]'
            );
 
            if (firstSuitableLabelField) {
                defaultLabelSchemeId = schemeToUseForGeo.id;
-               defaultLabelFieldKey = firstSuitableLabelField.name; // Field name is the key here
-               shouldShowLabels = true; // Enable labels if we found a suitable default
+               defaultLabelFieldKey = firstSuitableLabelField.name;
+               shouldShowLabels = true;
            }
-           // Optional: If no suitable label field in the geo scheme, you could search other schemes here
         }
       }
 
@@ -170,30 +162,25 @@ export default function ClassificationRunner({
         geocodeFieldKey: defaultGeoFieldKey,
         labelSchemeId: defaultLabelSchemeId,
         labelFieldKey: defaultLabelFieldKey,
-        showLabels: shouldShowLabels, // Set based on whether defaults were found
+        showLabels: shouldShowLabels,
       });
     } else {
-      console.log('[AutoGeoDebug] No runSchemes available.');
-      // Reset if no schemes
       setInitialMapControlsConfig({ geocodeSchemeId: null, geocodeFieldKey: null, labelSchemeId: null, labelFieldKey: null, showLabels: false });
     }
-  }, [runSchemes]); // Re-run when schemes change
+  }, [runSchemes, allSchemes]);
 
   const generateGeocodingCacheKey = useCallback(() => {
-    if (!activeWorkspace?.uid || !activeRunId) return null;
-    return `${activeWorkspace.uid}-run-${activeRunId}`;
-  }, [activeWorkspace?.uid, activeRunId]);
+    if (!activeWorkspace?.id || !activeJob?.id) return null;
+    return `${activeWorkspace.id}-run-${activeJob.id}`;
+  }, [activeWorkspace?.id, activeJob]);
 
-  // --- Geocoding Logic (now a callback passed to MapControls) ---
   const handleGeocodeRequest = useCallback(async (schemeIdStr: string, fieldKey: string) => {
-    if (!activeRunId || !schemeIdStr || !fieldKey) {
+    if (!activeJob?.id || !schemeIdStr || !fieldKey || !currentRunResults) {
       console.log("Geocoding prerequisites not met. Clearing points.");
       setGeocodedPoints([]);
       setFilteredGeocodedPoints([]);
       return;
     }
-
-    // Reset previous errors/state
     const cacheKey = generateGeocodingCacheKey();
     if (cacheKey) {
         const cachedPoints = getCache(cacheKey);
@@ -203,8 +190,7 @@ export default function ClassificationRunner({
             return;
         }
     }
-
-    console.log(`Geocoding run ${activeRunId}, scheme ${schemeIdStr}, field ${fieldKey}`);
+    console.log(`Geocoding run ${activeJob.id}, scheme ${schemeIdStr}, field ${fieldKey}`);
     setIsLoadingGeocoding(true);
     setGeocodingError(null);
     setGeocodedPoints([]);
@@ -236,12 +222,9 @@ export default function ClassificationRunner({
         geocodedData.set(locStr, null);
         errorsEncountered = true;
       }
-      await new Promise(resolve => setTimeout(resolve, 50)); // Rate limiting
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
-
-    if (errorsEncountered) {
-        setGeocodingError("Some locations failed to geocode. See console for details.");
-    }
+    if (errorsEncountered) setGeocodingError("Some locations failed to geocode. See console for details.");
 
     const pointsMap = new Map<string, MapPoint>();
     currentRunResults.forEach(result => {
@@ -263,62 +246,53 @@ export default function ClassificationRunner({
               };
               pointsMap.set(pointId, mapPoint);
             }
-            if (!mapPoint.documentIds.includes(result.document_id)) {
-              mapPoint.documentIds.push(result.document_id);
+            if (!mapPoint.documentIds.includes(result.datarecord_id)) {
+              mapPoint.documentIds.push(result.datarecord_id);
             }
           }
         }
       }
     });
-
     const newPoints = Array.from(pointsMap.values());
     console.log(`Generated ${newPoints.length} geocoded points.`);
     setGeocodedPoints(newPoints);
-
-    if (cacheKey) {
-        setCache(cacheKey, newPoints); // Cache the newly fetched points
-    }
-
+    if (cacheKey) setCache(cacheKey, newPoints);
     setIsLoadingGeocoding(false);
     console.log("Finished geocoding.");
   }, [
-    activeRunId,
+    activeJob?.id,
+    currentRunResults,
     extractLocationString,
     geocodeLocation,
     setIsLoadingGeocoding,
     setGeocodedPoints,
-    setFilteredGeocodedPoints,
     setGeocodingError,
     generateGeocodingCacheKey,
     getCache,
     setCache,
   ]);
 
-  // --- Filtered Results Logic (based on props) ---
   const filteredResults = useMemo(() => {
     if (activeFilters.length === 0) return currentRunResults;
 
-    const resultsByDocId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
-      const docId = result.document_id;
-      if (!acc[docId]) acc[docId] = [];
-      acc[docId].push(result);
+    const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+      const recordId = result.datarecord_id;
+      if (!acc[recordId]) acc[recordId] = [];
+      acc[recordId].push(result);
       return acc;
     }, {});
 
-    const filteredDocIds = Object.keys(resultsByDocId)
+    const filteredDataRecordIds = Object.keys(resultsByDataRecordId)
       .map(Number)
-      .filter(docId => {
-        const docResults = resultsByDocId[docId];
-        // Use runSchemes (derived from prop) here
-        return activeFilters.every(filter => checkFilterMatch(filter, docResults, runSchemes));
+      .filter(recordId => {
+        const recordResults = resultsByDataRecordId[recordId];
+        return activeFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
       });
 
-    return currentRunResults.filter(result => filteredDocIds.includes(result.document_id));
+    return currentRunResults.filter(result => filteredDataRecordIds.includes(result.datarecord_id));
   }, [currentRunResults, activeFilters, runSchemes]);
 
-  // --- useEffect for filtering points (based on props) ---
   useEffect(() => {
-    console.log(`[DEBUG] Geocoding filter useEffect triggered. Filters: ${activeFilters.length}, Current Results: ${currentRunResults.length}, Geocoded Points: ${geocodedPoints.length}`);
     const sourcePoints = geocodedPoints;
     if (activeFilters.length === 0) {
       setFilteredGeocodedPoints(sourcePoints);
@@ -328,45 +302,39 @@ export default function ClassificationRunner({
       setFilteredGeocodedPoints([]);
       return;
     }
-    const resultsByDocId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
-      const docId = result.document_id;
-      if (!acc[docId]) acc[docId] = [];
-      acc[docId].push(result);
+    const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+      const recordId = result.datarecord_id;
+      if (!acc[recordId]) acc[recordId] = [];
+      acc[recordId].push(result);
       return acc;
     }, {});
 
     const newlyFilteredPoints = sourcePoints.filter(point =>
-      point.documentIds.some(docId => {
-        const docResults = resultsByDocId[docId];
-        if (!docResults) return false;
-        // Use runSchemes (derived from prop) here
-        return activeFilters.every(filter => checkFilterMatch(filter, docResults, runSchemes));
+      point.documentIds.some(recordId => {
+        const recordResults = resultsByDataRecordId[recordId];
+        if (!recordResults) return false;
+        return activeFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
       })
     );
     setFilteredGeocodedPoints(newlyFilteredPoints);
   }, [geocodedPoints, activeFilters, currentRunResults, runSchemes]);
 
-  // --- Effect for resetting geocoding state when run changes ---
   useEffect(() => {
     setGeocodedPoints([]);
     setFilteredGeocodedPoints([]);
     setGeocodingError(null);
     setIsLoadingGeocoding(false);
-    // Initial values for controls will be handled by MapControls component itself based on props
-  }, [activeRunId, runSchemes]); // Dependencies: run ID and its schemes
+  }, [activeJob?.id]);
 
-  // --- UPDATE: Handler for Table Row Click --- (simplified)
-  const handleTableRowClick = (docId: number) => {
-    setSelectedDocumentId(docId);
+  const handleTableRowClick = (result: FormattedClassificationResult) => {
+    setSelectedDataRecordId(result.datarecord_id);
     setIsResultDialogOpen(true);
   };
 
-  // --- NEW: Handler for Map Point Click ---
   const handleMapPointClick = (point: MapPoint) => {
     console.log("Map point clicked in parent:", point);
     if (point.documentIds && point.documentIds.length > 0) {
-      // Open the dialog for the first document associated with the point
-      setSelectedDocumentId(point.documentIds[0]);
+      setSelectedDataRecordId(point.documentIds[0]);
       setIsResultDialogOpen(true);
     } else {
       console.warn("Map point clicked, but no associated document IDs found.");
@@ -378,18 +346,15 @@ export default function ClassificationRunner({
     }
   };
 
-  // --- Handlers for Editable Run Name/Description ---
   const handleEditClick = (field: 'name' | 'description') => {
       const elementId = field === 'name' ? 'run-name-editable' : 'run-description-editable';
       if (field === 'name') setIsEditingName(true);
       else setIsEditingDescription(true);
-
       setTimeout(() => {
           const el = document.getElementById(elementId);
           if (el) {
               el.contentEditable = 'true';
               el.focus();
-              // Select text logic (simplified)
               const selection = window.getSelection();
               const range = document.createRange();
               range.selectNodeContents(el);
@@ -402,19 +367,18 @@ export default function ClassificationRunner({
   const handleBlur = (e: React.FocusEvent<HTMLSpanElement>, field: 'name' | 'description') => {
     const newValue = e.target.innerText.trim();
     e.target.contentEditable = 'false';
-
     if (field === 'name') {
         setIsEditingName(false);
-        if (newValue !== activeRunName) {
-            onUpdateRunName(newValue); // Call prop function
+        if (newValue !== activeJob?.name) {
+            console.warn("Job name update via UI not implemented yet.");
         }
     } else {
         setIsEditingDescription(false);
         const placeholder = "Add a description...";
-        if (newValue !== activeRunDescription && newValue !== placeholder) {
-            onUpdateRunDescription(newValue); // Call prop function
-        } else if (newValue === placeholder && activeRunDescription !== '') {
-            onUpdateRunDescription(''); // Clear description
+        if (newValue !== (activeJob?.description ?? '') && newValue !== placeholder) {
+            console.warn("Job description update via UI not implemented yet.");
+        } else if (newValue === placeholder && activeJob?.description) {
+            console.warn("Job description clearing via UI not implemented yet.");
         }
     }
   };
@@ -424,77 +388,74 @@ export default function ClassificationRunner({
           e.preventDefault();
           e.currentTarget.blur();
       } else if (e.key === 'Escape') {
-          e.currentTarget.innerText = field === 'name' ? activeRunName : (activeRunDescription || "Add a description...");
+          e.currentTarget.innerText = field === 'name' ? (activeJob?.name ?? 'Unnamed Job') : (activeJob?.description ?? 'Add a description...');
           e.currentTarget.blur();
       }
   };
-  // --- End Editable Handlers ---
 
-  // --- Define renderResultsTabs function BEFORE the main return ---
   const renderResultsTabs = () => {
-    if (isLoadingRunDetails) {
-      return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+    if (isClassifying) {
+      return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Job is running...</span></div>;
     }
-    // Use prop directly for check
-    if (!activeRunResults || activeRunResults.length === 0) {
-      return <div className="flex items-center justify-center h-64 text-muted-foreground">No results found for this run.</div>;
+    if (!formattedRunResults || formattedRunResults.length === 0) {
+       if (activeJob && activeJob.status !== 'running' && activeJob.status !== 'pending') {
+          return <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                    <span>No results found for this job.</span>
+                    {activeJob.status === 'failed' && <span className="text-xs mt-1">(Job Failed)</span>}
+                 </div>;
+       }
+       return <div className="flex items-center justify-center h-64 text-muted-foreground">Load a job to view results.</div>;
     }
 
     return (
-       <Tabs defaultValue="chart" className="w-full">
-         <TabsList className="grid w-full grid-cols-3 mb-2 sticky top-0 z-10">
+       <Tabs defaultValue="table" className="w-full">
+         <TabsList className="grid w-full grid-cols-3 mb-2 sticky top-0 z-10 bg-background/80 backdrop-blur">
            <TabsTrigger value="chart">Chart</TabsTrigger>
            <TabsTrigger value="table">Table</TabsTrigger>
            <TabsTrigger value="map">Map</TabsTrigger>
          </TabsList>
          <TabsContent value="chart">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             {/* Pass prop data */}
-             <ClassificationResultsChart results={currentRunResults} schemes={runSchemes} documents={currentRunDocuments} filters={activeFilters} />
+             <ClassificationResultsChart results={formattedRunResults} schemes={runSchemes} dataSources={runDataSources} filters={activeFilters} />
            </div>
          </TabsContent>
          <TabsContent value="table">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             {/* Pass prop data */}
              <ClassificationResultsTable
-               results={currentRunResults}
+               results={formattedRunResults}
                schemes={runSchemes}
-               documents={currentRunDocuments}
+               dataSources={runDataSources}
+               dataRecords={currentRunDataRecords}
                filters={activeFilters}
-               onRowClick={handleTableRowClick}
+               onResultSelect={handleTableRowClick}
              />
            </div>
          </TabsContent>
          <TabsContent value="map">
-            {/* Use the new Map Controls Component */}
             <ClassificationMapControls
-               schemes={runSchemes}
-               results={currentRunResults}
+               schemes={allSchemes}
+               results={formattedRunResults}
                onGeocodeRequest={handleGeocodeRequest}
                isLoadingGeocoding={isLoadingGeocoding}
                geocodingError={geocodingError}
                onMapLabelConfigChange={setCurrentMapLabelConfig}
-               // Pass initial values derived from schemes
                initialSelectedGeocodeSchemeId={initialMapControlsConfig.geocodeSchemeId !== null ? String(initialMapControlsConfig.geocodeSchemeId) : null}
                initialSelectedGeocodeField={initialMapControlsConfig.geocodeFieldKey}
-               // Pass initial label props
                initialMapLabelSchemeId={initialMapControlsConfig.labelSchemeId}
                initialMapLabelFieldKey={initialMapControlsConfig.labelFieldKey}
                initialShowMapLabels={initialMapControlsConfig.showLabels}
             />
-
-            {/* Map Component - Use filteredGeocodedPoints */}
-            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60 overflow-hidden h-[600px] relative">
+            <div className="p-1 mt-2 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60 overflow-hidden h-[600px] relative">
               {isLoadingGeocoding ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
               ) : filteredGeocodedPoints.length > 0 ? (
                   <ClassificationResultsMap
-                      points={filteredGeocodedPoints} // Use the filtered points generated after geocoding
-                      documents={currentRunDocuments}
-                      results={currentRunResults}
-                      schemes={runSchemes}
-                      labelConfig={currentMapLabelConfig} // Use state updated by MapControls
-                      onPointClick={handleMapPointClick} // Pass the handler
+                      points={filteredGeocodedPoints}
+                      dataSources={allDataSources}
+                      results={formattedRunResults}
+                      schemes={allSchemes}
+                      labelConfig={currentMapLabelConfig}
+                      onPointClick={handleMapPointClick}
                   />
               ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-muted-foreground p-4 text-center">
@@ -507,19 +468,14 @@ export default function ClassificationRunner({
     );
   };
 
-  // --- Main Component Return (Modified) ---
   return (
     <DocumentDetailProvider>
-      <DocumentDetailWrapper onLoadIntoRunner={() => { /* This needs to be handled by parent */ }}>
-          {/* Main Content Area (Analysis) - Takes full width now */}
+      <DocumentDetailWrapper onLoadIntoRunner={() => { /* Placeholder - Parent should handle this if needed */ }}>
           <div className="flex-1 flex flex-col overflow-auto">
-
-            {/* Analysis Content Area */}
             <div className="p-4 flex-1 space-y-4">
 
-              {/* Run Details Header */}
-              {activeRunId && (
-                <div className="p-3 rounded-md bg-muted/10 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur z-10">
+              {activeJob ? (
+                <div className="p-3 rounded-md bg-muted/10 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur z-10 flex-wrap gap-2 border-b">
                   <div className="flex flex-col flex-1 min-w-0 mr-4">
                     <div className="flex items-center gap-1">
                       <span
@@ -530,21 +486,21 @@ export default function ClassificationRunner({
                           onBlur={(e) => handleBlur(e, 'name')}
                           onKeyDown={(e) => handleKeyDown(e, 'name')}
                           onClick={() => !isEditingName && handleEditClick('name')}
-                          title={activeRunName || 'Unnamed Run'}
+                          title={activeJob.name}
                       >
-                          {activeRunName || 'Unnamed Run'}
+                          {activeJob.name}
                       </span>
                       <TooltipProvider delayDuration={100}>
                         <Tooltip>
                             <TooltipTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
                             </TooltipTrigger>
-                            <TooltipContent><p>Edit Run Name</p></TooltipContent>
+                            <TooltipContent><p>Edit Job Name</p></TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     </div>
                     <div className="flex items-center gap-1 mt-1">
-                      <span
+                       <span
                           id="run-description-editable"
                           className={`text-sm px-1 truncate ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
                           contentEditable={isEditingDescription ? 'true' : 'false'}
@@ -552,9 +508,9 @@ export default function ClassificationRunner({
                           onBlur={(e) => handleBlur(e, 'description')}
                           onKeyDown={(e) => handleKeyDown(e, 'description')}
                           onClick={() => !isEditingDescription && handleEditClick('description')}
-                          title={activeRunDescription || 'Add a description...'}
+                          title={activeJob.description || 'Add a description...'}
                       >
-                          {activeRunDescription || 'Add a description...'}
+                          {activeJob.description || 'Add a description...'}
                       </span>
                        <TooltipProvider delayDuration={100}>
                           <Tooltip>
@@ -565,89 +521,123 @@ export default function ClassificationRunner({
                           </Tooltip>
                       </TooltipProvider>
                     </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Badge variant={
+                         activeJob.status === 'completed' ? 'default'
+                         : activeJob.status === 'failed' ? 'destructive'
+                         : activeJob.status === 'running' ? 'secondary'
+                         : activeJob.status === 'pending' ? 'secondary'
+                         : activeJob.status === 'completed_with_errors' ? 'outline'
+                         : 'outline'
+                      } className="capitalize">
+                        {(isClassifying || activeJob.status === 'running' || activeJob.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                        {(activeJob.status ?? '').replace(/_/g, ' ')}
+                      </Badge>
+                      {(activeJob.status === 'failed' || activeJob.status === 'completed_with_errors') && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => retryJob(activeJob.id)}
+                          disabled={isClassifying}
+                          className="h-6 px-2"
+                        >
+                           <RefreshCw className="h-3 w-3 mr-1"/> Retry Job
+                        </Button>
+                      )}
+                    </div>
+                    {activeJob.status === 'failed' && activeJob.error_message && (
+                       <Alert variant="destructive" className="mt-2 text-xs p-2">
+                         <AlertCircle className="h-4 w-4" />
+                         <AlertTitle>Job Failed</AlertTitle>
+                         <AlertDescription>{activeJob.error_message}</AlertDescription>
+                       </Alert>
+                    )}
+                     {activeJob.status === 'completed_with_errors' && (
+                       <Alert variant="default" className="mt-2 text-xs p-2 bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
+                         <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                         <AlertTitle className="text-yellow-800 dark:text-yellow-200">Completed with Errors</AlertTitle>
+                         <AlertDescription className="text-yellow-700 dark:text-yellow-300">
+                           Some classifications may have failed. {activeJob.error_message && `Error: ${activeJob.error_message}`}
+                         </AlertDescription>
+                       </Alert>
+                    )}
                   </div>
-                  <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRunId}>
-                    <XCircle className="h-4 w-4 mr-1" /> Clear Run
+                  <Button variant="outline" size="sm" onClick={onClearJob} disabled={!activeJob?.id}>
+                    <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Job
                   </Button>
                 </div>
+              ) : (
+                 <div className="p-3 rounded-md bg-muted/10 text-center text-muted-foreground italic">
+                    No job loaded. Create a new job or load one from the dock.
+                 </div>
               )}
 
-              {/* Filters */}
-              {activeRunId && !isLoadingRunDetails && (
+              {activeJob && !isClassifying && (
                 <div className="p-3 rounded-md bg-muted/10">
                   <ResultFilters
                     filters={activeFilters}
-                    schemes={runSchemes} // Use schemes from props
+                    schemes={runSchemes}
                     onChange={setActiveFilters}
                   />
                 </div>
               )}
 
-              {/* Results Display Area */}
-              {(activeRunId && !isLoadingRunDetails) || isLoadingRunDetails ? (
+              {activeJob ? (
                 <div className="mt-2">
-                  {isLoadingRunDetails ? (
-                    <div className="flex justify-center items-center h-60">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary"/>
-                      <span className="ml-2">Loading results...</span>
-                    </div>
-                  ) : (
-                    renderResultsTabs()
-                  )}
+                  {renderResultsTabs()}
                 </div>
               ) : (
-                <div className="text-center p-12 text-muted-foreground border rounded-lg border-dashed">
-                  Load a run from history or create a new one to view results.
+                 !isClassifying && <div className="text-center p-12 text-muted-foreground border rounded-lg border-dashed mt-4">
+                  Load a job from the dock to view results.
                 </div>
               )}
             </div>
           </div>
-          {/* === End Main Content Area === */}
 
-        {/* Dialogs (remain outside the flex container, potentially managed by parent page) */}
         <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Result Details</DialogTitle>
               <DialogDescription>
-                 Detailed view of classification results for the selected document.
+                Detailed view of classification results for the selected data record.
               </DialogDescription>
             </DialogHeader>
-            <ScrollArea className="max-h-[60vh] p-4">
-                {selectedDocumentId !== null && (() => {
-                   // Use prop data here
-                   const doc = currentRunDocuments.find(d => d.id === selectedDocumentId);
-                   const resultsForDoc = currentRunResults.filter(r => r.document_id === selectedDocumentId);
-                   const schemesForDoc = resultsForDoc
-                       .map(r => runSchemes?.find(s => s.id === r.scheme_id)) // Handle runSchemes potentially being undefined briefly
+            <ScrollArea className="py-4 max-h-[70vh]">
+              {selectedDataRecordId !== null && (() => {
+                   const record = runDataSources.find(ds => ds.id === selectedDataRecordId);
+                   const dataRecord = currentRunDataRecords.find(dr => dr.id === selectedDataRecordId);
+                   const resultsForRecord = currentRunResults.filter(r => r.datarecord_id === selectedDataRecordId);
+                   const schemesForRecord = resultsForRecord
+                       .map(r => runSchemes?.find(s => s.id === r.scheme_id))
                        .filter((s): s is ClassificationSchemeRead => !!s);
 
-                   if (!doc) return <p>Document details not found.</p>;
+                   if (!dataRecord) return <p>Data Record details not found.</p>;
 
                    return (
                      <div className="space-y-4">
-                        <h3 className="font-semibold text-lg">{doc.title}</h3>
-                        {resultsForDoc.length > 0 ? (
-                            <ClassificationResultDisplay
-                               result={resultsToResultReads(resultsForDoc)}
-                               scheme={schemesForDoc}
-                               useTabs={schemesForDoc.length > 1}
+                       {record && <h4 className="text-sm text-muted-foreground">Source: {record.name}</h4>}
+                       <h3 className="font-semibold text-lg">Record ID: {dataRecord.id}</h3>
+
+                       {resultsForRecord.length > 0 ? (
+                           <ClassificationResultDisplay
+                               result={resultsForRecord}
+                               scheme={schemesForRecord}
+                               useTabs={schemesForRecord.length > 1}
                                renderContext="dialog"
-                            />
-                        ) : (
-                           <p className="text-muted-foreground italic">No results for this document in run.</p>
-                        )}
+                               compact={false}
+                           />
+                       ) : (
+                          <p className="text-muted-foreground italic">No results found for this specific record in the current job.</p>
+                       )}
                      </div>
                    );
-                })()}
+               })()}
             </ScrollArea>
             <DialogFooter>
                 <Button variant="outline" onClick={() => setIsResultDialogOpen(false)}>Close</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        {/* Toaster should ideally be at a higher layout level */}
       </DocumentDetailWrapper>
     </DocumentDetailProvider>
   );

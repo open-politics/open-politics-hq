@@ -2,12 +2,35 @@ from sqlmodel import Field, Relationship, SQLModel
 from typing import List, Optional, Dict, Any, Union, Literal
 from datetime import datetime, timezone
 from sqlalchemy import Column, ARRAY, Text, JSON, Integer, UniqueConstraint, String, Enum, DateTime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, computed_field
 import enum
 
 # ---------------------------------------------------------------------------
 # Enums used across multiple models
 # ---------------------------------------------------------------------------
+
+class DataSourceType(str, enum.Enum):
+    """Defines the type of data source."""
+    CSV = "csv"
+    PDF = "pdf"
+    URL_LIST = "url_list"
+    TEXT_BLOCK = "text_block"
+    # Add other types as needed
+
+class DataSourceStatus(str, enum.Enum):
+    """Defines the processing status of a DataSource."""
+    PENDING = "pending" # Initial state, waiting for processing
+    PROCESSING = "processing" # Ingestion task is running
+    COMPLETE = "complete" # Ingestion finished successfully
+    FAILED = "failed" # Ingestion failed
+
+class ClassificationJobStatus(str, enum.Enum):
+    """Defines the execution status of a ClassificationJob."""
+    PENDING = "pending" # Initial state, waiting for execution
+    RUNNING = "running" # Classification task is active
+    COMPLETED = "completed" # Job finished successfully
+    COMPLETED_WITH_ERRORS = "completed_with_errors" # Job finished, but some classifications failed
+    FAILED = "failed" # Job execution failed critically
 
 class FieldType(str, enum.Enum):
     """Defines the data type for a ClassificationField."""
@@ -15,13 +38,6 @@ class FieldType(str, enum.Enum):
     STR = "str"
     LIST_STR = "List[str]"
     LIST_DICT = "List[Dict[str, any]]"
-
-class ClassificationRunStatus(str, enum.Enum):
-    """Defines the possible states of a ClassificationRun."""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 # ---------------------------------------------------------------------------
 # User Management Models
@@ -69,9 +85,12 @@ class User(UserBase, table=True):
     items: List["Item"] = Relationship(back_populates="owner")
     search_histories: List["SearchHistory"] = Relationship(back_populates="user")
     workspaces: List["Workspace"] = Relationship(back_populates="owner")
-    documents: List["Document"] = Relationship(back_populates="user")
-    # classification_schemes: List["ClassificationScheme"] = Relationship(back_populates="user") # Consider if direct link needed
-    # classification_runs: List["ClassificationRun"] = Relationship(back_populates="user") # Consider if direct link needed
+    # Remove old relationships
+    # documents: List["Document"] = Relationship(back_populates="user")
+
+    # Add new relationships
+    datasources: List["DataSource"] = Relationship(back_populates="user")
+    classification_jobs: List["ClassificationJob"] = Relationship(back_populates="user")
 
 # API model for returning User data
 class UserOut(UserBase):
@@ -106,12 +125,13 @@ class NewPassword(SQLModel):
 class WorkspaceBase(SQLModel):
     name: str
     description: Optional[str] = None
-    sources: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
+    # 'sources' might be deprecated or repurposed if DataSources cover this
+    # sources: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
     icon: Optional[str] = None
 
 # Database table model for Workspace
 class Workspace(WorkspaceBase, table=True):
-    uid: Optional[int] = Field(default=None, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     user_id_ownership: int = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -119,9 +139,14 @@ class Workspace(WorkspaceBase, table=True):
     # Relationships
     owner: Optional[User] = Relationship(back_populates="workspaces")
     classification_schemes: List["ClassificationScheme"] = Relationship(back_populates="workspace")
-    documents: List["Document"] = Relationship(back_populates="workspace")
-    # saved_result_sets: List["SavedResultSet"] = Relationship(back_populates="workspace") # Add if needed
-    # classification_runs: List["ClassificationRun"] = Relationship(back_populates="workspace") # Add if needed
+    # Remove old relationships
+    # documents: List["Document"] = Relationship(back_populates="workspace")
+
+    # Add new relationships
+    datasources: List["DataSource"] = Relationship(back_populates="workspace")
+    classification_jobs: List["ClassificationJob"] = Relationship(back_populates="workspace")
+    # saved_result_sets might need rethinking in context of Jobs/DataRecords
+    # saved_result_sets: List["SavedResultSet"] = Relationship(back_populates="workspace")
 
 # API model for Workspace creation
 class WorkspaceCreate(WorkspaceBase):
@@ -129,11 +154,13 @@ class WorkspaceCreate(WorkspaceBase):
 
 # API model for Workspace update
 class WorkspaceUpdate(WorkspaceBase):
-    pass
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
 
 # API model for returning Workspace data
 class WorkspaceRead(WorkspaceBase):
-    uid: int
+    id: int
     created_at: datetime
     updated_at: datetime
     user_id_ownership: int # Include owner ID
@@ -144,90 +171,143 @@ class WorkspacesOut(SQLModel):
     count: int
 
 # ---------------------------------------------------------------------------
-# Document & File Management Models
+# NEW: Association Tables for Job M2M Relationships
+# Moved these definitions BEFORE DataSource and ClassificationJob to resolve
+# NoInspectionAvailable error related to link_model.
 # ---------------------------------------------------------------------------
 
-# --- File Models ---
+class ClassificationJobDataSourceLink(SQLModel, table=True):
+    job_id: Optional[int] = Field(default=None, foreign_key="classificationjob.id", primary_key=True)
+    datasource_id: Optional[int] = Field(default=None, foreign_key="datasource.id", primary_key=True)
 
-# Shared properties for File
-class FileBase(SQLModel):
-    name: str
-    filetype: Optional[str] = None
-    size: Optional[int] = None
-    url: Optional[str] = None # Potentially a MinIO URL or presigned URL
-    caption: Optional[str] = None
-    media_type: Optional[str] = Field(default=None, sa_column=Column(Text))  # 'image', 'document', etc
-    top_image: Optional[str] = Field(default=None, sa_column=Column(Text)) # URL of representative image if applicable
+class ClassificationJobSchemeLink(SQLModel, table=True):
+    job_id: Optional[int] = Field(default=None, foreign_key="classificationjob.id", primary_key=True)
+    scheme_id: Optional[int] = Field(default=None, foreign_key="classificationscheme.id", primary_key=True)
 
-# Database table model for File
-class File(FileBase, table=True):
+# ---------------------------------------------------------------------------
+# NEW: DataSource Management Models
+# ---------------------------------------------------------------------------
+
+# Shared properties for DataSource
+class DataSourceBase(SQLModel):
+    name: str # User-provided name (e.g., filename, URL description, "Pasted Text")
+    type: DataSourceType = Field(sa_column=Column(Enum(DataSourceType)))
+    # origin_details: Stores info specific to the type.
+    # CSV: {'filepath': '/path/to/file.csv', 'delimiter': ',', 'encoding': 'utf-8'}
+    # PDF: {'filepath': '/path/to/document.pdf'}
+    # URL_LIST: {'urls': ['http://...','http://...']}
+    # TEXT_BLOCK: {'original_hash': 'sha256...'} (optional, to identify duplicates)
+    origin_details: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # source_metadata: Stores schema or structure info derived during PENDING/PROCESSING.
+    # CSV: {'columns': ['col1', 'col2'], 'row_count_processed': 100, 'encoding_used': 'utf-8'}
+    # PDF: {'page_count': 10, 'processed_page_count': 10}
+    # URL_LIST: {'url_count': 5, 'processed_count': 5, 'failed_count': 0, 'failed_urls': []}
+    # TEXT_BLOCK: {'character_count': 500}
+    source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    status: DataSourceStatus = Field(default=DataSourceStatus.PENDING, sa_column=Column(Enum(DataSourceStatus)))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text)) # Store error if status is FAILED
+
+# Database table model for DataSource
+class DataSource(DataSourceBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    document_id: Optional[int] = Field(default=None, foreign_key="document.id")
-
-    # Relationship
-    document: Optional["Document"] = Relationship(back_populates="files")
-
-# API model for returning File data
-class FileRead(FileBase):
-    id: int
-    document_id: int
-
-# --- Document Models ---
-
-# Shared properties for Document
-class DocumentBase(SQLModel):
-    title: str
-    url: Optional[str] = None
-    content_type: Optional[str] = 'article' # E.g., 'article', 'pdf_upload', 'report'
-    source: Optional[str] = None # Origin of the document (e.g., website name, import source)
-    top_image: Optional[str] = None # URL of primary image associated with the document
-    text_content: Optional[str] = Field(default=None, sa_column=Column(Text)) # Extracted text
-    summary: Optional[str] = Field(default=None, sa_column=Column(Text)) # Generated or provided summary
-    insertion_date: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime(timezone=True))
-    )
-
-# Database table model for Document
-class Document(DocumentBase, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    # insertion_date defined in Base is used
-    workspace_id: int = Field(foreign_key="workspace.uid")
-    user_id: int = Field(foreign_key="user.id")
+    workspace_id: int = Field(foreign_key="workspace.id")
+    user_id: int = Field(foreign_key="user.id") # User who created the source
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    workspace: Optional["Workspace"] = Relationship(back_populates="documents")
-    user: Optional["User"] = Relationship(back_populates="documents")
-    files: List["File"] = Relationship(back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
-    classification_results: List["ClassificationResult"] = Relationship(back_populates="document", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    workspace: Optional["Workspace"] = Relationship(back_populates="datasources")
+    user: Optional["User"] = Relationship(back_populates="datasources")
+    data_records: List["DataRecord"] = Relationship(back_populates="datasource", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    # Many-to-Many with ClassificationJob via association table
+    classification_jobs: List["ClassificationJob"] = Relationship(back_populates="target_datasources", link_model=ClassificationJobDataSourceLink)
 
-# API model for Document creation
-class DocumentCreate(DocumentBase):
-    workspace_id: Optional[int] = None # Can be set via path param or body
-    insertion_date: Optional[datetime] = None # Allow overriding default
+# API model for DataSource creation (input)
+# User provides minimal info, backend fills details like status, metadata
+class DataSourceCreate(SQLModel):
+    name: str
+    type: DataSourceType
+    # Depending on type, provide relevant origin details
+    # e.g., for URL_LIST, pass {'urls': [...]}. For file uploads, API handles saving and sets origin_details.
+    origin_details: Dict[str, Any] = Field(default_factory=dict)
+    # workspace_id and user_id are set from context/path
 
-# API model for returning Document data
-class DocumentRead(DocumentBase):
+# API model for returning DataSource data
+class DataSourceRead(DataSourceBase):
     id: int
     workspace_id: int
     user_id: int
-    files: List["FileRead"] = [] # Include associated files
+    created_at: datetime
+    updated_at: datetime
+    # Optionally include counts or related objects if needed for specific views
+    data_record_count: Optional[int] = None # Can be calculated in API
 
-# API model for Document update
-class DocumentUpdate(DocumentBase):
-    # Allow updating any field from Base optionally
-    title: Optional[str] = None
-    url: Optional[str] = None
-    content_type: Optional[str] = None
-    source: Optional[str] = None
-    top_image: Optional[str] = None
-    text_content: Optional[str] = None
-    summary: Optional[str] = None
-    insertion_date: Optional[datetime] = None
+# API model for DataSource update (mostly for status/metadata by backend tasks)
+class DataSourceUpdate(SQLModel):
+    status: Optional[DataSourceStatus] = None
+    source_metadata: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# API model for returning a list of Documents
-class DocumentsOut(SQLModel):
-    data: List[DocumentRead]
+# API model for returning a list of DataSources
+class DataSourcesOut(SQLModel):
+    data: List[DataSourceRead]
+    count: int
+
+# ---------------------------------------------------------------------------
+# NEW: API Model for CSV Data Fetching
+# ---------------------------------------------------------------------------
+
+class CsvRowData(BaseModel):
+    # Represents a single row. Using Dict[str, Any] is flexible,
+    # but consider defining specific column types if known/consistent.
+    # Or perhaps List[str] if order is guaranteed and types aren't critical.
+    # Let's use Optional[str] to handle empty cells gracefully.
+    row_data: Dict[str, Optional[str]] # Allow values to be None (from empty cells)
+    row_number: int # Original row number in the CSV (1-based, including header)
+
+class CsvRowsOut(SQLModel):
+    data: List[CsvRowData] # The paginated rows
+    total_rows: int # Total rows in the CSV (from metadata)
+    columns: List[str] # Column headers (from metadata)
+
+# ---------------------------------------------------------------------------
+# NEW: DataRecord Management Models
+# ---------------------------------------------------------------------------
+
+# Shared properties for DataRecord
+class DataRecordBase(SQLModel):
+    text_content: str = Field(sa_column=Column(Text)) # The actual text to be classified
+    # source_metadata: Stores context about where this record came from within the DataSource.
+    # CSV: {'row_number': 5, 'source_columns': {'text': 'column_name'}}
+    # PDF: {'page_number': 2, 'chunk_index': 1}
+    # URL_LIST: {'url': 'http://...', 'index': 0}
+    # TEXT_BLOCK: {}
+    source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+
+# Database table model for DataRecord
+class DataRecord(DataRecordBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    datasource_id: int = Field(foreign_key="datasource.id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    datasource: Optional["DataSource"] = Relationship(back_populates="data_records")
+    classification_results: List["ClassificationResult"] = Relationship(back_populates="datarecord", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+
+# API model for DataRecord creation (primarily used internally by ingestion tasks)
+class DataRecordCreate(DataRecordBase):
+    datasource_id: int
+
+# API model for returning DataRecord data
+class DataRecordRead(DataRecordBase):
+    id: int
+    datasource_id: int
+    created_at: datetime
+
+# API model for returning a list of DataRecords
+class DataRecordsOut(SQLModel):
+    data: List[DataRecordRead]
     count: int
 
 # ---------------------------------------------------------------------------
@@ -280,7 +360,7 @@ class ClassificationSchemeBase(SQLModel):
 # Database table model for ClassificationScheme
 class ClassificationScheme(ClassificationSchemeBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    workspace_id: int = Field(foreign_key="workspace.uid")
+    workspace_id: int = Field(foreign_key="workspace.id")
     user_id: int = Field(foreign_key="user.id") # User who created the scheme
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -289,6 +369,8 @@ class ClassificationScheme(ClassificationSchemeBase, table=True):
     fields: List[ClassificationField] = Relationship(back_populates="scheme", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
     workspace: Optional["Workspace"] = Relationship(back_populates="classification_schemes")
     classification_results: List["ClassificationResult"] = Relationship(back_populates="scheme")
+    # Many-to-Many with ClassificationJob via association table
+    classification_jobs: List["ClassificationJob"] = Relationship(back_populates="target_schemes", link_model=ClassificationJobSchemeLink)
 
 # API model for ClassificationScheme creation
 class ClassificationSchemeCreate(ClassificationSchemeBase):
@@ -302,7 +384,8 @@ class ClassificationSchemeUpdate(ClassificationSchemeBase):
     description: Optional[str] = None
     model_instructions: Optional[str] = None
     validation_rules: Optional[Dict[str, Any]] = None
-    fields: Optional[List[ClassificationFieldCreate]] = None # TODO: Define how field updates work (replace all? partial?)
+    # TODO: Define how field updates work (replace all? partial?)
+    # fields: Optional[List[ClassificationFieldCreate]] = None # Commented out for now
 
 # API model for returning ClassificationScheme data
 class ClassificationSchemeRead(ClassificationSchemeBase):
@@ -313,8 +396,9 @@ class ClassificationSchemeRead(ClassificationSchemeBase):
     updated_at: datetime
     fields: List[ClassificationFieldCreate] # Return field definitions
     # Optional counts populated by specific API endpoints
-    classification_count: Optional[int] = None
-    document_count: Optional[int] = None
+    classification_count: Optional[int] = None # Count of results using this scheme
+    job_count: Optional[int] = None # Count of jobs using this scheme
+
 
 # API model for returning a list of ClassificationSchemes
 class ClassificationSchemesOut(SQLModel):
@@ -323,227 +407,220 @@ class ClassificationSchemesOut(SQLModel):
 
 
 # ---------------------------------------------------------------------------
-# Classification Run Management Models
+# NEW: Classification Job Management Models
 # ---------------------------------------------------------------------------
-# A ClassificationRun represents a specific execution instance of applying
-# one or more ClassificationSchemes to one or more Documents. It groups
-# the resulting ClassificationResults generated during that single execution.
 
-# Shared properties for ClassificationRun
-class ClassificationRunBase(SQLModel):
-    name: Optional[str] = None # User-defined name for the run
+# --- Association Tables for Job M2M Relationships ---
+# Definitions moved BEFORE DataSource and ClassificationJob models above
+
+# Shared properties for ClassificationJob
+class ClassificationJobBase(SQLModel):
+    name: str # User-defined name for the job
     description: Optional[str] = Field(default=None, sa_column=Column(Text)) # User description
-    status: ClassificationRunStatus = Field(
-        default=ClassificationRunStatus.PENDING,
-        sa_column=Column(Enum(ClassificationRunStatus))
-    )
-    # Optional counts, potentially populated later or via specific queries
-    document_count: Optional[int] = None
-    scheme_count: Optional[int] = None
+    # configuration: Stores IDs of target schemes and datasources, plus any LLM params
+    # e.g., {'scheme_ids': [1, 2], 'datasource_ids': [5, 6], 'llm_provider': 'Google', 'llm_model': 'gemini-flash'}
+    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    status: ClassificationJobStatus = Field(default=ClassificationJobStatus.PENDING, sa_column=Column(Enum(ClassificationJobStatus)))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text)) # Store error if status is FAILED
 
-    model_config = {
-        "json_schema_extra": {
-            "properties": {
-                "status": {
-                    "default": "pending" # Explicitly set default in schema via model_config
-                }
-            }
-        }
-    }
-
-# Database table model for ClassificationRun
-class ClassificationRun(ClassificationRunBase, table=True):
+# Database table model for ClassificationJob
+class ClassificationJob(ClassificationJobBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    workspace_id: int = Field(foreign_key="workspace.uid")
-    user_id: int = Field(foreign_key="user.id") # User who initiated the run
+    workspace_id: int = Field(foreign_key="workspace.id")
+    user_id: int = Field(foreign_key="user.id") # User who initiated the job
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    # Relationship: A run groups multiple results
-    classification_results: List["ClassificationResult"] = Relationship(back_populates="run")
-    # workspace: Optional["Workspace"] = Relationship(back_populates="classification_runs") # Add if needed
-    # user: Optional["User"] = Relationship(back_populates="classification_runs") # Add if needed
+    # Relationships
+    workspace: Optional["Workspace"] = Relationship(back_populates="classification_jobs")
+    user: Optional["User"] = Relationship(back_populates="classification_jobs")
+    classification_results: List["ClassificationResult"] = Relationship(back_populates="job", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    # M2M relationships via link models
+    target_datasources: List["DataSource"] = Relationship(back_populates="classification_jobs", link_model=ClassificationJobDataSourceLink)
+    target_schemes: List["ClassificationScheme"] = Relationship(back_populates="classification_jobs", link_model=ClassificationJobSchemeLink)
 
-# API model for ClassificationRun creation
-class ClassificationRunCreate(ClassificationRunBase):
-    # workspace_id is already provided via the path parameter
-    pass # Inherits necessary fields from ClassificationRunBase
-
-# API model for ClassificationRun update
-class ClassificationRunUpdate(SQLModel):
-    name: Optional[str] = None
+# API model for ClassificationJob creation (input)
+class ClassificationJobCreate(SQLModel):
+    name: str
     description: Optional[str] = None
-    status: Optional[ClassificationRunStatus] = None
+    configuration: Dict[str, Any] # Must include 'scheme_ids' and 'datasource_ids' lists
+    # workspace_id and user_id are set from context/path
 
-# API model for returning ClassificationRun data
-class ClassificationRunRead(ClassificationRunBase):
+    @model_validator(mode='before')
+    def check_config_keys(cls, values):
+        config = values.get('configuration')
+        if not isinstance(config, dict):
+            raise ValueError("Configuration must be a dictionary")
+        if 'scheme_ids' not in config or not isinstance(config['scheme_ids'], list):
+            raise ValueError("Configuration must include a 'scheme_ids' list")
+        if 'datasource_ids' not in config or not isinstance(config['datasource_ids'], list):
+            raise ValueError("Configuration must include a 'datasource_ids' list")
+        return values
+
+
+# API model for ClassificationJob update (primarily for status/errors by backend tasks)
+class ClassificationJobUpdate(SQLModel):
+    status: Optional[ClassificationJobStatus] = None
+    error_message: Optional[str] = None
+    # Allow updating name/description? Maybe restrict this
+    # name: Optional[str] = None
+    # description: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# API model for returning ClassificationJob data
+class ClassificationJobRead(ClassificationJobBase):
     id: int
     workspace_id: int
     user_id: int
     created_at: datetime
     updated_at: datetime
-    result_count: Optional[int] = Field(default=0) # Include calculated count from API
+    # Configuration is inherited from ClassificationJobBase and will be populated by model_validate
+    # Include IDs from configuration for easier frontend use
+    # target_scheme_ids: List[int] = Field(default=[]) # Removed Field definition
+    # target_datasource_ids: List[int] = Field(default=[]) # Removed Field definition
+    # Optionally include counts
+    result_count: Optional[int] = None
+    datarecord_count: Optional[int] = None # Total records targeted by the job
 
-# API model for returning a list of ClassificationRuns
-class ClassificationRunsOut(SQLModel):
-    data: List[ClassificationRunRead]
+    # Added computed fields
+    @computed_field
+    @property
+    def target_scheme_ids(self) -> List[int]:
+        # Access self.configuration after the model has been initially validated
+        if isinstance(self.configuration, dict):
+            return self.configuration.get('scheme_ids', [])
+        # Handle cases where configuration might not be a dict (though it should be)
+        return []
+
+    @computed_field
+    @property
+    def target_datasource_ids(self) -> List[int]:
+        # Access self.configuration after the model has been initially validated
+        if isinstance(self.configuration, dict):
+            return self.configuration.get('datasource_ids', [])
+        # Handle cases where configuration might not be a dict
+        return []
+
+# API model for returning a list of ClassificationJobs
+class ClassificationJobsOut(SQLModel):
+    data: List[ClassificationJobRead]
     count: int
 
 # ---------------------------------------------------------------------------
-# Classification Result Management Models
+# REFACTORED: Classification Result Management Models
 # ---------------------------------------------------------------------------
 # A ClassificationResult stores the output of applying a single
-# ClassificationScheme to a single Document, potentially as part of a
-# specific ClassificationRun.
+# ClassificationScheme to a single DataRecord as part of a ClassificationJob.
 
 # Shared properties for ClassificationResult
 class ClassificationResultBase(SQLModel):
-    document_id: int = Field(foreign_key="document.id")
+    # Removed: document_id, run_id
+    datarecord_id: int = Field(foreign_key="datarecord.id")
     scheme_id: int = Field(foreign_key="classificationscheme.id")
-    run_id: Optional[int] = Field(default=None, foreign_key="classificationrun.id") # Link to the specific run
+    job_id: int = Field(foreign_key="classificationjob.id") # Link to the specific job
+
     value: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON)) # The actual classification output (JSON)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # Database table model for ClassificationResult
 class ClassificationResult(ClassificationResultBase, table=True):
-    # Define a unique constraint for (document_id, scheme_id, run_id) if a result
-    # for a given doc/scheme within a specific run should be unique.
-    # __table_args__ = (UniqueConstraint("document_id", "scheme_id", "run_id", name="uq_doc_scheme_run"),)
+    # Define a unique constraint for (datarecord_id, scheme_id, job_id)
+    __table_args__ = (UniqueConstraint("datarecord_id", "scheme_id", "job_id", name="uq_datarecord_scheme_job"),)
 
     id: int = Field(default=None, primary_key=True)
 
     # Relationships
-    document: Document = Relationship(back_populates="classification_results")
-    scheme: ClassificationScheme = Relationship(back_populates="classification_results")
-    run: Optional["ClassificationRun"] = Relationship(back_populates="classification_results")
+    # Removed: document, run
+    datarecord: "DataRecord" = Relationship(back_populates="classification_results")
+    scheme: "ClassificationScheme" = Relationship(back_populates="classification_results")
+    job: "ClassificationJob" = Relationship(back_populates="classification_results")
 
-# API model for ClassificationResult creation
+# API model for ClassificationResult creation (used internally by classification tasks)
 class ClassificationResultCreate(SQLModel):
-    document_id: int
+    datarecord_id: int
     scheme_id: int
-    run_id: Optional[int] = None # The run this result belongs to
+    job_id: int
     value: Dict[str, Any] = Field(default_factory=dict) # The classification output
     timestamp: Optional[datetime] = None # Allow overriding default
 
 # API model for returning ClassificationResult data
-# Includes nested DocumentRead and ClassificationSchemeRead for context
+# Keep nested objects minimal by default to avoid large responses.
+# Frontend can fetch details for datarecord, scheme, job separately if needed.
 class ClassificationResultRead(ClassificationResultBase):
     id: int
-    document: DocumentRead
-    scheme: ClassificationSchemeRead
-    # run details could be added here if needed, but might cause circular refs or large payloads
+    # Maybe include basic info from related objects? Or just IDs? Let's stick to IDs for now.
+    # datarecord: DataRecordRead # Too large potentially
+    # scheme: ClassificationSchemeRead # Too large potentially
+    # job: ClassificationJobRead # Too large potentially
 
 # API model specifically for enhancing results in the frontend, adding a display_value
-class EnhancedClassificationResultRead(ClassificationResultRead):
-    """Adds a processed 'display_value' based on the raw 'value' and scheme."""
+# Inherits from the base model to keep it simpler
+class EnhancedClassificationResultRead(ClassificationResultBase):
+    """Adds a processed 'display_value' based on the raw 'value'."""
+    id: int # Add id back as it's not in Base
     display_value: Union[float, str, Dict[str, Any], List[Any], None] = Field(default=None)
+    # Include nested objects needed for display_value calculation or context?
+    # For now, assume calculation relies only on 'value'. If scheme info is needed,
+    # the frontend might need to fetch the scheme separately or we include it here.
+    # Let's add scheme_fields for processing, assuming it's passed during validation.
+    scheme_fields: List[Dict[str, Any]] = Field(default=[], exclude=True) # Exclude from final output
 
     @model_validator(mode='before')
-    @classmethod # Use classmethod for model validators
-    def convert_value(cls, data: Any):
-        # Ensure data is a dict (SQLModel instance or dict) before processing
+    @classmethod
+    def process_and_set_display_value(cls, data: Any):
         if not isinstance(data, dict):
-             # If it's already an instance, it might have been validated, return directly.
-             # Or handle the case where it's some other type if necessary.
-             return data
+            # If already validated or not a dict, return as is.
+            return data
 
-        # Use .get() to safely access potential keys
-        scheme_data = data.get('scheme')
         value = data.get('value')
-        display_value = None # Default
+        # scheme_fields should ideally be injected here by the calling API endpoint
+        # based on the result's scheme_id if needed for complex display logic.
+        # For simplicity now, let's assume scheme_fields might be present in `data`.
+        scheme_fields = data.get('scheme_fields', [])
+        display_value = None
 
-        # Ensure scheme_data is a dict or an object with attributes before accessing 'fields'
-        scheme_fields = []
-        if isinstance(scheme_data, dict) and 'fields' in scheme_data:
-            scheme_fields = scheme_data['fields']
-        elif hasattr(scheme_data, 'fields'):
-            scheme_fields = scheme_data.fields
-
-        # --- Start: Simplified Value Processing Logic ---
+        # --- Start: Simplified Value Processing Logic (copied from old model) ---
         if value is None:
             display_value = None
         elif isinstance(value, str):
             display_value = "N/A" if value.lower() == "n/a" else value
         elif isinstance(value, (int, float)):
-             # Basic check for binary-like scales (adjust threshold if needed)
              is_likely_binary = False
              if scheme_fields and len(scheme_fields) == 1:
                  field = scheme_fields[0]
-                 # Check if field is dict or object before accessing keys/attrs
-                 s_min = field.get('scale_min') if isinstance(field, dict) else getattr(field, 'scale_min', None)
-                 s_max = field.get('scale_max') if isinstance(field, dict) else getattr(field, 'scale_max', None)
+                 s_min = field.get('scale_min')
+                 s_max = field.get('scale_max')
                  if s_min == 0 and s_max == 1:
                      is_likely_binary = True
 
              if is_likely_binary:
                  display_value = 'True' if value > 0.5 else 'False'
              else:
-                 display_value = value # Keep as number otherwise
+                 display_value = value
         elif isinstance(value, dict):
-             # Try to extract based on field names if available
              extracted = {}
              if scheme_fields:
-                 field_names = [f.get('name') if isinstance(f, dict) else getattr(f, 'name', None) for f in scheme_fields]
+                 field_names = [f.get('name') for f in scheme_fields if f.get('name')]
                  for name in field_names:
-                     if name and name in value:
+                     if name in value:
                          extracted[name] = value[name]
-
-             display_value = extracted if extracted else value # Fallback to raw dict
+             display_value = extracted if extracted else value
         elif isinstance(value, list):
-             display_value = value # Return list as is
+             display_value = value
         else:
-             display_value = str(value) # Fallback to string representation
+             display_value = str(value)
         # --- End: Simplified Value Processing Logic ---
 
         data['display_value'] = display_value
         return data
 
-# API model for querying results (e.g., for specific documents)
+
+# API model for querying results (e.g., for specific job)
 class ClassificationResultQuery(SQLModel):
-    document_ids: List[int] = Field(default=[])
-    scheme_ids: Optional[List[int]] = None # Allow filtering by scheme too
-    run_ids: Optional[List[int]] = None # Allow filtering by run
-
-
-# ---------------------------------------------------------------------------
-# Saved Result Set Management Models
-# ---------------------------------------------------------------------------
-# A SavedResultSet represents a user-defined, named collection (snapshot)
-# of ClassificationResults, defined by a specific set of Document IDs and
-# Scheme IDs. This allows users to bookmark interesting cross-sections of
-# data, potentially spanning multiple ClassificationRuns.
-
-# Shared properties for SavedResultSet
-class SavedResultSetBase(SQLModel):
-    name: str
-    # Store the criteria defining the set
-    document_ids: List[int] = Field(default=[], sa_column=Column(ARRAY(Integer)))
-    scheme_ids: List[int] = Field(default=[], sa_column=Column(ARRAY(Integer)))
-
-# Database table model for SavedResultSet
-class SavedResultSet(SavedResultSetBase, table=True):
-    id: int = Field(default=None, primary_key=True)
-    workspace_id: int = Field(foreign_key="workspace.uid")
-    # user_id: int = Field(foreign_key="user.id") # Link to user who saved it
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    # workspace: Optional["Workspace"] = Relationship(back_populates="saved_result_sets") # Add if needed
-    # user: Optional["User"] = Relationship() # Add if needed
-
-# API model for SavedResultSet creation
-class SavedResultSetCreate(SavedResultSetBase):
-    pass # Base fields are sufficient
-
-# API model for returning SavedResultSet data
-class SavedResultSetRead(SavedResultSetBase):
-    id: int
-    workspace_id: int
-    # user_id: int
-    created_at: datetime
-    updated_at: datetime
-    # Optionally include the actual results matching the criteria (can be large)
-    results: List["ClassificationResultRead"] = Field(default_factory=list)
+    # Replace document_ids, run_ids with job_id, datarecord_ids etc.
+    job_ids: Optional[List[int]] = None
+    datarecord_ids: Optional[List[int]] = None
+    scheme_ids: Optional[List[int]] = None
 
 
 # ---------------------------------------------------------------------------

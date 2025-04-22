@@ -35,3 +35,6 @@ minio
 bson
 python-multipart
 pymupdf
+celery
+redis
+eventlet

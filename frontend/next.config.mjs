@@ -47,9 +47,14 @@ const nextConfig = {
       }
     ];
   },
-  webpack: (config, { isServer }) =>  {
-    config.resolve.alias['@'] = resolve(__dirname, 'src');
-    return config;
+  // webpack: (config, { isServer }) =>  {
+  //   config.resolve.alias['@'] = resolve(__dirname, 'src');
+  //   return config;
+  // },
+  turbopack: {
+    resolveAlias: {
+      '@': './src',
+    },
   },
   typescript: {
     ignoreBuildErrors: true,

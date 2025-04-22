@@ -23,7 +23,7 @@ import {
 import { useBookMarkStore } from '@/zustand_stores/storeBookmark';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { ClassificationWidget } from '@/components/classification/ClassificationWidget';
-import { ClassifiableContent, ClassificationScheme } from '@/lib/classification/types';
+import { ClassificationScheme, DataRecord } from '@/lib/classification/types';
 import { CoreContentModel } from '@/lib/content';
 import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
@@ -32,16 +32,19 @@ import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { ClassificationService } from '@/lib/classification/service';
 import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
 import { ClassificationResultRead, ClassificationSchemeRead } from '@/client';
+import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
 
 export interface ContentCardProps extends CoreContentModel {
   id: string;
+  dataSourceId?: number;
   className?: string;
   isHighlighted?: boolean;
-  preloadedSchemes?: ClassificationScheme[];
+  preloadedSchemes?: ClassificationSchemeRead[];
 }
 
 export function ContentCard({ 
   id, 
+  dataSourceId,
   title, 
   text_content, 
   url, 
@@ -60,7 +63,8 @@ export function ContentCard({
   preloadedSchemes,
   ...props 
 }: ContentCardProps) {
-  const { bookmarks, addBookmark, removeBookmark, isBookmarkPending } = useBookMarkStore();
+  const { addBookmark, removeBookmark, isOperationPending } = useBookMarkStore();
+  const { dataSources } = useDataSourceStore();
   const { activeWorkspace } = useWorkspaceStore();
   const classificationSettings = useClassificationSettingsStore();
   const { apiKeys, selectedProvider } = useApiKeysStore();
@@ -74,41 +78,38 @@ export function ContentCard({
     isClassifying,
     loadSchemes,
     loadResults,
-    classifyContent,
+    createJob,
+    startClassificationJob,
     clearResultsCache
   } = useClassificationSystem({
     autoLoadSchemes: true,
-    contentId: parseInt(id),
     useCache: true,
   });
 
-  const isBookmarked = bookmarks.some(bookmark => bookmark.url === url);
-  const isPending = isBookmarkPending(url || '');
+  // Determine if the item is bookmarked by checking if a corresponding DataSource exists
+  const isBookmarked = useMemo(() => {
+    if (!url) return false;
+    // Use the same logic as in the store to find the DataSource
+    return findDataSourceByIdentifier(url, dataSources) !== null;
+  }, [url, dataSources]);
+
+  // Check if an add/remove operation is pending for this item's URL
+  const pendingOperation = isOperationPending(url || '');
+
+  const isPending = pendingOperation === 'add' || pendingOperation === 'remove'; // Combine pending states
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   // Track if classification has been completed to avoid redundant API calls
   const [classificationCompleted, setClassificationCompleted] = useState(false);
 
   const classificationWidgetRef = useRef<HTMLButtonElement>(null);
 
-  // Convert content to ClassifiableContent format - memoized to prevent unnecessary re-renders
-  const classifiableContent = useMemo<ClassifiableContent>(() => ({
-    id: parseInt(id) || 0, // Use 0 as fallback to ensure a new document is created
-    title: title || 'Untitled Content',
-    text_content: text_content || '',
-    url: url || '',
-    source: source || '',
-    content_type: content_type || 'article',
-    insertion_date: insertion_date || new Date().toISOString(),
-    publication_date: publication_date || null,
-    author: author || null,
-    top_image: top_image || null
-  }), [id, title, text_content, url, source, content_type, insertion_date, publication_date, author, top_image]);
-
   // Load classification results when component mounts or ID changes
   useEffect(() => {
-    const contentId = parseInt(id);
-    if (contentId > 0) {
-      loadResults(contentId);
+    const dataRecordId = parseInt(id);
+    if (!isNaN(dataRecordId) && dataRecordId > 0) {
+      // Pass options object to loadResults
+      loadResults({ datarecordId: dataRecordId, useCache: true }); 
     }
   }, [id, loadResults]);
 
@@ -124,105 +125,147 @@ export function ContentCard({
     console.log("Classification completed from dialog:", result);
     setClassificationCompleted(true);
     
-    // Pass runId from the result
-    const contentId = parseInt(id);
-    if (contentId > 0) {
-      loadResults(contentId, result?.run_id);
+    // Pass runId from the result? The result structure might not have run_id.
+    // Let's reload results based on the data record ID instead.
+    const dataRecordId = parseInt(id);
+    if (!isNaN(dataRecordId) && dataRecordId > 0) {
+      loadResults({ datarecordId: dataRecordId }); // Reload results for this record
     }
   }, [id, loadResults]);
 
-  // Update the handleExternalClassify function to use the hook
+  // Update the handleExternalClassify function to use the job system
   const handleExternalClassify = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    // Skip if already classifying
+
+    // Assuming isClassifying reflects if a job is currently running/being created
     if (isClassifying) {
-      console.log("Classification already in progress, skipping");
+      console.log("Classification process already active, skipping");
       return;
     }
-    
+
+    // Ensure we have the necessary info
+    const dataRecordId = parseInt(id);
+    if (isNaN(dataRecordId) || dataRecordId <= 0) {
+      console.error("Invalid DataRecord ID for classification:", id);
+      toast({ title: "Error", description: "Cannot classify item with invalid ID.", variant: "destructive" });
+      return;
+    }
+
+    // We need the DataSource ID to create a job properly.
+    // If not passed as prop, this won't work.
+    if (!dataSourceId) {
+      console.error("Missing DataSource ID for classification.");
+      toast({ title: "Error", description: "Missing DataSource information for this item.", variant: "destructive" });
+      return;
+    }
+
     try {
       // Get the workspace ID
-      if (!activeWorkspace?.uid) {
+      if (!activeWorkspace?.id) { // Changed uid to id
         console.error("No active workspace");
-        toast({
-          title: "Error",
-          description: "No active workspace",
-          variant: "destructive"
-        });
+        toast({ title: "Error", description: "No active workspace", variant: "destructive" });
         return;
       }
-      
-      const workspaceId = typeof activeWorkspace.uid === 'string' 
-        ? parseInt(activeWorkspace.uid) 
-        : activeWorkspace.uid;
-      
+
+      const workspaceId = activeWorkspace.id; // Changed uid to id
+
       // Get the default scheme ID using the store's validation
       const defaultSchemeId = classificationSettings.getDefaultSchemeId(workspaceId, schemes);
-      
+
       if (!defaultSchemeId) {
         console.error("No default classification scheme available");
-        toast({
-          title: "Error",
-          description: "No default classification scheme available",
-          variant: "destructive"
-        });
+        toast({ title: "Error", description: "No default classification scheme available", variant: "destructive" });
         return;
       }
-      
-      // Store the run ID
-      const runId = Math.floor(Math.random() * 2147483647);
-      
-      // Use the classifyContent method from the hook
-      const result = await classifyContent(
-        classifiableContent,
-        defaultSchemeId,
-        runId,
-        'Ad-hoc classification'
-      );
-      
-      if (result) {
-        console.log("ContentCard: Classification completed successfully");
-        setClassificationCompleted(true);
-        
-        // Pass runId to loadResults
-        const contentId = parseInt(id);
-        if (contentId > 0) {
-          loadResults(contentId, runId);
+
+      // Prepare job parameters according to ClassificationJobParams
+      const jobParams /*: ClassificationJobParams */ = {
+        workspaceId: workspaceId,
+        name: `Single Classification: ${title || 'Item ' + dataRecordId} - ${new Date().toISOString()}`,
+        // Pass schemeId as schemeIds array
+        schemeIds: [defaultSchemeId],
+        // Pass dataSourceId as datasourceIds array
+        datasourceIds: [dataSourceId],
+        // datarecord_ids: [dataRecordId] // Not directly in ClassificationJobParams interface
+        // Add configuration if needed, e.g., to target specific record
+        configuration: {
+          target_datarecord_ids: [dataRecordId] // Assuming backend/hook uses this
         }
+      };
+
+      // Create the classification job
+      const newJob = await createJob(jobParams);
+
+      if (newJob) {
+        console.log("ContentCard: Classification job created successfully", newJob);
+        toast({
+          title: "Classification Started",
+          description: `Job created (ID: ${newJob.id}). Results will appear soon.`,
+          variant: "default"
+        });
+        setClassificationCompleted(true); // Mark as completed (job created)
+        // Optionally start the job if needed (depends on backend setup)
+        // await startClassificationJob(newJob.id);
+        // Reload results optimistically or wait for job completion
+        loadResults({ datarecordId: dataRecordId });
+      } else {
+        // Handle case where job creation failed but didn't throw an error
+        toast({ title: "Error", description: "Failed to create classification job.", variant: "destructive" });
       }
+
     } catch (error) {
-      console.error("Error classifying content:", error);
+      console.error("Error creating classification job:", error);
       toast({
         title: "Classification Failed",
         description: error instanceof Error ? error.message : "An unknown error occurred",
         variant: "destructive"
       });
     }
-  }, [id, classifiableContent, isClassifying, activeWorkspace, classificationSettings, schemes, classifyContent, loadResults]);
+  }, [
+    id,
+    dataSourceId,
+    title,
+    isClassifying,
+    activeWorkspace,
+    classificationSettings,
+    schemes,
+    createJob,
+    loadResults,
+    toast
+  ]);
 
   const handleBookmark = async (event: React.MouseEvent) => {
     event.stopPropagation();
+    const identifier = url;
+    if (!identifier || !activeWorkspace?.id) {
+      console.error("Cannot bookmark/unbookmark: Missing URL or Workspace ID");
+      toast({ title: "Error", description: "Cannot perform action: Missing URL or workspace context.", variant: "destructive" });
+      return;
+    }
+
+    // Use the CoreContentModel structure expected by the store
+    const itemData: CoreContentModel = {
+      id, // Pass the current ID (likely DataRecord ID from content view)
+      title,
+      text_content,
+      url,
+      source,
+      insertion_date,
+      content_type: content_type || 'article',
+      content_language: content_language || null,
+      author: author || null,
+      publication_date: publication_date || null,
+      top_image: top_image || null,
+      entities,
+      tags,
+      evaluation,
+      // embeddings: null // Assuming embeddings are not part of bookmark payload
+    };
+
     if (isBookmarked) {
-      removeBookmark(url || '');
+      await removeBookmark(identifier, activeWorkspace.id);
     } else {
-      await addBookmark({
-        id,
-        title,
-        text_content,
-        url,
-        source,
-        insertion_date,
-        content_type: content_type || 'article',
-        content_language: content_language || null,
-        author: author || null,
-        publication_date: publication_date || null,
-        top_image: top_image || null,
-        entities,
-        tags,
-        evaluation,
-        embeddings: null
-      }, activeWorkspace?.uid);
+      await addBookmark(itemData, activeWorkspace.id);
     }
   };
 
@@ -257,13 +300,11 @@ export function ContentCard({
   // Update the useEffect to load the default scheme name
   useEffect(() => {
     const loadDefaultScheme = async () => {
-      if (!activeWorkspace?.uid || schemes.length === 0) return;
-      
+      if (!activeWorkspace?.id || schemes.length === 0) return; // Changed uid to id
+
       try {
-        const workspaceId = typeof activeWorkspace.uid === 'string' 
-          ? parseInt(activeWorkspace.uid) 
-          : activeWorkspace.uid;
-        
+        const workspaceId = activeWorkspace.id; // Changed uid to id
+
         // Get the default scheme ID using the hook instance
         const defaultSchemeId = classificationSettings.getDefaultSchemeId(workspaceId, schemes);
         
@@ -281,7 +322,7 @@ export function ContentCard({
     };
     
     loadDefaultScheme();
-  }, [activeWorkspace?.uid, schemes, classificationSettings]);
+  }, [activeWorkspace?.id, schemes, classificationSettings]);
 
   return (
     <Dialog open={isDialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -357,7 +398,7 @@ export function ContentCard({
                       <FolderDown 
                         className={cn(
                           "h-5 w-5 transition-all duration-300",
-                          isBookmarked 
+                          isBookmarked
                             ? "text-blue-600 fill-blue-100" 
                             : isPending 
                               ? "text-yellow-600 animate-pulse" 
@@ -377,6 +418,7 @@ export function ContentCard({
               {source && <span>Source: <span className="text-green-500">{source}</span></span>}
               {author && ` • ${author}`}
               {` • ${displayDate}`}
+              {dataSourceId && <span className="ml-2 text-xs italic opacity-60">(DS: {dataSourceId})</span>}
             </span>
             <h4 className="mb-2 text-lg font-semibold">{title}</h4>
             <p className="text-sm text-muted-foreground mb-2 line-clamp-2 leading-relaxed tracking-wide">
@@ -446,8 +488,11 @@ export function ContentCard({
                       isLoadingResults,
                       classificationResults
                     });
-                    // Force reload results
-                    loadResults(parseInt(id) || 0);
+                    // Force reload results - pass object
+                    const dataRecordId = parseInt(id);
+                    if (!isNaN(dataRecordId)) {
+                      loadResults({ datarecordId: dataRecordId });
+                    }
                   }}
                 >
                   <HelpCircle className="h-3 w-3 mr-1" />
@@ -474,6 +519,7 @@ export function ContentCard({
             {source && <span>Source: <span className="text-green-500">{source}</span></span>}
             {author && ` • ${author}`}
             {` • ${displayDate}`}
+            {dataSourceId && <span className="ml-2 text-xs italic opacity-60">(DS: {dataSourceId})</span>}
           </DialogDescription>
         </DialogHeader>
         
@@ -526,22 +572,6 @@ export function ContentCard({
             <p className="text-sm leading-relaxed tracking-wide whitespace-pre-line">
               {text_content}
             </p>
-          </div>
-          
-          <div className="w-full pt-4 border-t mt-2">
-            {isDialogOpen && (
-              <ClassificationWidget 
-                key={`classification-widget-${id}`}
-                content={classifiableContent}
-                buttonVariant="outline"
-                buttonSize="sm"
-                className="w-full"
-                showResults={true}
-                onClassificationComplete={handleClassificationComplete}
-                loadResultsOnMount={true}
-                buttonRef={classificationWidgetRef}
-              />
-            )}
           </div>
         </div>
 
@@ -650,5 +680,18 @@ function getColorClass(value: number | null, isNegative: boolean = false): strin
     return 'text-red-500';
   }
 }
+
+// Helper function copied/adapted from storeBookmark.tsx
+// TODO: Consider moving this to a shared utility file
+const findDataSourceByIdentifier = (identifier: string, dataSources: any[]): number | null => {
+  const found = dataSources.find(ds => {
+    if (ds.type === "url_list" && Array.isArray(ds.origin_details?.urls) && ds.origin_details.urls.includes(identifier)) {
+      return true;
+    }
+    // Add checks for other types if needed (e.g., text block hash)
+    return false;
+  });
+  return found ? found.id : null;
+};
 
 export default ContentCard;

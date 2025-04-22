@@ -4,48 +4,38 @@ from pydantic import BaseModel, Field, create_model, conint, model_validator
 import os
 from datetime import datetime, timezone
 # from sqlalchemy.orm import Session #Unnecessary import
-from app.models import ClassificationScheme, Document, ClassificationResult, ClassificationResultRead, FieldType, ClassificationField
-from app.api.deps import SessionDep, CurrentUser
-from app.core.db import engine  # Import the engine
+# Remove old model imports if no longer needed directly in API endpoints here
+from app.models import (
+    ClassificationScheme,
+    # Document, # Removed
+    # ClassificationResult, # Results created by task
+    # ClassificationResultRead, # Results created/read via different route
+    FieldType,
+    ClassificationField
+)
+from app.api.deps import SessionDep, CurrentUser # Keep if needed for other potential v2 routes
+from app.core.db import engine  # Import the engine for potential session use in helpers
 from sqlmodel import Session  # Import Session from sqlmodel
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from app.core.opol_config import opol, available_providers, get_fastclass
 
+import logging
+import traceback # Import traceback for detailed logging
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+# Keep router if other v2 endpoints exist or are planned
 router = APIRouter()
 
 @router.get("/available_providers")
-async def  get_providers():
+async def get_providers():
     return available_providers
 
-class RequestClassification(BaseModel):
-    """
-    Query to get the classification of the query
-    """
-    query: str
-
-@router.get("/location_from_query")
-async def get_location_from_query(query: str):
-    
-    class QueryLocation(BaseModel):
-        """
-        Location most relevant to the query
-        """
-        location: str
-
-    fastclass = get_fastclass()
-    location = fastclass.classify(QueryLocation, "Location most relevant to the query", query)
-
-    coordinates, location_type, bbox, area = opol.geo.code(location)
-
-    return {
-        "location": location,
-        "coordinates": coordinates,
-        "location_type": location_type,
-        "bbox": bbox,
-        "area": area
-    }
+# Removed old /location_from_query example unless needed
+# class RequestClassification(BaseModel): ...
+# @router.get("/location_from_query") ...
 
 ### How to use opol fastclass
 ## Create a pydantic model for the classification
@@ -71,258 +61,212 @@ class PopulistRehetoric(BaseModel):
 # The "" empty string needs to be passed as second argument. It's useful to inject or override instructions
 
 def generate_pydantic_model(scheme: ClassificationScheme) -> Type[BaseModel]:
+    """Generates a Pydantic model dynamically based on ClassificationScheme fields."""
     field_definitions = {}
     
     # Ensure scheme has fields attribute and it's not None or empty
+    # Use selectinload when fetching the scheme to ensure fields are loaded
     has_fields = hasattr(scheme, 'fields') and scheme.fields is not None and len(scheme.fields) > 0
     
     if not has_fields:
         # Create a simple model with a single text field if no fields are defined
-        field_definitions["text"] = (
+        field_definitions["classification_output"] = (
             str,
-            Field(description="Text classification result")
+            Field(description="Default text classification result as scheme has no fields.")
         )
     else:
         # Process each field in the scheme
         for field in scheme.fields:
+            field_name = field.name # Use field.name directly
+            field_description = field.description or f"Value for {field_name}"
+
             if field.type == FieldType.INT:
-                field_definitions[field.name] = (
-                    conint(ge=field.scale_min, le=field.scale_max),
-                    Field(description=f"Scale from {field.scale_min} to {field.scale_max}")
-                )
+                # Ensure scale limits are integers if provided
+                scale_min = int(field.scale_min) if field.scale_min is not None else None
+                scale_max = int(field.scale_max) if field.scale_max is not None else None
+                # Add validation rule for range if both min and max are defined
+                if scale_min is not None and scale_max is not None:
+                    field_definitions[field_name] = (
+                         # Use float initially, allow LLM flexibility, validate later if strict int needed
+                        float, # Changed to float to be more permissive for LLM
+                        # conint(ge=scale_min, le=scale_max), # This is too strict for LLM sometimes
+                        Field(description=f"{field_description} (Scale: {scale_min}-{scale_max})")
+                    )
+                else:
+                     field_definitions[field_name] = (float, Field(description=field_description))
+
             elif field.type == FieldType.LIST_STR:
                 if field.is_set_of_labels and field.labels:
                     # For selection from predefined labels
-                    field_definitions[field.name] = (
+                    field_definitions[field_name] = (
                         List[str],
                         Field(
-                            description=f"Select from: {', '.join(field.labels)}",
-                            examples=[field.labels],
-                            max_items=field.max_labels if hasattr(field, 'max_labels') and field.max_labels else None
+                            description=f"{field_description}. Select one or more from: {', '.join(field.labels)}",
+                            # examples=[field.labels] # Example might confuse LLM
                         )
                     )
                 else:
                     # For free-form lists
-                    field_definitions[field.name] = (
+                    field_definitions[field_name] = (
                         List[str],
-                        Field(
-                            description=field.description,
-                            max_items=field.max_labels if hasattr(field, 'max_labels') and field.max_labels else None
-                        )
+                        Field(description=field_description)
                     )
             elif field.type == FieldType.STR:
                 # For free-form text input
-                field_definitions[field.name] = (
-                    str, 
-                    Field(description=field.description)
+                field_definitions[field_name] = (
+                    str,
+                    Field(description=field_description)
                 )
             elif field.type == FieldType.LIST_DICT:
-                field_definitions[field.name] = (
-                    List[Dict[str, Any]], 
-                    Field(description=field.description)
-                )
+                 # Define the structure of the dict if dict_keys are provided
+                if field.dict_keys:
+                    dict_structure = {}
+                    key_types = {FieldType.STR: str, FieldType.INT: int, FieldType.FLOAT: float, FieldType.BOOL: bool}
+                    for key_def in field.dict_keys:
+                        key_name = key_def.get('name')
+                        key_type_str = key_def.get('type', 'str') # Default to string
+                        key_type = key_types.get(key_type_str, str)
+                        if key_name:
+                            dict_structure[key_name] = (Optional[key_type], ...)
+                    
+                    InnerDictModel = create_model(f"{scheme.name}_{field_name}_DictItem", **dict_structure)
+                    field_definitions[field_name] = (
+                         List[InnerDictModel], 
+                         Field(description=field_description)
+                    )
+                else:
+                    # Fallback if no dict_keys defined
+                    field_definitions[field_name] = (
+                        List[Dict[str, Any]],
+                        Field(description=f"{field_description} (List of dictionaries)")
+                    )
     
-    # Create the model with the field definitions
-    model = create_model(
-        scheme.name or "DefaultClassification",
-        __doc__=scheme.model_instructions or scheme.description or "Default classification model",
+    # Create the main model
+    DynamicModel = create_model(
+        f"Dynamic_{scheme.name.replace(' ', '')}" if scheme.name else "DynamicClassification",
+        __doc__=scheme.model_instructions or scheme.description or "Classification Model",
         **field_definitions
     )
     
-    # Add validators for fields with labels
-    if has_fields:
-        for field in scheme.fields:
-            if field.type == FieldType.LIST_STR and field.is_set_of_labels and field.labels:
-                def create_validator(field_name, valid_labels):
-                    @model_validator(mode='before')
-                    def validate_labels(cls, values):
-                        value = values.get(field_name)
-                        if value:
-                            invalid_labels = [v for v in value if v not in valid_labels]
-                            if invalid_labels:
-                                raise ValueError(
-                                    f"Invalid labels: {', '.join(invalid_labels)}. "
-                                    f"Must be from: {', '.join(valid_labels)}"
-                                )
-                        return values
-                    return validate_labels
-                
-                setattr(model, f'validate_{field.name}', create_validator(field.name, field.labels))
+    # Add validators AFTER model creation if needed (e.g., for labels)
+    # Pydantic v2 validators are often defined within the model or using decorators,
+    # dynamically adding them post-creation is complex. Simpler to rely on LLM guidance.
+    # Consider post-processing validation after getting the result if strict checks are needed.
     
-    return model
+    return DynamicModel
 
-@router.post("/{scheme_id}/classify/{document_id}")
-async def classify_document(
-    scheme_id: int,
-    document_id: int,
-    session: SessionDep,
-    current_user: CurrentUser,
-    x_api_key: str | None = Header(None, alias="X-API-Key"),
-    provider: str | None = Query("Google"),
-    model: str | None = Query("gemini-2.0-flash"),
-    run_id: int | None = None,
-    run_name: str | None = None,
-    run_description: str | None = None
-) -> ClassificationResultRead:
-    scheme = session.get(ClassificationScheme, scheme_id)
-    document = session.get(Document, document_id)
-    
-    # Check for existing result with the same run_id
-    if run_id:
-        existing_result = session.exec(
-            select(ClassificationResult)
-            .where(
-                ClassificationResult.document_id == document_id,
-                ClassificationResult.scheme_id == scheme_id,
-                ClassificationResult.run_id == run_id
-            )
-        ).first()
-        
-        if existing_result:
-            return ClassificationResultRead.model_validate(existing_result)
-    
-    # Generate dynamic Pydantic model
-    ModelClass = generate_pydantic_model(scheme)
-    
-    # Get fastclass instance with provided API key
-    if os.environ["LOCAL_LLM"] == "True":
-        fastclass = opol.classification(
-            provider="ollama", 
-            model_name=os.environ.get("LOCAL_LLM_MODEL", "llama3.2:latest"), 
-            llm_api_key=""
-        )
-    else:
+# --- Core Classification Logic (No longer an API endpoint) ---
+
+def run_classification(text: str, scheme: ClassificationScheme, api_key: str | None = None) -> Dict[str, Any]:
+    """
+    Runs classification on the provided text using the given scheme.
+    This is the core logic called by the background task.
+    Assumes scheme object includes loaded fields.
+    """
+    if not text:
+        logger.warning(f"Received empty text for classification with scheme {scheme.id}. Returning empty result.")
+        # Return a structure matching what generate_pydantic_model would expect,
+        # but with empty/null values.
+        ModelClass = generate_pydantic_model(scheme)
+        try:
+            # Create an empty instance if possible (might fail for complex models)
+            empty_instance = ModelClass.model_validate({})
+            return empty_instance.model_dump()
+        except Exception:
+             # Fallback to just an empty dict if model validation fails
+            return {}
+            
+    logger.debug(f"Running classification for scheme {scheme.id} ('{scheme.name}')")
+    # Generate dynamic Pydantic model from the scheme
+    try:
+        ModelClass = generate_pydantic_model(scheme)
+    except Exception as model_gen_err:
+        logger.error(f"Failed to generate Pydantic model for scheme {scheme.id}: {model_gen_err}")
+        raise ValueError(f"Model generation error for scheme {scheme.id}") from model_gen_err
+
+    # Get OPOL fastclass instance
+    # TODO: Get provider/model from scheme or job configuration if needed
+    try:
+        if os.environ.get("LOCAL_LLM") == "True":
+             provider = "ollama"
+             model_name = os.environ.get("LOCAL_LLM_MODEL", "llama3.2:latest")
+             current_api_key = "" # Ollama doesn't typically use API keys
+        else:
+            # Use defaults or fetch from config/job
+            provider = "Google" # Example default
+            model_name = "gemini-2.0-flash" # Example default
+            current_api_key = api_key # Use provided key or default
+            
         fastclass = get_fastclass(
             provider=provider,
-            model_name=model,
-            api_key=x_api_key
+            model_name=model_name,
+            api_key=current_api_key
         )
+    except Exception as fastclass_err:
+        logger.error(f"Failed to get fastclass instance: {fastclass_err}")
+        raise ConnectionError("Failed to initialize classification service") from fastclass_err
 
     # Classify using OPOL
-    result = fastclass.classify(ModelClass, "", document.text_content)
-    
-    # Store result
-    classification_result = ClassificationResult(
-        document_id=document_id,
-        scheme_id=scheme_id,
-        value=result.model_dump(),
-        timestamp=datetime.now(timezone.utc),
-        run_id=run_id,
-        run_name=run_name,
-        run_description=run_description
-    )
-    
-    session.add(classification_result)
-    session.commit()
-    session.refresh(classification_result)
-    
-    return ClassificationResultRead.model_validate(classification_result)
+    try:
+        logger.debug(f"Calling fastclass.classify for scheme {scheme.id}...")
+        # Pass model instructions from scheme if they exist
+        instructions = scheme.model_instructions or ""
+        result = fastclass.classify(ModelClass, instructions, text)
+        logger.debug(f"Classification successful for scheme {scheme.id}")
+        # Return the validated & structured data as a dictionary
+        return result.model_dump()
+    except Exception as classification_err:
+        # Log the specific error from the classification library
+        logger.error(f"OPOL classification failed for scheme {scheme.id}: {classification_err}")
+        # Re-raise a more generic error to be caught by the task
+        raise RuntimeError(f"Classification failed: {classification_err}") from classification_err
 
-def classify_text(text: str, scheme_id: int, x_api_key: str | None = Header(None, alias="X-API-Key")) -> Dict:
+
+# --- Helper Function (Used by Tasks) ---
+
+def classify_text(text: str, scheme_id: int, api_key: str | None = None) -> Dict:
+    """
+    Fetches the scheme and runs classification.
+    Called by background tasks.
+    """
     try:
         with Session(engine) as session:
-            # Get the classification scheme with its fields
-            statement = select(ClassificationScheme).where(
-                ClassificationScheme.id == scheme_id
-            ).options(
-                joinedload(ClassificationScheme.fields)
-            )
-            scheme = session.exec(statement).first()
-            
+            # Get the classification scheme using session.get()
+            scheme = session.get(ClassificationScheme, scheme_id)
+
             if not scheme:
-                raise HTTPException(status_code=404, detail=f"Classification scheme with id {scheme_id} not found")
-            
-            # Check if scheme has fields attribute before accessing it
-            has_fields = hasattr(scheme, 'fields') and scheme.fields is not None
-            
-            # If fields attribute is missing, try to load it explicitly
-            if not has_fields:
-                print(f"Fields attribute missing, trying to load fields explicitly for scheme {scheme_id}")
-                # Get fields directly
-                fields_statement = select(ClassificationField).where(
-                    ClassificationField.scheme_id == scheme_id
-                )
-                field_rows = session.exec(fields_statement).all()
-                
-                # Since we can't modify the scheme object directly (it's a SQLAlchemy Row),
-                # we'll create a new ClassificationScheme instance with the same data
-                # Use getattr with default values to handle missing attributes
-                scheme_data = {}
-                
-                # Try to access attributes safely
-                try:
-                    scheme_data["id"] = scheme_id  # Use the provided scheme_id instead of trying to access scheme.id
-                    scheme_data["name"] = getattr(scheme, 'name', f"Scheme {scheme_id}")
-                    scheme_data["description"] = getattr(scheme, 'description', f"Description for scheme {scheme_id}")
-                    scheme_data["model_instructions"] = getattr(scheme, 'model_instructions', None)
-                    scheme_data["validation_rules"] = getattr(scheme, 'validation_rules', None)
-                    scheme_data["workspace_id"] = getattr(scheme, 'workspace_id', 1)  # Default to workspace 1
-                    scheme_data["user_id"] = getattr(scheme, 'user_id', 1)  # Default to user 1
-                    scheme_data["created_at"] = getattr(scheme, 'created_at', datetime.now(timezone.utc))
-                    scheme_data["updated_at"] = getattr(scheme, 'updated_at', datetime.now(timezone.utc))
-                except Exception as attr_error:
-                    print(f"Error accessing scheme attributes: {attr_error}")
-                    # If we can't access attributes, create minimal data
-                    scheme_data = {
-                        "id": scheme_id,
-                        "name": f"Scheme {scheme_id}",
-                        "description": f"Description for scheme {scheme_id}",
-                        "workspace_id": 1,
-                        "user_id": 1,
-                        "created_at": datetime.now(timezone.utc),
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                
-                # Create a new scheme instance
-                scheme = ClassificationScheme(**scheme_data)
-                
-                # Create proper ClassificationField instances from the raw data
-                fields = []
-                for field_row in field_rows:
-                    try:
-                        field_data = {
-                            "id": getattr(field_row, 'id', None),
-                            "scheme_id": scheme_id,
-                            "name": getattr(field_row, 'name', 'default_field'),
-                            "description": getattr(field_row, 'description', ''),
-                            "type": getattr(field_row, 'type', FieldType.STR),
-                            "scale_min": getattr(field_row, 'scale_min', None),
-                            "scale_max": getattr(field_row, 'scale_max', None),
-                            "is_set_of_labels": getattr(field_row, 'is_set_of_labels', None),
-                            "labels": getattr(field_row, 'labels', None),
-                            "dict_keys": getattr(field_row, 'dict_keys', None),
-                        }
-                        fields.append(ClassificationField(**field_data))
-                    except Exception as field_error:
-                        print(f"Error creating field from row: {field_error}")
-                
-                # Set the fields on the scheme
-                scheme.fields = fields
-                has_fields = len(fields) > 0
-            
-            # Check if scheme has fields, but don't raise an error - we'll create a default model if needed
-            if not has_fields or len(scheme.fields) == 0:
-                print(f"Warning: Classification scheme with id {scheme_id} has no fields defined. Using default model.")
-            
-            # Generate dynamic Pydantic model
-            ModelClass = generate_pydantic_model(scheme)
-            
-            # Get fastclass instance with provided API key
-            fastclass = get_fastclass(x_api_key)
-            
-            # Classify using OPOL
-            result = fastclass.classify(ModelClass, "", text)
-            
-            # Return the raw model dump to preserve structure
-            return result.model_dump()
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
+                raise ValueError(f"Classification scheme with id {scheme_id} not found")
+
+            # Ensure fields are loaded. session.get might lazy-load,
+            # so explicitly refresh the relationship if needed.
+            # Check if fields are already loaded (might be by session.get depending on context)
+            if 'fields' not in scheme.__dict__:
+                # If not loaded, refresh the relationship
+                session.refresh(scheme, attribute_names=['fields'])
+            # Alternatively, access scheme.fields once to trigger lazy loading (less explicit):
+            # _ = scheme.fields 
+
+            # Verify fields are loaded before passing to run_classification
+            if not scheme.fields:
+                # If still not loaded after refresh/access, log a warning.
+                # run_classification has a fallback, but good to know.
+                logger.warning(f"Scheme {scheme_id} fields appear empty after fetching.")
+
+            # Now call the core logic function with the fetched scheme object
+            return run_classification(text, scheme, api_key)
+
     except Exception as e:
         # Log the error and provide a more helpful message
-        print(f"Error in classify_text: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
+        # --- MODIFIED LOGGING (Simpler) ---
+        tb_str = traceback.format_exc()
+        # logger.error(f"Error in classify_text helper for scheme {scheme_id}. Exception Type: {type(e).__name__}, Message: {str(e)}\nTraceback:\n{tb_str}")
+        logger.error(f"CLASSIFY_TEXT ERROR (Scheme {scheme_id}):\n{tb_str}") # Log only traceback
+        # --- END MODIFIED LOGGING ---
+        # Re-raise the exception so the calling task can handle it (e.g., mark as error)
+        raise
 
-@router.post("/classify")
-async def classify(text: str, scheme_id: int, x_api_key: str | None = Header(None, alias="X-API-Key")):
-    return classify_text(text, scheme_id, x_api_key)
+# --- Removed Old API Endpoints --- 
+
+# Removed: @router.post("/{scheme_id}/classify/{document_id}") ...
+
+# Removed: @router.post("/classify") ...
