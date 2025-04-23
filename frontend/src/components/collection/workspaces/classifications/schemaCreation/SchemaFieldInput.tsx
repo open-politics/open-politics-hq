@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { PlusIcon, XIcon } from "lucide-react";
+import { PlusIcon, XIcon, Clock } from "lucide-react";
 import { useEffect } from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface SchemaFieldInputProps {
   field: SchemeField;
@@ -68,6 +69,35 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
     });
   };
 
+  // --- Common Time Axis Hint Switch ---
+  const renderTimeAxisHintSwitch = () => (
+    <TooltipProvider delayDuration={100}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center space-x-2 pt-3 mt-3 border-t border-border/50">
+            <Switch
+              id={`time-axis-hint-${field.name || 'new'}`}
+              checked={field.config.is_time_axis_hint === true}
+              onCheckedChange={(checked) => handleConfigChange({ is_time_axis_hint: checked })}
+              disabled={readOnly}
+            />
+            <Label htmlFor={`time-axis-hint-${field.name || 'new'}`} className="text-xs font-normal flex items-center cursor-pointer">
+                <Clock className="h-3 w-3 mr-1.5 text-muted-foreground" />
+                Use as Time Axis
+            </Label>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="start">
+          <p className="text-xs max-w-xs">
+            Enable this if the field represents a date or timestamp that can be used for time-series analysis in charts.
+            The value should be parsable as a date (e.g., YYYY-MM-DD, ISO 8601).
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+  // --- End Common Time Axis Hint Switch ---
+
   switch (field.type) {
     case "int":
       return (
@@ -99,6 +129,7 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
               />
             </div>
           </div>
+          {renderTimeAxisHintSwitch()}
         </div>
       );
 
@@ -132,6 +163,7 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
               />
             </div>
           ) : null}
+          {renderTimeAxisHintSwitch()}
         </div>
       );
 
@@ -183,10 +215,15 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
             <PlusIcon className="h-4 w-4 mr-2" />
             Add Key
           </Button>
+          {renderTimeAxisHintSwitch()}
         </div>
       );
 
     default:
+      // For 'str' type, only show the time axis hint switch
+      if (field.type === 'str') {
+        return renderTimeAxisHintSwitch();
+      }
       return null;
   }
 } 

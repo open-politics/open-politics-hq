@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest,app__api__v1__entities__routes__SearchType,Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,Body_filestorage_file_upload,FileUploadResponse,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,CsvRowsOut,DataSourceRead,DataSourcesOut,DataRecordRead,ArticleResponse } from './models';
+import type { Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest,app__api__v1__entities__routes__SearchType,Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,Body_filestorage_file_upload,FileUploadResponse,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,CsvRowsOut,DataSourceRead,DataSourcesOut,AppendRecordInput,DataRecordRead,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,ArticleResponse } from './models';
 
 export type AppData = {
         
@@ -209,6 +209,15 @@ skip?: number
                     
                 };
 CreateUser: {
+                    requestBody: UserCreate
+                    
+                };
+ReadUsers1: {
+                    limit?: number
+skip?: number
+                    
+                };
+CreateUser1: {
                     requestBody: UserCreate
                     
                 };
@@ -683,7 +692,7 @@ ReadDatasourceRows: {
  */
 limit?: number
 /**
- * Number of rows to skip
+ * Number of rows to skip (relative to data rows, after header)
  */
 skip?: number
 workspaceId: number
@@ -743,7 +752,7 @@ ReadDatasourceRows: {
  */
 limit?: number
 /**
- * Number of rows to skip
+ * Number of rows to skip (relative to data rows, after header)
  */
 skip?: number
 workspaceId: number
@@ -764,6 +773,12 @@ skip?: number
 workspaceId: number
                     
                 };
+AppendRecordToDatasource: {
+                    datasourceId: number
+requestBody: AppendRecordInput
+workspaceId: number
+                    
+                };
     }
 
 export type DataRecordsData = {
@@ -776,6 +791,61 @@ ListDataRecordsForDatasource: {
                     datasourceId: number
 limit?: number
 skip?: number
+workspaceId: number
+                    
+                };
+AppendRecordToDatasource: {
+                    datasourceId: number
+requestBody: AppendRecordInput
+workspaceId: number
+                    
+                };
+    }
+
+export type RecurringTasksData = {
+        CreateRecurringTask: {
+                    requestBody: RecurringTaskCreate
+workspaceId: number
+                    
+                };
+ReadRecurringTasks: {
+                    limit?: number
+skip?: number
+/**
+ * Filter by task status
+ */
+status?: RecurringTaskStatus | null
+workspaceId: number
+                    
+                };
+CreateRecurringTask1: {
+                    requestBody: RecurringTaskCreate
+workspaceId: number
+                    
+                };
+ReadRecurringTasks1: {
+                    limit?: number
+skip?: number
+/**
+ * Filter by task status
+ */
+status?: RecurringTaskStatus | null
+workspaceId: number
+                    
+                };
+ReadRecurringTask: {
+                    taskId: number
+workspaceId: number
+                    
+                };
+UpdateRecurringTask: {
+                    requestBody: RecurringTaskUpdate
+taskId: number
+workspaceId: number
+                    
+                };
+DeleteRecurringTask: {
+                    taskId: number
 workspaceId: number
                     
                 };
@@ -1742,6 +1812,50 @@ requestBody,
 	}
 
 	/**
+	 * Read Users
+	 * Retrieve users.
+	 * @returns UsersOut Successful Response
+	 * @throws ApiError
+	 */
+	public static readUsers1(data: UsersData['ReadUsers1'] = {}): CancelablePromise<UsersOut> {
+		const {
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/users',
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create User
+	 * Create new user.
+	 * @returns UserOut Successful Response
+	 * @throws ApiError
+	 */
+	public static createUser1(data: UsersData['CreateUser1']): CancelablePromise<UserOut> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/users',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Read User Me
 	 * Get current user.
 	 * @returns UserOut Successful Response
@@ -1992,13 +2106,13 @@ formData,
 
 	/**
 	 * Scrape Article
-	 * Scrape article content from a URL using the centralized OPOL instance.
+	 * Scrape article content from a URL using the centralized scraping utility.
  * 
  * Args:
  * url: The URL of the article to scrape
  * 
  * Returns:
- * The scraped article content
+ * The scraped article content in a standardized format.
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
@@ -2124,13 +2238,13 @@ formData,
 
 	/**
 	 * Scrape Article
-	 * Scrape article content from a URL using the centralized OPOL instance.
+	 * Scrape article content from a URL using the centralized scraping utility.
  * 
  * Args:
  * url: The URL of the article to scrape
  * 
  * Returns:
- * The scraped article content
+ * The scraped article content in a standardized format.
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
@@ -3536,15 +3650,16 @@ export class DatasourcesService {
 
 	/**
 	 * Create Datasource
-	 * Create a new DataSource.
- * 
- * Based on the type, this might involve uploading a file or providing
- * details like URLs or text content via form fields.
- * Triggers a background task to process the source and create DataRecords.
-	 * @returns DataSourceRead Successful Response
+	 * Create a new DataSource or multiple DataSources (for bulk PDF upload).
+ * For PDF uploads, multiple files can be provided; one DataSource will be created per file,
+ * using extracted PDF title metadata for the name.
+ * For other types (CSV, URL, Text), only one source is created per request.
+ * CSV options: skip_rows, delimiter.
+ * Triggers background task(s) for ingestion.
+	 * @returns DataSourcesOut Successful Response
 	 * @throws ApiError
 	 */
-	public static createDatasource(data: DatasourcesData['CreateDatasource']): CancelablePromise<DataSourceRead> {
+	public static createDatasource(data: DatasourcesData['CreateDatasource']): CancelablePromise<DataSourcesOut> {
 		const {
 workspaceId,
 formData,
@@ -3594,15 +3709,16 @@ includeCounts = false,
 
 	/**
 	 * Create Datasource
-	 * Create a new DataSource.
- * 
- * Based on the type, this might involve uploading a file or providing
- * details like URLs or text content via form fields.
- * Triggers a background task to process the source and create DataRecords.
-	 * @returns DataSourceRead Successful Response
+	 * Create a new DataSource or multiple DataSources (for bulk PDF upload).
+ * For PDF uploads, multiple files can be provided; one DataSource will be created per file,
+ * using extracted PDF title metadata for the name.
+ * For other types (CSV, URL, Text), only one source is created per request.
+ * CSV options: skip_rows, delimiter.
+ * Triggers background task(s) for ingestion.
+	 * @returns DataSourcesOut Successful Response
 	 * @throws ApiError
 	 */
-	public static createDatasource1(data: DatasourcesData['CreateDatasource1']): CancelablePromise<DataSourceRead> {
+	public static createDatasource1(data: DatasourcesData['CreateDatasource1']): CancelablePromise<DataSourcesOut> {
 		const {
 workspaceId,
 formData,
@@ -3703,7 +3819,7 @@ datasourceId,
 	/**
 	 * Read Datasource Rows
 	 * Retrieve rows from a CSV DataSource, with pagination.
- * Directly streams and parses the CSV file from storage.
+ * Uses stored configuration and sanitizes row data.
 	 * @returns CsvRowsOut Successful Response
 	 * @throws ApiError
 	 */
@@ -3735,15 +3851,16 @@ export class DataSourcesService {
 
 	/**
 	 * Create Datasource
-	 * Create a new DataSource.
- * 
- * Based on the type, this might involve uploading a file or providing
- * details like URLs or text content via form fields.
- * Triggers a background task to process the source and create DataRecords.
-	 * @returns DataSourceRead Successful Response
+	 * Create a new DataSource or multiple DataSources (for bulk PDF upload).
+ * For PDF uploads, multiple files can be provided; one DataSource will be created per file,
+ * using extracted PDF title metadata for the name.
+ * For other types (CSV, URL, Text), only one source is created per request.
+ * CSV options: skip_rows, delimiter.
+ * Triggers background task(s) for ingestion.
+	 * @returns DataSourcesOut Successful Response
 	 * @throws ApiError
 	 */
-	public static createDatasource(data: DataSourcesData['CreateDatasource']): CancelablePromise<DataSourceRead> {
+	public static createDatasource(data: DataSourcesData['CreateDatasource']): CancelablePromise<DataSourcesOut> {
 		const {
 workspaceId,
 formData,
@@ -3793,15 +3910,16 @@ includeCounts = false,
 
 	/**
 	 * Create Datasource
-	 * Create a new DataSource.
- * 
- * Based on the type, this might involve uploading a file or providing
- * details like URLs or text content via form fields.
- * Triggers a background task to process the source and create DataRecords.
-	 * @returns DataSourceRead Successful Response
+	 * Create a new DataSource or multiple DataSources (for bulk PDF upload).
+ * For PDF uploads, multiple files can be provided; one DataSource will be created per file,
+ * using extracted PDF title metadata for the name.
+ * For other types (CSV, URL, Text), only one source is created per request.
+ * CSV options: skip_rows, delimiter.
+ * Triggers background task(s) for ingestion.
+	 * @returns DataSourcesOut Successful Response
 	 * @throws ApiError
 	 */
-	public static createDatasource1(data: DataSourcesData['CreateDatasource1']): CancelablePromise<DataSourceRead> {
+	public static createDatasource1(data: DataSourcesData['CreateDatasource1']): CancelablePromise<DataSourcesOut> {
 		const {
 workspaceId,
 formData,
@@ -3902,7 +4020,7 @@ datasourceId,
 	/**
 	 * Read Datasource Rows
 	 * Retrieve rows from a CSV DataSource, with pagination.
- * Directly streams and parses the CSV file from storage.
+ * Uses stored configuration and sanitizes row data.
 	 * @returns CsvRowsOut Successful Response
 	 * @throws ApiError
 	 */
@@ -3985,6 +4103,35 @@ limit = 1000,
 		});
 	}
 
+	/**
+	 * Append Record To Datasource
+	 * Append a single new record (text or URL) to an existing DataSource.
+ * Only supports TEXT_BLOCK and URL_LIST types.
+ * If content_type is 'url', it will be scraped.
+ * An optional event_timestamp (ISO 8601) can be provided.
+	 * @returns DataRecordRead Successful Response
+	 * @throws ApiError
+	 */
+	public static appendRecordToDatasource(data: DatarecordsData['AppendRecordToDatasource']): CancelablePromise<DataRecordRead> {
+		const {
+workspaceId,
+datasourceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}/records',
+			path: {
+				workspace_id: workspaceId, datasource_id: datasourceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
 }
 
 export class DataRecordsService {
@@ -4035,6 +4182,217 @@ limit = 1000,
 			},
 			query: {
 				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Append Record To Datasource
+	 * Append a single new record (text or URL) to an existing DataSource.
+ * Only supports TEXT_BLOCK and URL_LIST types.
+ * If content_type is 'url', it will be scraped.
+ * An optional event_timestamp (ISO 8601) can be provided.
+	 * @returns DataRecordRead Successful Response
+	 * @throws ApiError
+	 */
+	public static appendRecordToDatasource(data: DataRecordsData['AppendRecordToDatasource']): CancelablePromise<DataRecordRead> {
+		const {
+workspaceId,
+datasourceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}/records',
+			path: {
+				workspace_id: workspaceId, datasource_id: datasourceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class RecurringTasksService {
+
+	/**
+	 * Create Recurring Task
+	 * Create a new Recurring Task for the workspace.
+	 * @returns RecurringTaskRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRecurringTask(data: RecurringTasksData['CreateRecurringTask']): CancelablePromise<RecurringTaskRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Recurring Tasks
+	 * Retrieve Recurring Tasks for the workspace.
+	 * @returns RecurringTasksOut Successful Response
+	 * @throws ApiError
+	 */
+	public static readRecurringTasks(data: RecurringTasksData['ReadRecurringTasks']): CancelablePromise<RecurringTasksOut> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+status,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit, status
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Recurring Task
+	 * Create a new Recurring Task for the workspace.
+	 * @returns RecurringTaskRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRecurringTask1(data: RecurringTasksData['CreateRecurringTask1']): CancelablePromise<RecurringTaskRead> {
+		const {
+workspaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks',
+			path: {
+				workspace_id: workspaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Recurring Tasks
+	 * Retrieve Recurring Tasks for the workspace.
+	 * @returns RecurringTasksOut Successful Response
+	 * @throws ApiError
+	 */
+	public static readRecurringTasks1(data: RecurringTasksData['ReadRecurringTasks1']): CancelablePromise<RecurringTasksOut> {
+		const {
+workspaceId,
+skip = 0,
+limit = 100,
+status,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks',
+			path: {
+				workspace_id: workspaceId
+			},
+			query: {
+				skip, limit, status
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Recurring Task
+	 * Retrieve a specific Recurring Task by its ID.
+	 * @returns RecurringTaskRead Successful Response
+	 * @throws ApiError
+	 */
+	public static readRecurringTask(data: RecurringTasksData['ReadRecurringTask']): CancelablePromise<RecurringTaskRead> {
+		const {
+workspaceId,
+taskId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
+			path: {
+				workspace_id: workspaceId, task_id: taskId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Recurring Task
+	 * Update a Recurring Task.
+	 * @returns RecurringTaskRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateRecurringTask(data: RecurringTasksData['UpdateRecurringTask']): CancelablePromise<RecurringTaskRead> {
+		const {
+workspaceId,
+taskId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
+			path: {
+				workspace_id: workspaceId, task_id: taskId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Recurring Task
+	 * Delete a Recurring Task.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteRecurringTask(data: RecurringTasksData['DeleteRecurringTask']): CancelablePromise<void> {
+		const {
+workspaceId,
+taskId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
+			path: {
+				workspace_id: workspaceId, task_id: taskId
 			},
 			errors: {
 				422: `Validation Error`,
@@ -4215,7 +4573,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-04-21',
+timeframeTo = '2025-04-23',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

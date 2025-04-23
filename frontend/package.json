@@ -77,6 +77,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.0.4",
     "commander": "^12.1.0",
+    "cronstrue": "^2.59.0",
     "d3": "^7.9.0",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.1.3",

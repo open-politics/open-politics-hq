@@ -681,7 +681,7 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
                            ) : (
                              // Inlined Table Rendering
                              <div className="relative w-full h-full overflow-auto">
-                               <table className="w-full text-sm table-fixed"> {/* Use table-fixed for better size control */}
+                               <table className="w-full text-sm table-fixed">{/* Use table-fixed for better size control */}
                                  <thead className="sticky top-0 bg-muted/60 backdrop-blur-sm z-10">
                                    {table.getHeaderGroups().map(headerGroup => (
                                      <tr key={headerGroup.id} className="border-b transition-colors hover:bg-muted/70">

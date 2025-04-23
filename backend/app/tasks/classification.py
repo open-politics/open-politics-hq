@@ -3,18 +3,22 @@ import time
 from typing import List, Dict, Any
 
 from sqlalchemy.orm import selectinload # Use selectinload for relationships
-from sqlmodel import Session, select
+from sqlmodel import Session as SQLModelSession # Alias to avoid confusion with local 'session' variable
+from sqlmodel import select
 
 from app.core.celery_app import celery
-from app.core.db import engine
+from app.core.db import engine # Import engine for creating a new session
 from app.models import (
     ClassificationJob,
     ClassificationJobStatus,
     DataRecord,
     ClassificationScheme,
     ClassificationResult,
-    ClassificationResultCreate
+    ClassificationResultCreate,
+    RecurringTask # Import RecurringTask model
 )
+# Import the status update helper function from the new utils module
+from app.tasks.utils import update_task_status
 # TODO: Import the actual classification function after refactoring
 # from app.api.v2.classification import classify_data_record_text
 # Import the refactored helper function
@@ -23,7 +27,7 @@ from app.api.v2.classification import classify_text
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 # Helper function to update Job status
-def update_job_status(session: Session, job_id: int, status: ClassificationJobStatus, error_message: str | None = None):
+def update_job_status(session: SQLModelSession, job_id: int, status: ClassificationJobStatus, error_message: str | None = None):
     try:
         job = session.get(ClassificationJob, job_id)
         if job:
@@ -40,7 +44,7 @@ def update_job_status(session: Session, job_id: int, status: ClassificationJobSt
         logging.error(f"Error updating status for ClassificationJob {job_id}: {e}")
 
 # Helper function to create ClassificationResults in batch
-def create_results_batch(session: Session, results_data: List[Dict[str, Any]]):
+def create_results_batch(session: SQLModelSession, results_data: List[Dict[str, Any]]):
     # Check for duplicates based on the unique constraint (datarecord_id, scheme_id, job_id)
     # This prevents errors if the task is retried and tries to insert the same result again.
     existing_keys = set()
@@ -96,11 +100,12 @@ def process_classification_job(self, job_id: int):
     error_count = 0
     success_count = 0
     final_status = ClassificationJobStatus.COMPLETED # Assume success initially
+    job = None # Initialize job variable outside try block
 
-    with Session(engine) as session:
+    with SQLModelSession(engine) as session: # Use the alias here for clarity
         try:
             # 1. Fetch the Job and check status
-            job = session.get(ClassificationJob, job_id)
+            job = session.get(ClassificationJob, job_id) # Assign to outer scope variable
             if not job:
                 logging.error(f"ClassificationJob {job_id} not found. Aborting task.")
                 return
@@ -110,6 +115,7 @@ def process_classification_job(self, job_id: int):
 
             # 2. Update status to RUNNING
             update_job_status(session, job_id, ClassificationJobStatus.RUNNING)
+            session.refresh(job) # Refresh job to get the updated status if needed elsewhere
 
             # 3. Load Configuration
             config = job.configuration or {}
@@ -132,7 +138,8 @@ def process_classification_job(self, job_id: int):
             data_records = session.exec(datarecord_stmt).all()
             if not data_records:
                  logging.warning(f"No DataRecords found for target DataSources {datasource_ids} in Job {job_id}. Marking as complete.")
-                 update_job_status(session, job_id, ClassificationJobStatus.COMPLETED)
+                 final_status = ClassificationJobStatus.COMPLETED # Set final status before update
+                 update_job_status(session, job_id, final_status)
                  return
             
             logging.info(f"Found {len(data_records)} DataRecords to classify for Job {job_id}.")
@@ -143,6 +150,8 @@ def process_classification_job(self, job_id: int):
             ).options(selectinload(ClassificationScheme.fields))
             schemes = session.exec(scheme_stmt).all()
             if len(schemes) != len(scheme_ids):
+                 # Update status before raising error
+                 update_job_status(session, job_id, ClassificationJobStatus.FAILED, error_message=f"Could not find all specified ClassificationSchemes: {scheme_ids}")
                  raise ValueError(f"Could not find all specified ClassificationSchemes: {scheme_ids}")
             
             logging.info(f"Loaded {len(schemes)} ClassificationSchemes for Job {job_id}.")
@@ -215,25 +224,70 @@ def process_classification_job(self, job_id: int):
             if results_batch:
                 create_results_batch(session, results_batch)
             
-            # 8. Update final job status
-            logging.info(f"Classification for Job {job_id} finished. Success: {success_count}, Errors: {error_count}")
-            update_job_status(session, job_id, final_status)
+            # 8. Update final job status (within the main try block)
+            final_job_message = f"Classification finished. Success: {success_count}, Errors: {error_count}"
+            if error_count > 0:
+                 final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
+            else:
+                 final_status = ClassificationJobStatus.COMPLETED
+            
+            logging.info(f"Classification for Job {job_id} finished. Status: {final_status}. Message: {final_job_message}")
+            # Pass the message to the job update
+            update_job_status(session, job_id, final_status, error_message=final_job_message if error_count > 0 else None)
+            session.refresh(job) # Refresh job state after final status update
 
         except Exception as e:
             logging.exception(f"Critical error during classification task for Job {job_id}: {e}")
-            # Update status to FAILED
-            update_job_status(session, job_id, ClassificationJobStatus.FAILED, error_message=str(e))
-            # Retry logic for task execution errors
+            final_status = ClassificationJobStatus.FAILED
+            final_job_message = str(e) # Capture the critical error message
+            if job_id:
+                 update_job_status(session, job_id, ClassificationJobStatus.FAILED, error_message=final_job_message)
+                 if job: session.refresh(job)
             try:
                 self.retry(exc=e, countdown=60 * (self.request.retries + 1))
                 logging.warning(f"Retrying task for Job {job_id} due to error: {e}")
             except self.MaxRetriesExceededError:
                 logging.error(f"Max retries exceeded for Job {job_id}. Marking as FAILED.")
-                # Status is already set to FAILED before retry logic
+                # Status already set to FAILED, job status updated in DB
 
         finally:
+            # This block executes after try/except, even if retries are scheduled
+            # We only want to update the RecurringTask if the job has definitively finished (succeeded, failed after retries, or completed with errors)
+            # If self.request.retries < self.max_retries and final_status == ClassificationJobStatus.FAILED, it means a retry might happen.
+            
+            is_final_attempt = True # Assume final unless a retry is pending
+            if final_status == ClassificationJobStatus.FAILED:
+                try:
+                    # Check if we are within retry limits
+                    if self.request.retries < self.max_retries:
+                         is_final_attempt = False
+                         logging.info(f"Job {job_id} failed but retry is pending. Skipping RecurringTask status update.")
+                except AttributeError: # Might happen if task isn't bound correctly in some test scenarios
+                    pass 
+
+            # Update RecurringTask status only if the job is truly finished
+            if job and is_final_attempt: # Check if job object exists and it's the final attempt
+                recurring_task_id = job.configuration.get('recurring_task_id')
+                if recurring_task_id and isinstance(recurring_task_id, int):
+                    logging.info(f"Updating originating RecurringTask {recurring_task_id} based on final Job {job_id} status: {job.status}")
+                    # Map Job status to RecurringTask status ('success' or 'error')
+                    recurring_task_status = "success" if job.status == ClassificationJobStatus.COMPLETED else "error"
+                    # Use the job's final error/completion message
+                    recurring_task_message = job.error_message or f"Job {job_id} finished with status {job.status}."
+                    
+                    # Use a new session for safety in the finally block
+                    try:
+                        with SQLModelSession(engine) as final_session:
+                             # update_task_status handles fetching the task and committing
+                             update_task_status(final_session, recurring_task_id, recurring_task_status, recurring_task_message)
+                             logging.info(f"Successfully updated status for RecurringTask {recurring_task_id}.")
+                    except Exception as update_err:
+                         logging.error(f"Failed to update status for RecurringTask {recurring_task_id} from Job {job_id}: {update_err}", exc_info=True)
+                else:
+                    logging.debug(f"Job {job_id} was not triggered by a recurring task or ID is missing/invalid. Skipping RecurringTask status update.")
+            
             end_time = time.time()
-            logging.info(f"Classification task for Job {job_id} finished in {end_time - start_time:.2f} seconds.")
+            logging.info(f"Classification task processing finished for Job {job_id} in {end_time - start_time:.2f} seconds.")
 
 # Example of how to potentially call the task
 # Needs integration via API route

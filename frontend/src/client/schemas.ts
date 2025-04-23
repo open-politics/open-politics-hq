@@ -1,3 +1,26 @@
+export const $AppendRecordInput = {
+	properties: {
+		content: {
+	type: 'string',
+	isRequired: true,
+},
+		content_type: {
+	type: 'Enum',
+	enum: ['text','url',],
+	isRequired: true,
+},
+		event_timestamp: {
+	type: 'any-of',
+	description: `Optional ISO 8601 timestamp for the event`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $ArticleResponse = {
 	properties: {
 		contents: {
@@ -32,11 +55,33 @@ export const $Body_datasources_create_datasource = {
 	type: 'null',
 }],
 },
-		file: {
+		files: {
 	type: 'any-of',
 	contains: [{
+	type: 'array',
+	contains: {
 	type: 'binary',
 	format: 'binary',
+},
+}, {
+	type: 'null',
+}],
+},
+		skip_rows: {
+	type: 'any-of',
+	description: `Number of initial rows to skip (for CSV)`,
+	contains: [{
+	type: 'number',
+	minimum: 0,
+}, {
+	type: 'null',
+}],
+},
+		delimiter: {
+	type: 'any-of',
+	description: `Single character delimiter (for CSV)`,
+	contains: [{
+	type: 'string',
 }, {
 	type: 'null',
 }],
@@ -177,6 +222,14 @@ export const $ClassificationFieldCreate = {
 	type: 'null',
 }],
 },
+		is_time_axis_hint: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -260,20 +313,6 @@ export const $ClassificationJobRead = {
 	isRequired: true,
 	format: 'date-time',
 },
-		target_scheme_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	default: [],
-},
-		target_datasource_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	default: [],
-},
 		result_count: {
 	type: 'any-of',
 	contains: [{
@@ -289,6 +328,22 @@ export const $ClassificationJobRead = {
 }, {
 	type: 'null',
 }],
+},
+		target_scheme_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isReadOnly: true,
+	isRequired: true,
+},
+		target_datasource_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isReadOnly: true,
+	isRequired: true,
 },
 	},
 } as const;
@@ -535,8 +590,12 @@ export const $CsvRowData = {
 		row_data: {
 	type: 'dictionary',
 	contains: {
-	properties: {
-	},
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 	isRequired: true,
 },
@@ -582,6 +641,15 @@ export const $DataRecordRead = {
 	properties: {
 	},
 },
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
 },
 		id: {
 	type: 'number',
@@ -911,6 +979,208 @@ export const $QueryType = {
 	properties: {
 		type: {
 	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $RecurringTaskCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		type: {
+	type: 'RecurringTaskType',
+	isRequired: true,
+},
+		schedule: {
+	type: 'string',
+	isRequired: true,
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		status: {
+	type: 'RecurringTaskStatus',
+	default: 'paused',
+},
+	},
+} as const;
+
+export const $RecurringTaskRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		type: {
+	type: 'RecurringTaskType',
+	isRequired: true,
+},
+		schedule: {
+	type: 'string',
+	isRequired: true,
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		status: {
+	type: 'RecurringTaskStatus',
+	default: 'paused',
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		workspace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		last_run_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		last_run_status: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		last_run_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		last_job_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $RecurringTaskStatus = {
+	type: 'Enum',
+	enum: ['active','paused','error',],
+} as const;
+
+export const $RecurringTaskType = {
+	type: 'Enum',
+	enum: ['ingest','classify',],
+} as const;
+
+export const $RecurringTaskUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		schedule: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'RecurringTaskStatus',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $RecurringTasksOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'RecurringTaskRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
 	isRequired: true,
 },
 	},

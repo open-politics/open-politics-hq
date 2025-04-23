@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
 import { DataSourceType } from '@/lib/classification/types'; // Use internal type
-import { Loader2, UploadCloud, LinkIcon, FileText, X, FileUp, List, Type, Undo2 } from 'lucide-react';
+import { Loader2, UploadCloud, LinkIcon, FileText, X, FileUp, List, Type, Undo2, RefreshCcw } from 'lucide-react';
 import { useToast } from "@/components/ui/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertTriangle } from "lucide-react"
@@ -17,6 +17,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import { UtilitiesService } from '@/client'; // Import the correct service
 import { ScrapeArticleResponse } from '@/lib/scraping/scraping_response';
+import { Switch } from '@/components/ui/switch';
+import { useRecurringTasksStore, RecurringTaskCreate } from '@/zustand_stores/storeRecurringTasks';
+import Cronstrue from 'cronstrue';
 
 interface CreateDataSourceDialogProps {
   open: boolean;
@@ -34,6 +37,7 @@ const dataSourceTypes: { value: DataSourceType; label: string; description: stri
 
 export default function CreateDataSourceDialog({ open, onClose, initialMode }: CreateDataSourceDialogProps) {
   const { createDataSource, isLoading, error: storeError } = useDataSourceStore();
+  const { createRecurringTask } = useRecurringTasksStore();
   const { toast } = useToast();
 
   // --- State ---
@@ -41,7 +45,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   const [manualName, setManualName] = useState('');
   const [isNameAutoFilled, setIsNameAutoFilled] = useState(false);
   const [type, setType] = useState<DataSourceType>(dataSourceTypes[0].value);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [urls, setUrls] = useState<string>('');
   const [textContent, setTextContent] = useState<string>('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -53,6 +57,11 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   const [showAdvancedCsv, setShowAdvancedCsv] = useState(false);
   const [skipRows, setSkipRows] = useState<string>('0'); // NEW: Number of initial rows to skip (0-based internally, user sees 0+)
   const [delimiter, setDelimiter] = useState<string>(','); // Default delimiter
+  // NEW state for scheduled ingestion
+  const [enableScheduledIngestion, setEnableScheduledIngestion] = useState(false);
+  const [ingestionSchedule, setIngestionSchedule] = useState('0 0 * * *'); // Default: Daily midnight
+  const [cronExplanation, setCronExplanation] = useState('');
+  const [isSubmittingRecurring, setIsSubmittingRecurring] = useState(false); // Track second API call
   // --- End State ---
 
   const selectedTypeInfo = useMemo(() => dataSourceTypes.find(t => t.value === type), [type]);
@@ -62,7 +71,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
     setManualName('');
     setIsNameAutoFilled(false);
     setType(dataSourceTypes[0].value);
-    setFile(null);
+    setFiles([]);
     setUrls('');
     setTextContent('');
     setFormError(null);
@@ -74,6 +83,11 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
     setIsScrapingTitle(false);
     setScrapeTitleError(null);
     setIsNameAutoFilledFromUrl(false);
+    // Reset scheduled ingestion state
+    setEnableScheduledIngestion(false);
+    setIngestionSchedule('0 0 * * *');
+    setCronExplanation('');
+    setIsSubmittingRecurring(false);
   }, []);
 
   const handleClose = () => {
@@ -84,7 +98,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   // Reset specific fields when type changes
   const handleTypeChange = (newType: DataSourceType) => {
     setType(newType);
-    setFile(null);
+    setFiles([]);
     setUrls('');
     setTextContent('');
     setFormError(null); // Clear errors on type change
@@ -107,26 +121,46 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files ? event.target.files[0] : null;
-    setFile(selectedFile);
+    const selectedFiles = event.target.files ? Array.from(event.target.files) : [];
+    setFiles(selectedFiles);
 
-    if (selectedFile) {
-        // Clear URL-based autofill if file is selected
+    if (selectedFiles.length > 0) {
+        // Clear URL-based autofill if file(s) are selected
         setIsNameAutoFilledFromUrl(false);
-        // Only auto-fill name if current name is empty or was previously auto-filled
-        if (name.trim() === '' || isNameAutoFilled) {
-            if (!isNameAutoFilled && name.trim() !== '') {
-               setManualName(name);
-            } else if (!isNameAutoFilled && name.trim() === '') {
-               setManualName('');
+
+        // --- Name Autofill Logic for SINGLE file ONLY --- 
+        if (selectedFiles.length === 1) {
+            const selectedFile = selectedFiles[0];
+            // Only auto-fill name if current name is empty or was previously auto-filled
+            if (name.trim() === '' || isNameAutoFilled) {
+                if (!isNameAutoFilled && name.trim() !== '') {
+                   setManualName(name);
+                } else if (!isNameAutoFilled && name.trim() === '') {
+                   setManualName('');
+                }
+                const fileNameWithoutExtension = selectedFile.name.replace(/\.(csv|pdf)$/i, '');
+                setName(fileNameWithoutExtension);
+                setIsNameAutoFilled(true);
+            } else {
+                setManualName(name);
+                setIsNameAutoFilled(false);
             }
-            const fileNameWithoutExtension = selectedFile.name.replace(/\.(csv|pdf)$/i, '');
-            setName(fileNameWithoutExtension);
-            setIsNameAutoFilled(true);
         } else {
-            setManualName(name);
-            setIsNameAutoFilled(false);
+             // --- MULTIPLE FILES: Do NOT auto-fill, clear manual name backup --- 
+             // User must provide a name for the batch/group OR rely on backend metadata naming
+             if (isNameAutoFilled) {
+                  setName(''); // Clear potentially auto-filled name
+             }
+             setIsNameAutoFilled(false);
+             setManualName('');
         }
+    } else {
+         // No files selected, reset name state if it was auto-filled
+         if (isNameAutoFilled) {
+              setName('');
+              setManualName('');
+              setIsNameAutoFilled(false);
+         }
     }
   };
 
@@ -155,9 +189,13 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
 
     switch (type) {
       case 'csv':
-        if (!file) {
+        if (files.length === 0) {
           setFormError(`A CSV file is required.`);
           return false;
+        }
+        if (files.length > 1) {
+             setFormError(`Only one CSV file can be uploaded at a time.`);
+             return false;
         }
         // Validate advanced options if shown
         if (showAdvancedCsv) {
@@ -174,8 +212,8 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
         }
         break;
       case 'pdf':
-        if (!file) {
-          setFormError(`A PDF file is required.`);
+        if (files.length === 0) {
+          setFormError(`At least one PDF file is required.`);
           return false;
         }
         break;
@@ -208,10 +246,11 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
 
     // Create originDetails separately, it might remain empty
     const originDetails: Record<string, any> = {};
+    let sourceUrlList: string[] = []; // Keep track of URLs for recurring task config
 
     if (type === 'csv') {
-        if (file) {
-            formData.append('file', file);
+        if (files.length === 1) {
+            formData.append('file', files[0]); // Send single file with key 'file' for CSV
             // Append skip_rows and delimiter DIRECTLY to FormData if set
             if (showAdvancedCsv) {
                 const skipRowsNum = parseInt(skipRows, 10);
@@ -225,12 +264,15 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
             }
         }
     } else if (type === 'pdf') {
-        if (file) {
-            formData.append('file', file);
+        if (files.length > 0) {
+            files.forEach((pdfFile, index) => {
+               // Use the key 'files' for potentially multiple uploads
+               formData.append('files', pdfFile, pdfFile.name);
+            });
         }
     } else if (type === 'url_list') {
-        // Put URL list *inside* originDetails JSON
-        originDetails.urls = urls.split('\n').map(u => u.trim()).filter(Boolean);
+        sourceUrlList = urls.split('\n').map(u => u.trim()).filter(Boolean);
+        originDetails.urls = sourceUrlList;
     } else if (type === 'text_block') {
         // Put text content *inside* originDetails JSON
         originDetails.text_content = textContent;
@@ -249,6 +291,53 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
             title: "Data Source Created",
             description: `Source "${createdSource.name}" added successfully and is now processing.`,
         });
+
+        // --- NEW: Create Recurring Task if enabled --- 
+        if (type === 'url_list' && enableScheduledIngestion) {
+            setIsSubmittingRecurring(true);
+            const recurringTaskPayload: RecurringTaskCreate = {
+              name: `Scheduled Ingest: ${createdSource.name}`,
+              description: `Automatically scrapes URLs for DataSource ${createdSource.name} (ID: ${createdSource.id})`,
+              type: 'ingest',
+              schedule: ingestionSchedule,
+              configuration: { 
+                  target_datasource_id: createdSource.id,
+                  source_urls: sourceUrlList, // Use the URLs from the form
+                  deduplication_strategy: 'url_hash' // Default or make configurable?
+              },
+              status: 'active' // Start as active if enabled
+            };
+            
+            console.log("Attempting to create recurring task:", recurringTaskPayload);
+            try {
+                const createdRecurringTask = await createRecurringTask(recurringTaskPayload);
+                if (createdRecurringTask) {
+                    toast({
+                        title: "Scheduled Ingestion Enabled",
+                        description: `Task "${createdRecurringTask.name}" created. It will run first according to the schedule (${ingestionSchedule}).`,
+                        variant: "default" // Use different variant?
+                    });
+                } else {
+                     // createRecurringTask should handle its own errors/toasts via the store
+                     toast({
+                        title: "Scheduling Failed",
+                        description: "Could not create the scheduled ingestion task automatically. Please create it manually if needed.",
+                        variant: "destructive"
+                    });
+                }
+            } catch (error) {
+                 console.error("Error creating recurring task:", error);
+                 toast({
+                    title: "Scheduling Error",
+                    description: "An unexpected error occurred while trying to create the scheduled ingestion task.",
+                    variant: "destructive"
+                });
+            } finally {
+                setIsSubmittingRecurring(false);
+            }
+        }
+        // --- End NEW Section ---
+
         handleClose();
     } // Error handled via storeError display
   };
@@ -318,6 +407,21 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   // Watch changes in type, urls, and whether the name was autofilled (from file)
   }, [type, urls, name, isNameAutoFilled, isNameAutoFilledFromUrl]); // Added name and isNameAutoFilledFromUrl dependencies
 
+  // --- NEW: Update Cron Explanation --- 
+  useEffect(() => {
+    if (type !== 'url_list' || !enableScheduledIngestion) {
+        setCronExplanation('');
+        return;
+    }
+    try {
+      const explanation = Cronstrue.toString(ingestionSchedule);
+      setCronExplanation(explanation);
+      // TODO: Consider adding specific validation error state for schedule if needed
+    } catch (e) {
+      setCronExplanation('Invalid cron format.');
+    }
+  }, [ingestionSchedule, type, enableScheduledIngestion]);
+
   const renderTypeSpecificInput = () => {
     switch (type) {
       case 'csv':
@@ -331,19 +435,20 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
                 type="file"
                 accept=".csv"
                 onChange={handleFileChange}
-                className={cn(file ? "opacity-0 pointer-events-none" : "")}
+                className={cn(files.length > 0 ? "opacity-0 pointer-events-none" : "")}
                 disabled={isLoading}
+                multiple
               />
-              {file && (
+              {files.length === 1 && (
                 <div className="absolute inset-0 flex items-center justify-between text-sm p-3 bg-muted rounded-md border border-input">
                   <span className="truncate flex items-center gap-2">
                     <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground"/>
-                    {file.name}
+                    {files[0].name}
                   </span>
                   <Button
                     variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0"
                     onClick={(e) => {
-                        e.preventDefault(); setFile(null);
+                        e.preventDefault(); setFiles([]);
                         const fileInput = document.getElementById('file-upload') as HTMLInputElement;
                         if (fileInput) fileInput.value = '';
                     }}
@@ -421,19 +526,20 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
                 type="file"
                 accept=".pdf"
                 onChange={handleFileChange}
-                className={cn(file ? "opacity-0 pointer-events-none" : "")}
+                className={cn(files.length > 0 ? "opacity-0 pointer-events-none" : "")}
                 disabled={isLoading}
+                multiple
               />
-              {file && (
+              {files.length > 0 && (
                 <div className="absolute inset-0 flex items-center justify-between text-sm p-3 bg-muted rounded-md border border-input">
                   <span className="truncate flex items-center gap-2">
                     <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground"/>
-                    {file.name}
+                    {files.length === 1 ? files[0].name : `${files.length} PDF files selected`}
                   </span>
                   <Button
                     variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0"
                     onClick={(e) => {
-                        e.preventDefault(); setFile(null);
+                        e.preventDefault(); setFiles([]);
                         const fileInput = document.getElementById('file-upload') as HTMLInputElement;
                         if (fileInput) fileInput.value = '';
                     }}
@@ -447,16 +553,54 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
         );
       case 'url_list':
          return (
-          <div className="space-y-2 p-4 border rounded-md bg-background">
-            <Label htmlFor="urls" className="text-sm font-medium">URLs (one per line)</Label>
-            <Textarea
-              id="urls"
-              placeholder="https://example.com/page1&#10;https://anothersite.org/article"
-              value={urls}
-              onChange={(e) => setUrls(e.target.value)}
-              rows={8} className="text-sm" disabled={isLoading}
-            />
-            <p className="text-xs text-muted-foreground pt-1">{selectedTypeInfo?.description}</p>
+          <div className="space-y-3 p-4 border rounded-md bg-background">
+            <div> 
+              <Label htmlFor="urls" className="text-sm font-medium">URLs (one per line)</Label>
+              <Textarea
+                id="urls"
+                placeholder="https://example.com/page1\nhttps://anothersite.org/article"
+                value={urls}
+                onChange={(e) => setUrls(e.target.value)}
+                rows={8} className="text-sm" disabled={isLoading || isSubmittingRecurring}
+              />
+              <p className="text-xs text-muted-foreground pt-1">{selectedTypeInfo?.description}</p>
+            </div>
+            {/* --- NEW: Scheduled Ingestion Section --- */}
+            <div className="pt-3 space-y-3 border-t">
+                <div className="flex items-center justify-between space-x-2 pt-2">
+                    <Label htmlFor="scheduled-ingestion-switch" className="flex flex-col space-y-1">
+                        <span>Enable Scheduled Ingestion</span>
+                        <span className="font-normal leading-snug text-muted-foreground text-xs">
+                            Automatically re-scrape these URLs on a schedule to add new records.
+                        </span>
+                    </Label>
+                    <Switch
+                        id="scheduled-ingestion-switch"
+                        checked={enableScheduledIngestion}
+                        onCheckedChange={setEnableScheduledIngestion}
+                        disabled={isLoading || isSubmittingRecurring}
+                        aria-label="Enable Scheduled Ingestion"
+                    />
+                </div>
+                {enableScheduledIngestion && (
+                    <div className="space-y-1 pl-2 ml-1 border-l">
+                        <Label htmlFor="ingestion-schedule" className="text-xs">Schedule (Cron Format)</Label>
+                        <Input
+                            id="ingestion-schedule"
+                            value={ingestionSchedule}
+                            onChange={(e) => setIngestionSchedule(e.target.value)}
+                            placeholder="e.g., 0 0 * * *" 
+                            className="h-8 text-xs"
+                            disabled={isLoading || isSubmittingRecurring}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                             {cronExplanation || 'Enter a 5-part cron schedule.'} (Uses server timezone: UTC)
+                        </p>
+                         {/* TODO: Add link to cron editor/helper? */}
+                    </div>
+                )}
+            </div>
+            {/* --- End NEW Section --- */}
           </div>
         );
       case 'text_block':
@@ -548,10 +692,10 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
           {/* End Error Display */}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={handleClose} disabled={isLoading}>Cancel</Button>
-            <Button type="submit" disabled={isLoading || !type || !name.trim()}>
-              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create Source
+            <Button type="button" variant="outline" onClick={handleClose} disabled={isLoading || isSubmittingRecurring}>Cancel</Button>
+            <Button type="submit" disabled={isLoading || isSubmittingRecurring || !type || !name.trim()}> 
+              {(isLoading || isSubmittingRecurring) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isLoading ? 'Creating Source...' : (isSubmittingRecurring ? 'Scheduling...' : 'Create Source')}
             </Button>
           </DialogFooter>
         </form>

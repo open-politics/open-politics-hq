@@ -10,6 +10,7 @@ import {
   ClassificationJobsOut,
 } from '@/client';
 import { devtools } from 'zustand/middleware';
+import { shallow } from 'zustand/shallow';
 
 interface ClassificationJobState {
   classificationJobs: Record<number, ClassificationJobRead>;
@@ -160,8 +161,6 @@ export const useClassificationJobsStore = create<ClassificationJobState>()(
 
 export const useClassificationJobsActions = () =>
   useClassificationJobsStore((state) => state.actions);
-export const useAllClassificationJobs = () =>
-  useClassificationJobsStore((state) => Object.values(state.classificationJobs));
 export const useIsClassificationJobsLoading = () =>
   useClassificationJobsStore((state) => state.isLoading);
 export const useClassificationJobsError = () =>

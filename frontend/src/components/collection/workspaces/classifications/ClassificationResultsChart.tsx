@@ -25,7 +25,7 @@ import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
-import { ClassificationResultRead, ClassificationSchemeRead, EnhancedClassificationResultRead, DataSourceRead, DataRecordRead as DataRecord, ClassificationFieldCreate as ClientClassificationField, DictKeyDefinition as ClientDictKeyDefinition, FieldType } from '@/client';
+import { ClassificationResultRead, ClassificationSchemeRead, EnhancedClassificationResultRead, DataSourceRead, DataRecordRead as DataRecord, ClassificationFieldCreate as ClientClassificationField, DictKeyDefinition as ClientDictKeyDefinition, FieldType, DataRecordRead } from '@/client';
 import ClassificationResultDisplay from './ClassificationResultDisplay';
 import { FormattedClassificationResult, ClassificationScheme, DictKeyDefinition, SchemeField } from '@/lib/classification/types';
 import { adaptEnhancedResultReadToFormattedResult, adaptSchemeReadToScheme } from '@/lib/classification/adapters';
@@ -55,6 +55,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Eye, ExternalLink, Trash2 } from "lucide-react";
 import { ArrowUpDown } from "lucide-react";
+import { TimeAxisConfig } from './ClassificationTimeAxisControls';
 
 // Define gradient colors for bars
 const gradientColors = [
@@ -221,10 +222,11 @@ interface Props {
   results: FormattedClassificationResult[];
   schemes: ClassificationSchemeRead[];
   dataSources?: DataSourceRead[];
-  dataRecords?: DataRecord[];
+  dataRecords?: DataRecordRead[];
   onDataRecordSelect?: (datarecordId: number) => void;
   onDataPointClick?: (point: ChartDataPoint | GroupedDataPoint) => void;
   filters: ResultFilter[];
+  timeAxisConfig: TimeAxisConfig | null;
 }
 
 interface SchemeData {
@@ -362,200 +364,165 @@ const getFormattedClassificationValue = (result: any, scheme: any): any => {
   }
 };
 
-// --- Data Processing for Line Chart (isGrouped = false) ---
+// --- Helper function to get timestamp based on config ---
+const getTimestamp = (
+    result: FormattedClassificationResult,
+    dataRecordsMap: Map<number, DataRecordRead> | undefined, // Use a Map for efficient lookup
+    timeAxisConfig: TimeAxisConfig | null
+): Date | null => {
+    if (!timeAxisConfig) return null; // Default to null if no config
+
+    if (timeAxisConfig.type === 'schema' && timeAxisConfig.schemeId && timeAxisConfig.fieldKey) {
+        // Find the value for the specified scheme and field
+        // Note: Assumes result.value structure matches the scheme fields
+        let rawValue: any = null;
+        if (result.scheme_id === timeAxisConfig.schemeId && result.value) {
+            // Simplistic access - might need getNestedValue if fieldKey is nested like 'details.date'
+            rawValue = result.value[timeAxisConfig.fieldKey];
+        }
+
+        if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== '') {
+            try {
+                // Use standard Date constructor (less flexible than dateutil)
+                const parsedDate = new Date(String(rawValue));
+                // Check if the parsing resulted in a valid date
+                if (isNaN(parsedDate.getTime())) {
+                    throw new Error('Invalid Date');
+                }
+                return parsedDate; // Returns a Date object
+            } catch (e) {
+                console.warn(`Could not parse date from schema field '${timeAxisConfig.fieldKey}' value '${rawValue}':`, e);
+                return null; // Return null if parsing fails
+            }
+        }
+        return null; // Return null if value is missing or empty
+
+    } else if (timeAxisConfig.type === 'default') {
+        // Find the corresponding DataRecord
+        const record = dataRecordsMap?.get(result.datarecord_id);
+        if (record) {
+            // Prioritize event_timestamp, then created_at
+            const timestampStr = record.event_timestamp || record.created_at;
+            if (timestampStr) {
+                try {
+                    return new Date(timestampStr); // Standard ISO strings should parse
+                } catch (e) {
+                    console.warn(`Could not parse default timestamp '${timestampStr}' for record ${record.id}:`, e);
+                    return null;
+                }
+            }
+        }
+        // Fallback to classification result timestamp if record or its timestamps are missing?
+        // Or just return null? Let's return null for consistency.
+        return null;
+    }
+
+    return null; // Fallback case
+};
+
+// --- Data Processing Function (Example for Line Chart) ---
+// Modify this function (or create a similar one) to use getTimestamp
 const processLineChartData = (
   results: FormattedClassificationResult[],
   schemes: ClassificationSchemeRead[],
-  dataRecords?: DataRecord[]
+  dataRecords: DataRecordRead[] | undefined, // Accept dataRecords
+  timeAxisConfig: TimeAxisConfig | null, // Accept timeAxisConfig
+  groupingInterval: 'day' | 'week' | 'month' // Example grouping
 ): ChartData => {
-  if (!results || results.length === 0) return [];
-  console.log("[Line Chart] Processing results:", results.length);
+    console.log("[Chart] Processing line chart data with config:", timeAxisConfig);
+    const groupedData: Record<string, ChartDataPoint> = {};
 
-  const recordDateMap = new Map<number, { date: Date | null; source: string }>();
-  if (dataRecords) {
-    dataRecords.forEach(record => {
-      let dateToUse: string | Date | null = null;
-      let dateSource: string = 'unknown';
-      
-      // FIX: Add type check for publication_date
-      const pubDate = record.source_metadata?.publication_date;
-      if (pubDate && typeof pubDate === 'string') {
-         dateToUse = pubDate;
-         dateSource = 'record.source_metadata.publication_date';
-      } 
-      else if (record.created_at) {
-         dateToUse = record.created_at;
-         dateSource = 'record.created_at';
-      }
+    // Create a Map for faster DataRecord lookup
+    const dataRecordsMap = useMemo(() => dataRecords ? new Map(dataRecords.map(dr => [dr.id, dr])) : undefined, [dataRecords]);
 
-      if (dateToUse) {
-          try {
-             const parsedDate = new Date(dateToUse);
-             if (!isNaN(parsedDate.getTime())) {
-                 recordDateMap.set(record.id, { date: parsedDate, source: dateSource });
-             } else {
-                  console.warn(`[Line Chart] Invalid date format for DataRecord ${record.id}: ${dateToUse}`);
-                  recordDateMap.set(record.id, { date: null, source: dateSource + ' (Invalid Format)' });
+    results.forEach(result => {
+        const timestamp = getTimestamp(result, dataRecordsMap, timeAxisConfig);
+        if (!timestamp || isNaN(timestamp.getTime())) {
+             console.warn(`Skipping result ID ${result.id} due to invalid/missing timestamp.`);
+             return; // Skip results without a valid timestamp
+        }
+
+        // Format the date based on the grouping interval
+        let dateKey: string;
+        const year = timestamp.getFullYear();
+        const month = timestamp.getMonth() + 1; // 0-indexed
+        const day = timestamp.getDate();
+        const week = Math.ceil(day / 7); // Simple week calculation
+
+        switch (groupingInterval) {
+            case 'day':
+                dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                break;
+            case 'week':
+                // A more robust week calculation might be needed depending on requirements
+                dateKey = `${year}-W${String(week).padStart(2, '0')}`;
+                break;
+            case 'month':
+            default:
+                dateKey = `${year}-${String(month).padStart(2, '0')}`;
+                break;
+        }
+
+        if (!groupedData[dateKey]) {
+            groupedData[dateKey] = {
+                dateString: dateKey,
+                timestamp: new Date(dateKey).getTime(), // Use start of period for timestamp
+                count: 0,
+                documents: [],
+                docSchemeValues: {},
+                stats: {},
+                categoryFrequency: {}
+            };
+        }
+
+        // --- Aggregation Logic (Keep similar to existing) ---
+        const point = groupedData[dateKey];
+        point.count++;
+        if (!point.documents.includes(result.datarecord_id)) {
+            point.documents.push(result.datarecord_id);
+        }
+
+        // Add scheme-specific aggregation
+        const scheme = schemes.find(s => s.id === result.scheme_id);
+        if (scheme) {
+             const schemeKey = `scheme_${scheme.id}`;
+             point[schemeKey] = (point[schemeKey] || 0) + 1; // Example: count per scheme
+
+             // Store value for tooltip/drilldown
+             if (!point.docSchemeValues) point.docSchemeValues = {};
+             if (!point.docSchemeValues[result.datarecord_id]) point.docSchemeValues[result.datarecord_id] = {};
+             point.docSchemeValues[result.datarecord_id][scheme.id] = result.value;
+
+             // Calculate stats for numeric fields
+             const numericValue = getPlottableValue(result, scheme);
+             if (typeof numericValue === 'number') {
+                 if (!point.stats) point.stats = {};
+                 if (!point.stats[schemeKey]) {
+                     point.stats[schemeKey] = { min: numericValue, max: numericValue, avg: numericValue, count: 1 };
+                 } else {
+                     const stats = point.stats[schemeKey];
+                     stats.min = Math.min(stats.min, numericValue);
+                     stats.max = Math.max(stats.max, numericValue);
+                     stats.avg = (stats.avg * stats.count + numericValue) / (stats.count + 1);
+                     stats.count++;
+                 }
              }
-          } catch(e) {
-               console.warn(`[Line Chart] Error parsing date for DataRecord ${record.id}: ${dateToUse}`, e);
-               recordDateMap.set(record.id, { date: null, source: dateSource + ' (Parsing Error)' });
-          }
-      } else {
-          recordDateMap.set(record.id, { date: null, source: 'No Date Found' });
-      }
+
+             // Calculate category frequency
+            if (scheme.fields[0]?.type === 'List[str]' && (scheme.fields[0] as any)?.config?.is_set_of_labels && Array.isArray(result.value)) {
+                if (!point.categoryFrequency) point.categoryFrequency = {};
+                if (!point.categoryFrequency[schemeKey]) point.categoryFrequency[schemeKey] = {};
+                result.value.forEach(label => {
+                     point.categoryFrequency![schemeKey][label] = (point.categoryFrequency![schemeKey][label] || 0) + 1;
+                });
+            }
+        }
     });
-  }
 
-  const resultsByDateAndRecord = results.reduce<Record<string, Record<string, FormattedClassificationResult[]>>>((acc, result) => {
-    // Determine the date key using the DataRecord map
-    const recordDateInfo = recordDateMap.get(result.datarecord_id);
-    let dateKey: string = 'Unknown Date';
-    let jsDate: Date | null = null;
-    let dateSource: string = 'result.timestamp'; // Default if record not found or has no date
-
-    if (recordDateInfo && recordDateInfo.date) {
-      jsDate = recordDateInfo.date;
-      dateKey = format(jsDate, 'yyyy-MM-dd'); // Group by day
-      dateSource = recordDateInfo.source;
-    } else {
-      // Fallback to result timestamp if DataRecord date is missing/invalid
-      try {
-        const resultDate = new Date(result.timestamp);
-         if (!isNaN(resultDate.getTime())) {
-            jsDate = resultDate;
-            dateKey = format(jsDate, 'yyyy-MM-dd');
-            dateSource = 'result.timestamp';
-         } else {
-             // Log if even the result timestamp is bad
-             console.warn(`[Line Chart] Invalid result timestamp for Result ${result.id}, Record ${result.datarecord_id}: ${result.timestamp}`);
-             dateSource += ' (Invalid Format)';
-         }
-      } catch (e) {
-         console.warn(`[Line Chart] Error parsing result timestamp for Result ${result.id}, Record ${result.datarecord_id}: ${result.timestamp}`, e);
-         dateSource += ' (Parsing Error)';
-      }
-    }
-    
-    // console.log(`[Line Chart] Result ${result.id}, Record ${result.datarecord_id}: Using ${dateSource} (${dateKey}) for X-axis.`);
-
-    const recordKey = `rec-${result.datarecord_id}`; 
-    
-    if (!acc[dateKey]) {
-      acc[dateKey] = {};
-    }
-    if (!acc[dateKey][recordKey]) {
-      acc[dateKey][recordKey] = [];
-    }
-
-    acc[dateKey][recordKey].push(result);
-    return acc;
-  }, {});
-
-  // Aggregate data points
-  const chartData: ChartData = Object.entries(resultsByDateAndRecord)
-    .map(([date, recordResults]) => {
-      const allResultsOnDate = Object.values(recordResults).flat();
-      const uniqueRecordIds = [...new Set(allResultsOnDate.map(r => r.datarecord_id))]; 
-
-      const stats: Record<string, { min: number; max: number; avg: number; count: number }> = {};
-      const categoryFrequency: Record<string, Record<string, number>> = {};
-
-      uniqueRecordIds.forEach(recordId => {
-          const resultsForRecord = allResultsOnDate.filter(r => r.datarecord_id === recordId);
-          resultsForRecord.forEach(res => {
-              const scheme = schemes.find(s => s.id === res.scheme_id);
-              if (!scheme || !scheme.fields) return;
-
-              scheme.fields.forEach(field => {
-                  // --- ADJUSTMENT: Construct key using scheme ID and field name ---
-                  const schemeFieldKey = `scheme_${scheme.id}_field_${field.name}`;
-                  // --- END ADJUSTMENT ---
-                  
-                  let value: any;
-                  // Value extraction logic (simplified for brevity - assume it works)
-                  if (typeof res.value === 'object' && res.value !== null && field.name in res.value) {
-                      value = res.value[field.name];
-                  } else if (scheme.fields.length === 1) {
-                      value = res.value;
-                  } else {
-                     return;
-                  }
-
-                  const fieldDefinition = scheme.fields.find(f => f.name === field.name);
-                  
-                  // Stats for 'int'
-                  if (fieldDefinition && fieldDefinition.type === 'int' && typeof value === 'number' && !isNaN(value)) {
-                      if (!stats[schemeFieldKey]) stats[schemeFieldKey] = { min: Infinity, max: -Infinity, avg: 0, count: 0 };
-                      stats[schemeFieldKey].min = Math.min(stats[schemeFieldKey].min, value);
-                      stats[schemeFieldKey].max = Math.max(stats[schemeFieldKey].max, value);
-                      stats[schemeFieldKey].avg += value;
-                      stats[schemeFieldKey].count++;
-                  }
-
-                  // Frequencies for 'str' or 'List[str]' with labels
-                  const isSetOfLabels = field.is_set_of_labels; 
-                  if (field.type === 'str' || (field.type === 'List[str]' && isSetOfLabels)) {
-                       if (!categoryFrequency[schemeFieldKey]) categoryFrequency[schemeFieldKey] = {};
-                        if (Array.isArray(value) && field.type === 'List[str]') {
-                            value.forEach(label => {
-                                const categoryValue = String(label);
-                                categoryFrequency[schemeFieldKey][categoryValue] = (categoryFrequency[schemeFieldKey][categoryValue] || 0) + 1;
-                            });
-                        } else {
-                             const categoryValue = String(value);
-                             categoryFrequency[schemeFieldKey][categoryValue] = (categoryFrequency[schemeFieldKey][categoryValue] || 0) + 1;
-                        }
-                  }
-              });
-          });
-      });
-
-       // Finalize average calculation
-      Object.keys(stats).forEach(key => {
-          if (stats[key].count > 0) {
-              stats[key].avg /= stats[key].count;
-          }
-      });
-
-      const dateObj = new Date(date + 'T00:00:00Z'); // Use the derived date key
-
-      // --- ADJUSTMENT: Ensure stats and categoryFrequency keys match tooltip logic ---
-      const finalStats: Record<string, any> = {};
-      Object.entries(stats).forEach(([key, value]) => {
-         const schemeId = key.match(/scheme_(\d+)_/)?.[1];
-         const schemeName = schemes.find(s => s.id === parseInt(schemeId || ''))?.name || 'UnknownScheme';
-         finalStats[`${schemeName}_min`] = value.min;
-         finalStats[`${schemeName}_max`] = value.max;
-         finalStats[`${schemeName}_avg`] = value.avg;
-         // We might need the count in the tooltip, let's add it
-         finalStats[`${schemeName}_count`] = value.count;
-      });
-      
-      const finalCategories: Record<string, any> = {};
-       Object.entries(categoryFrequency).forEach(([key, value]) => {
-         const schemeId = key.match(/scheme_(\d+)_/)?.[1];
-         const schemeName = schemes.find(s => s.id === parseInt(schemeId || ''))?.name || 'UnknownScheme';
-         finalCategories[schemeName] = value; // Store categories under scheme name
-      });
-      // --- END ADJUSTMENT ---
-
-      return {
-        dateString: date,
-        timestamp: !isNaN(dateObj.getTime()) ? dateObj.getTime() : 0,
-        count: allResultsOnDate.length, 
-        documents: uniqueRecordIds, 
-        // --- ADJUSTMENT: Use the correctly keyed stats and categories ---
-        stats: finalStats, 
-        categoryFrequency: finalCategories,
-        // --- END ADJUSTMENT ---
-      };
-    })
-    .filter(point => point.timestamp > 0)
-    .sort((a, b) => a.timestamp - b.timestamp); 
-
-  console.log("[Line Chart] Processed chart data:", chartData);
-  return chartData;
+    // Convert to array and sort by date
+    const chartData = Object.values(groupedData).sort((a, b) => a.timestamp - b.timestamp);
+    console.log("[Chart] Processed data count:", chartData.length);
+    return chartData;
 };
 
 // --- Data Processing for Bar Chart (isGrouped = true) ---
@@ -665,7 +632,7 @@ const processGroupedChartData = (
     return groupedData;
 };
 
-const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSources, dataRecords, onDataRecordSelect, onDataPointClick, filters }) => {
+const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSources, dataRecords, onDataRecordSelect, onDataPointClick, filters, timeAxisConfig }) => {
   const [isGrouped, setIsGrouped] = useState(false);
   const [showStatistics, setShowStatistics] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
@@ -746,10 +713,10 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
       return { chartData: [], groupedData: groupedResult, maxGroupCount: 'auto' };
     } else {
       // Pass dataRecords to processLineChartData
-      const lineData = processLineChartData(filteredResults, schemes, dataRecords);
+      const lineData = processLineChartData(filteredResults, schemes, dataRecords, timeAxisConfig, 'day');
       return { chartData: lineData, groupedData: [], maxGroupCount: 'auto' }; // 'auto' for line chart Y-axis
     }
-  }, [results, schemes, isGrouped, dataRecords, filters, groupingSchemeId, groupingFieldKey]);
+  }, [results, schemes, isGrouped, dataRecords, filters, groupingSchemeId, groupingFieldKey, timeAxisConfig]);
 
   // Determine which data source to use based on the switch
   const displayData = isGrouped ? groupedData : chartData;
@@ -1297,7 +1264,7 @@ const DocumentResults: React.FC<{
   results: FormattedClassificationResult[];
   schemes: ClassificationSchemeRead[];
   dataSources?: DataSourceRead[];
-  dataRecords?: DataRecord[];
+  dataRecords?: DataRecordRead[];
   onDataRecordSelect?: (datarecordId: number) => void;
 }> = ({ selectedPoint, results, schemes, dataSources, dataRecords, onDataRecordSelect }) => {
   console.log("[DialogContent] DocumentResults rendering. Selected Point:", selectedPoint);

@@ -1,7 +1,7 @@
 from sqlmodel import Field, Relationship, SQLModel
 from typing import List, Optional, Dict, Any, Union, Literal
 from datetime import datetime, timezone
-from sqlalchemy import Column, ARRAY, Text, JSON, Integer, UniqueConstraint, String, Enum, DateTime
+from sqlalchemy import Column, ARRAY, Text, JSON, Integer, UniqueConstraint, String, Enum, DateTime, Index
 from pydantic import BaseModel, model_validator, computed_field
 import enum
 
@@ -284,12 +284,14 @@ class DataRecordBase(SQLModel):
     # URL_LIST: {'url': 'http://...', 'index': 0}
     # TEXT_BLOCK: {}
     source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    event_timestamp: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True)) # When the event occurred
 
 # Database table model for DataRecord
 class DataRecord(DataRecordBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     datasource_id: int = Field(foreign_key="datasource.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    url_hash: Optional[str] = Field(default=None, index=True) # Added for efficient URL deduplication
 
     # Relationships
     datasource: Optional["DataSource"] = Relationship(back_populates="data_records")
@@ -298,12 +300,14 @@ class DataRecord(DataRecordBase, table=True):
 # API model for DataRecord creation (primarily used internally by ingestion tasks)
 class DataRecordCreate(DataRecordBase):
     datasource_id: int
+    # event_timestamp is inherited from DataRecordBase
 
 # API model for returning DataRecord data
 class DataRecordRead(DataRecordBase):
     id: int
     datasource_id: int
     created_at: datetime
+    # event_timestamp is inherited from DataRecordBase
 
 # API model for returning a list of DataRecords
 class DataRecordsOut(SQLModel):
@@ -331,6 +335,7 @@ class ClassificationFieldCreate(SQLModel):
     is_set_of_labels: Optional[bool] = None # For LIST_STR: use predefined labels?
     labels: Optional[List[str]] = None # Predefined labels if is_set_of_labels is True
     dict_keys: Optional[List[DictKeyDefinition]] = None # Definitions if type is LIST_DICT
+    is_time_axis_hint: Optional[bool] = None # Hint for UI to suggest this field for time axis
 
 # Database table model for ClassificationField (defines one field within a scheme)
 class ClassificationField(SQLModel, table=True):
@@ -344,6 +349,7 @@ class ClassificationField(SQLModel, table=True):
     is_set_of_labels: Optional[bool] = None # For LIST_STR type
     labels: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(String))) # For LIST_STR type
     dict_keys: Optional[List[Dict[str, str]]] = Field(default=None, sa_column=Column(JSON)) # For LIST_DICT type, store as JSON
+    is_time_axis_hint: Optional[bool] = Field(default=False, nullable=True) # Hint for UI
 
     # Relationship
     scheme: Optional["ClassificationScheme"] = Relationship(back_populates="fields")
@@ -394,7 +400,7 @@ class ClassificationSchemeRead(ClassificationSchemeBase):
     user_id: int
     created_at: datetime
     updated_at: datetime
-    fields: List[ClassificationFieldCreate] # Return field definitions
+    fields: List[ClassificationFieldCreate] # Return field definitions including the hint
     # Optional counts populated by specific API endpoints
     classification_count: Optional[int] = None # Count of results using this scheme
     job_count: Optional[int] = None # Count of jobs using this scheme
@@ -621,6 +627,96 @@ class ClassificationResultQuery(SQLModel):
     job_ids: Optional[List[int]] = None
     datarecord_ids: Optional[List[int]] = None
     scheme_ids: Optional[List[int]] = None
+
+
+# ---------------------------------------------------------------------------
+# NEW: Recurring Task Management Models
+# ---------------------------------------------------------------------------
+
+class RecurringTaskType(str, enum.Enum):
+    """Defines the type of recurring task."""
+    INGEST = "ingest"       # e.g., scrape URLs and add DataRecords
+    CLASSIFY = "classify"   # e.g., run schemes against datasources
+
+class RecurringTaskStatus(str, enum.Enum):
+    """Defines the status of a recurring task."""
+    ACTIVE = "active"       # Task is scheduled and running
+    PAUSED = "paused"       # Task is configured but not scheduled
+    ERROR = "error"         # Task encountered an error on last run (needs review)
+    # Maybe add 'ARCHIVED' later if needed
+
+# Shared properties for RecurringTask
+class RecurringTaskBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    type: RecurringTaskType = Field(sa_column=Column(Enum(RecurringTaskType)))
+    # Cron string for scheduling (e.g., "0 5 * * *")
+    schedule: str
+    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Configuration Examples:
+    # INGEST: {
+    #   "target_datasource_id": 123,
+    #   "source_urls": ["url1", "url2"],
+    #   "deduplication_strategy": "url_hash" # or "content_hash"
+    # }
+    # CLASSIFY: {
+    #   "target_datasource_ids": [123, 124],
+    #   "target_scheme_ids": [4, 5],
+    #   "process_only_new": true, # Only classify records created since last successful run
+    #   "job_name_template": "Auto-classify: {task_name} - {timestamp}" # Optional naming
+    # }
+    status: RecurringTaskStatus = Field(default=RecurringTaskStatus.PAUSED, sa_column=Column(Enum(RecurringTaskStatus)))
+
+# Database table model for RecurringTask
+class RecurringTask(RecurringTaskBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id")
+    user_id: int = Field(foreign_key="user.id") # User who created the task
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_run_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    last_successful_run_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True)) # Added
+    last_run_status: Optional[str] = Field(default=None) # Can store 'success', 'error', etc.
+    last_run_message: Optional[str] = Field(default=None, sa_column=Column(Text)) # Store error message or details
+    # Optional link to the last ClassificationJob created by a 'classify' type task
+    last_job_id: Optional[int] = Field(default=None, foreign_key="classificationjob.id", nullable=True)
+    consecutive_failure_count: int = Field(default=0) # Added for auto-pausing
+
+    # Relationships
+    workspace: Optional["Workspace"] = Relationship() # Define back_populates if needed later
+    user: Optional["User"] = Relationship() # Define back_populates if needed later
+    last_job: Optional["ClassificationJob"] = Relationship()
+
+# API model for RecurringTask creation
+class RecurringTaskCreate(RecurringTaskBase):
+    # workspace_id and user_id are set from context/path
+    pass
+
+# API model for RecurringTask update
+class RecurringTaskUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    schedule: Optional[str] = None
+    configuration: Optional[Dict[str, Any]] = None
+    status: Optional[RecurringTaskStatus] = None
+    # last_run fields are updated internally by tasks
+
+# API model for returning RecurringTask data
+class RecurringTaskRead(RecurringTaskBase):
+    id: int
+    workspace_id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+    last_run_at: Optional[datetime] = None
+    last_run_status: Optional[str] = None
+    last_run_message: Optional[str] = None
+    last_job_id: Optional[int] = None
+
+# API model for returning a list of RecurringTasks
+class RecurringTasksOut(SQLModel):
+    data: List[RecurringTaskRead]
+    count: int
 
 
 # ---------------------------------------------------------------------------

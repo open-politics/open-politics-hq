@@ -54,6 +54,7 @@ export interface FieldConfig {
   is_set_of_labels?: boolean;
   labels?: string[];
   dict_keys?: DictKeyDefinition[];
+  is_time_axis_hint?: boolean;
 }
 
 // A field in a classification scheme

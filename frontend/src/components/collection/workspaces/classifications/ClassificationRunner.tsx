@@ -60,6 +60,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { adaptEnhancedResultReadToFormattedResult, adaptDataSourceReadToDataSource } from '@/lib/classification/adapters';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useRecurringTasksStore } from '@/zustand_stores/storeRecurringTasks';
+import Link from 'next/link';
 
 interface ClassificationRunnerProps {
   allSchemes: ClassificationSchemeRead[];
@@ -103,6 +105,7 @@ export default function ClassificationRunner({
   const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
   const { getCache, setCache } = useGeocodingCacheStore();
   const { activeWorkspace } = useWorkspaceStore();
+  const { recurringTasks } = useRecurringTasksStore();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -416,7 +419,7 @@ export default function ClassificationRunner({
          </TabsList>
          <TabsContent value="chart">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             <ClassificationResultsChart results={formattedRunResults} schemes={runSchemes} dataSources={runDataSources} filters={activeFilters} />
+             <ClassificationResultsChart results={formattedRunResults} schemes={runSchemes} dataSources={runDataSources} filters={activeFilters} timeAxisConfig={null} />
            </div>
          </TabsContent>
          <TabsContent value="table">
@@ -467,6 +470,23 @@ export default function ClassificationRunner({
        </Tabs>
     );
   };
+
+  // --- NEW: Prepare Recurring Task Info Element --- 
+  let recurringTaskInfoElement: React.ReactNode = null;
+  if (activeJob?.configuration?.recurring_task_id) {
+    const recurringTaskId = activeJob.configuration.recurring_task_id;
+    const taskName = Object.values(recurringTasks).find(t => t.id === recurringTaskId)?.name;
+    const taskLabel = taskName ? `"${taskName}" (ID: ${recurringTaskId})` : `ID: ${recurringTaskId}`;
+    recurringTaskInfoElement = (
+      <div className="text-xs text-muted-foreground mt-1">
+        Triggered by Recurring Task:{' '}
+        <Link href={`/workspaces/${activeWorkspace?.id}/settings/recurring?highlight=${recurringTaskId}`} legacyBehavior>
+          <a className="underline hover:text-primary cursor-pointer">{taskLabel}</a>
+        </Link>
+      </div>
+    );
+  }
+  // --- End Prepare Recurring Task Info Element --- 
 
   return (
     <DocumentDetailProvider>
@@ -521,6 +541,7 @@ export default function ClassificationRunner({
                           </Tooltip>
                       </TooltipProvider>
                     </div>
+                    {recurringTaskInfoElement}
                     <div className="mt-2 flex items-center gap-2">
                       <Badge variant={
                          activeJob.status === 'completed' ? 'default'

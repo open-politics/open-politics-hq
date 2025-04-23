@@ -14,6 +14,7 @@ export interface RunHistoryItem {
   status?: string;
   createdAt?: string;
   updatedAt?: string; // Keep for sorting if available, fallback to created_at
+  configuration?: ClassificationJobRead['configuration'];
 }
 
 interface RunHistoryState {
@@ -62,6 +63,7 @@ export const useRunHistoryStore = create<RunHistoryState>((set) => ({
           status: job.status ?? 'unknown',
           createdAt: job.created_at,
           updatedAt: job.updated_at,
+          configuration: job.configuration,
         };
       });
 

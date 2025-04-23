@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen, Eye, Search, XCircle } from 'lucide-react';
+import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen, Eye, Search, XCircle, Repeat } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -25,7 +25,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from "@/components/ui/progress";
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { FormattedClassificationResult } from '@/lib/classification/types';
-import { SchemePreview } from '@/components/collection/workspaces/schemaCreation/SchemePreview';
+import { SchemePreview } from '@/components/collection/workspaces/classifications/schemaCreation/SchemePreview';
 import { transformApiToFormData } from '@/lib/classification/service';
 import ClassificationSchemeEditor from './ClassificationSchemeEditor';
 
@@ -206,52 +206,81 @@ const RunHistoryPanel: React.FC<{
       <ScrollArea className="flex-1">
         {sortedRuns.length > 0 ? (
           <div className="space-y-2">
-            {sortedRuns.map((run) => (
-              <div
-                key={run.id}
-                className={cn(
-                  "p-3 rounded-md border cursor-pointer hover:bg-muted/50 transition-colors",
-                  activeRunId === run.id && "bg-muted border-primary"
-                )}
-                onClick={() => onSelectRun(run.id, run.name, run.description)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="font-medium">{run.name}</div>
-                  {onToggleFavorite && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleFavorite(run);
-                      }}
-                      className="h-6 w-6"
-                    >
-                      {(favoriteRunIds ?? []).includes(run.id) ? (
-                        <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                      ) : (
-                        <Star className="h-4 w-4" />
-                      )}
-                    </Button>
-                  )}
-                </div>
-                <div className="text-sm text-muted-foreground mt-1">
-                  {run.timestamp}
-                </div>
-                <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
-                  <div>{run.documentCount} documents</div>
-                  <div>{run.schemeCount} schemes</div>
-                </div>
-              </div>
-            ))}
+            {sortedRuns.map((run) => {
+               // Check for recurring task ID - be more explicit about type check
+               const config = run.configuration as any; // Keep casting if type isn't precise
+               const recurringTaskIdValue: unknown = config?.recurring_task_id; // Use unknown first
+
+               // Explicitly check if it's a number
+               const isRecurring = typeof recurringTaskIdValue === 'number';
+               const recurringTaskIdNumber = isRecurring ? recurringTaskIdValue : null; // Store the number or null
+
+               return (
+                 <div
+                   key={run.id}
+                   className={cn(
+                     "p-3 rounded-md border cursor-pointer hover:bg-muted/50 transition-colors",
+                     activeRunId === run.id && "bg-muted border-primary"
+                   )}
+                   onClick={() => onSelectRun(run.id, run.name, run.description)}
+                 >
+                   <div className="flex items-center justify-between">
+                     {/* Wrap name and potential icon in a div for alignment */}
+                     <div className="flex items-center gap-1.5">
+                       <span className="font-medium truncate" title={run.name}>{run.name}</span>
+                       {/* Add Icon and Tooltip if recurring */}
+                       {isRecurring && ( // Use the boolean flag derived from the type check
+                         <TooltipProvider delayDuration={100}>
+                           <Tooltip>
+                             <TooltipTrigger asChild>
+                               {/* Icon acts as the trigger */}
+                               <Repeat className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                             </TooltipTrigger>
+                             <TooltipContent>
+                               {/* Render only if it's confirmed to be a number */}
+                               <p>Recurring Run (Task ID: {recurringTaskIdNumber})</p>
+                             </TooltipContent>
+                           </Tooltip>
+                         </TooltipProvider>
+                       )}
+                     </div>
+                     {/* Favorite Button */}
+                     {onToggleFavorite && (
+                       <Button
+                         variant="ghost"
+                         size="icon"
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           onToggleFavorite(run);
+                         }}
+                         className="h-6 w-6"
+                       >
+                         {(favoriteRunIds ?? []).includes(run.id) ? (
+                           <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                         ) : (
+                           <Star className="h-4 w-4" />
+                         )}
+                       </Button>
+                     )}
+                   </div>
+                   <div className="text-sm text-muted-foreground mt-1">
+                     {run.timestamp}
+                   </div>
+                   <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
+                     <div>{run.documentCount} documents</div>
+                     <div>{run.schemeCount} schemes</div>
+                   </div>
+                 </div>
+               );
+             })}
           </div>
-        ) : searchTerm ? (
+        ) : runs.length === 0 && !searchTerm ? ( // Adjusted condition for clarity
           <div className="text-center py-8 text-muted-foreground">
-            No runs match your search
+            No run history available
           </div>
         ) : (
           <div className="text-center py-8 text-muted-foreground">
-            No run history available
+            No runs match your search
           </div>
         )}
       </ScrollArea>

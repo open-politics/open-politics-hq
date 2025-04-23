@@ -1856,6 +1856,110 @@
         }
       }
     },
+    "/api/v1/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Read Users",
+        "description": "Retrieve users.",
+        "operationId": "read_users",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsersOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Create User",
+        "description": "Create new user.",
+        "operationId": "create_user",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me": {
       "get": {
         "tags": [
@@ -2366,7 +2470,7 @@
           "Utilities"
         ],
         "summary": "Scrape Article",
-        "description": "Scrape article content from a URL using the centralized OPOL instance.\n\nArgs:\n    url: The URL of the article to scrape\n    \nReturns:\n    The scraped article content",
+        "description": "Scrape article content from a URL using the centralized scraping utility.\n\nArgs:\n    url: The URL of the article to scrape\n\nReturns:\n    The scraped article content in a standardized format.",
         "operationId": "scrape_article",
         "parameters": [
           {
@@ -4754,7 +4858,7 @@
           "DataSources"
         ],
         "summary": "Create Datasource",
-        "description": "Create a new DataSource.\n\nBased on the type, this might involve uploading a file or providing\ndetails like URLs or text content via form fields.\nTriggers a background task to process the source and create DataRecords.",
+        "description": "Create a new DataSource or multiple DataSources (for bulk PDF upload).\nFor PDF uploads, multiple files can be provided; one DataSource will be created per file,\nusing extracted PDF title metadata for the name.\nFor other types (CSV, URL, Text), only one source is created per request.\nCSV options: skip_rows, delimiter.\nTriggers background task(s) for ingestion.",
         "operationId": "create_datasource",
         "security": [
           {
@@ -4788,7 +4892,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DataSourceRead"
+                  "$ref": "#/components/schemas/DataSourcesOut"
                 }
               }
             }
@@ -4892,7 +4996,7 @@
           "DataSources"
         ],
         "summary": "Create Datasource",
-        "description": "Create a new DataSource.\n\nBased on the type, this might involve uploading a file or providing\ndetails like URLs or text content via form fields.\nTriggers a background task to process the source and create DataRecords.",
+        "description": "Create a new DataSource or multiple DataSources (for bulk PDF upload).\nFor PDF uploads, multiple files can be provided; one DataSource will be created per file,\nusing extracted PDF title metadata for the name.\nFor other types (CSV, URL, Text), only one source is created per request.\nCSV options: skip_rows, delimiter.\nTriggers background task(s) for ingestion.",
         "operationId": "create_datasource",
         "security": [
           {
@@ -4926,7 +5030,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DataSourceRead"
+                  "$ref": "#/components/schemas/DataSourcesOut"
                 }
               }
             }
@@ -5149,7 +5253,7 @@
           "DataSources"
         ],
         "summary": "Read Datasource Rows",
-        "description": "Retrieve rows from a CSV DataSource, with pagination.\nDirectly streams and parses the CSV file from storage.",
+        "description": "Retrieve rows from a CSV DataSource, with pagination.\nUses stored configuration and sanitizes row data.",
         "operationId": "read_datasource_rows",
         "security": [
           {
@@ -5182,11 +5286,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Number of rows to skip",
+              "description": "Number of rows to skip (relative to data rows, after header)",
               "default": 0,
               "title": "Skip"
             },
-            "description": "Number of rows to skip"
+            "description": "Number of rows to skip (relative to data rows, after header)"
           },
           {
             "name": "limit",
@@ -5353,6 +5457,528 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}/records": {
+      "post": {
+        "tags": [
+          "datarecords",
+          "DataRecords"
+        ],
+        "summary": "Append Record To Datasource",
+        "description": "Append a single new record (text or URL) to an existing DataSource.\nOnly supports TEXT_BLOCK and URL_LIST types.\nIf content_type is 'url', it will be scraped.\nAn optional event_timestamp (ISO 8601) can be provided.",
+        "operationId": "append_record_to_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendRecordInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataRecordRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/recurring_tasks/": {
+      "post": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Create Recurring Task",
+        "description": "Create a new Recurring Task for the workspace.",
+        "operationId": "create_recurring_task",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecurringTaskCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringTaskRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Read Recurring Tasks",
+        "description": "Retrieve Recurring Tasks for the workspace.",
+        "operationId": "read_recurring_tasks",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RecurringTaskStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by task status",
+              "title": "Status"
+            },
+            "description": "Filter by task status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringTasksOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/recurring_tasks": {
+      "post": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Create Recurring Task",
+        "description": "Create a new Recurring Task for the workspace.",
+        "operationId": "create_recurring_task",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecurringTaskCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringTaskRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Read Recurring Tasks",
+        "description": "Retrieve Recurring Tasks for the workspace.",
+        "operationId": "read_recurring_tasks",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RecurringTaskStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by task status",
+              "title": "Status"
+            },
+            "description": "Filter by task status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringTasksOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Read Recurring Task",
+        "description": "Retrieve a specific Recurring Task by its ID.",
+        "operationId": "read_recurring_task",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringTaskRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Update Recurring Task",
+        "description": "Update a Recurring Task.",
+        "operationId": "update_recurring_task",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecurringTaskUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecurringTaskRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "RecurringTasks"
+        ],
+        "summary": "Delete Recurring Task",
+        "description": "Delete a Recurring Task.",
+        "operationId": "delete_recurring_task",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -5926,7 +6552,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-04-21",
+              "default": "2025-04-23",
               "title": "Timeframe To"
             }
           }
@@ -5956,6 +6582,40 @@
   },
   "components": {
     "schemas": {
+      "AppendRecordInput": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "url"
+            ],
+            "title": "Content Type"
+          },
+          "event_timestamp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Timestamp",
+            "description": "Optional ISO 8601 timestamp for the event"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "content_type"
+        ],
+        "title": "AppendRecordInput"
+      },
       "ArticleResponse": {
         "properties": {
           "contents": {
@@ -5994,17 +6654,46 @@
             "title": "Origin Details",
             "default": "{}"
           },
-          "file": {
+          "files": {
             "anyOf": [
               {
-                "type": "string",
-                "format": "binary"
+                "items": {
+                  "type": "string",
+                  "format": "binary"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "File"
+            "title": "Files"
+          },
+          "skip_rows": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Rows",
+            "description": "Number of initial rows to skip (for CSV)",
+            "default": 0
+          },
+          "delimiter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delimiter",
+            "description": "Single character delimiter (for CSV)"
           }
         },
         "type": "object",
@@ -6187,6 +6876,17 @@
               }
             ],
             "title": "Dict Keys"
+          },
+          "is_time_axis_hint": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Time Axis Hint"
           }
         },
         "type": "object",
@@ -6286,22 +6986,6 @@
             "format": "date-time",
             "title": "Updated At"
           },
-          "target_scheme_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Target Scheme Ids",
-            "default": []
-          },
-          "target_datasource_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Target Datasource Ids",
-            "default": []
-          },
           "result_count": {
             "anyOf": [
               {
@@ -6323,6 +7007,22 @@
               }
             ],
             "title": "Datarecord Count"
+          },
+          "target_scheme_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Target Scheme Ids",
+            "readOnly": true
+          },
+          "target_datasource_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Target Datasource Ids",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -6332,7 +7032,9 @@
           "workspace_id",
           "user_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "target_scheme_ids",
+          "target_datasource_ids"
         ],
         "title": "ClassificationJobRead"
       },
@@ -6640,7 +7342,16 @@
       "CsvRowData": {
         "properties": {
           "row_data": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "type": "object",
             "title": "Row Data"
           },
@@ -6695,6 +7406,18 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Source Metadata"
+          },
+          "event_timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Timestamp"
           },
           "id": {
             "type": "integer",
@@ -7137,6 +7860,263 @@
           "type"
         ],
         "title": "QueryType"
+      },
+      "RecurringTaskCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "type": {
+            "$ref": "#/components/schemas/RecurringTaskType"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RecurringTaskStatus",
+            "default": "paused"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "schedule"
+        ],
+        "title": "RecurringTaskCreate"
+      },
+      "RecurringTaskRead": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "type": {
+            "$ref": "#/components/schemas/RecurringTaskType"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RecurringTaskStatus",
+            "default": "paused"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "type": "integer",
+            "title": "Workspace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "last_run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Status"
+          },
+          "last_run_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Message"
+          },
+          "last_job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "schedule",
+          "id",
+          "workspace_id",
+          "user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RecurringTaskRead"
+      },
+      "RecurringTaskStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "error"
+        ],
+        "title": "RecurringTaskStatus",
+        "description": "Defines the status of a recurring task."
+      },
+      "RecurringTaskType": {
+        "type": "string",
+        "enum": [
+          "ingest",
+          "classify"
+        ],
+        "title": "RecurringTaskType",
+        "description": "Defines the type of recurring task."
+      },
+      "RecurringTaskUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecurringTaskStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "RecurringTaskUpdate"
+      },
+      "RecurringTasksOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RecurringTaskRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "RecurringTasksOut"
       },
       "Request": {
         "properties": {

@@ -29,6 +29,7 @@ interface Field {
     is_set_of_labels?: boolean
     labels?: string[]
     dict_keys?: DictKeyDefinition[]
+    is_time_axis_hint?: boolean
   }
 }
 
@@ -55,7 +56,8 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
       scale_max: 1,
       is_set_of_labels: false,
       labels: [],
-      dict_keys: []
+      dict_keys: [],
+      is_time_axis_hint: false
     }
   })
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
@@ -74,7 +76,8 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
           scale_max: field.config.scale_max,
           is_set_of_labels: field.config.is_set_of_labels,
           labels: field.config.labels ? [...field.config.labels] : [],
-          dict_keys: field.config.dict_keys ? [...field.config.dict_keys] : []
+          dict_keys: field.config.dict_keys ? [...field.config.dict_keys] : [],
+          is_time_axis_hint: field.config.is_time_axis_hint
         }
       }));
       setFields(convertedFields);
@@ -99,7 +102,8 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
         scale_max: currentField.config.scale_max,
         is_set_of_labels: currentField.config.is_set_of_labels,
         labels: [...(currentField.config.labels || [])],
-        dict_keys: currentField.config.dict_keys ? [...currentField.config.dict_keys] : []
+        dict_keys: currentField.config.dict_keys ? [...currentField.config.dict_keys] : [],
+        is_time_axis_hint: currentField.config.is_time_axis_hint
       }
     };
     
@@ -122,7 +126,8 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
         scale_max: 1,
         is_set_of_labels: false,
         labels: [],
-        dict_keys: []
+        dict_keys: [],
+        is_time_axis_hint: false
       }
     });
     
@@ -164,6 +169,7 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
         is_set_of_labels: fieldData.config.is_set_of_labels,
         labels: fieldData.config.labels ? [...fieldData.config.labels] : [],
         dict_keys: fieldData.config.dict_keys ? [...fieldData.config.dict_keys] : [],
+        is_time_axis_hint: fieldData.config.is_time_axis_hint
       },
     });
   }
@@ -210,6 +216,7 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
                         is_set_of_labels: example.is_set_of_labels,
                         labels: example.labels,
                         dict_keys: example.dict_keys,
+                        is_time_axis_hint: example.is_time_axis_hint
                       }
                     }]
                   })}
@@ -305,7 +312,8 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
                           scale_max: field.config?.scale_max ?? 1,
                           is_set_of_labels: field.config?.is_set_of_labels === true,
                           labels: field.config?.labels ? [...field.config.labels] : [],
-                          dict_keys: field.config?.dict_keys ? [...field.config.dict_keys] : []
+                          dict_keys: field.config?.dict_keys ? [...field.config.dict_keys] : [],
+                          is_time_axis_hint: field.config?.is_time_axis_hint === true
                         }
                       };
                       
@@ -356,6 +364,9 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
                         ...formData,
                         fields: newFormDataFields
                       });
+
+                      // Ensure the hint is carried over when editing
+                      fieldForEditing.config.is_time_axis_hint = field.config?.is_time_axis_hint === true;
                     }}
                     disabled={readOnly}
                   >
@@ -530,7 +541,8 @@ export const transformFormDataToApi = (formData: SchemeFormData): Classification
     scale_max: field.config.scale_max,
     is_set_of_labels: field.config.is_set_of_labels,
     labels: field.config.labels,
-    dict_keys: field.config.dict_keys
+    dict_keys: field.config.dict_keys,
+    is_time_axis_hint: field.config.is_time_axis_hint
   })),
   model_instructions: formData.model_instructions,
   validation_rules: formData.validation_rules

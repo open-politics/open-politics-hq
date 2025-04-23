@@ -6,6 +6,8 @@ import fitz # PyMuPDF
 import requests # For URL fetching
 from typing import List, Dict, Any, Optional
 import chardet
+import dateutil.parser # Added for robust date parsing
+from datetime import datetime, timezone # Ensure timezone is imported
 
 from app.core.celery_app import celery
 from sqlmodel import Session, select, func
@@ -223,6 +225,27 @@ def process_datasource(self, datasource_id: int):
                         if not text_content.strip():
                             continue
 
+                        # --- NEW: CSV Event Timestamp Parsing ---
+                        event_ts = None
+                        timestamp_column = origin_details.get('event_timestamp_column')
+                        if timestamp_column and timestamp_column in sanitized_row_filtered:
+                            timestamp_str = sanitized_row_filtered[timestamp_column]
+                            if timestamp_str:
+                                try:
+                                    # Use dateutil.parser for flexibility
+                                    parsed_dt = dateutil.parser.parse(timestamp_str)
+                                    # Make timezone-aware if not already (assume UTC if naive)
+                                    if parsed_dt.tzinfo is None or parsed_dt.tzinfo.utcoffset(parsed_dt) is None:
+                                        event_ts = parsed_dt.replace(tzinfo=timezone.utc)
+                                    else:
+                                        event_ts = parsed_dt
+                                except (ValueError, OverflowError, TypeError) as parse_err:
+                                    logging.warning(
+                                        f"Could not parse timestamp '{timestamp_str}' from column '{timestamp_column}' "
+                                        f"on line ~{original_file_line_num} in CSV {object_name}: {parse_err}"
+                                    )
+                        # --- End CSV Event Timestamp Parsing ---
+
                         record_meta = {
                             'row_number': original_file_line_num,
                             'source_columns': sanitized_row_filtered
@@ -230,7 +253,8 @@ def process_datasource(self, datasource_id: int):
                         batch_records.append({
                             "datasource_id": datasource_id,
                             "text_content": text_content,
-                            "source_metadata": record_meta
+                            "source_metadata": record_meta,
+                            "event_timestamp": event_ts # Add parsed timestamp
                         })
                         row_count += 1
 
@@ -292,13 +316,15 @@ def process_datasource(self, datasource_id: int):
                              except Exception as page_err:
                                  logging.error(f"Error processing page {page_num + 1} in PDF {object_name}: {page_err}")
                          if all_pdf_text:
+                              # For PDF, event_timestamp is typically unknown on initial ingest
                               records_to_create_list = [{
                                   "datasource_id": datasource_id,
                                   "text_content": all_pdf_text.strip(),
                                   "source_metadata": {
                                       'processed_page_count': total_processed_pages,
                                       'original_filename': origin_details.get('filename', 'N/A')
-                                  }
+                                  },
+                                  "event_timestamp": None # Explicitly None for PDF
                               }]
                               created_count = create_datarecords_batch(session, records_to_create_list)
                               if created_count == -1: raise ValueError("Error preparing PDF DataRecord.")
@@ -331,38 +357,59 @@ def process_datasource(self, datasource_id: int):
                      error_msg = None
                      scraped_data = None
                      try:
-                         # --- Call the centralized scraping logic ---
-                         # Option 1: Call the endpoint (might require async context or adjustments)
-                         # This is less ideal within a Celery task but demonstrates the concept.
-                         # A better approach might involve a shared scraping utility function.
-                         # For now, let's assume a function `internal_scrape_article` exists
-                         # that mirrors the logic of the endpoint.
+                         # --- Call the centralized scraping logic --- 
+                         # Assuming the /utils/scrape_article endpoint is called implicitly
+                         # or a similar function `internal_scrape_article` returns the expected structure.
+                         # For simulation, we now expect a structure including 'publication_date'
+                         # based on the updated utils.py endpoint.
 
-                         # Placeholder for actual scraping call
-                         # Replace this with the appropriate call to your scraping utility
-                         # Example: scraped_data = await internal_scrape_article(url) # If using async helper
-                         # Example: scraped_data = opol.scraping.url(url) # If directly using OPOL sdk here
-                         
-                         # Simulate getting the expected structure back
-                         # In a real scenario, you'd make the actual call
-                         response = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True)
-                         response.raise_for_status()
-                         from bs4 import BeautifulSoup # Keep temp import for simulation
-                         soup = BeautifulSoup(response.text, 'html.parser')
-                         simulated_text = soup.get_text(separator='\\n', strip=True)
-                         simulated_title = soup.title.string if soup.title else url
+                         # Placeholder simulation - replace with actual call
+                         try:
+                             # Simulate calling the util endpoint/function
+                             # In a real setup, this might involve an internal function call or a direct call to opol.scraping.url
+                             # and then formatting the result like utils.py does.
+                             temp_response = requests.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True)
+                             temp_response.raise_for_status()
+                             from bs4 import BeautifulSoup # Temp import for simulation
+                             soup = BeautifulSoup(temp_response.text, 'html.parser')
+                             sim_text = soup.get_text(separator='\n', strip=True)
+                             sim_title = soup.title.string if soup.title else url
+                             # Try to find a plausible date in meta tags for simulation
+                             sim_pub_date_tag = soup.find('meta', property='article:published_time') or soup.find('meta', attrs={'name': 'pubdate'})
+                             sim_pub_date = sim_pub_date_tag['content'] if sim_pub_date_tag else None
 
-                         scraped_data = {
-                             "title": simulated_title,
-                             "text_content": simulated_text,
-                             "original_data": {"url": url} # Simulate minimal original data
-                         }
-                         # --- End of Scraping Call Simulation ---
+                             scraped_data = {
+                                 "title": sim_title,
+                                 "text_content": sim_text,
+                                 "publication_date": sim_pub_date,
+                                 "original_data": {"url": url}
+                             }
+                         except Exception as sim_err:
+                             logging.warning(f"Scraping simulation failed for {url}: {sim_err}")
+                             scraped_data = None
 
                          if scraped_data and scraped_data.get("text_content"):
-                             text_content = scraped_data["text_content"].replace('\\x00', '').strip()
+                             text_content = scraped_data["text_content"].replace('\x00', '').strip()
                              title = scraped_data.get("title", "")
+                             publication_date_str = scraped_data.get("publication_date")
                              original_scrape_info = scraped_data.get("original_data", {})
+
+                             # --- NEW: URL Event Timestamp Parsing ---
+                             event_ts = None
+                             if publication_date_str:
+                                 try:
+                                     parsed_dt = dateutil.parser.parse(publication_date_str)
+                                     # Make timezone-aware (assume UTC if naive)
+                                     if parsed_dt.tzinfo is None or parsed_dt.tzinfo.utcoffset(parsed_dt) is None:
+                                         event_ts = parsed_dt.replace(tzinfo=timezone.utc)
+                                     else:
+                                         event_ts = parsed_dt
+                                 except (ValueError, OverflowError, TypeError) as parse_err:
+                                      logging.warning(
+                                          f"Could not parse publication_date '{publication_date_str}' "
+                                          f"for URL {url}: {parse_err}"
+                                      )
+                             # --- End URL Event Timestamp Parsing ---
 
                              if text_content:
                                  # Store title and original scrape info in source_metadata
@@ -375,7 +422,8 @@ def process_datasource(self, datasource_id: int):
                                  batch_records.append({
                                      "datasource_id": datasource_id,
                                      "text_content": text_content,
-                                     "source_metadata": record_meta
+                                     "source_metadata": record_meta,
+                                     "event_timestamp": event_ts # Add parsed timestamp
                                  })
                                  processed_count += 1
                              else:
@@ -428,7 +476,12 @@ def process_datasource(self, datasource_id: int):
                  logging.info(f"Processing TEXT_BLOCK DataSource: {datasource.id}")
                  text_content = origin_details.get('text_content')
                  if not text_content or not isinstance(text_content, str): raise ValueError("Missing/invalid 'text_content'")
-                 records_to_create_list = [{"datasource_id": datasource_id, "text_content": text_content, "source_metadata": {}}]
+                 # For TEXT_BLOCK, event_timestamp is typically unknown on initial ingest
+                 records_to_create_list = [{"datasource_id": datasource_id,
+                                          "text_content": text_content,
+                                          "source_metadata": {},
+                                          "event_timestamp": None # Explicitly None for TEXT_BLOCK
+                                          }]
                  created_count = create_datarecords_batch(session, records_to_create_list)
                  if created_count == -1: raise ValueError("Error preparing TEXT_BLOCK record.")
                  total_records_created += created_count; session.flush()

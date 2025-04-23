@@ -19,10 +19,10 @@ import { ClassificationResultsService, ClassificationSchemesService, Classificat
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import ClassificationResultDisplay from '../classifications/ClassificationResultDisplay';
-import { PlusCircle, Lock, Unlock, ArrowRight, Loader2, Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw } from "lucide-react";
+import { PlusCircle, Lock, Unlock, ArrowRight, Loader2, Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw, AlertCircle, Info, Search, ArrowUp, ArrowDown } from "lucide-react"; // Added Search, ArrowUp, ArrowDown
 import { useToast } from '@/components/ui/use-toast';
 import { Toaster } from '@/components/ui/toaster';
-import { useClassificationJobsStore, useClassificationJobsActions } from '@/zustand_stores/storeClassificationJobs';
+import { useClassificationJobsStore, useClassificationJobsActions, useIsClassificationJobsLoading, useClassificationJobsError } from "@/zustand_stores/storeClassificationJobs";
 import { DataRecordsService, DataSourcesService } from '@/client/services';
 import { DataRecordRead, DataSourceRead, DataSourceType, DataSourceStatus } from '@/client/models';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -41,6 +41,23 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClassificationJobRead } from '@/client';
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ClassificationTimeAxisControls, TimeAxisConfig } from "../classifications/ClassificationTimeAxisControls";
+import ResultsChart from '../classifications/ClassificationResultsChart';
+import { formatDistanceToNow } from 'date-fns';
+import { FormattedClassificationResult } from '@/lib/classification/types';
+import { ResultFilter } from '../classifications/ClassificationResultFilters';
+import { adaptEnhancedResultReadToFormattedResult } from '@/lib/classification/adapters';
+import { useRecurringTasksStore, RecurringTask, RecurringTaskCreate, RecurringTaskUpdate } from '@/zustand_stores/storeRecurringTasks';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import Cronstrue from 'cronstrue';
+
+// Define Sort Direction type
+type SortDirection = 'asc' | 'desc' | null;
 
 interface DataRecordDetailViewProps {
   onEdit: (item: DataSourceRead) => void;
@@ -79,8 +96,9 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
   const [csvError, setCsvError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const csvRowsPerPage = 30; // Configurable number of rows per page
-  // Remove selectedCsvRowNumber state, use selectedRowData instead for dialog
-  // const [selectedCsvRowNumber, setSelectedCsvRowNumber] = useState<number | null>(null); 
+  const [csvSearchTerm, setCsvSearchTerm] = useState(''); // NEW: State for CSV search
+  const [sortColumn, setSortColumn] = useState<string | null>(null); // NEW: State for sort column
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null); // NEW: State for sort direction
 
   // State for Row Detail Dialog
   const [selectedRowData, setSelectedRowData] = useState<CsvRowData | null>(null);
@@ -96,6 +114,36 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
   // NEW: State for classification results specific to the selected CSV row
   const [selectedRowResults, setSelectedRowResults] = useState<EnhancedClassificationResultRead[]>([]);
 
+  // NEW State for Scheduling UI
+  const [localIngestTask, setLocalIngestTask] = useState<RecurringTask | null>(null);
+  const [enableScheduledIngestion, setEnableScheduledIngestion] = useState(false);
+  const [ingestionSchedule, setIngestionSchedule] = useState('0 0 * * *'); // Default cron
+  const [cronExplanation, setCronExplanation] = useState('');
+  const [isUpdatingSchedule, setIsUpdatingSchedule] = useState(false);
+  const [initialScheduleState, setInitialScheduleState] = useState({ enabled: false, schedule: '' });
+
+  // Get Recurring Task store data and actions
+  const { 
+      recurringTasks,
+      getIngestTaskForDataSource,
+      createRecurringTask,
+      updateRecurringTask,
+      deleteRecurringTask // Maybe needed later?
+  } = useRecurringTasksStore();
+
+  // Added handler for chart clicks
+  const handleChartPointClick = (point: any) => {
+    console.log("Chart point clicked:", point);
+    // TODO: Implement logic based on clicked point (e.g., open details)
+  };
+
+  // Memoized list of jobs that have results for the current data source (Moved Earlier)
+  const jobsWithResultsForDataSource = useMemo(() => {
+    return Object.values(availableJobsFromStore).filter(job =>
+      classificationResults.some(result => result.job_id === job.id)
+    );
+  }, [availableJobsFromStore, classificationResults]);
+
   const fetchClassificationResults = useCallback(
     async (workspaceId: number, datasourceId: number, jobIdFilter: number | null) => {
       setIsLoadingResults(true);
@@ -107,9 +155,9 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
           jobId: jobIdFilter ?? undefined,
           limit: 1000
         };
-        
+
         const results = await ClassificationResultsService.listClassificationResults(filterParams);
-        
+
         setClassificationResults(results);
 
       } catch (error: any) {
@@ -140,16 +188,16 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
         title: "Preparing data",
         description: "Gathering all classification results for this data record...",
       });
-      
+
       ClassificationResultsService.getJobResults({
         workspaceId: activeWorkspace.id,
         jobId: jobId,
       }).then(results => {
         const resultsForThisDataRecord = results.filter(r => r.datarecord_id === result.datarecord_id);
         const schemeIds = [...new Set(resultsForThisDataRecord.map(r => r.scheme_id))];
-        
-        onLoadIntoRunner(jobId, jobName); 
-        
+
+        onLoadIntoRunner(jobId, jobName);
+
         toast({
           title: "Success",
           description: `Loaded job "${jobName}" with ${schemeIds.length} schemes for data record ${result.datarecord_id}`,
@@ -161,15 +209,20 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
           description: "Could not load all results for the job.",
           variant: "destructive",
         });
-        onLoadIntoRunner(jobId, jobName); 
+        onLoadIntoRunner(jobId, jobName);
       });
     } else {
-      onLoadIntoRunner(jobId, jobName); 
+      onLoadIntoRunner(jobId, jobName);
     }
   }, [onLoadIntoRunner, activeWorkspace?.id, toast, availableJobsFromStore]);
 
+  // TEMP: Use all results while filteredResults is commented out
+  const filteredResults = classificationResults;
+  // TEMP: Use placeholder while jobResultCounts is commented out
+  const jobResultCounts: Record<number, number> = {};
+
   const renderJobSelector = () => {
-    const jobsWithResultsForDataSource = Object.values(availableJobsFromStore).filter(job => 
+    const jobsWithResultsForDataSource = Object.values(availableJobsFromStore).filter(job =>
       classificationResults.some(result => result.job_id === job.id)
     );
 
@@ -185,26 +238,26 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
         </div>
       );
     }
-    
+
     return (
       <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium">Filter by Job</h4>
-          {isLoadingResults && <Loader2 className="h-4 w-4 animate-spin" />}
+          {(isLoadingResults || isLoadingSource) && <Loader2 className="h-4 w-4 animate-spin" />}
         </div>
         <div className="mt-2">
           <Select
             value={selectedJobId || "all"}
-            onValueChange={(value) => setSelectedJobId(value === "all" ? null : value)}
+            onValueChange={handleJobSelect}
           >
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select a job to filter results" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All jobs for this data source</SelectItem>
+              <SelectItem value="all">All jobs for this data source ({classificationResults.length} results)</SelectItem>
               {jobsWithResultsForDataSource.map((job) => (
                 <SelectItem key={job.id} value={job.id.toString()}>
-                  {job.name || `Job ${job.id}`} ({format(new Date(job.created_at), "PP")})
+                  {job.name || `Job ${job.id}`} ({format(new Date(job.created_at), "PP")}) - {jobResultCounts[job.id] || 0} results
                 </SelectItem>
               ))}
             </SelectContent>
@@ -215,82 +268,64 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
   };
 
   const renderClassificationSection = () => (
-    <div className="p-6 w-full bg-secondary/70 rounded-lg shadow-md relative overflow-hidden border border-border/30">
-      {renderJobSelector()}
-      
-      <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-        {isLoadingResults ? (
-           <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading results...
-            </div>
-        ) : classificationResults.length === 0 ? (
-          <div className="text-center py-4 text-muted-foreground">
-            No classification results available {selectedJobId && selectedJobId !== 'all' ? 'for the selected job' : ''}.
-          </div>
-        ) : (
-          classificationResults
-            .map((result) => {
-              const scheme = schemes.find(s => s.id === result.scheme_id);
-              if (!scheme) {
-                console.warn(`Scheme not found for result ID ${result.id} with scheme ID ${result.scheme_id}`);
-                return null;
-              }
-
-              const job = result.job_id ? availableJobsFromStore[result.job_id] : null;
-              const jobName = job?.name || (result.job_id ? `Job ${result.job_id}` : null);
-
-              return (
-                <div 
-                  key={result.id} 
-                  className="p-4 bg-card rounded-lg shadow-sm border border-border/50 hover:shadow-md hover:border-border/80 transition-all duration-200 cursor-pointer"
-                  onClick={() => {
-                    setSelectedResult(result);
-                    setIsResultDialogOpen(true);
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 space-y-1">
-                       <div className="flex items-center gap-2 mb-1">
-                         <span className="font-medium text-sm">{scheme.name}</span>
-                         {jobName && (
-                           <Badge variant="outline" className="text-xs font-normal">{jobName}</Badge>
-                         )}
-                       </div>
-                       <ClassificationResultDisplay 
-                         result={result}
-                         scheme={scheme}
-                         compact={false}
-                       />
-                    </div>
-                    <div className="flex flex-col items-end gap-2 mt-1 shrink-0">
-                      <div className="text-xs text-muted-foreground whitespace-nowrap">
-                        {result.timestamp && format(new Date(result.timestamp), "PP · p")}
-                      </div>
-                      {result.job_id && onLoadIntoRunner && (
-                        <Button 
-                          variant="ghost"
-                          size="sm" 
-                          className="text-xs h-7 px-2 text-primary hover:bg-primary/10"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleLoadIntoRunner(result);
-                          }}
-                        >
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          Load Job
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-            .filter(Boolean)
-        )}
-        {resultsError && (
-          <div className="text-center py-4 text-red-600">{resultsError}</div>
-        )}
+    <div className="p-4 w-full bg-card rounded-lg shadow-sm border">
+      <h3 className="text-lg font-semibold mb-3">Classification Results</h3>
+      {/* --- Controls Section --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        {renderJobSelector()} {/* Keep job selector */}
+        {/* TEMP: Commented out Time Axis Controls */}
+        {/* <ClassificationTimeAxisControls
+          schemes={schemes}
+          initialConfig={timeAxisConfig}
+          onTimeAxisConfigChange={handleTimeAxisChange}
+        /> */}
+        {/* Map controls removed */}
       </div>
+      {/* --- End Controls Section --- */}
+
+      {isLoadingResults ? (
+            <div className="text-center py-8 text-muted-foreground flex items-center justify-center gap-2">
+               <Loader2 className="h-4 w-4 animate-spin" /> Loading results...
+             </div>
+         ) : resultsError ? (
+             <Alert variant="destructive">
+                 <AlertCircle className="h-4 w-4" />
+                 <AlertTitle>Error Loading Results</AlertTitle>
+                 <AlertDescription>{resultsError}</AlertDescription>
+             </Alert>
+         ) : (
+            <Tabs defaultValue="chart" className="mt-2">
+                <TabsList className="mb-2">
+                    <TabsTrigger value="chart">Time Series Chart</TabsTrigger>
+                    {/* <TabsTrigger value="map">Location Map</TabsTrigger> */} {/* Map removed */}
+                </TabsList>
+                <TabsContent value="chart" className="min-h-[400px]">
+                    {filteredResults.length > 0 ? (
+                        <>
+                            {/* TEMP: Commented out Results Chart */}
+                            {/* <ResultsChart
+                              results={filteredResults.map(adaptEnhancedResultReadToFormattedResult)} // Use adapter
+                              schemes={schemes}
+                              dataSources={dataSource ? [dataSource] : []}
+                              dataRecords={dataRecords} // Pass dataRecords
+                              onDataPointClick={handleChartPointClick} // Pass handler
+                              filters={activeFilters} // Pass filter state
+                              timeAxisConfig={timeAxisConfig} // Pass time axis config
+                            /> */}
+                            <div className="text-center p-4 text-muted-foreground italic">
+                               Chart temporarily disabled for debugging.
+                            </div>
+                        </>
+                    ) : (
+                        <div className="text-center py-8 text-muted-foreground">
+                            No classification results available {selectedJobId !== null ? 'for the selected job' : 'for this data source'}.
+                        </div>
+                    )}
+                </TabsContent>
+                {/* Map tab removed */}
+            </Tabs>
+         )
+      }
     </div>
   );
 
@@ -307,6 +342,9 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
         setCsvError(null);
         // Clear row detail state on source change
         setSelectedRowData(null);
+        setCsvSearchTerm(''); // Reset search on source change
+        setSortColumn(null); // Reset sort on source change
+        setSortDirection(null);
         return;
       }
 
@@ -320,6 +358,9 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
       setCsvError(null);
       // Clear row detail state on source change
       setSelectedRowData(null);
+      setCsvSearchTerm(''); // Reset search on source change
+      setSortColumn(null); // Reset sort on source change
+      setSortDirection(null);
 
       try {
         // 1. Fetch DataSource
@@ -429,6 +470,10 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                 limit: csvRowsPerPage
             });
             setCsvData(result);
+            // Reset search and sort when new page data is loaded
+            setCsvSearchTerm('');
+            setSortColumn(null);
+            setSortDirection(null);
         } catch (err: any) {
             console.error("Error fetching CSV rows:", err);
             const errorDetail = err.body?.detail || err.message || "Failed to load CSV data.";
@@ -440,7 +485,9 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     };
 
     fetchCsvData();
-  }, [dataSource, currentPage, activeWorkspace?.id, csvRowsPerPage]); // Re-fetch when source, page, or workspace changes
+    // Re-fetch when source, page, or workspace changes
+    // Exclude csvSearchTerm, sortColumn, sortDirection as they are client-side
+  }, [dataSource, currentPage, activeWorkspace?.id, csvRowsPerPage]);
 
   // NEW: Effect for fetching DataRecords for URL_LIST type
   useEffect(() => {
@@ -496,6 +543,213 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     return classificationResults.filter(r => r.datarecord_id === recordId);
   };
 
+  // Find the relevant ingest task when data source or tasks change
+  useEffect(() => {
+      if (dataSource?.type === 'url_list' && dataSource.id) {
+          const task = getIngestTaskForDataSource(dataSource.id);
+          setLocalIngestTask(task);
+          const isActive = task?.status === 'active';
+          const currentSchedule = task?.schedule || '0 0 * * *';
+          setEnableScheduledIngestion(isActive);
+          setIngestionSchedule(currentSchedule);
+          // Store initial state to check for changes later
+          setInitialScheduleState({ enabled: isActive, schedule: currentSchedule });
+          console.log("Found ingest task for source", dataSource.id, task);
+      } else {
+          // Clear state if source is not url_list or no source selected
+          setLocalIngestTask(null);
+          setEnableScheduledIngestion(false);
+          setIngestionSchedule('0 0 * * *');
+          setInitialScheduleState({ enabled: false, schedule: '' });
+      }
+  }, [dataSource, recurringTasks, getIngestTaskForDataSource]);
+
+  // Update Cron Explanation for schedule input
+  useEffect(() => {
+    if (dataSource?.type !== 'url_list' || !enableScheduledIngestion) {
+        setCronExplanation('');
+        return;
+    }
+    try {
+      const explanation = Cronstrue.toString(ingestionSchedule);
+      setCronExplanation(explanation);
+    } catch (e) {
+      setCronExplanation('Invalid cron format.');
+    }
+  }, [ingestionSchedule, dataSource?.type, enableScheduledIngestion]);
+
+  // NEW: Handler for saving schedule changes
+  const handleScheduleUpdate = async () => {
+    if (!dataSource || dataSource.type !== 'url_list') return;
+
+    const hasChanged = 
+        enableScheduledIngestion !== initialScheduleState.enabled || 
+        (enableScheduledIngestion && ingestionSchedule !== initialScheduleState.schedule);
+
+    if (!hasChanged) {
+        toast({ title: "No Changes", description: "Schedule settings are already up to date.", variant: "default"});
+        return;
+    }
+
+    // Validate cron schedule if enabling/changing
+    if (enableScheduledIngestion) {
+        try { Cronstrue.toString(ingestionSchedule); } 
+        catch (e) {
+            toast({ title: "Invalid Schedule", description: "Please enter a valid 5-part cron schedule.", variant: "destructive" });
+            return;
+        }
+    }
+
+    setIsUpdatingSchedule(true);
+    let success = false;
+    let taskName = localIngestTask?.name || `Scheduled Ingest: ${dataSource.name}`;
+
+    try {
+        if (enableScheduledIngestion) {
+            if (localIngestTask) {
+                // Update existing task (status and maybe schedule)
+                const updatePayload: RecurringTaskUpdate = {
+                    status: 'active',
+                    schedule: ingestionSchedule
+                };
+                console.log("Updating recurring task:", localIngestTask.id, updatePayload);
+                const updated = await updateRecurringTask(localIngestTask.id, updatePayload);
+                success = !!updated;
+                if (success) taskName = updated!.name; // Update name if task was renamed
+            } else {
+                // Create new task
+                const createPayload: RecurringTaskCreate = {
+                    name: taskName,
+                    description: `Automatically scrapes URLs for DataSource ${dataSource.name} (ID: ${dataSource.id})`,
+                    type: 'ingest',
+                    schedule: ingestionSchedule,
+                    configuration: { 
+                        target_datasource_id: dataSource.id,
+                        source_urls: dataSource.origin_details?.urls || [], // Get URLs from source details
+                        deduplication_strategy: 'url_hash'
+                    },
+                    status: 'active'
+                };
+                console.log("Creating recurring task:", createPayload);
+                const created = await createRecurringTask(createPayload);
+                success = !!created;
+                if (success) taskName = created!.name;
+            }
+            if (success) {
+                toast({ title: "Schedule Enabled", description: `Task "${taskName}" is now active with schedule: ${ingestionSchedule}` });
+            } else {
+                 toast({ title: "Update Failed", description: "Could not enable or update the schedule.", variant: "destructive" });
+            }
+        } else {
+            // Disable: Update existing task to paused
+            if (localIngestTask) {
+                 const updatePayload: RecurringTaskUpdate = { status: 'paused' };
+                 console.log("Pausing recurring task:", localIngestTask.id, updatePayload);
+                 const updated = await updateRecurringTask(localIngestTask.id, updatePayload);
+                 success = !!updated;
+                 if (success) {
+                     toast({ title: "Schedule Disabled", description: `Task "${taskName}" is now paused.` });
+                 } else {
+                      toast({ title: "Update Failed", description: "Could not disable the schedule.", variant: "destructive" });
+                 }
+            } else {
+                 // Nothing to do, was already disabled and didn't exist
+                 success = true; 
+                 toast({ title: "Schedule Disabled", description: "Scheduled ingestion remains disabled.", variant: "default"});
+            }
+        }
+    } catch (error) {
+        console.error("Error updating schedule:", error);
+        toast({ title: "Error", description: "An unexpected error occurred saving schedule settings.", variant: "destructive" });
+        success = false;
+    } finally {
+        setIsUpdatingSchedule(false);
+        if (success) {
+            // Update initial state to reflect successful change
+            setInitialScheduleState({ enabled: enableScheduledIngestion, schedule: ingestionSchedule });
+             // Note: The useEffect watching recurringTasks will update localIngestTask
+        }
+    }
+  };
+
+  // NEW: Render function for the scheduling card
+  const renderScheduledIngestionCard = () => {
+     if (!dataSource || dataSource.type !== 'url_list') {
+         return null;
+     }
+
+     const hasChanged = 
+        enableScheduledIngestion !== initialScheduleState.enabled || 
+        (enableScheduledIngestion && ingestionSchedule !== initialScheduleState.schedule);
+
+     return (
+        <Card className="mt-4">
+            <CardHeader>
+                <CardTitle className="text-base">Scheduled Ingestion</CardTitle>
+                <CardDescription>
+                    Configure automatic scraping of the source URLs on a regular schedule.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                 <div className="flex items-center justify-between space-x-2 pt-2">
+                    <Label htmlFor="scheduled-ingestion-switch-detail" className="flex flex-col space-y-1">
+                        <span>Enable Scheduled Ingestion</span>
+                        <span className="font-normal leading-snug text-muted-foreground text-xs">
+                            {enableScheduledIngestion ? "Task is active and will run on schedule." : "Task is currently paused or not created."} 
+                        </span>
+                    </Label>
+                    <Switch
+                        id="scheduled-ingestion-switch-detail"
+                        checked={enableScheduledIngestion}
+                        onCheckedChange={setEnableScheduledIngestion}
+                        disabled={isUpdatingSchedule}
+                        aria-label="Enable Scheduled Ingestion"
+                    />
+                </div>
+                {enableScheduledIngestion && (
+                    <div className="space-y-1 pl-3 ml-1 border-l">
+                        <Label htmlFor="ingestion-schedule-detail" className="text-sm">Schedule (Cron Format)</Label>
+                        <Input
+                            id="ingestion-schedule-detail"
+                            value={ingestionSchedule}
+                            onChange={(e) => setIngestionSchedule(e.target.value)}
+                            placeholder="e.g., 0 0 * * *" 
+                            className="h-9 text-sm font-mono"
+                            disabled={isUpdatingSchedule}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                             {cronExplanation || 'Enter a 5-part cron schedule.'} (UTC)
+                        </p>
+                    </div>
+                )}
+                 {/* Display Last Run Info if task exists */} 
+                 {localIngestTask && (
+                     <div className="text-xs text-muted-foreground pt-3 border-t space-y-1">
+                         <p>Task Name: <span className='font-medium text-foreground'>{localIngestTask.name}</span></p>
+                         <p>Last Run: {localIngestTask.last_run_at ? formatDistanceToNow(new Date(localIngestTask.last_run_at), { addSuffix: true }) : 'Never'}</p>
+                         <p>Last Status: {localIngestTask.last_run_status ? 
+                             <Badge variant={localIngestTask.last_run_status === 'success' ? 'default' : 'destructive'} className='text-xs'>
+                                 {localIngestTask.last_run_status}
+                             </Badge> : 'N/A'}
+                         </p>
+                         {localIngestTask.last_run_message && <p>Last Message: {localIngestTask.last_run_message}</p>}
+                     </div>
+                 )}
+            </CardContent>
+            <CardFooter>
+                 <Button 
+                    onClick={handleScheduleUpdate} 
+                    disabled={isUpdatingSchedule || !hasChanged}
+                    size="sm"
+                 >
+                     {isUpdatingSchedule && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                     Save Schedule Changes
+                 </Button>
+            </CardFooter>
+        </Card>
+     );
+  }
+
   // Return loading/error/empty states first
   if (isLoadingSource) {
     return (
@@ -542,8 +796,40 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
         displayTextContent = "(No text content extracted or available for this source)";
     } // If sourceError is set, it will be displayed elsewhere
 
-  } 
+  }
   // Removed CSV/URL_LIST handling from here, it's handled separately below
+
+  // --- CSV Filtering and Sorting Logic ---
+  const filteredAndSortedCsvData = useMemo(() => {
+    if (!csvData?.data) return [];
+
+    let data = [...csvData.data]; // Create a mutable copy
+
+    // Apply search filter
+    if (csvSearchTerm) {
+      const lowerCaseSearch = csvSearchTerm.toLowerCase();
+      data = data.filter(row =>
+        Object.values(row.row_data).some(value =>
+          String(value).toLowerCase().includes(lowerCaseSearch)
+        )
+      );
+    }
+
+    // Apply sorting
+    if (sortColumn && sortDirection) {
+      data.sort((a, b) => {
+        const valA = a.row_data[sortColumn];
+        const valB = b.row_data[sortColumn];
+
+        // Basic comparison (can be enhanced for different types)
+        if (valA !== null && valB !== null && valA < valB) return sortDirection === 'asc' ? -1 : 1;
+        if (valA !== null && valB !== null && valA > valB) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return data;
+  }, [csvData?.data, csvSearchTerm, sortColumn, sortDirection]);
 
   // --- CSV Pagination Logic ---
   const totalPages = csvData ? Math.ceil(csvData.total_rows / csvRowsPerPage) : 0;
@@ -551,6 +837,8 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
   const handlePageChange = (page: number) => {
     if (page >= 1 && page <= totalPages) {
       setCurrentPage(page);
+      // Reset selection when changing page
+      setSelectedRowData(null);
     }
   };
   // --- End CSV Pagination Logic ---
@@ -565,11 +853,28 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
   };
   // --- End URL List Pagination Logic ---
 
+  // --- CSV Sort Handler ---
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      // Cycle through directions: asc -> desc -> null
+      setSortDirection(prev => prev === 'asc' ? 'desc' : prev === 'desc' ? null : 'asc');
+    } else {
+      // New column, start with ascending
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+    // Reset selection when sorting
+    setSelectedRowData(null);
+  };
+
   // --- Rendering for Selected Row Detail ---
   const renderSelectedRowDetail = () => {
     if (!selectedRowData || dataSource?.type !== 'csv') {
       return null;
     }
+
+    // FIX: Check if selectedJobId is null
+    const jobNameForDialog = selectedJobId !== null ? (availableJobsFromStore[selectedJobId]?.name || `Job ${selectedJobId}`) : 'All Jobs';
 
     return (
       <div className="mt-4 p-4 rounded-lg bg-muted/20 shadow-sm">
@@ -627,13 +932,20 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                   );
                 })
               ) : (
-                <p className="text-xs text-muted-foreground italic">No classification results found for this specific row.</p>
+                <p className="text-xs text-muted-foreground italic">
+                  No classification results found for this row {selectedJobId !== null ? `in ${jobNameForDialog}` : '(across all jobs)'}.
+                </p>
               )}
             </div>
           </div>
         </div>
       </div>
     );
+  };
+
+  // Combined handler for job selection
+  const handleJobSelect = (jobIdStr: string | null) => {
+    setSelectedJobId(jobIdStr === 'all' ? null : jobIdStr);
   };
 
   return (
@@ -674,7 +986,12 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                   : dataSource.status === 'processing' ? 'secondary'
                   : dataSource.status === 'pending' ? 'secondary'
                   : 'outline'
-                }>{displayStatus}</Badge>
+                }
+                  className="capitalize flex items-center gap-1"
+                >
+                  {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {displayStatus}
+                </Badge>
               </div>
               <div className="text-xs">
                 <TooltipProvider delayDuration={100}>
@@ -708,6 +1025,9 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
             )}
           </div>
 
+          {/* NEW: Insert Scheduling Card */}
+          {renderScheduledIngestionCard()}
+
           <Tabs defaultValue="content" className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-2">
               <TabsTrigger value="content">Source Content / Summary</TabsTrigger>
@@ -728,40 +1048,72 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                        </div>
                      ) : csvData && csvData.columns && csvData.columns.length > 0 && csvData.data && csvData.data.length > 0 ? (
                        <>
+                         {/* NEW: Search Bar */}
+                         <div className="relative max-w-xs">
+                           <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                           <Input
+                             placeholder="Search this page..."
+                             value={csvSearchTerm}
+                             onChange={(e) => {
+                               setCsvSearchTerm(e.target.value);
+                               setSelectedRowData(null); // Reset selection on search
+                             }}
+                             className="pl-8 h-8 text-sm"
+                           />
+                         </div>
+
                          <div className="border rounded-md overflow-auto relative w-full max-h-[30vh] max-w-[50vw]">
                            <Table className="text-xs max-w-screen-3xl">
                              <TableHeader className="sticky top-0 bg-muted z-10">
                                <TableRow>
                                  <TableHead className="w-[80px] px-2 py-2 font-semibold sticky left-0 bg-muted z-10 border-r shadow-sm">Row</TableHead>
                                  {csvData.columns.map((col) => (
-                                   <TableHead key={col} className="px-2 py-2 font-semibold whitespace-nowrap overflow-hidden text-ellipsis">{col}</TableHead>
+                                   <TableHead
+                                     key={col}
+                                     className="px-2 py-2 font-semibold whitespace-nowrap overflow-hidden text-ellipsis cursor-pointer hover:bg-muted-foreground/10"
+                                     onClick={() => handleSort(col)}
+                                   >
+                                     <div className="flex items-center gap-1">
+                                       {col}
+                                       {sortColumn === col && sortDirection === 'asc' && <ArrowUp className="h-3 w-3" />}
+                                       {sortColumn === col && sortDirection === 'desc' && <ArrowDown className="h-3 w-3" />}
+                                     </div>
+                                   </TableHead>
                                  ))}
                                </TableRow>
                              </TableHeader>
                              <TableBody>
-                               {csvData.data.map((row: CsvRowData) => (
-                                 <TableRow
-                                   key={row.row_number}
-                                   onClick={() => {
-                                     setSelectedRowData(prev => prev?.row_number === row.row_number ? null : row);
-                                   }}
-                                   className={cn(
-                                     "cursor-pointer hover:bg-muted/50",
-                                     selectedRowData?.row_number === row.row_number && "bg-primary/10 hover:bg-primary/20"
-                                   )}
-                                 >
-                                   <TableCell className="px-2 py-1 text-foreground sticky left-0 bg-muted z-10 border-r">{row.row_number}</TableCell>
-                                   {csvData.columns.map((col) => (
-                                     <TableCell
-                                       key={`${row.row_number}-${col}`}
-                                       className="px-2 py-1 max-w-[300px] truncate whitespace-nowrap" // Keep truncate for now
-                                       title={typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
-                                     >
-                                       {typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
-                                     </TableCell>
-                                   ))}
+                               {filteredAndSortedCsvData.length > 0 ? (
+                                 filteredAndSortedCsvData.map((row: CsvRowData) => (
+                                   <TableRow
+                                     key={row.row_number}
+                                     onClick={() => {
+                                       setSelectedRowData(prev => prev?.row_number === row.row_number ? null : row);
+                                     }}
+                                     className={cn(
+                                       "cursor-pointer hover:bg-muted/50",
+                                       selectedRowData?.row_number === row.row_number && "bg-primary/10 hover:bg-primary/20"
+                                     )}
+                                   >
+                                     <TableCell className="px-2 py-1 text-foreground sticky left-0 bg-muted z-10 border-r">{row.row_number}</TableCell>
+                                     {csvData.columns.map((col) => (
+                                       <TableCell
+                                         key={`${row.row_number}-${col}`}
+                                         className="px-2 py-1 max-w-[300px] truncate whitespace-nowrap" // Keep truncate for now
+                                         title={typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                                       >
+                                         {typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                                       </TableCell>
+                                     ))}
+                                   </TableRow>
+                                 ))
+                               ) : (
+                                 <TableRow>
+                                   <TableCell colSpan={csvData.columns.length + 1} className="h-24 text-center text-muted-foreground italic">
+                                     {csvSearchTerm ? 'No results found for your search.' : 'No data available.'}
+                                   </TableCell>
                                  </TableRow>
-                               ))}
+                               )}
                              </TableBody>
                            </Table>
                          </div>
@@ -968,7 +1320,7 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
             </DialogHeader>
             <div className="max-h-[60vh] overflow-y-auto pr-2">
               {selectedResult && (
-                <ClassificationResultDisplay 
+                <ClassificationResultDisplay
                   result={selectedResult}
                   scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
                   renderContext="dialog"

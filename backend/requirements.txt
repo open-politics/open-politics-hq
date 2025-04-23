@@ -38,3 +38,5 @@ pymupdf
 celery
 redis
 eventlet
+croniter
+sqlalchemy-celery-beat

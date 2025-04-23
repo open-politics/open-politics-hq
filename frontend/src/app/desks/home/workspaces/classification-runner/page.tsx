@@ -7,6 +7,10 @@ import { ClassificationJobRead, ClassificationSchemeRead, DataSourceRead, Enhanc
 import ClassificationRunner from '@/components/collection/workspaces/classifications/ClassificationRunner';
 import { useToast } from '@/components/ui/use-toast';
 import ClassificationRunnerDock from '@/components/collection/workspaces/classifications/ClassificationRunnerDock';
+import RecurringTasksSettings from '@/components/collection/workspaces/recurring-jobs/RecurringTasksSettings';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import JobHistoryView from '@/components/collection/workspaces/jobs/JobHistoryView';
+import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
 export default function ClassificationRunnerPage() {
   const { activeWorkspace } = useWorkspaceStore();
@@ -27,7 +31,7 @@ export default function ClassificationRunnerPage() {
     setActiveJob,
     deleteJob,
     activeJobDataRecords,
-  } = useClassificationSystem({ autoLoadSchemes: true, autoLoadDataSources: true });
+  } = useClassificationSystem({ autoLoadSchemes: true, autoLoadDataSources: false });
 
   const [targetJobId, setTargetJobId] = useState<number | null>(null);
 
@@ -51,7 +55,7 @@ export default function ClassificationRunnerPage() {
       setTargetJobId(null);
       setActiveJob(null);
     }
-  }, [activeWorkspace, loadSchemes, loadDataSources, setActiveJob]);
+  }, [activeWorkspace?.id]);
 
   useEffect(() => {
     if (targetJobId !== null && activeWorkspace) {
@@ -99,8 +103,8 @@ export default function ClassificationRunnerPage() {
       }
   }, [activeWorkspace, createJob, toast]);
 
-  const handleLoadJobCallback = useCallback((jobId: number, jobName: string, jobDescription?: string) => {
-     console.log(`[RunnerPage] Setting target job ID from Dock: ${jobId}`);
+  const handleLoadJobCallback = useCallback((jobId: number) => {
+     console.log(`[RunnerPage] Setting target job ID from callback: ${jobId}`);
      setTargetJobId(jobId);
   }, []);
 
@@ -112,18 +116,38 @@ export default function ClassificationRunnerPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-muted/30">
-      <div className="flex-1 overflow-auto pb-28">
-          <ClassificationRunner
-            key={activeJob?.id || 'no-job'}
-            allSchemes={allSchemesHook}
-            allDataSources={allDataSourcesHook}
-            activeJob={activeJob}
-            isClassifying={isCreatingJob}
-            results={activeJobResults}
-            activeJobDataRecords={activeJobDataRecords}
-            retryJob={handleRetryJob}
-            onClearJob={handleClearJobCallback}
-          />
+      <div className="flex-1 overflow-auto pb-28 p-4 space-y-4">
+          <Tabs defaultValue="runner" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="runner">Runner</TabsTrigger>
+              <TabsTrigger value="recurring">Recurring Tasks</TabsTrigger>
+              <TabsTrigger value="history">Job History</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="runner">
+                <ClassificationRunner
+                    key={activeJob?.id || 'no-job'}
+                    allSchemes={allSchemesHook}
+                    allDataSources={allDataSourcesHook}
+                    activeJob={activeJob}
+                    isClassifying={isCreatingJob}
+                    results={activeJobResults}
+                    activeJobDataRecords={activeJobDataRecords}
+                    retryJob={handleRetryJob}
+                    onClearJob={handleClearJobCallback}
+                />
+            </TabsContent>
+
+            <TabsContent value="recurring">
+                <RecurringTasksSettings onLoadJob={handleLoadJobCallback} />
+            </TabsContent>
+
+            <TabsContent value="history">
+                <JobHistoryView
+                    onLoadJob={handleLoadJobCallback}
+                 />
+            </TabsContent>
+          </Tabs>
       </div>
 
       {activeWorkspace && (

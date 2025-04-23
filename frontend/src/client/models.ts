@@ -1,3 +1,15 @@
+export type AppendRecordInput = {
+	content: string;
+	content_type: 'text' | 'url';
+	/**
+	 * Optional ISO 8601 timestamp for the event
+	 */
+	event_timestamp?: string | null;
+};
+
+
+
+
 export type ArticleResponse = {
 	contents: Array<Record<string, unknown>>;
 };
@@ -8,7 +20,15 @@ export type Body_datasources_create_datasource = {
 	name: string;
 	type: DataSourceType;
 	origin_details?: string | null;
-	file?: Blob | File | null;
+	files?: Array<Blob | File> | null;
+	/**
+	 * Number of initial rows to skip (for CSV)
+	 */
+	skip_rows?: number | null;
+	/**
+	 * Single character delimiter (for CSV)
+	 */
+	delimiter?: string | null;
 };
 
 
@@ -54,6 +74,7 @@ export type ClassificationFieldCreate = {
 	is_set_of_labels?: boolean | null;
 	labels?: Array<string> | null;
 	dict_keys?: Array<DictKeyDefinition> | null;
+	is_time_axis_hint?: boolean | null;
 };
 
 
@@ -77,10 +98,10 @@ export type ClassificationJobRead = {
 	user_id: number;
 	created_at: string;
 	updated_at: string;
-	target_scheme_ids?: Array<number>;
-	target_datasource_ids?: Array<number>;
 	result_count?: number | null;
 	datarecord_count?: number | null;
+	readonly target_scheme_ids: Array<number>;
+	readonly target_datasource_ids: Array<number>;
 };
 
 
@@ -155,7 +176,7 @@ export type ClassificationSchemeUpdate = {
 
 
 export type CsvRowData = {
-	row_data: Record<string, unknown>;
+	row_data: Record<string, string | null>;
 	row_number: number;
 };
 
@@ -172,6 +193,7 @@ export type CsvRowsOut = {
 export type DataRecordRead = {
 	text_content: string;
 	source_metadata?: Record<string, unknown>;
+	event_timestamp?: string | null;
 	id: number;
 	datasource_id: number;
 	created_at: string;
@@ -317,6 +339,68 @@ export type NewPassword = {
 
 export type QueryType = {
 	type: string;
+};
+
+
+
+export type RecurringTaskCreate = {
+	name: string;
+	description?: string | null;
+	type: RecurringTaskType;
+	schedule: string;
+	configuration?: Record<string, unknown>;
+	status?: RecurringTaskStatus;
+};
+
+
+
+export type RecurringTaskRead = {
+	name: string;
+	description?: string | null;
+	type: RecurringTaskType;
+	schedule: string;
+	configuration?: Record<string, unknown>;
+	status?: RecurringTaskStatus;
+	id: number;
+	workspace_id: number;
+	user_id: number;
+	created_at: string;
+	updated_at: string;
+	last_run_at?: string | null;
+	last_run_status?: string | null;
+	last_run_message?: string | null;
+	last_job_id?: number | null;
+};
+
+
+
+/**
+ * Defines the status of a recurring task.
+ */
+export type RecurringTaskStatus = 'active' | 'paused' | 'error';
+
+
+
+/**
+ * Defines the type of recurring task.
+ */
+export type RecurringTaskType = 'ingest' | 'classify';
+
+
+
+export type RecurringTaskUpdate = {
+	name?: string | null;
+	description?: string | null;
+	schedule?: string | null;
+	configuration?: Record<string, unknown> | null;
+	status?: RecurringTaskStatus | null;
+};
+
+
+
+export type RecurringTasksOut = {
+	data: Array<RecurringTaskRead>;
+	count: number;
 };
 
 

@@ -8,6 +8,7 @@ from app.api.deps import get_current_active_superuser
 from app.models import Message
 from app.utils import generate_test_email, send_email
 from app.core.opol_config import opol 
+from app.core.scraping_utils import get_article_content
 
 router = APIRouter(prefix="/utils", tags=["Utilities"])
 
@@ -120,37 +121,26 @@ async def extract_pdf_metadata(
 @router.get("/scrape_article")
 async def scrape_article(url: str):
     """
-    Scrape article content from a URL using the centralized OPOL instance.
-    
+    Scrape article content from a URL using the centralized scraping utility.
+
     Args:
         url: The URL of the article to scrape
-        
+
     Returns:
-        The scraped article content
+        The scraped article content in a standardized format.
     """
-    if not opol:
-        raise HTTPException(
-            status_code=501, 
-            detail="OPOL is not available. Make sure the package is installed and properly configured."
-        )
-    
+    # No need to check for opol here, utility does it
     try:
-        article_data = opol.scraping.url(url)
-
-        # Assuming article_data is dict-like or has attributes
-        title = getattr(article_data, 'title', article_data.get('title', '')) if article_data else ''
-        text_content = getattr(article_data, 'text', article_data.get('text', '')) if article_data else ''
-
-        # Return a standardized structure
-        return {
-            "title": title,
-            "text_content": text_content,
-            "original_data": article_data
-        }
-
+        # Call the async utility function and return its result
+        scraped_data = await get_article_content(url)
+        return scraped_data
+    except HTTPException as http_exc:
+        # Re-raise HTTPException from the utility function
+        raise http_exc
     except Exception as e:
+        # Catch any other unexpected errors during the call
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to scrape article: {str(e)}"
+            detail=f"Unexpected error during scraping process: {str(e)}"
         )
     

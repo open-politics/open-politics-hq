@@ -1,5 +1,7 @@
 from typing import Any, List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+import fitz # PyMuPDF for metadata extraction
+import logging # Added logging
 
 from sqlmodel import Session, select, func
 from sqlalchemy.orm import joinedload
@@ -25,6 +27,33 @@ import io
 import csv
 import json
 
+# --- Helper Function (Adapted from utils.py) --- 
+def _extract_pdf_metadata_sync(file_content: bytes, filename: str) -> Dict[str, Any]:
+    """Synchronous helper to extract PDF metadata."""
+    try:
+        with fitz.open(stream=file_content, filetype="pdf") as doc:
+            metadata = doc.metadata
+            title = metadata.get("title", "")
+            
+            # Try extracting title from first page if not in metadata
+            if not title and doc.page_count > 0:
+                first_page = doc[0]
+                first_page_text = first_page.get_text()
+                lines = [line.strip() for line in first_page_text.split('\n') if line.strip()]
+                if lines and len(lines[0]) < 100: 
+                    title = lines[0]
+                    
+            return {
+                "title": title or filename.replace(".pdf", ""), # Fallback to filename
+                "author": metadata.get("author", ""),
+                "subject": metadata.get("subject", ""),
+                "page_count": doc.page_count
+            }
+    except Exception as e:
+        logging.error(f"_extract_pdf_metadata_sync failed for {filename}: {e}", exc_info=True)
+        # Return default values on error
+        return {"title": filename.replace(".pdf", ""), "page_count": 0}
+# --- End Helper Function --- 
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/datasources",
@@ -32,8 +61,8 @@ router = APIRouter(
 )
 
 
-@router.post("", response_model=DataSourceRead)
-@router.post("/", response_model=DataSourceRead)
+@router.post("", response_model=DataSourcesOut)
+@router.post("/", response_model=DataSourcesOut)
 async def create_datasource(
     *,
     session: SessionDep,
@@ -42,117 +71,251 @@ async def create_datasource(
     name: str = Form(...),
     type: DataSourceType = Form(...),
     origin_details: Optional[str] = Form("{}"),
-    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     skip_rows: Optional[int] = Form(0, ge=0, description="Number of initial rows to skip (for CSV)"),
     delimiter: Optional[str] = Form(None, description="Single character delimiter (for CSV)")
-) -> Any:
+) -> DataSourcesOut:
     """
-    Create a new DataSource. Includes options for CSV header row and delimiter.
-    Triggers a background task for ingestion.
+    Create a new DataSource or multiple DataSources (for bulk PDF upload).
+    For PDF uploads, multiple files can be provided; one DataSource will be created per file,
+    using extracted PDF title metadata for the name.
+    For other types (CSV, URL, Text), only one source is created per request.
+    CSV options: skip_rows, delimiter.
+    Triggers background task(s) for ingestion.
     """
     workspace = session.get(Workspace, workspace_id)
     if not workspace or workspace.user_id_ownership != current_user.id:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    temp_datasource_data = {
-        "name": name,
-        "type": type,
-        "workspace_id": workspace_id,
-        "user_id": current_user.id,
-        "status": DataSourceStatus.PENDING,
-        "origin_details": {},
-        "source_metadata": {}
-    }
+    created_sources: List[DataSource] = []
+    tasks_to_trigger: List[int] = []
+    uploaded_object_names: List[str] = [] # Keep track for potential cleanup
 
-    datasource_id = None
     try:
-        temp_datasource = DataSource.model_validate(temp_datasource_data)
-        session.add(temp_datasource)
-        session.flush()
-        datasource_id = temp_datasource.id
-        if datasource_id is None: raise ValueError("Failed to obtain DataSource ID after flush.")
-    except Exception as e:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error during initial save: {str(e)}")
+        # --- Handle PDF Bulk Upload --- 
+        if type == DataSourceType.PDF:
+            if not files:
+                raise HTTPException(status_code=400, detail="At least one PDF file upload required for type 'pdf'")
 
-    final_origin_details = {}
-    object_name = None
-    try:
-        parsed_origin_details = json.loads(origin_details or '{}')
-        final_origin_details.update(parsed_origin_details)
+            for pdf_file in files:
+                if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
+                     logging.warning(f"Skipping non-PDF file during bulk upload: {pdf_file.filename}")
+                     continue # Skip non-PDF files in the batch
+                
+                # Generate a temporary unique ID for this source within the batch logic
+                # We'll use a placeholder mechanism, assuming DB generates final ID upon add/flush
+                temp_id_placeholder = f"pending_{len(created_sources) + 1}" 
+                object_name = f"workspace_{workspace_id}/datasource_{temp_id_placeholder}_{pdf_file.filename}"
+                
+                try:
+                    # Read file content for metadata extraction and upload
+                    file_content = await pdf_file.read()
+                    await pdf_file.seek(0) # Reset file pointer for upload
 
-        if type == DataSourceType.CSV or type == DataSourceType.PDF:
-            if not file:
-                raise HTTPException(status_code=400, detail=f"File upload required for type '{type}'")
+                    # Extract Metadata (Sync helper used here for simplicity within async route)
+                    metadata = _extract_pdf_metadata_sync(file_content, pdf_file.filename)
+                    source_name = metadata.get('title') or pdf_file.filename.replace(".pdf", "")
+                    
+                    # Upload to MinIO
+                    uploaded_path = await minio_client.upload_file(pdf_file, object_name)
+                    uploaded_object_names.append(object_name) # Track successful uploads
 
-            object_name = f"workspace_{workspace_id}/datasource_{datasource_id}/{file.filename}"
+                    # Prepare Origin Details
+                    pdf_origin_details = {
+                        'filepath': uploaded_path,
+                        'filename': pdf_file.filename,
+                        'content_type': pdf_file.content_type
+                    }
+                    
+                    # Prepare Source Metadata (optional, can be enriched by ingestion task)
+                    pdf_source_metadata = {
+                        'page_count': metadata.get('page_count')
+                    }
+
+                    # Create DataSource Object
+                    ds_data = {
+                        "name": source_name,
+                        "type": DataSourceType.PDF,
+                        "workspace_id": workspace_id,
+                        "user_id": current_user.id,
+                        "status": DataSourceStatus.PENDING,
+                        "origin_details": pdf_origin_details,
+                        "source_metadata": pdf_source_metadata
+                    }
+                    new_datasource = DataSource.model_validate(ds_data)
+                    created_sources.append(new_datasource)
+                    session.add(new_datasource)
+                    # Flush to get IDs before triggering tasks?
+                    # Flushing within loop can be inefficient. Let's flush after loop.
+
+                except Exception as pdf_proc_err:
+                    logging.error(f"Error processing PDF file {pdf_file.filename}: {pdf_proc_err}", exc_info=True)
+                    # Consider how to handle partial failures - skip this file? Fail the whole batch?
+                    # For now, let's skip this file and continue with others
+                    continue 
+            
+            if not created_sources:
+                 raise HTTPException(status_code=400, detail="No valid PDF files processed successfully.")
+
+        # --- Handle CSV (Single File) --- 
+        elif type == DataSourceType.CSV:
+            if not files or len(files) != 1:
+                raise HTTPException(status_code=400, detail="Exactly one CSV file upload required for type 'csv'")
+            file = files[0]
+            if not file.filename:
+                 raise HTTPException(status_code=400, detail="CSV file must have a name")
+
+            # Use placeholder for ID in object name, actual ID assigned on flush
+            object_name = f"workspace_{workspace_id}/datasource_csv_pending/{file.filename}"
             uploaded_path = await minio_client.upload_file(file, object_name)
+            uploaded_object_names.append(object_name) # Track upload
 
-            final_origin_details.update({
+            csv_origin_details = {
                 'filepath': uploaded_path,
                 'filename': file.filename,
                 'content_type': file.content_type
-            })
+            }
+            if skip_rows is not None and skip_rows >= 0:
+                csv_origin_details['skip_rows'] = skip_rows
+            if delimiter is not None and len(delimiter) == 1:
+                csv_origin_details['delimiter'] = delimiter
+            
+            ds_data = {
+                "name": name, # Use the provided form name for CSV
+                "type": DataSourceType.CSV,
+                "workspace_id": workspace_id,
+                "user_id": current_user.id,
+                "status": DataSourceStatus.PENDING,
+                "origin_details": csv_origin_details,
+                "source_metadata": {}
+            }
+            new_datasource = DataSource.model_validate(ds_data)
+            created_sources.append(new_datasource)
+            session.add(new_datasource)
 
-            if type == DataSourceType.CSV:
-                if skip_rows is not None and skip_rows >= 0:
-                    final_origin_details['skip_rows'] = skip_rows
-                if delimiter is not None and len(delimiter) == 1:
-                    final_origin_details['delimiter'] = delimiter
-                elif delimiter is not None:
-                    # Silently ignore invalid delimiter or consider raising 400?
-                    pass
-
+        # --- Handle URL List --- 
         elif type == DataSourceType.URL_LIST:
-            if 'urls' not in final_origin_details or not isinstance(final_origin_details.get('urls'), list):
+            if files: raise HTTPException(status_code=400, detail="File upload not supported for URL_LIST type")
+            try:
+                parsed_origin_details = json.loads(origin_details or '{}')
+            except json.JSONDecodeError:
+                 raise HTTPException(status_code=400, detail="Invalid JSON in origin_details")
+            if 'urls' not in parsed_origin_details or not isinstance(parsed_origin_details.get('urls'), list):
                  raise HTTPException(status_code=400, detail="'urls' list required in origin_details for type URL_LIST")
+            
+            ds_data = {
+                "name": name, # Use provided form name
+                "type": DataSourceType.URL_LIST,
+                "workspace_id": workspace_id,
+                "user_id": current_user.id,
+                "status": DataSourceStatus.PENDING,
+                "origin_details": parsed_origin_details,
+                "source_metadata": {}
+            }
+            new_datasource = DataSource.model_validate(ds_data)
+            created_sources.append(new_datasource)
+            session.add(new_datasource)
 
+        # --- Handle Text Block --- 
         elif type == DataSourceType.TEXT_BLOCK:
-            if 'text_content' not in final_origin_details or not isinstance(final_origin_details.get('text_content'), str):
+            if files: raise HTTPException(status_code=400, detail="File upload not supported for TEXT_BLOCK type")
+            try:
+                parsed_origin_details = json.loads(origin_details or '{}')
+            except json.JSONDecodeError:
+                 raise HTTPException(status_code=400, detail="Invalid JSON in origin_details")
+            if 'text_content' not in parsed_origin_details or not isinstance(parsed_origin_details.get('text_content'), str):
                  raise HTTPException(status_code=400, detail="'text_content' string required in origin_details for type TEXT_BLOCK")
+            
+            ds_data = {
+                "name": name, # Use provided form name
+                "type": DataSourceType.TEXT_BLOCK,
+                "workspace_id": workspace_id,
+                "user_id": current_user.id,
+                "status": DataSourceStatus.PENDING,
+                "origin_details": parsed_origin_details,
+                "source_metadata": {}
+            }
+            new_datasource = DataSource.model_validate(ds_data)
+            created_sources.append(new_datasource)
+            session.add(new_datasource)
 
+        # --- Unsupported Type --- 
         else:
-             raise HTTPException(status_code=400, detail=f"Unsupported DataSource type: {type}")
+            # This case should ideally be caught by Pydantic validation of the Enum
+            raise HTTPException(status_code=400, detail=f"Unsupported DataSource type: {type}")
 
-    except HTTPException as http_exc:
-        session.rollback()
-        raise http_exc
-    except Exception as e:
-        session.rollback()
-        if object_name:
+        # --- Commit and Prepare Tasks --- 
+        session.flush() # Assign IDs to all created_sources
+
+        # Update object names with real IDs if needed (important for CSV)
+        for i, ds in enumerate(created_sources):
+            if ds.id is None: # Should not happen after flush, but check
+                 raise ValueError(f"DataSource did not get an ID after flush: {ds.name}")
+            tasks_to_trigger.append(ds.id) # Collect IDs for task triggering
+            
+            # Example: Correcting CSV object name after getting ID (if structure used ID)
+            if ds.type == DataSourceType.CSV and 'filepath' in ds.origin_details:
+                 old_object_name_base = f"workspace_{workspace_id}/datasource_csv_pending/"
+                 original_filename = ds.origin_details.get('filename', 'unknown.csv')
+                 # Find the corresponding original upload name 
+                 old_object_name = next((n for n in uploaded_object_names if n.endswith(original_filename) and n.startswith(old_object_name_base)), None)
+                 
+                 if old_object_name: # If we tracked the original upload name correctly
+                     new_object_name = f"workspace_{workspace_id}/datasource_{ds.id}/{original_filename}"
+                     try:
+                         await minio_client.rename_file(old_object_name, new_object_name)
+                         ds.origin_details['filepath'] = new_object_name # Update path in DB model
+                         uploaded_object_names.remove(old_object_name) # Remove old name from cleanup list
+                         uploaded_object_names.append(new_object_name) # Add new name to cleanup list (though unlikely needed now)
+                         session.add(ds) # Stage the update to origin_details
+                     except Exception as rename_err:
+                          logging.error(f"Failed to rename MinIO object from {old_object_name} to {new_object_name}: {rename_err}", exc_info=True)
+                          # Decide how to handle - maybe fail the specific source creation?
+                          # For now, log error and potentially leave path as temporary one.
+                          pass
+
+        session.commit() # Commit all sources and path updates
+
+        # Refresh objects to get final state from DB
+        for ds in created_sources:
+            session.refresh(ds)
+
+        # --- Trigger Background Tasks --- 
+        for ds_id in tasks_to_trigger:
             try:
-                await minio_client.delete_file(object_name)
-            except Exception as cleanup_err:
-                # Log this internally if possible, but don't expose to user
-                pass
-        raise HTTPException(status_code=500, detail=f"Error processing input: {str(e)}")
+                process_datasource.delay(ds_id)
+            except Exception as task_err:
+                # Log this internally. The datasource is created, but ingestion won't start.
+                logging.error(f"Failed to trigger ingestion task for DataSource {ds_id}: {task_err}", exc_info=True)
+                # Optionally update status to FAILED here?
+                try:
+                     fail_ds = session.get(DataSource, ds_id)
+                     if fail_ds:
+                          fail_ds.status = DataSourceStatus.FAILED
+                          fail_ds.error_message = f"Failed to queue ingestion task: {str(task_err)[:250]}"
+                          session.add(fail_ds)
+                          session.commit()
+                except Exception as status_update_err:
+                     logging.error(f"Failed to mark DataSource {ds_id} as FAILED after task queue error: {status_update_err}")
 
-    try:
-        datasource = session.get(DataSource, datasource_id)
-        if not datasource:
-             raise ValueError("DataSource lost after flush.")
-        datasource.origin_details = final_origin_details
-        session.add(datasource)
-        session.commit()
-        session.refresh(datasource)
+        # Return the list of created sources
+        return DataSourcesOut(data=[DataSourceRead.model_validate(ds) for ds in created_sources], count=len(created_sources))
+
     except Exception as e:
-        session.rollback()
-        if object_name:
+        session.rollback() # Rollback any partial DB changes
+        logging.error(f"Error during DataSource creation (workspace {workspace_id}): {e}", exc_info=True)
+        # Attempt to clean up any uploaded files if an error occurred
+        for obj_name in uploaded_object_names:
             try:
-                await minio_client.delete_file(object_name)
+                logging.warning(f"Attempting cleanup of uploaded file due to error: {obj_name}")
+                await minio_client.delete_file(obj_name)
             except Exception as cleanup_err:
-                # Log this internally if possible
-                pass
-        raise HTTPException(status_code=500, detail=f"Database error saving final details: {str(e)}")
-
-    try:
-        process_datasource.delay(datasource.id)
-    except Exception as e:
-        # Log this internally. The datasource is created, but ingestion won't start.
-        # Consider updating status to FAILED or similar?
-        pass
-
-    return datasource
+                logging.error(f"Failed to cleanup MinIO object {obj_name}: {cleanup_err}", exc_info=True)
+        # Re-raise as a 500 error
+        if isinstance(e, HTTPException):
+             raise e # Preserve original HTTP error if it was one
+        else:
+             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
 @router.get("", response_model=DataSourcesOut)

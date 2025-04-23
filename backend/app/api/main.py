@@ -12,7 +12,8 @@ from app.api.routes import (
     filestorage,
     classification_jobs,
     datasources,
-    datarecords
+    datarecords,
+    recurring_tasks
 )
 from app.api.v1.locations.routes import router as location_router
 from app.api.v1.search.routes import router as search_router
@@ -49,6 +50,7 @@ api_router_v1.include_router(classification_results.router, tags=["classificatio
 api_router_v1.include_router(classification_jobs.router, tags=["classification-jobs"])
 api_router_v1.include_router(datasources.router, tags=["datasources"])
 api_router_v1.include_router(datarecords.router, tags=["datarecords"])
+api_router_v1.include_router(recurring_tasks.router)
 
 # V2/ Experimental APIs
 api_router_v2.include_router(geo.router, prefix="/geo", tags=["geo"])

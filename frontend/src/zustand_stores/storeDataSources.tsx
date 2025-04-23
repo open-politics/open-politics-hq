@@ -90,10 +90,17 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       console.log("Sending payload to DataSourcesService.createDatasource:", serviceCallPayload);
 
       // Pass the correctly assembled payload to the service
-      const createdDataSourceRead: ClientDataSourceRead = await DataSourcesService.createDatasource({
+      // Expect DataSourcesOut as per client definition
+      const response: DataSourcesOut = await DataSourcesService.createDatasource({
          workspaceId: activeWorkspace.id,
          formData: serviceCallPayload // Pass the object containing all fields
       });
+
+      // Assuming the API returns the created source as the first item in the data array
+      if (!response || !response.data || response.data.length === 0) {
+        throw new Error("API did not return the created data source in the expected format.");
+      }
+      const createdDataSourceRead: ClientDataSourceRead = response.data[0];
 
       const adaptedDataSource = adaptDataSourceReadToDataSource(createdDataSourceRead);
 
