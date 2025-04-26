@@ -1,5 +1,14 @@
+/**
+ * Input model for appending a record to a datasource.
+ */
 export type AppendRecordInput = {
+	/**
+	 * The text content or URL to append
+	 */
 	content: string;
+	/**
+	 * Type of content being appended
+	 */
 	content_type: 'text' | 'url';
 	/**
 	 * Optional ISO 8601 timestamp for the event
@@ -12,6 +21,15 @@ export type AppendRecordInput = {
 
 export type ArticleResponse = {
 	contents: Array<Record<string, unknown>>;
+};
+
+
+
+export type Body_datasets_import_dataset = {
+	/**
+	 * Dataset Package JSON file (.json)
+	 */
+	file: Blob | File;
 };
 
 
@@ -49,6 +67,12 @@ export type Body_login_login_access_token = {
 	scope?: string;
 	client_id?: string | null;
 	client_secret?: string | null;
+};
+
+
+
+export type Body_shareables_import_resource = {
+	file: Blob | File;
 };
 
 
@@ -109,7 +133,7 @@ export type ClassificationJobRead = {
 /**
  * Defines the execution status of a ClassificationJob.
  */
-export type ClassificationJobStatus = 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed';
+export type ClassificationJobStatus = 'pending' | 'running' | 'paused' | 'completed' | 'completed_with_errors' | 'failed';
 
 
 
@@ -195,14 +219,15 @@ export type DataRecordRead = {
 	source_metadata?: Record<string, unknown>;
 	event_timestamp?: string | null;
 	id: number;
-	datasource_id: number;
+	datasource_id?: number | null;
 	created_at: string;
+	content_hash?: string | null;
 };
 
 
 
 export type DataSourceRead = {
-	name: string;
+	name?: string | null;
 	type: DataSourceType;
 	origin_details?: Record<string, unknown>;
 	source_metadata?: Record<string, unknown>;
@@ -214,6 +239,7 @@ export type DataSourceRead = {
 	created_at: string;
 	updated_at: string;
 	data_record_count?: number | null;
+	description?: string | null;
 };
 
 
@@ -228,12 +254,67 @@ export type DataSourceStatus = 'pending' | 'processing' | 'complete' | 'failed';
 /**
  * Defines the type of data source.
  */
-export type DataSourceType = 'csv' | 'pdf' | 'url_list' | 'text_block';
+export type DataSourceType = 'csv' | 'pdf' | 'bulk_pdf' | 'url' | 'url_list' | 'text_block';
+
+
+
+export type DataSourceUpdate = {
+	status?: DataSourceStatus | null;
+	source_metadata?: Record<string, unknown> | null;
+	error_message?: string | null;
+	updated_at?: string;
+};
 
 
 
 export type DataSourcesOut = {
 	data: Array<DataSourceRead>;
+	count: number;
+};
+
+
+
+export type DatasetCreate = {
+	name: string;
+	description?: string | null;
+	custom_metadata?: Record<string, unknown>;
+	datarecord_ids?: Array<number> | null;
+	source_job_ids?: Array<number> | null;
+	source_scheme_ids?: Array<number> | null;
+};
+
+
+
+export type DatasetRead = {
+	name: string;
+	description?: string | null;
+	custom_metadata?: Record<string, unknown>;
+	id: number;
+	workspace_id: number;
+	user_id: number;
+	created_at: string;
+	updated_at: string;
+	datarecord_ids?: Array<number> | null;
+	source_job_ids?: Array<number> | null;
+	source_scheme_ids?: Array<number> | null;
+};
+
+
+
+export type DatasetUpdate = {
+	name?: string | null;
+	description?: string | null;
+	custom_metadata?: Record<string, unknown> | null;
+	datarecord_ids?: Array<number> | null;
+	source_job_ids?: Array<number> | null;
+	source_scheme_ids?: Array<number> | null;
+	updated_at?: string;
+};
+
+
+
+export type DatasetsOut = {
+	data: Array<DatasetRead>;
 	count: number;
 };
 
@@ -271,13 +352,13 @@ export type FieldType = 'int' | 'str' | 'List[str]' | 'List[Dict[str, any]]';
 
 export type FileUploadResponse = {
 	/**
-	 * Uploaded filename
+	 * Original uploaded filename
 	 */
 	filename: string;
 	/**
-	 * Storage ID
+	 * Object name in storage
 	 */
-	storage_id: string;
+	object_name: string;
 };
 
 
@@ -334,6 +415,13 @@ export type NewPassword = {
 	token: string;
 	new_password: string;
 };
+
+
+
+/**
+ * Enumeration of permission levels for shared resources.
+ */
+export type PermissionLevel = 'read_only' | 'edit' | 'full_access';
 
 
 
@@ -415,6 +503,13 @@ export type Request = {
 
 
 
+/**
+ * Enumeration of resource types that can be shared.
+ */
+export type ResourceType = 'data_source' | 'schema' | 'workspace' | 'classification_job' | 'dataset';
+
+
+
 export type SearchHistoriesOut = {
 	data: Array<SearchHistoryRead>;
 	count: number;
@@ -443,6 +538,77 @@ export type SearchHistoryRead = {
 	timestamp?: string;
 	id: number;
 	user_id: number;
+};
+
+
+
+export type SearchType = 'text' | 'semantic' | 'structured';
+
+
+
+/**
+ * Schema for creating a new shareable link.
+ */
+export type ShareableLinkCreate = {
+	resource_type: ResourceType;
+	resource_id: number;
+	name?: string | null;
+	description?: string | null;
+	permission_level?: PermissionLevel;
+	is_public?: boolean;
+	requires_login?: boolean;
+	expiration_date?: string | null;
+	max_uses?: number | null;
+};
+
+
+
+/**
+ * Schema for reading a shareable link.
+ */
+export type ShareableLinkRead = {
+	name?: string | null;
+	description?: string | null;
+	permission_level?: PermissionLevel;
+	is_public?: boolean;
+	requires_login?: boolean;
+	expiration_date?: string | null;
+	max_uses?: number | null;
+	id: number;
+	token: string;
+	user_id: number;
+	resource_type: ResourceType;
+	resource_id: number;
+	use_count: number;
+	created_at: string;
+	updated_at: string;
+	share_url?: string | null;
+};
+
+
+
+export type ShareableLinkStats = {
+	total_links: number;
+	active_links: number;
+	expired_links: number;
+	links_by_resource_type: Record<string, number>;
+	most_shared_resources: Array<Record<string, unknown>>;
+	most_used_links: Array<Record<string, unknown>>;
+};
+
+
+
+/**
+ * Schema for updating a shareable link.
+ */
+export type ShareableLinkUpdate = {
+	name?: string | null;
+	description?: string | null;
+	permission_level?: PermissionLevel | null;
+	is_public?: boolean | null;
+	requires_login?: boolean | null;
+	expiration_date?: string | null;
+	max_uses?: number | null;
 };
 
 
@@ -546,12 +712,4 @@ export type WorkspaceUpdate = {
 	description?: string | null;
 	icon?: string | null;
 };
-
-
-
-export type app__api__v1__entities__routes__SearchType = 'text' | 'semantic';
-
-
-
-export type app__api__v1__search__routes__SearchType = 'text' | 'semantic' | 'structured';
 

@@ -1,23 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select, func
-from typing import List, Optional, Union, Dict, Any
-from datetime import datetime, timezone
-from sqlalchemy.orm import joinedload, selectinload
-from pydantic import BaseModel, model_validator, Field
-import time
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import List, Optional
 import logging
 
 from app.models import (
-    ClassificationResult,
     ClassificationResultRead,
     EnhancedClassificationResultRead,
-    DataRecord,
-    ClassificationScheme,
-    ClassificationSchemeRead,
-    ClassificationJob,
-    Workspace,
 )
-from app.api.deps import SessionDep, CurrentUser
+from app.api.deps import SessionDep, CurrentUser, ClassificationServiceDep
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}",
@@ -27,127 +16,99 @@ router = APIRouter(
 @router.get("/classification_results/{result_id}", response_model=ClassificationResultRead)
 def get_classification_result(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
-    result_id: int
+    result_id: int,
+    service: ClassificationServiceDep,
 ) -> ClassificationResultRead:
     """
-    Load (retrieve) an individual classification result by its ID.
-    Verifies that the result belongs to the specified workspace via its job.
+    Retrieve an individual classification result by its ID using the service.
+    The service handles workspace/user authorization.
     """
-    result = session.exec(
-        select(ClassificationResult)
-        .join(ClassificationJob)
-        .where(
-            ClassificationResult.id == result_id,
-            ClassificationJob.workspace_id == workspace_id,
-            ClassificationJob.user_id == current_user.id
+    try:
+        result = service.get_result(
+            result_id=result_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id
         )
-    ).first()
-
-    if not result:
-        raise HTTPException(status_code=404, detail="ClassificationResult not found in this workspace")
-
-    return ClassificationResultRead.model_validate(result)
+        if not result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ClassificationResult not found or not accessible")
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logging.exception(f"Route: Error getting result {result_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.get("/classification_results", response_model=List[EnhancedClassificationResultRead])
 @router.get("/classification_results/", response_model=List[EnhancedClassificationResultRead])
 def list_classification_results(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     job_id: Optional[int] = Query(None, description="Filter results by ClassificationJob ID"),
     datarecord_ids: Optional[List[int]] = Query(None, description="Filter results by DataRecord IDs"),
     scheme_ids: Optional[List[int]] = Query(None, description="Filter results by ClassificationScheme IDs"),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    session: SessionDep,
+    service: ClassificationServiceDep,
 ) -> List[EnhancedClassificationResultRead]:
     """
-    List classification results for the workspace, with optional filters.
-    Requires workspace ownership verification.
+    List classification results for the workspace, with optional filters, using the service.
+    The service handles workspace ownership verification and data fetching.
     Returns enhanced results with calculated display_value.
     """
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace or workspace.user_id_ownership != current_user.id:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    
-    statement = select(ClassificationResult)
-    statement = statement.join(ClassificationJob).where(
-        ClassificationJob.workspace_id == workspace_id,
-        ClassificationJob.user_id == current_user.id
-    )
-
-    statement = statement.options(
-        selectinload(ClassificationResult.scheme).selectinload(ClassificationScheme.fields)
-    )
-
-    if job_id is not None:
-        statement = statement.where(ClassificationResult.job_id == job_id)
-    if datarecord_ids is not None:
-        if datarecord_ids:
-            statement = statement.where(ClassificationResult.datarecord_id.in_(datarecord_ids))
-        else:
-            return []
-    if scheme_ids is not None:
-        if scheme_ids:
-            statement = statement.where(ClassificationResult.scheme_id.in_(scheme_ids))
-        else:
-            return []
-
-    statement = statement.order_by(ClassificationResult.timestamp.desc()).offset(skip).limit(limit)
-
-    results = session.exec(statement).unique().all()
-
-    enhanced_results = []
-    for result in results:
-        try:
-            enhanced_result = EnhancedClassificationResultRead.model_validate(result)
-            enhanced_results.append(enhanced_result)
-        except Exception as validation_error:
-            logging.error(f"Error validating EnhancedClassificationResultRead for result ID {result.id}: {validation_error}", exc_info=True)
-
-    return enhanced_results
+    try:
+        results = service.list_results(
+            user_id=current_user.id,
+            workspace_id=workspace_id,
+            job_id=job_id,
+            datarecord_ids=datarecord_ids,
+            scheme_ids=scheme_ids,
+            skip=skip,
+            limit=limit
+        )
+        return results
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logging.exception(f"Route: Error listing results for workspace {workspace_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.get("/classification_jobs/{job_id}/results", response_model=List[EnhancedClassificationResultRead])
 def get_job_results(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     job_id: int,
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    session: SessionDep,
+    service: ClassificationServiceDep,
 ) -> List[EnhancedClassificationResultRead]:
     """
-    Retrieve all classification results for a specific ClassificationJob.
-    Verifies job ownership and workspace context.
+    Retrieve all classification results for a specific ClassificationJob using the service.
+    The service handles job ownership and workspace context verification.
     Returns enhanced results with calculated display_value.
     """
-    job = session.get(ClassificationJob, job_id)
-    if (
-        not job
-        or job.workspace_id != workspace_id
-        or job.user_id != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="ClassificationJob not found in this workspace")
-
-    statement = select(ClassificationResult)
-    statement = statement.where(ClassificationResult.job_id == job_id)
-    statement = statement.options(
-        selectinload(ClassificationResult.scheme).selectinload(ClassificationScheme.fields)
-    )
-    statement = statement.order_by(ClassificationResult.timestamp.desc()).offset(skip).limit(limit)
-
-    results = session.exec(statement).unique().all()
-
-    enhanced_results = []
-    for result in results:
-        try:
-            enhanced_result = EnhancedClassificationResultRead.model_validate(result)
-            enhanced_results.append(enhanced_result)
-        except Exception as validation_error:
-            logging.error(f"Error validating EnhancedClassificationResultRead for result ID {result.id} (Job {job_id}): {validation_error}", exc_info=True)
-
-    return enhanced_results
+    try:
+        results = service.list_results(
+            user_id=current_user.id,
+            workspace_id=workspace_id,
+            job_id=job_id,
+            skip=skip,
+            limit=limit
+        )
+        return results
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logging.exception(f"Route: Error listing results for job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

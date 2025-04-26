@@ -13,6 +13,8 @@ class DataSourceType(str, enum.Enum):
     """Defines the type of data source."""
     CSV = "csv"
     PDF = "pdf"
+    BULK_PDF = "bulk_pdf"
+    URL = "url"
     URL_LIST = "url_list"
     TEXT_BLOCK = "text_block"
     # Add other types as needed
@@ -28,6 +30,7 @@ class ClassificationJobStatus(str, enum.Enum):
     """Defines the execution status of a ClassificationJob."""
     PENDING = "pending" # Initial state, waiting for execution
     RUNNING = "running" # Classification task is active
+    PAUSED = "paused"  # Job is temporarily paused
     COMPLETED = "completed" # Job finished successfully
     COMPLETED_WITH_ERRORS = "completed_with_errors" # Job finished, but some classifications failed
     FAILED = "failed" # Job execution failed critically
@@ -241,6 +244,9 @@ class DataSourceRead(DataSourceBase):
     updated_at: datetime
     # Optionally include counts or related objects if needed for specific views
     data_record_count: Optional[int] = None # Can be calculated in API
+    # ADDED fields for user updates
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 # API model for DataSource update (mostly for status/metadata by backend tasks)
 class DataSourceUpdate(SQLModel):
@@ -289,9 +295,10 @@ class DataRecordBase(SQLModel):
 # Database table model for DataRecord
 class DataRecord(DataRecordBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    datasource_id: int = Field(foreign_key="datasource.id")
+    datasource_id: Optional[int] = Field(default=None, foreign_key="datasource.id", nullable=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     url_hash: Optional[str] = Field(default=None, index=True) # Added for efficient URL deduplication
+    content_hash: Optional[str] = Field(default=None, index=True) # Added for content deduplication
 
     # Relationships
     datasource: Optional["DataSource"] = Relationship(back_populates="data_records")
@@ -299,14 +306,16 @@ class DataRecord(DataRecordBase, table=True):
 
 # API model for DataRecord creation (primarily used internally by ingestion tasks)
 class DataRecordCreate(DataRecordBase):
-    datasource_id: int
+    datasource_id: Optional[int] = None # Allow creating records without an initial datasource link
+    content_hash: Optional[str] = None # Allow passing hash during creation
     # event_timestamp is inherited from DataRecordBase
 
 # API model for returning DataRecord data
 class DataRecordRead(DataRecordBase):
     id: int
-    datasource_id: int
+    datasource_id: Optional[int] = None # Made optional here too
     created_at: datetime
+    content_hash: Optional[str] = None # Include hash in read model
     # event_timestamp is inherited from DataRecordBase
 
 # API model for returning a list of DataRecords
@@ -777,4 +786,208 @@ class ItemOut(ItemBase):
 class ItemsOut(SQLModel):
     data: list[ItemOut]
     count: int
+
+# ---------------------------------------------------------------------------
+# Shareable Link Models (Copied from api/models/shareables.py)
+# ---------------------------------------------------------------------------
+# Note: Removed the table=True and __tablename__ from the DB model to keep it Pydantic-only
+# for now, as integrating it fully into SQLModel requires more schema analysis/adjustment.
+# The service layer seems to handle the DB logic separately.
+
+class ResourceType(str, enum.Enum):
+    """Enumeration of resource types that can be shared."""
+    DATA_SOURCE = "data_source"
+    SCHEMA = "schema"
+    WORKSPACE = "workspace"
+    CLASSIFICATION_JOB = "classification_job" # Changed from RUN
+    DATASET = "dataset" # Add new resource type
+
+class PermissionLevel(str, enum.Enum):
+    """Enumeration of permission levels for shared resources."""
+    READ_ONLY = "read_only"
+    EDIT = "edit"
+    FULL_ACCESS = "full_access"
+
+class ShareableLinkBase(SQLModel): # Changed back to SQLModel
+    """Base model for shareable links."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permission_level: PermissionLevel = Field(default=PermissionLevel.READ_ONLY, sa_column=Column(Enum(PermissionLevel)))
+    is_public: bool = Field(default=False)
+    requires_login: bool = Field(default=True)
+    expiration_date: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    max_uses: Optional[int] = None
+    # Not in DB model: resource_type, resource_id (defined below)
+
+# Actual DB Model for ShareableLink
+class ShareableLink(ShareableLinkBase, table=True):
+    """Database model for shareable links."""
+    __tablename__ = "shareable_links"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token: str = Field(index=True, unique=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    resource_type: ResourceType = Field(sa_column=Column(Enum(ResourceType)))
+    resource_id: int
+    use_count: int = Field(default=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True)))
+
+    # Relationship (Optional, if needed)
+    # user: Optional["User"] = Relationship(back_populates="shareable_links") # Add back_populates="shareable_links" to User model if needed
+
+    def is_expired(self) -> bool:
+        """Check if the link has expired"""
+        if self.expiration_date is None:
+            return False
+        now_utc = datetime.now(timezone.utc)
+        return now_utc > self.expiration_date
+
+    def has_exceeded_max_uses(self) -> bool:
+        """Check if the link has exceeded its maximum number of uses"""
+        if self.max_uses is None:
+            return False
+        return self.use_count >= self.max_uses
+
+    def is_valid(self) -> bool:
+        """Check if the link is still valid (not expired and not exceeded max uses)"""
+        return not (self.is_expired() or self.has_exceeded_max_uses())
+
+
+class ShareableLinkCreate(SQLModel): # Use SQLModel if fields match DB closely
+    """Schema for creating a new shareable link."""
+    resource_type: ResourceType
+    resource_id: int
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permission_level: PermissionLevel = PermissionLevel.READ_ONLY
+    is_public: bool = False
+    requires_login: bool = True
+    expiration_date: Optional[datetime] = None
+    max_uses: Optional[int] = None
+    # user_id and token are set by the service
+
+class ShareableLinkRead(ShareableLinkBase): # Keep as SQLModel
+    """Schema for reading a shareable link."""
+    id: int
+    token: str
+    user_id: int
+    resource_type: ResourceType # Add from DB model
+    resource_id: int          # Add from DB model
+    use_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    share_url: Optional[str] = None # Keep computed field
+
+    @model_validator(mode='before')
+    def set_share_url(cls, values):
+        try:
+            from app.core.config import settings
+            if isinstance(values, dict) and 'token' in values:
+                 values['share_url'] = f"{settings.FRONTEND_URL}/share/{values.get('token')}"
+            elif hasattr(values, 'token'): # Handle model instance case
+                 values.share_url = f"{settings.FRONTEND_URL}/share/{values.token}"
+        except ImportError:
+            if isinstance(values, dict):
+                 values['share_url'] = None
+            elif hasattr(values, 'share_url'):
+                 values.share_url = None
+        return values
+
+
+class ShareableLinkUpdate(SQLModel): # Use SQLModel
+    """Schema for updating a shareable link."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    permission_level: Optional[PermissionLevel] = None
+    is_public: Optional[bool] = None
+    requires_login: Optional[bool] = None
+    expiration_date: Optional[datetime] = None
+    max_uses: Optional[int] = None
+
+    @model_validator(mode='before')
+    def validate_expiration_date(cls, values):
+        exp_date = values.get('expiration_date')
+        if exp_date is not None:
+            now_utc = datetime.now(timezone.utc)
+            exp_date_utc = exp_date
+            if exp_date_utc.tzinfo is None:
+                exp_date_utc = exp_date_utc.replace(tzinfo=timezone.utc)
+            if exp_date_utc < now_utc:
+                raise ValueError("expiration_date must be in the future")
+        return values
+
+class ShareableLinkStats(SQLModel): # Use SQLModel
+    total_links: int
+    active_links: int
+    expired_links: int
+    links_by_resource_type: Dict[str, int]
+    most_shared_resources: List[Dict[str, Any]]
+    most_used_links: List[Dict[str, Any]]
+
+# ---------------------------------------------------------------------------
+# NEW: Dataset Management Models
+# ---------------------------------------------------------------------------
+
+# Shared properties for Dataset
+class DatasetBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    custom_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON)) # Renamed from metadata
+
+# Database table model for Dataset
+class Dataset(DatasetBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id")
+    user_id: int = Field(foreign_key="user.id") # User who created the dataset
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Links to content using lists of IDs
+    datarecord_ids: Optional[List[int]] = Field(default=None, sa_column=Column(ARRAY(Integer)))
+    source_job_ids: Optional[List[int]] = Field(default=None, sa_column=Column(ARRAY(Integer)))
+    source_scheme_ids: Optional[List[int]] = Field(default=None, sa_column=Column(ARRAY(Integer)))
+
+    # Relationships (Optional, add back_populates if needed on Workspace/User)
+    workspace: Optional["Workspace"] = Relationship()
+    user: Optional["User"] = Relationship()
+
+# API model for Dataset creation
+class DatasetCreate(DatasetBase):
+    # IDs are provided during creation
+    datarecord_ids: Optional[List[int]] = None
+    source_job_ids: Optional[List[int]] = None
+    source_scheme_ids: Optional[List[int]] = None
+    # workspace_id and user_id are set from context/path
+    # custom_metadata is inherited from DatasetBase
+
+# API model for Dataset update
+class DatasetUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    custom_metadata: Optional[Dict[str, Any]] = None # Renamed from metadata
+    datarecord_ids: Optional[List[int]] = None
+    source_job_ids: Optional[List[int]] = None
+    source_scheme_ids: Optional[List[int]] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# API model for returning Dataset data
+class DatasetRead(DatasetBase):
+    id: int
+    workspace_id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+    datarecord_ids: Optional[List[int]] = None
+    source_job_ids: Optional[List[int]] = None
+    source_scheme_ids: Optional[List[int]] = None
+    # custom_metadata is inherited from DatasetBase
+
+# API model for returning a list of Datasets
+class DatasetsOut(SQLModel):
+    data: List[DatasetRead]
+    count: int
+
 

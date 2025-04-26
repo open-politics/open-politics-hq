@@ -7,15 +7,15 @@ from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.models import RecurringTask, RecurringTaskStatus, RecurringTaskType
-# Import the specific worker tasks (we'll create these files next)
-from app.tasks.recurring_ingestion import process_recurring_ingest
-from app.tasks.recurring_classification import process_recurring_classify
-from app.core.celery_app import celery # Import celery instance if needed for dispatch
+# Remove direct task imports
+# from app.api.tasks.recurring_ingestion import process_recurring_ingest
+# from app.api.tasks.recurring_classification import process_recurring_classify
+from app.core.celery_app import celery # Ensure celery instance is imported
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-@shared_task(name="app.tasks.scheduling.check_recurring_tasks")
+@shared_task(name="app.api.tasks.scheduling.check_recurring_tasks")
 def check_recurring_tasks():
     """
     Checks for active recurring tasks that are due to run and dispatches them.
@@ -56,11 +56,13 @@ def check_recurring_tasks():
 
                         # Dispatch the appropriate worker task based on type
                         if task.type == RecurringTaskType.INGEST:
-                            process_recurring_ingest.delay(task.id) # Dispatch the actual task
+                            # Use send_task with task name string
+                            celery.send_task("app.api.tasks.recurring_ingestion.process_recurring_ingest", args=[task.id])
                             # logger.info(f"Dispatching INGEST task for {task.id} (Placeholder)")
                             # pass # Placeholder for actual dispatch
                         elif task.type == RecurringTaskType.CLASSIFY:
-                            process_recurring_classify.delay(task.id) # Dispatch the actual task
+                            # Use send_task with task name string
+                            celery.send_task("app.api.tasks.recurring_classification.process_recurring_classify", args=[task.id])
                             # logger.info(f"Dispatching CLASSIFY task for {task.id} (Placeholder)")
                             # pass # Placeholder for actual dispatch
                         else:

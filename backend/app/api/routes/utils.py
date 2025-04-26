@@ -8,7 +8,6 @@ from app.api.deps import get_current_active_superuser
 from app.models import Message
 from app.utils import generate_test_email, send_email
 from app.core.opol_config import opol 
-from app.core.scraping_utils import get_article_content
 
 router = APIRouter(prefix="/utils", tags=["Utilities"])
 
@@ -121,26 +120,30 @@ async def extract_pdf_metadata(
 @router.get("/scrape_article")
 async def scrape_article(url: str):
     """
-    Scrape article content from a URL using the centralized scraping utility.
-
+    Scrape article content from a URL using the centralized OPOL instance.
+    
     Args:
         url: The URL of the article to scrape
-
+        
     Returns:
-        The scraped article content in a standardized format.
+        The scraped article content
     """
-    # No need to check for opol here, utility does it
+    if not opol:
+        raise HTTPException(
+            status_code=501, 
+            detail="OPOL is not available. Make sure the package is installed and properly configured."
+        )
+    
     try:
-        # Call the async utility function and return its result
-        scraped_data = await get_article_content(url)
-        return scraped_data
-    except HTTPException as http_exc:
-        # Re-raise HTTPException from the utility function
-        raise http_exc
+        article_data = opol.scraping.url(url)
+
+        print(article_data)
+        
+        return article_data
+
     except Exception as e:
-        # Catch any other unexpected errors during the call
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error during scraping process: {str(e)}"
+            detail=f"Failed to scrape article: {str(e)}"
         )
     

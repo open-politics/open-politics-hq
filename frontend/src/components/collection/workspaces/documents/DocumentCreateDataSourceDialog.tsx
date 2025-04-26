@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
 import { DataSourceType } from '@/lib/classification/types'; // Use internal type
-import { Loader2, UploadCloud, LinkIcon, FileText, X, FileUp, List, Type, Undo2, RefreshCcw } from 'lucide-react';
+import { Loader2, UploadCloud, LinkIcon, FileText, X, FileSpreadsheet, List, Type, Undo2, RefreshCcw } from 'lucide-react';
 import { useToast } from "@/components/ui/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertTriangle } from "lucide-react"
@@ -20,6 +20,7 @@ import { ScrapeArticleResponse } from '@/lib/scraping/scraping_response';
 import { Switch } from '@/components/ui/switch';
 import { useRecurringTasksStore, RecurringTaskCreate } from '@/zustand_stores/storeRecurringTasks';
 import Cronstrue from 'cronstrue';
+import { DateTimePicker } from '@/components/ui/datetime-picker';
 
 interface CreateDataSourceDialogProps {
   open: boolean;
@@ -29,8 +30,8 @@ interface CreateDataSourceDialogProps {
 
 // Add icons to the types
 const dataSourceTypes: { value: DataSourceType; label: string; description: string; icon: React.ElementType }[] = [
-  { value: 'csv', label: 'CSV File', description: 'Upload a comma-separated values file.', icon: FileUp },
-  { value: 'pdf', label: 'PDF File', description: 'Upload a PDF document.', icon: FileUp }, // Can use same icon or different one
+  { value: 'csv', label: 'CSV File', description: 'Upload a comma-separated values file.', icon: FileSpreadsheet },
+  { value: 'pdf', label: 'PDF File', description: 'Upload a PDF document.', icon: FileSpreadsheet }, // Can use same icon or different one
   { value: 'url_list', label: 'URL List', description: 'Provide a list of URLs to scrape.', icon: List },
   { value: 'text_block', label: 'Text Block', description: 'Paste or type raw text content.', icon: Type },
 ];
@@ -62,6 +63,8 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   const [ingestionSchedule, setIngestionSchedule] = useState('0 0 * * *'); // Default: Daily midnight
   const [cronExplanation, setCronExplanation] = useState('');
   const [isSubmittingRecurring, setIsSubmittingRecurring] = useState(false); // Track second API call
+  // NEW State for timestamp picker
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   // --- End State ---
 
   const selectedTypeInfo = useMemo(() => dataSourceTypes.find(t => t.value === type), [type]);
@@ -88,6 +91,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
     setIngestionSchedule('0 0 * * *');
     setCronExplanation('');
     setIsSubmittingRecurring(false);
+    setSelectedDate(undefined); // ADDED: Reset date
   }, []);
 
   const handleClose = () => {
@@ -250,7 +254,9 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
 
     if (type === 'csv') {
         if (files.length === 1) {
-            formData.append('file', files[0]); // Send single file with key 'file' for CSV
+            // formData.append('file', files[0]); // Send single file with key 'file' for CSV
+            // CORRECTED: Use 'files' key as expected by the backend List[UploadFile]
+            formData.append('files', files[0]);
             // Append skip_rows and delimiter DIRECTLY to FormData if set
             if (showAdvancedCsv) {
                 const skipRowsNum = parseInt(skipRows, 10);
@@ -282,6 +288,18 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
     // This ensures the field is present, even if it's just "{}"
     formData.append('origin_details', JSON.stringify(originDetails));
 
+    // --- REMOVED: Append Timestamp if selected ---
+    /*
+    if (selectedDate) {
+       try {
+          formData.append('user_provided_timestamp', selectedDate.toISOString());
+       } catch (e) {
+          console.error("Error converting date to ISO string:", e);
+          // Optionally set formError here if date conversion fails?
+       }
+    }
+    */
+    // --- END REMOVED ---
 
     // --- Call createDataSource ---
     const createdSource = await createDataSource(formData);

@@ -62,1494 +62,6 @@
         }
       }
     },
-    "/api/v1/locations/{location}/contents": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Contents",
-        "description": "Get articles related to a location with basic pagination.",
-        "operationId": "get_location_contents",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/{location}/entities/contents": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Entities Contents",
-        "description": "Get articles related to a location with basic pagination.",
-        "operationId": "get_location_entities_contents",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/location_from_query": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Location From Query",
-        "operationId": "location_from_query",
-        "parameters": [
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Query"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/geojson/": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Geojson View",
-        "operationId": "geojson_view",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/geojson_events": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Geojson Events View",
-        "operationId": "geojson_events_view",
-        "parameters": [
-          {
-            "name": "event_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Event Type"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/dashboard": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Dashboard View",
-        "operationId": "dashboard_view",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/{location_name}/entities": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Entities",
-        "operationId": "get_location_entities",
-        "parameters": [
-          {
-            "name": "location_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location Name"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 50,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "min_relevance",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "number",
-              "default": 0,
-              "title": "Min Relevance"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/leaders/{state}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Leader Info",
-        "operationId": "get_leader_info",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/legislation/{state}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Legislation Data",
-        "operationId": "get_legislation_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/econ_data/{state}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Econ Data",
-        "operationId": "get_econ_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          },
-          {
-            "name": "indicators",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "default": [
-                "GDP",
-                "GDP_GROWTH"
-              ],
-              "title": "Indicators"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/update_leaders/": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Update Leaders",
-        "operationId": "update_leaders",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/get_articles": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Tavily Data",
-        "operationId": "get_tavily_data",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/get_coordinates": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Coordinates",
-        "description": "Fetches the coordinates, bounding box, and location type for a given location.",
-        "operationId": "get_coordinates",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "en",
-              "title": "Language"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/get_geojson_for_article_ids": {
-      "post": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Geojson For Article Ids",
-        "operationId": "get_geojson_for_article_ids",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array",
-                "title": "Article Ids"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/metadata/{location}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Metadata",
-        "description": "Get metadata about a location including supported features",
-        "operationId": "get_location_metadata",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/channel/{service_name}/{path}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Channel Route",
-        "description": "A channel route that forwards requests to a specified service.",
-        "operationId": "channel_route",
-        "parameters": [
-          {
-            "name": "service_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Service Name"
-            }
-          },
-          {
-            "name": "path",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Path"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Request"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/search/contents": {
-      "get": {
-        "tags": [
-          "search"
-        ],
-        "summary": "Get Contents",
-        "operationId": "get_contents",
-        "parameters": [
-          {
-            "name": "search_query",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search Query"
-            }
-          },
-          {
-            "name": "search_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/app__api__v1__search__routes__SearchType",
-              "default": "semantic"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "news_category",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "News Category"
-            }
-          },
-          {
-            "name": "secondary_categories",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Secondary Categories"
-            }
-          },
-          {
-            "name": "keyword",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Keyword"
-            }
-          },
-          {
-            "name": "entities",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Entities"
-            }
-          },
-          {
-            "name": "locations",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Locations"
-            }
-          },
-          {
-            "name": "topics",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Topics"
-            }
-          },
-          {
-            "name": "classification_scores",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Classification Scores"
-            }
-          },
-          {
-            "name": "keyword_weights",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Keyword Weights"
-            }
-          },
-          {
-            "name": "exclude_keywords",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Exclude Keywords"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/search/most_relevant_entities": {
-      "post": {
-        "tags": [
-          "search"
-        ],
-        "summary": "Get Most Relevant Entities",
-        "operationId": "get_most_relevant_entities",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MostRelevantEntitiesRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/search/search_synthesizer": {
-      "get": {
-        "tags": [
-          "search"
-        ],
-        "summary": "Search Synthesizer",
-        "operationId": "search_synthesizer",
-        "parameters": [
-          {
-            "name": "search_query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Search Query"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/{location}/articles": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Location Articles",
-        "operationId": "get_location_articles",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "search_query",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search Query"
-            }
-          },
-          {
-            "name": "search_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/app__api__v1__entities__routes__SearchType",
-              "default": "text"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/geojson/": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Geojson View",
-        "operationId": "geojson_view",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/{entity_name}/articles": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Entity Articles",
-        "operationId": "get_entity_articles",
-        "parameters": [
-          {
-            "name": "entity_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Entity Name"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/leaders/{state}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Leader Info",
-        "operationId": "get_leader_info",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/legislation/{state}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Legislation Data",
-        "operationId": "get_legislation_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/econ_data/{state}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Econ Data",
-        "operationId": "get_econ_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          },
-          {
-            "name": "indicators",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "default": [
-                "GDP",
-                "GDP_GROWTH"
-              ],
-              "title": "Indicators"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/update_leaders/": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Update Leaders",
-        "operationId": "update_leaders",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/get_articles": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Tavily Data",
-        "operationId": "get_tavily_data",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/score_over_time/{entity}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Entity Score Over Time",
-        "operationId": "get_entity_score_over_time",
-        "parameters": [
-          {
-            "name": "entity",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Entity"
-            }
-          },
-          {
-            "name": "score_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Score Type"
-            }
-          },
-          {
-            "name": "timeframe_from",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Timeframe From"
-            }
-          },
-          {
-            "name": "timeframe_to",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Timeframe To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/top_entities_by_score": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Top Entities By Score",
-        "operationId": "get_top_entities_by_score",
-        "parameters": [
-          {
-            "name": "score_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Type of score to rank entities by",
-              "title": "Score Type"
-            },
-            "description": "Type of score to rank entities by"
-          },
-          {
-            "name": "timeframe_from",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Start date in ISO format",
-              "title": "Timeframe From"
-            },
-            "description": "Start date in ISO format"
-          },
-          {
-            "name": "timeframe_to",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "End date in ISO format",
-              "title": "Timeframe To"
-            },
-            "description": "End date in ISO format"
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "description": "Number of top entities to retrieve",
-              "default": 10,
-              "title": "Limit"
-            },
-            "description": "Number of top entities to retrieve"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/login/access-token": {
       "post": {
         "tags": [
@@ -2470,7 +982,7 @@
           "Utilities"
         ],
         "summary": "Scrape Article",
-        "description": "Scrape article content from a URL using the centralized scraping utility.\n\nArgs:\n    url: The URL of the article to scrape\n\nReturns:\n    The scraped article content in a standardized format.",
+        "description": "Scrape article content from a URL using the centralized OPOL instance.\n\nArgs:\n    url: The URL of the article to scrape\n    \nReturns:\n    The scraped article content",
         "operationId": "scrape_article",
         "parameters": [
           {
@@ -2759,6 +1271,472 @@
         }
       }
     },
+    "/api/v1/shareables/shareables/": {
+      "post": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Create Shareable Link",
+        "description": "Create a new shareable link for a resource.\nTransaction managed by SessionDep.",
+        "operationId": "create_shareable_link",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareableLinkCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareableLinkRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Get Shareable Links",
+        "description": "Get all shareable links for the current user.\nCan be filtered by resource_type and resource_id.",
+        "operationId": "get_shareable_links",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "resource_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ResourceType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by resource type",
+              "title": "Resource Type"
+            },
+            "description": "Filter by resource type"
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by resource ID",
+              "title": "Resource Id"
+            },
+            "description": "Filter by resource ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ShareableLinkRead"
+                  },
+                  "title": "Response Shareables-Get Shareable Links"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shareables/shareables/stats": {
+      "get": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Get Shareable Link Stats",
+        "description": "Get statistics about shareable links for the current user.",
+        "operationId": "get_shareable_link_stats",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareableLinkStats"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/shareables/shareables/{link_id}": {
+      "get": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Get Shareable Link",
+        "description": "Get a specific shareable link by ID.",
+        "operationId": "get_shareable_link",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Link Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareableLinkRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Update Shareable Link",
+        "description": "Update a shareable link by ID.\nTransaction managed by SessionDep.",
+        "operationId": "update_shareable_link",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Link Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareableLinkUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareableLinkRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Delete Shareable Link",
+        "description": "Delete a shareable link by ID.\nTransaction managed by SessionDep.",
+        "operationId": "delete_shareable_link",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Link Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shareables/shareables/access/{token}": {
+      "get": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Access Shared Resource",
+        "description": "Access a shared resource using its token.\nCan be accessed with or without authentication depending on the link settings.\nAuthentication errors are suppressed to allow access to public resources.",
+        "operationId": "access_shared_resource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shareables/shareables/export": {
+      "post": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Export Resource",
+        "description": "Export a resource to a file.\nReturns a file download.",
+        "operationId": "export_resource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "resource_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceType"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shareables/shareables/import/{workspace_id}": {
+      "post": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Import Resource",
+        "description": "Import a resource from a file into a specific workspace.\nTransaction managed by SessionDep.",
+        "operationId": "import_resource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_shareables-import_resource"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/search_histories/create": {
       "post": {
         "tags": [
@@ -2861,6 +1839,203 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/files/files/": {
+      "post": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "File Upload",
+        "description": "Upload a file to the configured storage provider.\nExpects form-data with a file.\nGenerates a unique object name based on user ID and filename.",
+        "operationId": "file_upload",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_filestorage-file_upload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "File Download",
+        "description": "Download a file from the storage provider.\nExpects query parameter 'file_path' (the object name).\nThe file is saved temporarily and a background task deletes the temp file.",
+        "operationId": "file_download",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "file_path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/v1/files/files/list": {
+      "get": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "List Files",
+        "description": "List all files in the storage bucket.\nNote: This might list files for all users depending on bucket setup.\nConsider adding user-specific prefix filtering if needed.",
+        "operationId": "list_files",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Filestorage-List Files"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/files/files/{object_name}": {
+      "delete": {
+        "tags": [
+          "filestorage",
+          "files"
+        ],
+        "summary": "Delete File",
+        "description": "Delete a file (object) from the storage provider.\nRequires the full object name/path.\nTODO: Add authorization check - does this user own this file?\n      (e.g., check if object_name starts with f\"user_{current_user.id}/\")",
+        "operationId": "delete_file",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "object_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Object Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
           }
         }
       }
@@ -3217,7 +2392,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Workspaces-Delete Workspace"
+                  "$ref": "#/components/schemas/Message"
                 }
               }
             }
@@ -3262,218 +2437,14 @@
         ]
       }
     },
-    "/api/v1/files/": {
-      "post": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "File Upload",
-        "description": "Upload a file to Minio.\nExpects form-data with a file.",
-        "operationId": "file_upload",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_filestorage-file_upload"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FileUploadResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "File Download",
-        "description": "Download a file from Minio.\nExpects query parameters for storage_id and file_path.\nThe file is saved temporarily and a background task deletes the temp file.",
-        "operationId": "file_download",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "storage_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Storage Id"
-            }
-          },
-          {
-            "name": "file_path",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "File Path"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        }
-      }
-    },
-    "/api/v1/files/list": {
-      "get": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "List Files",
-        "description": "List all files in the storage bucket.",
-        "operationId": "list_files",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array",
-                  "title": "Response Filestorage-List Files"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/files/{filename}": {
-      "delete": {
-        "tags": [
-          "filestorage",
-          "files"
-        ],
-        "summary": "Delete File",
-        "description": "Delete a file from the storage bucket.",
-        "operationId": "delete_file",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "filename",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Filename"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        }
-      }
-    },
     "/api/v1/workspaces/{workspace_id}/classification_schemes": {
       "post": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Create Classification Scheme",
+        "description": "Create a new classification scheme using the service.",
         "operationId": "create_classification_scheme",
         "security": [
           {
@@ -3502,7 +2473,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -3526,9 +2497,11 @@
       },
       "get": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Read Classification Schemes",
+        "description": "Retrieve classification schemes for the workspace using the service.",
         "operationId": "read_classification_schemes",
         "security": [
           {
@@ -3595,9 +2568,11 @@
       },
       "delete": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Delete All Classification Schemes",
+        "description": "Delete all classification schemes in a workspace using the service.",
         "operationId": "delete_all_classification_schemes",
         "security": [
           {
@@ -3642,9 +2617,11 @@
     "/api/v1/workspaces/{workspace_id}/classification_schemes/": {
       "post": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Create Classification Scheme",
+        "description": "Create a new classification scheme using the service.",
         "operationId": "create_classification_scheme",
         "security": [
           {
@@ -3673,7 +2650,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -3697,9 +2674,11 @@
       },
       "get": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Read Classification Schemes",
+        "description": "Retrieve classification schemes for the workspace using the service.",
         "operationId": "read_classification_schemes",
         "security": [
           {
@@ -3766,9 +2745,11 @@
       },
       "delete": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Delete All Classification Schemes",
+        "description": "Delete all classification schemes in a workspace using the service.",
         "operationId": "delete_all_classification_schemes",
         "security": [
           {
@@ -3813,9 +2794,11 @@
     "/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}": {
       "get": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Read Classification Scheme",
+        "description": "Retrieve a specific classification scheme using the service.",
         "operationId": "read_classification_scheme",
         "security": [
           {
@@ -3867,9 +2850,11 @@
       },
       "patch": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Update Classification Scheme",
+        "description": "Update a classification scheme using the service.",
         "operationId": "update_classification_scheme",
         "security": [
           {
@@ -3931,9 +2916,11 @@
       },
       "delete": {
         "tags": [
-          "classification-schemes"
+          "classification-schemes",
+          "ClassificationSchemes"
         ],
         "summary": "Delete Classification Scheme",
+        "description": "Delete a classification scheme using the service.",
         "operationId": "delete_classification_scheme",
         "security": [
           {
@@ -3961,15 +2948,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Classification-Schemes-Delete Classification Scheme"
-                }
-              }
-            }
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -3991,7 +2971,7 @@
           "ClassificationResults"
         ],
         "summary": "Get Classification Result",
-        "description": "Load (retrieve) an individual classification result by its ID.\nVerifies that the result belongs to the specified workspace via its job.",
+        "description": "Retrieve an individual classification result by its ID using the service.\nThe service handles workspace/user authorization.",
         "operationId": "get_classification_result",
         "security": [
           {
@@ -4049,7 +3029,7 @@
           "ClassificationResults"
         ],
         "summary": "List Classification Results",
-        "description": "List classification results for the workspace, with optional filters.\nRequires workspace ownership verification.\nReturns enhanced results with calculated display_value.",
+        "description": "List classification results for the workspace, with optional filters, using the service.\nThe service handles workspace ownership verification and data fetching.\nReturns enhanced results with calculated display_value.",
         "operationId": "list_classification_results",
         "security": [
           {
@@ -4182,7 +3162,7 @@
           "ClassificationResults"
         ],
         "summary": "List Classification Results",
-        "description": "List classification results for the workspace, with optional filters.\nRequires workspace ownership verification.\nReturns enhanced results with calculated display_value.",
+        "description": "List classification results for the workspace, with optional filters, using the service.\nThe service handles workspace ownership verification and data fetching.\nReturns enhanced results with calculated display_value.",
         "operationId": "list_classification_results",
         "security": [
           {
@@ -4315,7 +3295,7 @@
           "ClassificationResults"
         ],
         "summary": "Get Job Results",
-        "description": "Retrieve all classification results for a specific ClassificationJob.\nVerifies job ownership and workspace context.\nReturns enhanced results with calculated display_value.",
+        "description": "Retrieve all classification results for a specific ClassificationJob using the service.\nThe service handles job ownership and workspace context verification.\nReturns enhanced results with calculated display_value.",
         "operationId": "get_job_results",
         "security": [
           {
@@ -4397,7 +3377,7 @@
           "ClassificationJobs"
         ],
         "summary": "Create Classification Job",
-        "description": "Create a new Classification Job.\n\nValidates workspace ownership and required configuration fields.\nAssociates the job with target DataSources and ClassificationSchemes.\nTriggers a background task to perform the classification.",
+        "description": "Create a new Classification Job.",
         "operationId": "create_classification_job",
         "security": [
           {
@@ -4426,7 +3406,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -4454,7 +3434,7 @@
           "ClassificationJobs"
         ],
         "summary": "List Classification Jobs",
-        "description": "Retrieve Classification Jobs for the workspace.\nOptionally includes counts of results and targeted data records.",
+        "description": "Retrieve Classification Jobs for the workspace.",
         "operationId": "list_classification_jobs",
         "security": [
           {
@@ -4535,7 +3515,7 @@
           "ClassificationJobs"
         ],
         "summary": "Create Classification Job",
-        "description": "Create a new Classification Job.\n\nValidates workspace ownership and required configuration fields.\nAssociates the job with target DataSources and ClassificationSchemes.\nTriggers a background task to perform the classification.",
+        "description": "Create a new Classification Job.",
         "operationId": "create_classification_job",
         "security": [
           {
@@ -4564,7 +3544,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -4592,7 +3572,7 @@
           "ClassificationJobs"
         ],
         "summary": "List Classification Jobs",
-        "description": "Retrieve Classification Jobs for the workspace.\nOptionally includes counts of results and targeted data records.",
+        "description": "Retrieve Classification Jobs for the workspace.",
         "operationId": "list_classification_jobs",
         "security": [
           {
@@ -4741,7 +3721,7 @@
           "ClassificationJobs"
         ],
         "summary": "Update Classification Job",
-        "description": "Update a Classification Job (primarily status or error message).\nUsed internally by background tasks or potentially for manual status changes.",
+        "description": "Update a Classification Job.",
         "operationId": "update_classification_job",
         "security": [
           {
@@ -4807,7 +3787,7 @@
           "ClassificationJobs"
         ],
         "summary": "Delete Classification Job",
-        "description": "Delete a Classification Job and its associated results (due to cascade).",
+        "description": "Delete a Classification Job.",
         "operationId": "delete_classification_job",
         "security": [
           {
@@ -4855,10 +3835,10 @@
       "post": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
         "summary": "Create Datasource",
-        "description": "Create a new DataSource or multiple DataSources (for bulk PDF upload).\nFor PDF uploads, multiple files can be provided; one DataSource will be created per file,\nusing extracted PDF title metadata for the name.\nFor other types (CSV, URL, Text), only one source is created per request.\nCSV options: skip_rows, delimiter.\nTriggers background task(s) for ingestion.",
+        "description": "Create a new DataSource.",
         "operationId": "create_datasource",
         "security": [
           {
@@ -4887,7 +3867,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -4912,11 +3892,11 @@
       "get": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
-        "summary": "Read Datasources",
-        "description": "Retrieve DataSources for the workspace.\nOptionally include the count of associated DataRecords.",
-        "operationId": "read_datasources",
+        "summary": "List Datasources",
+        "description": "List DataSources in a workspace.",
+        "operationId": "list_datasources",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -4993,10 +3973,10 @@
       "post": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
         "summary": "Create Datasource",
-        "description": "Create a new DataSource or multiple DataSources (for bulk PDF upload).\nFor PDF uploads, multiple files can be provided; one DataSource will be created per file,\nusing extracted PDF title metadata for the name.\nFor other types (CSV, URL, Text), only one source is created per request.\nCSV options: skip_rows, delimiter.\nTriggers background task(s) for ingestion.",
+        "description": "Create a new DataSource.",
         "operationId": "create_datasource",
         "security": [
           {
@@ -5025,7 +4005,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -5050,11 +4030,11 @@
       "get": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
-        "summary": "Read Datasources",
-        "description": "Retrieve DataSources for the workspace.\nOptionally include the count of associated DataRecords.",
-        "operationId": "read_datasources",
+        "summary": "List Datasources",
+        "description": "List DataSources in a workspace.",
+        "operationId": "list_datasources",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5131,11 +4111,11 @@
       "get": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
-        "summary": "Read Datasource",
-        "description": "Retrieve a specific DataSource by its ID.",
-        "operationId": "read_datasource",
+        "summary": "Get Datasource",
+        "description": "Get a specific DataSource.",
+        "operationId": "get_datasource",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5199,10 +4179,10 @@
       "delete": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
         "summary": "Delete Datasource",
-        "description": "Delete a DataSource and its associated DataRecords (due to cascade).",
+        "description": "Delete a DataSource.",
         "operationId": "delete_datasource",
         "security": [
           {
@@ -5244,16 +4224,82 @@
             }
           }
         }
+      },
+      "put": {
+        "tags": [
+          "datasources",
+          "datasources"
+        ],
+        "summary": "Update Datasource",
+        "description": "Update an existing DataSource.",
+        "operationId": "update_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/rows": {
       "get": {
         "tags": [
           "datasources",
-          "DataSources"
+          "datasources"
         ],
         "summary": "Read Datasource Rows",
-        "description": "Retrieve rows from a CSV DataSource, with pagination.\nUses stored configuration and sanitizes row data.",
+        "description": "Get rows from a CSV DataSource.",
         "operationId": "read_datasource_rows",
         "security": [
           {
@@ -5286,11 +4332,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Number of rows to skip (relative to data rows, after header)",
+              "description": "Number of rows to skip",
               "default": 0,
               "title": "Skip"
             },
-            "description": "Number of rows to skip (relative to data rows, after header)"
+            "description": "Number of rows to skip"
           },
           {
             "name": "limit",
@@ -5331,15 +4377,117 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/content": {
+      "get": {
+        "tags": [
+          "datasources",
+          "datasources"
+        ],
+        "summary": "Get Datasource Content",
+        "description": "Get the raw content of a PDF DataSource.",
+        "operationId": "get_datasource_content",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/pdf_download": {
+      "get": {
+        "tags": [
+          "datasources",
+          "datasources"
+        ],
+        "summary": "Download Datasource Pdf",
+        "description": "Download the PDF file for a DataSource.",
+        "operationId": "download_datasource_pdf",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}": {
       "get": {
         "tags": [
           "datarecords",
-          "DataRecords"
+          "datarecords"
         ],
-        "summary": "Get Data Record",
-        "description": "Retrieve a specific DataRecord by its ID.\nVerifies workspace ownership by checking the associated DataSource.",
-        "operationId": "get_data_record",
+        "summary": "Get Datarecord",
+        "description": "Get a specific DataRecord.",
+        "operationId": "get_datarecord",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5393,11 +4541,11 @@
       "get": {
         "tags": [
           "datarecords",
-          "DataRecords"
+          "datarecords"
         ],
-        "summary": "List Data Records For Datasource",
-        "description": "Retrieve DataRecords associated with a specific DataSource.\nVerifies workspace ownership by checking the DataSource.",
-        "operationId": "list_data_records_for_datasource",
+        "summary": "List Datarecords",
+        "description": "List DataRecords for a specific DataSource.",
+        "operationId": "list_datarecords",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5453,7 +4601,7 @@
                   "items": {
                     "$ref": "#/components/schemas/DataRecordRead"
                   },
-                  "title": "Response Datarecords-List Data Records For Datasource"
+                  "title": "Response Datarecords-List Datarecords"
                 }
               }
             }
@@ -5475,11 +4623,11 @@
       "post": {
         "tags": [
           "datarecords",
-          "DataRecords"
+          "datarecords"
         ],
-        "summary": "Append Record To Datasource",
-        "description": "Append a single new record (text or URL) to an existing DataSource.\nOnly supports TEXT_BLOCK and URL_LIST types.\nIf content_type is 'url', it will be scraped.\nAn optional event_timestamp (ISO 8601) can be provided.",
-        "operationId": "append_record_to_datasource",
+        "summary": "Append Record",
+        "description": "Append a record to a DataSource.",
+        "operationId": "append_record",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -5516,7 +4664,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -5542,10 +4690,11 @@
     "/api/v1/workspaces/{workspace_id}/recurring_tasks/": {
       "post": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Create Recurring Task",
-        "description": "Create a new Recurring Task for the workspace.",
+        "description": "Create a new Recurring Task using the service.",
         "operationId": "create_recurring_task",
         "security": [
           {
@@ -5574,7 +4723,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -5598,10 +4747,11 @@
       },
       "get": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Read Recurring Tasks",
-        "description": "Retrieve Recurring Tasks for the workspace.",
+        "description": "Retrieve Recurring Tasks for the workspace using the service.",
         "operationId": "read_recurring_tasks",
         "security": [
           {
@@ -5684,10 +4834,11 @@
     "/api/v1/workspaces/{workspace_id}/recurring_tasks": {
       "post": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Create Recurring Task",
-        "description": "Create a new Recurring Task for the workspace.",
+        "description": "Create a new Recurring Task using the service.",
         "operationId": "create_recurring_task",
         "security": [
           {
@@ -5716,7 +4867,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -5740,10 +4891,11 @@
       },
       "get": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Read Recurring Tasks",
-        "description": "Retrieve Recurring Tasks for the workspace.",
+        "description": "Retrieve Recurring Tasks for the workspace using the service.",
         "operationId": "read_recurring_tasks",
         "security": [
           {
@@ -5826,10 +4978,11 @@
     "/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}": {
       "get": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Read Recurring Task",
-        "description": "Retrieve a specific Recurring Task by its ID.",
+        "description": "Retrieve a specific Recurring Task by its ID using the service.",
         "operationId": "read_recurring_task",
         "security": [
           {
@@ -5881,10 +5034,11 @@
       },
       "patch": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Update Recurring Task",
-        "description": "Update a Recurring Task.",
+        "description": "Update a Recurring Task using the service.",
         "operationId": "update_recurring_task",
         "security": [
           {
@@ -5946,10 +5100,11 @@
       },
       "delete": {
         "tags": [
+          "recurring-tasks",
           "RecurringTasks"
         ],
         "summary": "Delete Recurring Task",
-        "description": "Delete a Recurring Task.",
+        "description": "Delete a Recurring Task using the service.",
         "operationId": "delete_recurring_task",
         "security": [
           {
@@ -5979,6 +5134,1833 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasets/": {
+      "post": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Create Dataset",
+        "description": "Create a new dataset within a specific workspace.",
+        "operationId": "create_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "List Datasets",
+        "description": "Retrieve datasets within a specific workspace.",
+        "operationId": "list_datasets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasets": {
+      "post": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Create Dataset",
+        "description": "Create a new dataset within a specific workspace.",
+        "operationId": "create_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "List Datasets",
+        "description": "Retrieve datasets within a specific workspace.",
+        "operationId": "list_datasets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasets/{dataset_id}": {
+      "get": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Get Dataset",
+        "description": "Get a specific dataset by ID.",
+        "operationId": "get_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Update Dataset",
+        "description": "Update a dataset.",
+        "operationId": "update_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Delete Dataset",
+        "description": "Delete a dataset.",
+        "operationId": "delete_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasets/{dataset_id}/export": {
+      "post": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Export Dataset",
+        "description": "Export a specific dataset as a self-contained package (JSON).",
+        "operationId": "export_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "include_content",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include full text content of data records",
+              "default": false,
+              "title": "Include Content"
+            },
+            "description": "Include full text content of data records"
+          },
+          {
+            "name": "include_results",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include associated classification results",
+              "default": false,
+              "title": "Include Results"
+            },
+            "description": "Include associated classification results"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Datasets-Export Dataset"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasets/import": {
+      "post": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Import Dataset",
+        "description": "Import a dataset from an exported Dataset Package file.",
+        "operationId": "import_dataset",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "conflict_strategy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "How to handle conflicts",
+              "default": "skip",
+              "title": "Conflict Strategy"
+            },
+            "description": "How to handle conflicts"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_datasets-import_dataset"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasets/import_from_token": {
+      "post": {
+        "tags": [
+          "datasets",
+          "datasets"
+        ],
+        "summary": "Import Dataset From Token",
+        "description": "Import a dataset into the target workspace using a share token.\nThis internally performs an export from the source and then an import.",
+        "operationId": "import_dataset_from_token",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "share_token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Share token for the dataset",
+              "title": "Share Token"
+            },
+            "description": "Share token for the dataset"
+          },
+          {
+            "name": "include_content",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include full text content if available",
+              "default": false,
+              "title": "Include Content"
+            },
+            "description": "Include full text content if available"
+          },
+          {
+            "name": "include_results",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include classification results if available",
+              "default": false,
+              "title": "Include Results"
+            },
+            "description": "Include classification results if available"
+          },
+          {
+            "name": "conflict_strategy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "How to handle conflicts",
+              "default": "skip",
+              "title": "Conflict Strategy"
+            },
+            "description": "How to handle conflicts"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/{location}/contents": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Location Contents",
+        "description": "Get articles related to a location with basic pagination.",
+        "operationId": "get_location_contents",
+        "parameters": [
+          {
+            "name": "location",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/{location}/entities/contents": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Location Entities Contents",
+        "description": "Get articles related to a location with basic pagination.",
+        "operationId": "get_location_entities_contents",
+        "parameters": [
+          {
+            "name": "location",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/location_from_query": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Location From Query",
+        "operationId": "location_from_query",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Query"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/geojson/": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Geojson View",
+        "operationId": "geojson_view",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/geojson_events": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Geojson Events View",
+        "operationId": "geojson_events_view",
+        "parameters": [
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/dashboard": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Dashboard View",
+        "operationId": "dashboard_view",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/{location_name}/entities": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Location Entities",
+        "operationId": "get_location_entities",
+        "parameters": [
+          {
+            "name": "location_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location Name"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "min_relevance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 0,
+              "title": "Min Relevance"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/leaders/{state}": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Leader Info",
+        "operationId": "get_leader_info",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/legislation/{state}": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Legislation Data",
+        "operationId": "get_legislation_data",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/econ_data/{state}": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Econ Data",
+        "operationId": "get_econ_data",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State"
+            }
+          },
+          {
+            "name": "indicators",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [
+                "GDP",
+                "GDP_GROWTH"
+              ],
+              "title": "Indicators"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/update_leaders/": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Update Leaders",
+        "operationId": "update_leaders",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/get_articles": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Tavily Data",
+        "operationId": "get_tavily_data",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/get_coordinates": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Coordinates",
+        "description": "Fetches the coordinates, bounding box, and location type for a given location.",
+        "operationId": "get_coordinates",
+        "parameters": [
+          {
+            "name": "location",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "en",
+              "title": "Language"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/get_geojson_for_article_ids": {
+      "post": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Geojson For Article Ids",
+        "operationId": "get_geojson_for_article_ids",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "title": "Article Ids"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/metadata/{location}": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Get Location Metadata",
+        "description": "Get metadata about a location including supported features",
+        "operationId": "get_location_metadata",
+        "parameters": [
+          {
+            "name": "location",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/locations/channel/{service_name}/{path}": {
+      "get": {
+        "tags": [
+          "locations"
+        ],
+        "summary": "Channel Route",
+        "description": "A channel route that forwards requests to a specified service.",
+        "operationId": "channel_route",
+        "parameters": [
+          {
+            "name": "service_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Service Name"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search/contents": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Get Contents",
+        "operationId": "get_contents",
+        "parameters": [
+          {
+            "name": "search_query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search Query"
+            }
+          },
+          {
+            "name": "search_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SearchType",
+              "default": "semantic"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "news_category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "News Category"
+            }
+          },
+          {
+            "name": "secondary_categories",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Secondary Categories"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "entities",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entities"
+            }
+          },
+          {
+            "name": "locations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locations"
+            }
+          },
+          {
+            "name": "topics",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topics"
+            }
+          },
+          {
+            "name": "classification_scores",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Classification Scores"
+            }
+          },
+          {
+            "name": "keyword_weights",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword Weights"
+            }
+          },
+          {
+            "name": "exclude_keywords",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Exclude Keywords"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search/most_relevant_entities": {
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Get Most Relevant Entities",
+        "operationId": "get_most_relevant_entities",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MostRelevantEntitiesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search/search_synthesizer": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Search Synthesizer",
+        "operationId": "search_synthesizer",
+        "parameters": [
+          {
+            "name": "search_query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Query"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/entities/": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Search Entities",
+        "description": "Search and paginate through entities based on a query.",
+        "operationId": "search_entities",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Search query for entities",
+              "title": "Query"
+            },
+            "description": "Search query for entities"
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of records to skip",
+              "default": 0,
+              "title": "Skip"
+            },
+            "description": "Number of records to skip"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Maximum number of records to return",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum number of records to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/entities/by_entity": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Get Entity Details",
+        "description": "Retrieve detailed information about a specific entity.",
+        "operationId": "get_entity_details",
+        "parameters": [
+          {
+            "name": "entity",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Entity for details",
+              "title": "Entity"
+            },
+            "description": "Entity for details"
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of records to skip",
+              "default": 0,
+              "title": "Skip"
+            },
+            "description": "Number of records to skip"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Maximum number of records to return",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum number of records to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -6552,7 +7534,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-04-23",
+              "default": "2025-04-26",
               "title": "Timeframe To"
             }
           }
@@ -6586,7 +7568,8 @@
         "properties": {
           "content": {
             "type": "string",
-            "title": "Content"
+            "title": "Content",
+            "description": "The text content or URL to append"
           },
           "content_type": {
             "type": "string",
@@ -6594,7 +7577,8 @@
               "text",
               "url"
             ],
-            "title": "Content Type"
+            "title": "Content Type",
+            "description": "Type of content being appended"
           },
           "event_timestamp": {
             "anyOf": [
@@ -6614,7 +7598,8 @@
           "content",
           "content_type"
         ],
-        "title": "AppendRecordInput"
+        "title": "AppendRecordInput",
+        "description": "Input model for appending a record to a datasource."
       },
       "ArticleResponse": {
         "properties": {
@@ -6632,6 +7617,21 @@
           "contents"
         ],
         "title": "ArticleResponse"
+      },
+      "Body_datasets-import_dataset": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Dataset Package JSON file (.json)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_datasets-import_dataset"
       },
       "Body_datasources-create_datasource": {
         "properties": {
@@ -6774,6 +7774,20 @@
           "password"
         ],
         "title": "Body_login-login_access_token"
+      },
+      "Body_shareables-import_resource": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_shareables-import_resource"
       },
       "Body_utils-extract_pdf_metadata": {
         "properties": {
@@ -7043,6 +8057,7 @@
         "enum": [
           "pending",
           "running",
+          "paused",
           "completed",
           "completed_with_errors",
           "failed"
@@ -7424,20 +8439,37 @@
             "title": "Id"
           },
           "datasource_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Datasource Id"
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
           }
         },
         "type": "object",
         "required": [
           "text_content",
           "id",
-          "datasource_id",
           "created_at"
         ],
         "title": "DataRecordRead"
@@ -7445,7 +8477,14 @@
       "DataSourceRead": {
         "properties": {
           "name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Name"
           },
           "type": {
@@ -7508,11 +8547,21 @@
               }
             ],
             "title": "Data Record Count"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           }
         },
         "type": "object",
         "required": [
-          "name",
           "type",
           "id",
           "workspace_id",
@@ -7538,11 +8587,57 @@
         "enum": [
           "csv",
           "pdf",
+          "bulk_pdf",
+          "url",
           "url_list",
           "text_block"
         ],
         "title": "DataSourceType",
         "description": "Defines the type of data source."
+      },
+      "DataSourceUpdate": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DataSourceStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Metadata"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "title": "DataSourceUpdate"
       },
       "DataSourcesOut": {
         "properties": {
@@ -7564,6 +8659,283 @@
           "count"
         ],
         "title": "DataSourcesOut"
+      },
+      "DatasetCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "custom_metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Custom Metadata"
+          },
+          "datarecord_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Datarecord Ids"
+          },
+          "source_job_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Job Ids"
+          },
+          "source_scheme_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Scheme Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DatasetCreate"
+      },
+      "DatasetRead": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "custom_metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Custom Metadata"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "workspace_id": {
+            "type": "integer",
+            "title": "Workspace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "datarecord_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Datarecord Ids"
+          },
+          "source_job_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Job Ids"
+          },
+          "source_scheme_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Scheme Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id",
+          "workspace_id",
+          "user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DatasetRead"
+      },
+      "DatasetUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "custom_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Metadata"
+          },
+          "datarecord_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Datarecord Ids"
+          },
+          "source_job_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Job Ids"
+          },
+          "source_scheme_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Scheme Ids"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "title": "DatasetUpdate"
+      },
+      "DatasetsOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "DatasetsOut"
       },
       "DictKeyDefinition": {
         "properties": {
@@ -7666,18 +9038,18 @@
           "filename": {
             "type": "string",
             "title": "Filename",
-            "description": "Uploaded filename"
+            "description": "Original uploaded filename"
           },
-          "storage_id": {
+          "object_name": {
             "type": "string",
-            "title": "Storage Id",
-            "description": "Storage ID"
+            "title": "Object Name",
+            "description": "Object name in storage"
           }
         },
         "type": "object",
         "required": [
           "filename",
-          "storage_id"
+          "object_name"
         ],
         "title": "FileUploadResponse"
       },
@@ -7847,6 +9219,16 @@
           "new_password"
         ],
         "title": "NewPassword"
+      },
+      "PermissionLevel": {
+        "type": "string",
+        "enum": [
+          "read_only",
+          "edit",
+          "full_access"
+        ],
+        "title": "PermissionLevel",
+        "description": "Enumeration of permission levels for shared resources."
       },
       "QueryType": {
         "properties": {
@@ -8136,6 +9518,18 @@
         "title": "Request",
         "description": "Request object for search synthesizer"
       },
+      "ResourceType": {
+        "type": "string",
+        "enum": [
+          "data_source",
+          "schema",
+          "workspace",
+          "classification_job",
+          "dataset"
+        ],
+        "title": "ResourceType",
+        "description": "Enumeration of resource types that can be shared."
+      },
       "SearchHistoriesOut": {
         "properties": {
           "data": {
@@ -8236,6 +9630,345 @@
           "user_id"
         ],
         "title": "SearchHistoryRead"
+      },
+      "SearchType": {
+        "type": "string",
+        "enum": [
+          "text",
+          "semantic",
+          "structured"
+        ],
+        "title": "SearchType"
+      },
+      "ShareableLinkCreate": {
+        "properties": {
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "resource_id": {
+            "type": "integer",
+            "title": "Resource Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "permission_level": {
+            "$ref": "#/components/schemas/PermissionLevel",
+            "default": "read_only"
+          },
+          "is_public": {
+            "type": "boolean",
+            "title": "Is Public",
+            "default": false
+          },
+          "requires_login": {
+            "type": "boolean",
+            "title": "Requires Login",
+            "default": true
+          },
+          "expiration_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration Date"
+          },
+          "max_uses": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Uses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "resource_id"
+        ],
+        "title": "ShareableLinkCreate",
+        "description": "Schema for creating a new shareable link."
+      },
+      "ShareableLinkRead": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "permission_level": {
+            "$ref": "#/components/schemas/PermissionLevel",
+            "default": "read_only"
+          },
+          "is_public": {
+            "type": "boolean",
+            "title": "Is Public",
+            "default": false
+          },
+          "requires_login": {
+            "type": "boolean",
+            "title": "Requires Login",
+            "default": true
+          },
+          "expiration_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration Date"
+          },
+          "max_uses": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Uses"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "resource_id": {
+            "type": "integer",
+            "title": "Resource Id"
+          },
+          "use_count": {
+            "type": "integer",
+            "title": "Use Count"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "share_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "token",
+          "user_id",
+          "resource_type",
+          "resource_id",
+          "use_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ShareableLinkRead",
+        "description": "Schema for reading a shareable link."
+      },
+      "ShareableLinkStats": {
+        "properties": {
+          "total_links": {
+            "type": "integer",
+            "title": "Total Links"
+          },
+          "active_links": {
+            "type": "integer",
+            "title": "Active Links"
+          },
+          "expired_links": {
+            "type": "integer",
+            "title": "Expired Links"
+          },
+          "links_by_resource_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Links By Resource Type"
+          },
+          "most_shared_resources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Most Shared Resources"
+          },
+          "most_used_links": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Most Used Links"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_links",
+          "active_links",
+          "expired_links",
+          "links_by_resource_type",
+          "most_shared_resources",
+          "most_used_links"
+        ],
+        "title": "ShareableLinkStats"
+      },
+      "ShareableLinkUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "permission_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PermissionLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Public"
+          },
+          "requires_login": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Login"
+          },
+          "expiration_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration Date"
+          },
+          "max_uses": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Uses"
+          }
+        },
+        "type": "object",
+        "title": "ShareableLinkUpdate",
+        "description": "Schema for updating a shareable link."
       },
       "Token": {
         "properties": {
@@ -8641,23 +10374,6 @@
         },
         "type": "object",
         "title": "WorkspaceUpdate"
-      },
-      "app__api__v1__entities__routes__SearchType": {
-        "type": "string",
-        "enum": [
-          "text",
-          "semantic"
-        ],
-        "title": "SearchType"
-      },
-      "app__api__v1__search__routes__SearchType": {
-        "type": "string",
-        "enum": [
-          "text",
-          "semantic",
-          "structured"
-        ],
-        "title": "SearchType"
       }
     },
     "securitySchemes": {

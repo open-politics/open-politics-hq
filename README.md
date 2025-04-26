@@ -23,6 +23,8 @@ We're building tools that support:
 
 **Methodical research** - Combining technical innovation with structured analytical approaches to political information
 
+**Collaborative analysis** - Sharing resources with team members and the public through flexible permission levels and shareable links
+
 Whether you're analysing news coverage, tracking political advocacy efforts, generating visual reports, exploring geospatial data, or mapping structured arguments from coalition talks, we build tools that help make sense of today's information environment.
 
 #### Status
@@ -44,6 +46,7 @@ Whether you're analysing news coverage, tracking political advocacy efforts, gen
 ## Table of Contents
 - [About](#about)
 - [Our Approach](#our-approach)
+- [Key Features](#key-features)
 - [Why Open Politics Exists](#why-open-politics-exists)
 - [Usage/Installation](#usageinstallation)
 - [Contributing](#contributing)
@@ -59,6 +62,28 @@ Here's a glimpse of what we're building:
 ![HQ Classification Runner](.github/assets/gifs/HQ-Recording-Runner-Github-001.gif)
 
 The classification runner of HQ lets you classify, extract and work with structured data to analyse and visualise data according to your needs. The possibilities are endless!
+
+## Key Features
+
+### Classification & Analysis
+Run powerful classification tasks to extract structured data from unstructured text using LLMs.
+
+### Data Sources Management
+Manage various data sources including URL lists, text documents, and more in a unified interface.
+
+### Workspaces
+Organize your work in collaborative workspaces with customizable settings.
+
+### Shareable Links
+Share your resources with others through secure, customizable links:
+- Share data sources, classification schemes, workspaces, and analysis results
+- Set granular permission levels (read-only, edit, full access)
+- Control access with expiration dates and usage limits
+- Make resources public or private
+- Track usage statistics
+
+### Export & Import
+Export your data in standardized formats and import them in other workspaces or share with colleagues.
 
 ## Why Open Politics Exists
 

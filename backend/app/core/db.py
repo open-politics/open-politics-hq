@@ -22,6 +22,11 @@ def init_db(session: Session) -> None:
     # But if you don't want to use migrations, create
     # the tables un-commenting the next lines
 
+    from app.api.services.providers.storage import get_storage_provider
+
+    storage_provider = get_storage_provider()
+
+    assert storage_provider is not None, "Storage provider not initialized"
 
     if os.environ.get("WIPE_DB") == "True":
         logger.info("Wiping DB")

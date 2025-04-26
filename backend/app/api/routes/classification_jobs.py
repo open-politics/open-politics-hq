@@ -1,28 +1,29 @@
 import logging
 from typing import Any, List, Optional, Dict
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, select, func
-from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query, status # Added status
+# Removed unused imports like select, func
 
+# Models
 from app.models import (
-    ClassificationJob,
-    ClassificationJobCreate,
     ClassificationJobRead,
+    ClassificationJobCreate,
     ClassificationJobUpdate,
-    ClassificationJobStatus,
     ClassificationJobsOut,
-    Workspace,
-    User,
-    DataSource,
+    ClassificationJob,
+    ClassificationJobStatus,
     ClassificationScheme,
-    ClassificationResult,
-    DataRecord,
-    ClassificationJobDataSourceLink,
-    ClassificationJobSchemeLink
+    DataSource,
+    ClassificationResult
 )
-from app.api.deps import SessionDep, CurrentUser
-from app.tasks.classification import process_classification_job
+# Deps: Remove SessionDep if not needed, keep CurrentUser
+from app.api.deps import SessionDep, CurrentUser, ClassificationProviderDep
+# Service: Import class directly for DI
+# from app.api.services.classification import ClassificationService
+# Task import removed, service handles triggering
+from app.api.tasks.classification import process_classification_job
+from app.api.services.service_utils import validate_workspace_access
+from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,291 +33,321 @@ router = APIRouter(
     tags=["ClassificationJobs"]
 )
 
-@router.post("", response_model=ClassificationJobRead)
-@router.post("/", response_model=ClassificationJobRead)
+@router.post("", response_model=ClassificationJobRead, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=ClassificationJobRead, status_code=status.HTTP_201_CREATED)
 def create_classification_job(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
-    job_in: ClassificationJobCreate
+    job_in: ClassificationJobCreate,
+    session: SessionDep,
+    classification_provider: ClassificationProviderDep
 ) -> Any:
     """
     Create a new Classification Job.
-
-    Validates workspace ownership and required configuration fields.
-    Associates the job with target DataSources and ClassificationSchemes.
-    Triggers a background task to perform the classification.
     """
-    logger.info(f"Creating ClassificationJob '{job_in.name}' in workspace {workspace_id}")
+    logger.info(f"Route: Creating ClassificationJob '{job_in.name}' in workspace {workspace_id}")
 
-    # 1. Verify Workspace Access
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace or workspace.user_id_ownership != current_user.id:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    # 2. Validate Configuration and Fetch Related Objects
-    datasource_ids = job_in.configuration.get('datasource_ids', [])
-    scheme_ids = job_in.configuration.get('scheme_ids', [])
-
-    if not datasource_ids or not scheme_ids:
-         raise HTTPException(status_code=400, detail="Configuration must include non-empty 'datasource_ids' and 'scheme_ids' lists")
-
-    # Fetch and validate datasources
-    datasources = session.exec(
-        select(DataSource).where(
-            DataSource.id.in_(datasource_ids),
-            DataSource.workspace_id == workspace_id
-        )
-    ).all()
-    if len(datasources) != len(datasource_ids):
-        raise HTTPException(status_code=404, detail="One or more specified DataSources not found in this workspace.")
-
-    # Fetch and validate schemes
-    schemes = session.exec(
-        select(ClassificationScheme).where(
-            ClassificationScheme.id.in_(scheme_ids),
-            ClassificationScheme.workspace_id == workspace_id
-        )
-    ).all()
-    if len(schemes) != len(scheme_ids):
-        raise HTTPException(status_code=404, detail="One or more specified ClassificationSchemes not found in this workspace.")
-
-    # 3. Create ClassificationJob instance
-    job = ClassificationJob.model_validate(
-        job_in.model_dump(),
-        update={
-            "workspace_id": workspace_id,
-            "user_id": current_user.id,
-            "status": ClassificationJobStatus.PENDING,
-            "target_datasources": datasources,
-            "target_schemes": schemes
-        }
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    logger.info(f"ClassificationJob {job.id} created successfully with status PENDING.")
-
-    # 4. Trigger Background Classification Task
     try:
-        # Trigger the main task that orchestrates classifications
-        process_classification_job.delay(job.id)
-        logger.info(f"Queued classification task for Job {job.id}")
-    except Exception as e:
-        logger.error(f"Failed to trigger classification task for Job {job.id}: {e}")
-        # Update job status to failed if trigger fails?
-        job.status = ClassificationJobStatus.FAILED
-        job.error_message = f"Failed to queue task: {e}"
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+        
+        # Validate that the datasource exists and belongs to the workspace
+        datasource = session.get(DataSource, job_in.datasource_id)
+        if not datasource:
+            raise ValueError(f"DataSource with ID {job_in.datasource_id} not found")
+        if datasource.workspace_id != workspace_id:
+            raise ValueError(f"DataSource with ID {job_in.datasource_id} does not belong to workspace {workspace_id}")
+        
+        # Validate that the classification scheme exists and belongs to the workspace
+        scheme = session.get(ClassificationScheme, job_in.scheme_id)
+        if not scheme:
+            raise ValueError(f"ClassificationScheme with ID {job_in.scheme_id} not found")
+        if scheme.workspace_id != workspace_id:
+            raise ValueError(f"ClassificationScheme with ID {job_in.scheme_id} does not belong to workspace {workspace_id}")
+        
+        # Create the job object
+        job = ClassificationJob(
+            name=job_in.name,
+            description=job_in.description,
+            configuration=job_in.configuration,
+            status=ClassificationJobStatus.PENDING,
+            workspace_id=workspace_id,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        
         session.add(job)
+        session.flush()  # Get ID
+        logger.info(f"Created ClassificationJob {job.id}")
+        
+        # Commit the transaction
         session.commit()
         session.refresh(job)
-        # Don't raise HTTP error here, job is created but task failed
+        
+        # Queue the job for processing
+        try:
+            process_classification_job.delay(job.id)
+            logger.info(f"Queued classification task for job {job.id}")
+        except Exception as task_error:
+            # Log but don't fail the request if task queuing fails
+            logger.error(f"Failed to queue classification task for job {job.id}: {task_error}")
+        
+        # Return the job
+        return ClassificationJobRead.model_validate(job)
 
-    # 5. Return the created job (frontend will poll for status updates)
-    # Populate counts before returning
-    job_read = ClassificationJobRead.model_validate(job)
-    job_read.result_count = 0 # Initial count
-    # Calculate datarecord count (this could be slow for many sources, consider optimizing)
-    datarecord_count_stmt = select(func.count(DataRecord.id)).join(DataSource).where(DataSource.id.in_(datasource_ids))
-    job_read.datarecord_count = session.exec(datarecord_count_stmt).one_or_none() or 0
-
-    return job_read
+    except ValueError as ve:
+        # Handle validation errors
+        session.rollback()
+        logger.error(f"Route: Validation error creating job: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        # Re-raise exceptions from validate_workspace_access
+        session.rollback()
+        raise he
+    except Exception as e:
+        # Handle unexpected errors
+        session.rollback()
+        logger.exception(f"Route: Unexpected error creating job: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
 @router.get("", response_model=ClassificationJobsOut)
 @router.get("/", response_model=ClassificationJobsOut)
 def list_classification_jobs(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     skip: int = 0,
     limit: int = 100,
-    include_counts: bool = Query(True, description="Include counts of results and data records")
+    include_counts: bool = Query(True, description="Include counts of results and data records"),
+    session: SessionDep,
 ) -> Any:
     """
     Retrieve Classification Jobs for the workspace.
-    Optionally includes counts of results and targeted data records.
     """
-    # 1. Verify Workspace Access
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace or workspace.user_id_ownership != current_user.id:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    # 2. Base Query for Jobs
-    statement = select(ClassificationJob).where(
-        ClassificationJob.workspace_id == workspace_id,
-        ClassificationJob.user_id == current_user.id
-    ).order_by(ClassificationJob.created_at.desc())
-
-    # 3. Get Total Count for Pagination
-    count_statement = select(func.count()).select_from(ClassificationJob).where(
-        ClassificationJob.workspace_id == workspace_id,
-        ClassificationJob.user_id == current_user.id
-    )
-    total_count = session.exec(count_statement).one()
-
-    # 4. Apply Pagination
-    statement = statement.offset(skip).limit(limit)
-
-    # 5. Execute Query
-    jobs = session.exec(statement).all()
-
-    # 6. Prepare response models, optionally fetch counts
-    job_reads = []
-    for job in jobs:
-        job_read = ClassificationJobRead.model_validate(job)
-        if include_counts:
-            # Result Count
-            result_count_stmt = select(func.count()).select_from(ClassificationResult).where(ClassificationResult.job_id == job.id)
-            job_read.result_count = session.exec(result_count_stmt).one_or_none() or 0
-
-            # DataRecord Count (extract datasource IDs from job)
-            datasource_ids = job.configuration.get('datasource_ids', [])
-            if datasource_ids:
-                datarecord_count_stmt = select(func.count(DataRecord.id)).join(DataSource).where(DataSource.id.in_(datasource_ids))
-                job_read.datarecord_count = session.exec(datarecord_count_stmt).one_or_none() or 0
-            else:
-                job_read.datarecord_count = 0 # Should not happen if validation works
-        else:
-            job_read.result_count = None
-            job_read.datarecord_count = None
-
-        job_reads.append(job_read)
-
-    return ClassificationJobsOut(data=job_reads, count=total_count)
+    try:
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+        
+        # Build query for jobs
+        query = (
+            select(ClassificationJob)
+            .where(ClassificationJob.workspace_id == workspace_id)
+            .offset(skip)
+            .limit(limit)
+        )
+        
+        # Execute query
+        jobs = session.exec(query).all()
+        
+        # Get total count
+        count_query = select(func.count(ClassificationJob.id)).where(
+            ClassificationJob.workspace_id == workspace_id
+        )
+        total_count = session.exec(count_query).one()
+        
+        # Convert to read models and add counts if requested
+        result_jobs = []
+        for job in jobs:
+            job_read = ClassificationJobRead.model_validate(job)
+            
+            # Add counts if requested
+            if include_counts:
+                # Count results for this job
+                results_count_query = select(func.count(ClassificationResult.id)).where(
+                    ClassificationResult.job_id == job.id
+                )
+                job_read.results_count = session.exec(results_count_query).one() or 0
+                
+                # Can also add datasource record count if needed
+                # This would require a join to datasource and then to datarecords
+            
+            result_jobs.append(job_read)
+            
+        return ClassificationJobsOut(data=result_jobs, count=total_count)
+    
+    except ValueError as ve:
+        # Should not happen if validation is correct
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+    except HTTPException as he:
+        # Re-raise exceptions from validate_workspace_access
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error listing jobs: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
 @router.get("/{job_id}", response_model=ClassificationJobRead)
 def get_classification_job(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     job_id: int,
-    include_counts: bool = Query(True, description="Include counts of results and data records")
+    include_counts: bool = Query(True, description="Include counts of results and data records"),
+    session: SessionDep,
 ) -> Any:
     """
     Retrieve a specific Classification Job by its ID.
     """
-    job = session.get(ClassificationJob, job_id)
-    if (
-        not job
-        or job.workspace_id != workspace_id
-        or job.user_id != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="Classification Job not found")
+    try:
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+        
+        # Get the job
+        job = session.get(ClassificationJob, job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classification Job not found"
+            )
+        
+        # Verify job belongs to workspace
+        if job.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classification Job not found in this workspace"
+            )
+        
+        # Convert to read model
+        job_read = ClassificationJobRead.model_validate(job)
+        
+        # Add counts if requested
+        if include_counts:
+            # Count results for this job
+            results_count_query = select(func.count(ClassificationResult.id)).where(
+                ClassificationResult.job_id == job.id
+            )
+            job_read.results_count = session.exec(results_count_query).one() or 0
+        
+        return job_read
+    
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error getting job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
-    job_read = ClassificationJobRead.model_validate(job)
-
-    if include_counts:
-        # Result Count
-        result_count_stmt = select(func.count()).select_from(ClassificationResult).where(ClassificationResult.job_id == job.id)
-        job_read.result_count = session.exec(result_count_stmt).one_or_none() or 0
-        # DataRecord Count
-        datasource_ids = job.configuration.get('datasource_ids', [])
-        if datasource_ids:
-            datarecord_count_stmt = select(func.count(DataRecord.id)).join(DataSource).where(DataSource.id.in_(datasource_ids))
-            job_read.datarecord_count = session.exec(datarecord_count_stmt).one_or_none() or 0
-        else:
-            job_read.datarecord_count = 0
-    else:
-        job_read.result_count = None
-        job_read.datarecord_count = None
-
-    return job_read
 
 @router.patch("/{job_id}", response_model=ClassificationJobRead)
 def update_classification_job(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     job_id: int,
-    job_in: ClassificationJobUpdate
+    job_in: ClassificationJobUpdate,
+    session: SessionDep,
 ) -> Any:
     """
-    Update a Classification Job (primarily status or error message).
-    Used internally by background tasks or potentially for manual status changes.
+    Update a Classification Job.
     """
-    logger.info(f"Updating ClassificationJob {job_id} in workspace {workspace_id}")
-    job = session.get(ClassificationJob, job_id)
-    if (
-        not job
-        or job.workspace_id != workspace_id
-        or job.user_id != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="Classification Job not found")
-
-    update_data = job_in.model_dump(exclude_unset=True)
-    needs_update = False
-    for key, value in update_data.items():
-        if getattr(job, key) != value:
-            setattr(job, key, value)
-            needs_update = True
-
-    if needs_update:
+    logger.info(f"Route: Updating ClassificationJob {job_id} in workspace {workspace_id}")
+    try:
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+        
+        # Get the job
+        job = session.get(ClassificationJob, job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classification Job not found"
+            )
+        
+        # Verify job belongs to workspace
+        if job.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classification Job not found in this workspace"
+            )
+        
+        # Apply updates
+        update_data = job_in.model_dump(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid fields provided for update"
+            )
+        
+        # Update fields
+        for field, value in update_data.items():
+            setattr(job, field, value)
+        
         job.updated_at = datetime.now(timezone.utc)
+        
+        # Save changes
         session.add(job)
         session.commit()
         session.refresh(job)
-        logger.info(f"ClassificationJob {job_id} updated successfully.")
-    else:
-         logger.info(f"No changes detected for ClassificationJob {job_id}. Update skipped.")
-
-
-    # Return the updated job, populating counts like GET
-    job_read = ClassificationJobRead.model_validate(job)
-    # Result Count
-    result_count_stmt = select(func.count()).select_from(ClassificationResult).where(ClassificationResult.job_id == job.id)
-    job_read.result_count = session.exec(result_count_stmt).one_or_none() or 0
-    # DataRecord Count
-    datasource_ids = job.configuration.get('datasource_ids', [])
-    if datasource_ids:
-        datarecord_count_stmt = select(func.count(DataRecord.id)).join(DataSource).where(DataSource.id.in_(datasource_ids))
-        job_read.datarecord_count = session.exec(datarecord_count_stmt).one_or_none() or 0
-    else:
-        job_read.datarecord_count = 0
-
-    return job_read
-
-
-@router.delete("/{job_id}", status_code=204)
-def delete_classification_job(
-    *,
-    session: SessionDep,
-    current_user: CurrentUser,
-    workspace_id: int,
-    job_id: int
-) -> None:
-    """
-    Delete a Classification Job and its associated results (due to cascade).
-    """
-    logger.info(f"Attempting to delete ClassificationJob {job_id} from workspace {workspace_id}")
-    job = session.get(ClassificationJob, job_id)
-    if (
-        not job
-        or job.workspace_id != workspace_id
-        or job.user_id != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="Classification Job not found")
-
-    # TODO: Check if job is RUNNING? Prevent deletion? Or cancel the task?
-    # If job.status == "running":
-    #    raise HTTPException(status_code=400, detail="Cannot delete a running job. Cancel it first.")
-
-    try:
-        # Manually delete links first if cascade delete isn't reliable on link tables
-        # session.exec(delete(ClassificationJobDataSourceLink).where(ClassificationJobDataSourceLink.job_id == job_id))
-        # session.exec(delete(ClassificationJobSchemeLink).where(ClassificationJobSchemeLink.job_id == job_id))
-        # session.flush() # Ensure links are gone before deleting the job
-
-        session.delete(job) # Cascade should handle results
-        session.commit()
-        logger.info(f"ClassificationJob {job_id} deleted successfully.")
-        return None # Return None for 204 response
+        
+        # Return updated job
+        return ClassificationJobRead.model_validate(job)
+    
+    except ValueError as ve:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        session.rollback()
+        raise he
     except Exception as e:
         session.rollback()
-        logger.error(f"Error deleting ClassificationJob {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Could not delete Classification Job: {str(e)}") 
+        logger.exception(f"Route: Error updating job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_classification_job(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    job_id: int,
+    session: SessionDep,
+) -> None:
+    """
+    Delete a Classification Job.
+    """
+    logger.info(f"Route: Attempting to delete ClassificationJob {job_id} from workspace {workspace_id}")
+    try:
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+        
+        # Get the job
+        job = session.get(ClassificationJob, job_id)
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classification Job not found"
+            )
+        
+        # Verify job belongs to workspace
+        if job.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Classification Job not found in this workspace"
+            )
+        
+        # Check if job can be deleted (not in progress)
+        if job.status == ClassificationJobStatus.PROCESSING:
+            raise ValueError("Cannot delete a job that is currently processing. Cancel it first.")
+        
+        # Delete the job
+        session.delete(job)
+        session.commit()
+        logger.info(f"Route: ClassificationJob {job_id} successfully deleted")
+        
+    except ValueError as ve:
+        # Handle validation errors
+        session.rollback()
+        logger.error(f"Route: Validation error deleting job {job_id}: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        # Re-raise exceptions from validate_workspace_access
+        session.rollback()
+        raise he
+    except Exception as e:
+        # Handle unexpected errors
+        session.rollback()
+        logger.exception(f"Route: Unexpected error deleting job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") 

@@ -24,8 +24,8 @@ import {
   ClassificationSchemesService,
   ClassificationJobsService,
   ClassificationResultsService,
-  DataSourcesService,
-  DataRecordsService,
+  DatasourcesService,
+  DatarecordsService,
 } from '@/client/services';
 import {
   adaptEnhancedResultReadToFormattedResult,
@@ -198,7 +198,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setIsLoadingResults(true);
     setError(null);
     try {
-      const apiResults = await ClassificationResultsService.getJobResults({ workspaceId: targetWorkspaceId, jobId, limit: 5000 });
+      const apiResults = await ClassificationResultsService.listClassificationResults({ workspaceId: targetWorkspaceId, jobId, limit: 5000 });
       const formatted = apiResults.map(r => ({
           id: r.id,
           datarecord_id: r.datarecord_id,
@@ -679,7 +679,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
                 console.log("[loadJob] Fetching data records for data source IDs:", jobDataSourceIds);
                 try {
                     const recordFetchPromises = jobDataSourceIds.map(dsId =>
-                        DataRecordsService.listDataRecordsForDatasource({ workspaceId, datasourceId: dsId, limit: 5000 }) // Adjust limit
+                        DatarecordsService.listDatarecords({ workspaceId, datasourceId: dsId, limit: 5000 }) // Adjust limit
                     );
                     const resultsArrays = await Promise.all(recordFetchPromises);
                     const allDataRecords = resultsArrays.flat();

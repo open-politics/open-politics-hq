@@ -262,7 +262,7 @@ export default function RecurringTaskFormDialog({ // Remove isOpen, onOpenChange
 
   // Renders ONLY the content, assumes parent Dialog provides structure
   return (
-     <DialogContent className="sm:max-w-[600px]">
+     <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
          <DialogHeader>
            <DialogTitle>{isEditMode ? 'Edit Recurring Task' : 'Create New Recurring Task'}</DialogTitle>
            <DialogDescription>

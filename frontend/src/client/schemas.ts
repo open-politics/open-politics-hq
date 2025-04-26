@@ -1,7 +1,9 @@
 export const $AppendRecordInput = {
+	description: `Input model for appending a record to a datasource.`,
 	properties: {
 		content: {
 	type: 'string',
+	description: `The text content or URL to append`,
 	isRequired: true,
 },
 		content_type: {
@@ -33,6 +35,17 @@ export const $ArticleResponse = {
 },
 },
 	isRequired: true,
+},
+	},
+} as const;
+
+export const $Body_datasets_import_dataset = {
+	properties: {
+		file: {
+	type: 'binary',
+	description: `Dataset Package JSON file (.json)`,
+	isRequired: true,
+	format: 'binary',
 },
 	},
 } as const;
@@ -138,6 +151,16 @@ export const $Body_login_login_access_token = {
 }, {
 	type: 'null',
 }],
+},
+	},
+} as const;
+
+export const $Body_shareables_import_resource = {
+	properties: {
+		file: {
+	type: 'binary',
+	isRequired: true,
+	format: 'binary',
 },
 	},
 } as const;
@@ -350,7 +373,7 @@ export const $ClassificationJobRead = {
 
 export const $ClassificationJobStatus = {
 	type: 'Enum',
-	enum: ['pending','running','completed','completed_with_errors','failed',],
+	enum: ['pending','running','paused','completed','completed_with_errors','failed',],
 } as const;
 
 export const $ClassificationJobUpdate = {
@@ -656,13 +679,25 @@ export const $DataRecordRead = {
 	isRequired: true,
 },
 		datasource_id: {
+	type: 'any-of',
+	contains: [{
 	type: 'number',
-	isRequired: true,
+}, {
+	type: 'null',
+}],
 },
 		created_at: {
 	type: 'string',
 	isRequired: true,
 	format: 'date-time',
+},
+		content_hash: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -670,8 +705,12 @@ export const $DataRecordRead = {
 export const $DataSourceRead = {
 	properties: {
 		name: {
+	type: 'any-of',
+	contains: [{
 	type: 'string',
-	isRequired: true,
+}, {
+	type: 'null',
+}],
 },
 		type: {
 	type: 'DataSourceType',
@@ -733,6 +772,14 @@ export const $DataSourceRead = {
 	type: 'null',
 }],
 },
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -743,7 +790,44 @@ export const $DataSourceStatus = {
 
 export const $DataSourceType = {
 	type: 'Enum',
-	enum: ['csv','pdf','url_list','text_block',],
+	enum: ['csv','pdf','bulk_pdf','url','url_list','text_block',],
+} as const;
+
+export const $DataSourceUpdate = {
+	properties: {
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'DataSourceStatus',
+}, {
+	type: 'null',
+}],
+},
+		source_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		updated_at: {
+	type: 'string',
+	format: 'date-time',
+},
+	},
 } as const;
 
 export const $DataSourcesOut = {
@@ -752,6 +836,228 @@ export const $DataSourcesOut = {
 	type: 'array',
 	contains: {
 		type: 'DataSourceRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $DatasetCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		custom_metadata: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		datarecord_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		source_job_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		source_scheme_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $DatasetRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		custom_metadata: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		workspace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		datarecord_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		source_job_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		source_scheme_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $DatasetUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		custom_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		datarecord_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		source_job_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		source_scheme_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		updated_at: {
+	type: 'string',
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $DatasetsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'DatasetRead',
 	},
 	isRequired: true,
 },
@@ -840,12 +1146,12 @@ export const $FileUploadResponse = {
 	properties: {
 		filename: {
 	type: 'string',
-	description: `Uploaded filename`,
+	description: `Original uploaded filename`,
 	isRequired: true,
 },
-		storage_id: {
+		object_name: {
 	type: 'string',
-	description: `Storage ID`,
+	description: `Object name in storage`,
 	isRequired: true,
 },
 	},
@@ -973,6 +1279,11 @@ export const $NewPassword = {
 	isRequired: true,
 },
 	},
+} as const;
+
+export const $PermissionLevel = {
+	type: 'Enum',
+	enum: ['read_only','edit','full_access',],
 } as const;
 
 export const $QueryType = {
@@ -1200,6 +1511,11 @@ export const $Request = {
 	},
 } as const;
 
+export const $ResourceType = {
+	type: 'Enum',
+	enum: ['data_source','schema','workspace','classification_job','dataset',],
+} as const;
+
 export const $SearchHistoriesOut = {
 	properties: {
 		data: {
@@ -1271,6 +1587,272 @@ export const $SearchHistoryRead = {
 		user_id: {
 	type: 'number',
 	isRequired: true,
+},
+	},
+} as const;
+
+export const $SearchType = {
+	type: 'Enum',
+	enum: ['text','semantic','structured',],
+} as const;
+
+export const $ShareableLinkCreate = {
+	description: `Schema for creating a new shareable link.`,
+	properties: {
+		resource_type: {
+	type: 'ResourceType',
+	isRequired: true,
+},
+		resource_id: {
+	type: 'number',
+	isRequired: true,
+},
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		permission_level: {
+	type: 'PermissionLevel',
+	default: 'read_only',
+},
+		is_public: {
+	type: 'boolean',
+	default: false,
+},
+		requires_login: {
+	type: 'boolean',
+	default: true,
+},
+		expiration_date: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		max_uses: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $ShareableLinkRead = {
+	description: `Schema for reading a shareable link.`,
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		permission_level: {
+	type: 'PermissionLevel',
+	default: 'read_only',
+},
+		is_public: {
+	type: 'boolean',
+	default: false,
+},
+		requires_login: {
+	type: 'boolean',
+	default: true,
+},
+		expiration_date: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		max_uses: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		token: {
+	type: 'string',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		resource_type: {
+	type: 'ResourceType',
+	isRequired: true,
+},
+		resource_id: {
+	type: 'number',
+	isRequired: true,
+},
+		use_count: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		share_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $ShareableLinkStats = {
+	properties: {
+		total_links: {
+	type: 'number',
+	isRequired: true,
+},
+		active_links: {
+	type: 'number',
+	isRequired: true,
+},
+		expired_links: {
+	type: 'number',
+	isRequired: true,
+},
+		links_by_resource_type: {
+	type: 'dictionary',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		most_shared_resources: {
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+	isRequired: true,
+},
+		most_used_links: {
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ShareableLinkUpdate = {
+	description: `Schema for updating a shareable link.`,
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		permission_level: {
+	type: 'any-of',
+	contains: [{
+	type: 'PermissionLevel',
+}, {
+	type: 'null',
+}],
+},
+		is_public: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		requires_login: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		expiration_date: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		max_uses: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -1574,14 +2156,4 @@ export const $WorkspaceUpdate = {
 }],
 },
 	},
-} as const;
-
-export const $app__api__v1__entities__routes__SearchType = {
-	type: 'Enum',
-	enum: ['text','semantic',],
-} as const;
-
-export const $app__api__v1__search__routes__SearchType = {
-	type: 'Enum',
-	enum: ['text','semantic','structured',],
 } as const;

@@ -1,216 +1,208 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from app.models import ClassificationScheme, ClassificationSchemeCreate, ClassificationSchemeRead, ClassificationSchemeUpdate, Workspace, ClassificationResult, ClassificationResultRead, ClassificationField, FieldType
-from sqlmodel import Session, select, func
-from app.api.deps import SessionDep, CurrentUser
-from typing import List, Any, Dict
-from datetime import datetime, timezone
-from pydantic import BaseModel, Field, create_model
-import os
-from app.core.opol_config import opol
-from sqlalchemy.orm import joinedload
-from sqlalchemy import distinct
+import logging
+from typing import List, Any
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-router = APIRouter(prefix="/workspaces/{workspace_id}/classification_schemes")
+# Models
+from app.models import (
+    ClassificationSchemeRead,
+    ClassificationSchemeCreate,
+    ClassificationSchemeUpdate
+)
+# Deps - Updated: Use ClassificationServiceDep
+from app.api.deps import SessionDep, CurrentUser, ClassificationServiceDep
+# Service class for type hint
+# from app.api.services.classification import ClassificationService
+# Base provider type
+# from app.api.services.providers.base import ClassificationProvider
 
-@router.post("/", response_model=ClassificationSchemeRead)
-@router.post("", response_model=ClassificationSchemeRead)
+# Remove unused imports
+# from app.models import Workspace, ClassificationResult, ClassificationResultRead, ClassificationField, FieldType
+# from sqlmodel import Session, select, func
+# from datetime import datetime, timezone
+# from pydantic import BaseModel, Field, create_model
+# import os
+# from app.core.opol_config import opol
+# from sqlalchemy.orm import joinedload
+# from sqlalchemy import distinct
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(
+    prefix="/workspaces/{workspace_id}/classification_schemes",
+    tags=["ClassificationSchemes"]
+)
+
+@router.post("/", response_model=ClassificationSchemeRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ClassificationSchemeRead, status_code=status.HTTP_201_CREATED)
 def create_classification_scheme(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
-    scheme_in: ClassificationSchemeCreate
+    scheme_in: ClassificationSchemeCreate,
+    session: SessionDep,
+    # Inject service
+    service: ClassificationServiceDep,
 ) -> ClassificationSchemeRead:
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace or workspace.user_id_ownership != current_user.id:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    # Validate fields
-    for field in scheme_in.fields:
-        if field.type == FieldType.INT:
-            if field.scale_min is None or field.scale_max is None:
-                raise HTTPException(
-                    400, 
-                    f"Field '{field.name}': scale_min and scale_max are required for integer fields"
-                )
-            if field.scale_min >= field.scale_max:
-                raise HTTPException(
-                    400, 
-                    f"Field '{field.name}': scale_min must be less than scale_max"
-                )
-
-        elif field.type == FieldType.LIST_STR and field.is_set_of_labels:
-            if not field.labels or len(field.labels) < 2:
-                raise HTTPException(
-                    400, 
-                    f"Field '{field.name}': at least 2 labels required for list-based fields"
-                )
-
-        elif field.type == FieldType.LIST_DICT:
-            if not field.dict_keys or len(field.dict_keys) < 1:
-                raise HTTPException(
-                    400,
-                    f"Field '{field.name}': dict_keys required for structured data fields"
-                )
-            valid_types = {'str', 'int', 'float', 'bool'}
-            for key_def in field.dict_keys:
-                if key_def.type not in valid_types:
-                    raise HTTPException(
-                        400,
-                        f"Field '{field.name}': Invalid type '{key_def.type}' for key '{key_def.name}'. Must be one of: {', '.join(valid_types)}"
-                    )
-
-    # Create scheme
-    scheme = ClassificationScheme(
-        name=scheme_in.name,
-        description=scheme_in.description,
-        model_instructions=scheme_in.model_instructions,
-        validation_rules=scheme_in.validation_rules,
-        workspace_id=workspace_id,
-        user_id=current_user.id
-    )
-    session.add(scheme)
-    session.flush()  # Get scheme.id without committing
-
-    # Create fields
-    for field_data in scheme_in.fields:
-        field = ClassificationField(
-            scheme_id=scheme.id,
-            name=field_data.name,
-            description=field_data.description,
-            type=field_data.type,
-            scale_min=field_data.scale_min,
-            scale_max=field_data.scale_max,
-            is_set_of_labels=field_data.is_set_of_labels,
-            labels=field_data.labels,
-            dict_keys=field_data.dict_keys
+    """Create a new classification scheme using the service."""
+    try:
+        # Pass provider - NO, use injected service directly
+        scheme = service.create_scheme(
+            user_id=current_user.id,
+            workspace_id=workspace_id,
+            scheme_data=scheme_in
         )
-        session.add(field)
-
-    session.commit()
-    session.refresh(scheme)
-    return scheme
+        return scheme
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error creating scheme in workspace {workspace_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.get("")
 @router.get("/", response_model=List[ClassificationSchemeRead])
 def read_classification_schemes(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    session: SessionDep,
+    # Inject service
+    service: ClassificationServiceDep,
 ) -> List[ClassificationSchemeRead]:
-    # Verify workspace access
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace or workspace.user_id_ownership != current_user.id:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    # Updated query to include fields relationship and classification count
-    stmt = (
-        select(
-            ClassificationScheme,
-            func.count(ClassificationResult.id).label('classification_count')
+    """Retrieve classification schemes for the workspace using the service."""
+    try:
+        # Pass provider - NO, use injected service directly
+        schemes = service.list_schemes(
+            user_id=current_user.id,
+            workspace_id=workspace_id,
+            skip=skip,
+            limit=limit
         )
-        .options(joinedload(ClassificationScheme.fields))
-        .join(ClassificationResult, ClassificationResult.scheme_id == ClassificationScheme.id, isouter=True)
-        .where(ClassificationScheme.workspace_id == workspace_id)
-        .group_by(ClassificationScheme.id)
-        .offset(skip)
-        .limit(limit)
-    )
-
-    # Add .unique() to handle the collection joinedload
-    results = session.exec(stmt).unique().all()
-
-    return [
-        ClassificationSchemeRead(
-            **scheme.model_dump(),
-            classification_count=classification_count,
-            fields=scheme.fields
-        )
-        for scheme, classification_count in results
-    ]
+        return schemes
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error listing schemes for workspace {workspace_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.get("/{scheme_id}", response_model=ClassificationSchemeRead)
 def read_classification_scheme(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
-    scheme_id: int
+    scheme_id: int,
+    session: SessionDep,
+    # Inject service
+    service: ClassificationServiceDep,
 ) -> ClassificationSchemeRead:
-    scheme = session.get(ClassificationScheme, scheme_id)
-    if (
-        not scheme
-        or scheme.workspace_id != workspace_id
-        or scheme.workspace.user_id_ownership != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="Classification scheme not found")
-    return scheme
+    """Retrieve a specific classification scheme using the service."""
+    try:
+        # Pass provider - NO, use injected service directly
+        scheme = service.get_scheme(
+            scheme_id=scheme_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id
+        )
+        if not scheme:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classification scheme not found or not accessible")
+        return scheme
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error getting scheme {scheme_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.patch("/{scheme_id}", response_model=ClassificationSchemeRead)
 def update_classification_scheme(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
     scheme_id: int,
-    scheme_in: ClassificationSchemeUpdate
+    scheme_in: ClassificationSchemeUpdate,
+    session: SessionDep,
+    # Inject service
+    service: ClassificationServiceDep,
 ) -> ClassificationSchemeRead:
-    scheme = session.get(ClassificationScheme, scheme_id)
-    if (
-        not scheme
-        or scheme.workspace_id != workspace_id
-        or scheme.workspace.user_id_ownership != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="Classification scheme not found")
-    
-    for field, value in scheme_in.model_dump(exclude_unset=True).items():
-        setattr(scheme, field, value)
-    scheme.updated_at = datetime.now(timezone.utc)
-    
-    session.add(scheme)
-    session.commit()
-    session.refresh(scheme)
-    return scheme
+    """Update a classification scheme using the service."""
+    try:
+        # Pass provider - NO, use injected service directly
+        updated_scheme = service.update_scheme(
+            scheme_id=scheme_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id,
+            update_data=scheme_in
+        )
+        if not updated_scheme:
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classification scheme not found or update failed")
+        return updated_scheme
+    except ValueError as ve:
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+         raise he
+    except Exception as e:
+        logger.exception(f"Route: Error updating scheme {scheme_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
-@router.delete("/{scheme_id}")
+@router.delete("/{scheme_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_classification_scheme(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
     workspace_id: int,
-    scheme_id: int
-) -> Any:
-    scheme = session.get(ClassificationScheme, scheme_id)
-    if (
-        not scheme
-        or scheme.workspace_id != workspace_id
-        or scheme.workspace.user_id_ownership != current_user.id
-    ):
-        raise HTTPException(status_code=404, detail="Classification scheme not found")
-    session.delete(scheme)
-    session.commit()
-    return {"message": "Classification scheme deleted successfully"}
+    scheme_id: int,
+    session: SessionDep,
+    # Inject service
+    service: ClassificationServiceDep,
+) -> None:
+    """Delete a classification scheme using the service."""
+    try:
+        # Pass provider - NO, use injected service directly
+        deleted = service.delete_scheme(
+            scheme_id=scheme_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id
+        )
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classification scheme not found or could not be deleted")
+        return None
+    except ValueError as ve:
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+         raise he
+    except Exception as e:
+        logger.exception(f"Route: Error deleting scheme {scheme_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
-@router.delete("")
-@router.delete("/")
+# Note: Deleting all schemes might be better handled by a specific service method
+# rather than iterating in the route.
+@router.delete("", status_code=status.HTTP_200_OK)
+@router.delete("/", status_code=status.HTTP_200_OK)
 def delete_all_classification_schemes(
     *,
-    session: SessionDep,
     current_user: CurrentUser,
-    workspace_id: int
+    workspace_id: int,
+    session: SessionDep,
+    # Inject service
+    service: ClassificationServiceDep,
 ) -> Any:
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace or workspace.user_id_ownership != current_user.id:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    statement = select(ClassificationScheme).where(ClassificationScheme.workspace_id == workspace_id)
-    schemes = session.exec(statement).all()
-
-    for scheme in schemes:
-        session.delete(scheme)
-
-    session.commit()
-    return {"message": "All classification schemes deleted successfully"}
+    """Delete all classification schemes in a workspace using the service."""
+    try:
+        # Pass provider - NO, use injected service directly
+        deleted_count = service.delete_all_schemes_in_workspace(
+            user_id=current_user.id,
+            workspace_id=workspace_id
+        )
+        return {"message": f"Successfully deleted {deleted_count} classification schemes"}
+    except ValueError as ve:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+    except HTTPException as he:
+         raise he
+    except Exception as e:
+        logger.exception(f"Route: Error deleting all schemes in workspace {workspace_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

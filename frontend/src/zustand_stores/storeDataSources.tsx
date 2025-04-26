@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import { DataSourcesService } from '@/client/services';
+import { DatasourcesService } from '@/client/services';
 import { DataSourceRead as ClientDataSourceRead, DataSourceType as ClientDataSourceType, DataSourcesOut, DataSourceStatus as ClientDataSourceStatus } from '@/client/models';
 import { DataSource, DataSourceType, DataSourceStatus } from '@/lib/classification/types';
 import { adaptDataSourceReadToDataSource } from '@/lib/classification/adapters';
@@ -35,7 +35,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
 
     set({ isLoading: true, error: null });
     try {
-      const response: DataSourcesOut = await DataSourcesService.readDatasources({
+      const response: DataSourcesOut = await DatasourcesService.listDatasources({
         workspaceId: activeWorkspace.id,
         limit: 1000,
         includeCounts: true
@@ -44,6 +44,12 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       const clientDataSources = response.data;
       
       const adaptedDataSources = clientDataSources.map(adaptDataSourceReadToDataSource);
+      // Ensure polling starts for all pending sources from the response
+      adaptedDataSources.forEach(ds => {
+          if (ds.status === 'pending') {
+             get().startPollingDataSourceStatus(ds.id);
+          }
+      });
       set({ dataSources: adaptedDataSources, isLoading: false });
     } catch (err: any) {
       console.error("Error fetching data sources:", err);
@@ -60,61 +66,53 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
 
     set({ isLoading: true, error: null });
     try {
-      // Construct the object containing all necessary form fields
-      // for the DataSourcesService.createDatasource call.
-      const serviceCallPayload: {
-          name: string;
-          type: ClientDataSourceType;
-          origin_details: string; // Keep sending the stringified JSON for non-CSV details
-          file?: File;
-          skip_rows?: number;
-          delimiter?: string;
-      } = {
-          name: formData.get('name') as string,
-          type: formData.get('type') as ClientDataSourceType,
-          origin_details: formData.get('origin_details') as string, // Will be "{}" for CSV usually now
-      };
-
-      // Conditionally add fields present in the FormData
-      if (formData.has('file')) {
-        serviceCallPayload.file = formData.get('file') as File;
-      }
-      if (formData.has('skip_rows')) {
-        // Parse to number as expected by the backend Form(...) definition
-        serviceCallPayload.skip_rows = parseInt(formData.get('skip_rows') as string, 10);
-      }
-      if (formData.has('delimiter')) {
-        serviceCallPayload.delimiter = formData.get('delimiter') as string;
-      }
-
-      console.log("Sending payload to DataSourcesService.createDatasource:", serviceCallPayload);
-
-      // Pass the correctly assembled payload to the service
-      // Expect DataSourcesOut as per client definition
-      const response: DataSourcesOut = await DataSourcesService.createDatasource({
+      // --- CORRECTED: Structure the payload correctly for the service ---
+      // The service expects an object with workspaceId and a formData key
+      // containing the actual form fields.
+      // Define the payload structure inline based on the service expectation
+      const servicePayload = {
          workspaceId: activeWorkspace.id,
-         formData: serviceCallPayload // Pass the object containing all fields
-      });
+         formData: { // Nest form fields under 'formData'
+           // Required fields:
+           name: formData.get('name') as string,
+           type: formData.get('type') as ClientDataSourceType,
+           origin_details: formData.get('origin_details') as string,
+           // Optional fields:
+           // Use getAll('files') as the backend expects a list for 'files'
+           files: formData.getAll('files') as File[],
+           skip_rows: formData.has('skip_rows') ? parseInt(formData.get('skip_rows') as string, 10) : undefined,
+           delimiter: formData.has('delimiter') ? formData.get('delimiter') as string : undefined,
+         }
+      };
+      console.log("Sending payload to DataSourcesService.createDatasource:", servicePayload);
+      const response: DataSourcesOut = await DatasourcesService.createDatasource(servicePayload);
+      // --- End Correction ---
 
-      // Assuming the API returns the created source as the first item in the data array
+
+      // Assuming the API returns the created source(s) in the data array
       if (!response || !response.data || response.data.length === 0) {
-        throw new Error("API did not return the created data source in the expected format.");
+        throw new Error("API did not return the created data source(s) in the expected format.");
       }
-      const createdDataSourceRead: ClientDataSourceRead = response.data[0];
 
-      const adaptedDataSource = adaptDataSourceReadToDataSource(createdDataSourceRead);
+      // Adapt all returned sources (for bulk PDF)
+      const createdAdaptedSources = response.data.map(adaptDataSourceReadToDataSource);
 
       set(state => ({
-        dataSources: [adaptedDataSource, ...state.dataSources],
+        // Prepend all new sources to the list
+        dataSources: [...createdAdaptedSources, ...state.dataSources],
         isLoading: false,
       }));
 
-      // Start polling if the source is pending
-      if (adaptedDataSource.status === 'pending') {
-         get().startPollingDataSourceStatus(adaptedDataSource.id);
-      }
+      // Start polling for all newly created pending sources
+      createdAdaptedSources.forEach(adaptedDataSource => {
+        if (adaptedDataSource.status === 'pending') {
+            get().startPollingDataSourceStatus(adaptedDataSource.id);
+        }
+      });
 
-      return adaptedDataSource;
+
+      // Return the first created source (or null if none)
+      return createdAdaptedSources.length > 0 ? createdAdaptedSources[0] : null;
     } catch (err: any) {
       console.error("Error creating data source:", err);
       let errorMsg = "Failed to create data source";
@@ -139,7 +137,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     
     set({ isLoading: true, error: null });
     try {
-      await DataSourcesService.deleteDatasource({
+      await DatasourcesService.deleteDatasource({
         workspaceId: activeWorkspace.id,
         datasourceId: dataSourceId,
       });
@@ -174,7 +172,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       }
 
       try {
-        const updatedDataSourceRead: ClientDataSourceRead = await DataSourcesService.readDatasource({
+        const updatedDataSourceRead: ClientDataSourceRead = await DatasourcesService.getDatasource({
           workspaceId: activeWorkspace.id,
           datasourceId: dataSourceId,
         });

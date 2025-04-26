@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { FileText, FileSpreadsheet, Link, File, RefreshCcw, Loader2 } from "lucide-react";
+import { FileText, FileSpreadsheet, List, File, RefreshCcw, Loader2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DataSource } from '@/lib/classification/types';
 import { useRecurringTasksStore } from '@/zustand_stores/storeRecurringTasks';
@@ -23,7 +23,7 @@ const getSourceIcon = (type: string) => {
     case 'csv':
       return <FileSpreadsheet className="h-4 w-4 text-green-600/80" />;
     case 'url_list':
-      return <Link className="h-4 w-4 text-blue-600/80" />;
+      return <List className="h-4 w-4 text-blue-600/80" />;
     default:
       return <File className="h-4 w-4 text-muted-foreground" />;
   }

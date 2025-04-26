@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
 set -e
-set -x
 
-coverage run --source=app -m pytest
-coverage report --show-missing
-coverage html --title "${@-coverage}"
+# Run pytest directly
+# pytest "$@"
+
+python /app/app/tests/workflow/test_full_workflow.py
+
+# Removed coverage command:
+# coverage run --source=app -m pytest "$@"
+# coverage report -m

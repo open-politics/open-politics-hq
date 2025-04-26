@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import useAuth from "@/hooks/useAuth";
 import { Separator } from "@/components/ui/separator";
-import { Search, Plus, FileText, Upload, LinkIcon, ArrowUpDown, Loader2, CheckCircle, XCircle, AlertCircle, Trash2, Eye } from "lucide-react"
+import { Search, Plus, FileText, Upload, LinkIcon, ArrowUpDown, Loader2, CheckCircle, XCircle, AlertCircle, Trash2, Eye, FileSpreadsheet, List, Type, File } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { format, formatDistanceToNow } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -63,13 +63,27 @@ const renderOrigin = (datasource: DataSource) => {
   const details = datasource.origin_details;
   switch (datasource.type) {
     case 'csv':
+      return (
+        <TooltipProvider delayDuration={100}>
+          <Tooltip>
+            <TooltipTrigger className="flex items-center gap-1 cursor-default">
+              <FileSpreadsheet className="h-3.5 w-3.5 text-green-600/80 shrink-0" />
+              <span className="truncate text-xs">{details?.filename || 'CSV File'}</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Path: {details?.filepath || 'N/A'}</p>
+              <p>Type: {details?.content_type || 'N/A'}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
     case 'pdf':
       return (
         <TooltipProvider delayDuration={100}>
           <Tooltip>
             <TooltipTrigger className="flex items-center gap-1 cursor-default">
-              <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="truncate text-xs">{details?.filename || 'File'}</span>
+              <FileText className="h-3.5 w-3.5 text-primary/80 shrink-0" />
+              <span className="truncate text-xs">{details?.filename || 'PDF File'}</span>
             </TooltipTrigger>
             <TooltipContent>
               <p>Path: {details?.filepath || 'N/A'}</p>
@@ -84,7 +98,7 @@ const renderOrigin = (datasource: DataSource) => {
          <TooltipProvider delayDuration={100}>
           <Tooltip>
             <TooltipTrigger className="flex items-center gap-1 cursor-default">
-              <LinkIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <List className="h-3.5 w-3.5 text-blue-600/80 shrink-0" />
               <span className="truncate text-xs">{count} URL(s)</span>
             </TooltipTrigger>
             <TooltipContent className="max-w-xs max-h-40 overflow-y-auto">
@@ -98,10 +112,32 @@ const renderOrigin = (datasource: DataSource) => {
       );
     case 'text_block':
       return (
-        <span className="text-xs italic">Text Block</span>
+        <TooltipProvider delayDuration={100}>
+          <Tooltip>
+            <TooltipTrigger className="flex items-center gap-1 cursor-default">
+              <Type className="h-3.5 w-3.5 text-primary/80 shrink-0" />
+              <span className="truncate text-xs">Text Block</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Inline text content</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       );
     default:
-      return <span className="text-xs italic">Unknown</span>;
+      return (
+        <TooltipProvider delayDuration={100}>
+          <Tooltip>
+            <TooltipTrigger className="flex items-center gap-1 cursor-default">
+              <File className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="truncate text-xs">Unknown</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Source type is unknown or not specified.</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
   }
 };
 
