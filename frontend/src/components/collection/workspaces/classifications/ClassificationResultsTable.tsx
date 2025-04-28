@@ -141,12 +141,22 @@ export function ClassificationResultsTable({
     // 2. Create lookup maps
     const recordToSourceMap = new Map<number, number>();
     (dataRecords || []).forEach(rec => { 
-      recordToSourceMap.set(rec.id, rec.datasource_id);
+      // Ensure rec.id and rec.datasource_id are numbers before setting
+      if (typeof rec.id === 'number' && typeof rec.datasource_id === 'number') {
+        recordToSourceMap.set(rec.id, rec.datasource_id);
+      } else {
+        console.warn('Skipping data record due to missing id or datasource_id:', rec);
+      }
     });
 
     const sourceInfoMap = new Map<number, { name: string }>();
     dataSources.forEach(ds => {
-      sourceInfoMap.set(ds.id, { name: ds.name });
+      // Ensure ds.id is a number and ds.name is a string before setting
+      if (typeof ds.id === 'number' && typeof ds.name === 'string') {
+        sourceInfoMap.set(ds.id, { name: ds.name });
+      } else {
+        console.warn('Skipping data source due to missing id or name:', ds);
+      }
     });
 
     // 3. Group the filtered results by DataSource

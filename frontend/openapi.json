@@ -3935,7 +3935,7 @@
           "datasources"
         ],
         "summary": "Create Datasource",
-        "description": "Create a new DataSource.",
+        "description": "Creates a new DataSource. Handles single/bulk PDF uploads based on file count.",
         "operationId": "create_datasource",
         "security": [
           {
@@ -4061,7 +4061,7 @@
           "datasources"
         ],
         "summary": "Create Datasource",
-        "description": "Create a new DataSource.",
+        "description": "Creates a new DataSource. Handles single/bulk PDF uploads based on file count.",
         "operationId": "create_datasource",
         "security": [
           {
@@ -4852,6 +4852,57 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}/content": {
+      "get": {
+        "tags": [
+          "datarecords",
+          "datarecords"
+        ],
+        "summary": "Get Datarecord Content",
+        "description": "Get the raw content of the file associated with a DataRecord (primarily for PDFs).",
+        "operationId": "get_datarecord_content",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datarecord_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datarecord Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -7920,8 +7971,7 @@
               }
             ],
             "title": "Skip Rows",
-            "description": "Number of initial rows to skip (for CSV)",
-            "default": 0
+            "description": "Number of initial rows to skip (for CSV)"
           },
           "delimiter": {
             "anyOf": [

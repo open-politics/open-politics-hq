@@ -436,7 +436,7 @@ class ClassificationService:
             except Exception as e:
                 logger.error("Failed to queue job %d: %s", job.id, str(e))
                 self.update_job_status(
-                    job_id=job.id,
+                    job=job,
                     status=ClassificationJobStatus.FAILED,
                     error_message=f"Failed to queue job: {e}"
                 )
@@ -577,8 +577,11 @@ class ClassificationService:
             created_count = 0
             for data in results_data:
                 try:
-                    result = ClassificationResult(**data)
-                    self.session.add(result)
+                    # Create the ClassificationResult object directly
+                    # Validate data (Pydantic validation happens implicitly here)
+                    # Use result_dict directly, which already contains job_id from the task
+                    db_result = ClassificationResult(**data)
+                    self.session.add(db_result)
                     created_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to create result: {e}")
@@ -592,51 +595,56 @@ class ClassificationService:
 
     def update_job_status(
         self,
-        job_id: int,
+        job: ClassificationJob,
         status: ClassificationJobStatus,
         error_message: Optional[str] = None
     ) -> ClassificationJob:
         """
-        Update a job's status.
-        MODIFIES DATA - Commits transaction.
-        
-        Args:
-            job_id: The ID of the job to update
-            status: The new status
-            error_message: Optional error message for failed states
-            
-        Returns:
-            The updated job
-            
-        Raises:
-            JobNotFoundError: If job not found
-            InvalidStatusTransitionError: If status transition is invalid
-        """
-        try:
-            job = self.session.get(ClassificationJob, job_id)
-            if not job:
-                raise JobNotFoundError(f"Classification job {job_id} not found")
+        Update the status and optionally error message of a ClassificationJob.
+        DOES NOT COMMIT - Relies on caller.
 
-            # Validate status transition
+        Args:
+            job: The ClassificationJob object to update.
+            status: The new status to set.
+            error_message: Optional error message to set (usually for FAILED status).
+
+        Returns:
+            The updated ClassificationJob object.
+
+        Raises:
+            JobNotFoundError: If job is not found (shouldn't happen if object is passed).
+            InvalidStatusTransitionError: If the status transition is not allowed.
+        """
+        logger.debug(f"Attempting to update status for Job {job.id} from {job.status} to {status}")
+        # REMOVED: Fetching job by ID as it's passed directly
+        # job = self.session.get(ClassificationJob, job_id)
+        # if not job:
+        #     raise JobNotFoundError(f"Job {job_id} not found")
+
+        try:
+            # Validate transition
             StatusTransition.validate(job.status, status)
 
-            # Update status and error message
+            # Update fields
             job.status = status
-            if error_message is not None:
-                job.error_message = error_message
+            job.error_message = error_message
             job.updated_at = datetime.now(timezone.utc)
 
             self.session.add(job)
-            self.session.commit()
-            self.session.refresh(job)
+            # Flush to apply changes within the current transaction, caller commits/rollbacks
+            self.session.flush()
+            self.session.refresh(job) # Refresh to get updated state
+            logger.info(f"Job {job.id} status updated to {status} in session.")
             return job
-
-        except (JobNotFoundError, InvalidStatusTransitionError) as e:
-            self.session.rollback()
+        except InvalidStatusTransitionError as e:
+            # Log and re-raise specific transition error
+            logger.error(f"Invalid status transition for Job {job.id}: {e}")
             raise e
         except Exception as e:
-            self.session.rollback()
-            raise ValueError(f"Failed to update job status: {str(e)}")
+            # Log general errors during update
+            logger.exception(f"Error updating status for Job {job.id}: {e}")
+            # Consider wrapping in a different exception if needed
+            raise ValueError(f"Failed to update job status: {e}")
 
     # --- Scheme Methods ---
 
@@ -1768,7 +1776,6 @@ class ClassificationService:
 
                 # Create result
                 result = ClassificationResult(
-                    job_id=job_id,
                     timestamp=datetime.now(timezone.utc),
                     **data
                 )

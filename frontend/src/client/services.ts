@@ -651,6 +651,11 @@ skip?: number
 workspaceId: number
                     
                 };
+GetDatarecordContent: {
+                    datarecordId: number
+workspaceId: number
+                    
+                };
 AppendRecord: {
                     datasourceId: number
 requestBody: AppendRecordInput
@@ -3563,7 +3568,7 @@ export class DatasourcesService {
 
 	/**
 	 * Create Datasource
-	 * Create a new DataSource.
+	 * Creates a new DataSource. Handles single/bulk PDF uploads based on file count.
 	 * @returns DataSourcesOut Successful Response
 	 * @throws ApiError
 	 */
@@ -3615,7 +3620,7 @@ limit = 100,
 
 	/**
 	 * Create Datasource
-	 * Create a new DataSource.
+	 * Creates a new DataSource. Handles single/bulk PDF uploads based on file count.
 	 * @returns DataSourcesOut Successful Response
 	 * @throws ApiError
 	 */
@@ -3933,6 +3938,29 @@ limit = 1000,
 			},
 			query: {
 				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Datarecord Content
+	 * Get the raw content of the file associated with a DataRecord (primarily for PDFs).
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static getDatarecordContent(data: DatarecordsData['GetDatarecordContent']): CancelablePromise<any> {
+		const {
+workspaceId,
+datarecordId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}/content',
+			path: {
+				workspace_id: workspaceId, datarecord_id: datarecordId
 			},
 			errors: {
 				422: `Validation Error`,

@@ -51,16 +51,29 @@ def _sanitize_csv_row(row_dict: Dict[str, Any]) -> Dict[str, Optional[str]]:
     return sanitized
 
 # --- Start: PDF Processing Logic Moved from IngestionService ---
-async def _task_process_pdf_content(file_content_bytes: bytes, datasource_id: int, origin_details: dict) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+async def _task_process_pdf_content(
+    file_content_bytes: bytes,
+    datasource_id: int,
+    # Accept the override, fall back to actual DS origin_details if not provided
+    origin_details_override: Optional[Dict[str, Any]] = None,
+    actual_datasource_origin_details: Optional[Dict[str, Any]] = None
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Parses PDF content and returns record data and metadata updates. (Task version)"""
     source_metadata_update = {}
-    records_data = []
+    # Removed: records_data = [] - it will be created inside process_pdf_sync
+
+    # Use the override if provided, otherwise use the actual DS details
+    effective_origin_details = origin_details_override or actual_datasource_origin_details or {}
+    original_filename_for_record = effective_origin_details.get('filename', 'unknown.pdf')
 
     def process_pdf_sync():
         nonlocal source_metadata_update
         local_all_pdf_text = ""
         local_total_processed_pages = 0
         local_page_count = 0
+        # --- Define local_records_data here ---
+        local_records_data: List[Dict[str, Any]] = []
+        # --- End Define ---
         try:
             with fitz.open(stream=file_content_bytes, filetype="pdf") as doc:
                 local_page_count = doc.page_count
@@ -69,143 +82,163 @@ async def _task_process_pdf_content(file_content_bytes: bytes, datasource_id: in
                         page = doc.load_page(page_num)
                         text = page.get_text("text").replace('\\x00', '').strip()
                         if text:
-                            local_all_pdf_text += text + "\\n\\n"
+                            local_all_pdf_text += text + "\\n\\n" # Changed separator
                             local_total_processed_pages += 1
                     except Exception as page_err:
                         logging.error(f"Error processing PDF page {page_num + 1} for DS {datasource_id}: {page_err}")
+
             source_metadata_update['page_count'] = local_page_count
             source_metadata_update['processed_page_count'] = local_total_processed_pages
-            return local_all_pdf_text
+
+            # --- Move record creation logic inside ---
+            if local_all_pdf_text:
+                # Use local_records_data
+                local_records_data = [{
+                    "datasource_id": datasource_id, # Link record to the PARENT datasource ID
+                    "text_content": local_all_pdf_text.strip(),
+                    "source_metadata": {
+                        'processed_page_count': local_total_processed_pages,
+                        # Store the specific file's name here
+                        'original_filename': original_filename_for_record
+                    },
+                    "event_timestamp": None
+                }]
+            else:
+                logging.warning(f"No text extracted from PDF (DS: {datasource_id}).")
+            # --- End Move ---
+
+            # Return the local variables correctly
+            return local_all_pdf_text, local_records_data # Return populated local_records_data
+
         except (fitz.PyMuPDFError) as specific_err:
+            # Ensure local_records_data is returned even on error if needed, or handle differently
             raise ValueError(f"Failed to open/parse PDF for DS {datasource_id}: {specific_err}") from specific_err
         except Exception as pdf_err:
+            # Ensure local_records_data is returned even on error if needed, or handle differently
             raise ValueError(f"Failed processing PDF for DS {datasource_id}: {pdf_err}") from pdf_err
 
-    all_pdf_text = await asyncio.to_thread(process_pdf_sync)
+    # Capture both returned values correctly
+    all_pdf_text, records_data = await asyncio.to_thread(process_pdf_sync)
 
-    total_processed_pages = source_metadata_update.get('processed_page_count', 0)
-    page_count = source_metadata_update.get('page_count', 0)
-
-    if all_pdf_text:
-        records_data = [{
-            "datasource_id": datasource_id,
-            "text_content": all_pdf_text.strip(),
-            "source_metadata": {'processed_page_count': total_processed_pages, 'original_filename': origin_details.get('filename')},
-            "event_timestamp": None
-        }]
-    else:
-        logging.warning(f"No text extracted from PDF (DS: {datasource_id}).")
-
-    logging.info(f"Processed PDF: {total_processed_pages}/{page_count} pages (DS: {datasource_id}).")
-    return records_data, source_metadata_update
+    logging.info(f"Processed PDF: {source_metadata_update.get('processed_page_count', 0)}/{source_metadata_update.get('page_count', 0)} pages (DS: {datasource_id}). Records created: {len(records_data)}")
+    return records_data, source_metadata_update # Return the captured records_data
 # --- End: PDF Processing Logic ---
 
 # --- Start: CSV Processing Logic Moved from IngestionService ---
-async def _task_process_csv_content(file_content_bytes: bytes, datasource_id: int, origin_details: dict) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Parses CSV content and returns record data and metadata updates. (Task version)"""
+async def _task_process_csv_content(
+    datasource_id: int,
+    storage_path: str,
+    origin_details: Dict[str, Any],
+    storage_provider: StorageProvider
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Helper coroutine to process CSV content from storage."""
+    logger.info(f"Processing CSV content for DS {datasource_id} from {storage_path}")
+    records_data_to_create = []
     source_metadata_update = {}
-    records_data = []
-    default_encoding = 'utf-8'
-    skip_rows = int(origin_details.get('skip_rows', 0))
-    if skip_rows < 0: skip_rows = 0
-    user_delimiter = origin_details.get('delimiter')
-    delimiter = None
-    if user_delimiter:
-        if user_delimiter == '\\t': delimiter = '\\t'
-        elif len(user_delimiter) == 1: delimiter = user_delimiter
 
-    def process_csv_sync():
-        nonlocal source_metadata_update
-        local_records_data = []
-        encoding_used = None
-        try:
-            file_content_text = file_content_bytes.decode(default_encoding)
-            encoding_used = default_encoding
-        except UnicodeDecodeError:
-            try:
-                file_content_text = file_content_bytes.decode('latin-1')
-                encoding_used = 'latin-1'
-            except UnicodeDecodeError:
-                try:
-                    detected = chardet.detect(file_content_bytes)
-                    if detected['encoding'] and detected['confidence'] > 0.7:
-                        encoding_used = detected['encoding']
-                        file_content_text = file_content_bytes.decode(encoding_used)
-                    else: raise UnicodeDecodeError("chardet", b'', 0, 0, "Low confidence")
-                except Exception as chardet_err:
-                    raise ValueError(f"Could not determine encoding for CSV (DS {datasource_id}): {chardet_err}") from chardet_err
+    try:
+        # Get skip_rows and delimiter, handling potential None values
+        raw_skip_rows = origin_details.get('skip_rows') # Get value, might be None, string, or number
+        skip_rows = int(raw_skip_rows) if raw_skip_rows is not None else 0 # Default to 0 if None
 
-        source_metadata_update['encoding_used'] = encoding_used
+        raw_delimiter = origin_details.get('delimiter')
+        delimiter = raw_delimiter if raw_delimiter is not None else ',' # Default to comma if None or missing
 
-        lines = file_content_text.splitlines()
-        if not lines or skip_rows >= len(lines): raise ValueError("No data/header after skip_rows")
-        content_lines = lines[skip_rows:]
-        if not content_lines: raise ValueError("No lines remaining after skip")
-        header_line = content_lines[0]
-        data_lines = content_lines[1:]
+        encoding = origin_details.get('encoding', 'utf-8') # Default to utf-8
+        text_column = origin_details.get('text_column') # Primary text column (optional)
 
-        local_delimiter = delimiter
-        if local_delimiter is None:
-            try:
-                sniffer = csv.Sniffer()
-                dialect = sniffer.sniff("\\n".join(content_lines[:10]))
-                local_delimiter = dialect.delimiter
-            except csv.Error: local_delimiter = ','
-        source_metadata_update['delimiter_used'] = repr(local_delimiter)
+        logger.debug(f"DS {datasource_id}: CSV options - skip_rows={skip_rows}, delimiter='{delimiter}', encoding='{encoding}', text_column='{text_column}'")
 
-        csv_content_for_reader = header_line + '\\n' + '\\n'.join(data_lines)
-        csv_data_io = io.StringIO(csv_content_for_reader)
-        reader = csv.DictReader(csv_data_io, delimiter=local_delimiter)
-        columns = reader.fieldnames
-        if not columns: raise ValueError("Could not parse header")
-        valid_columns = [col for col in columns if col and col.strip()]
-        if len(valid_columns) != len(columns): logging.warning(f"CSV header has empty names (DS {datasource_id})")
-        columns = valid_columns
-        source_metadata_update['columns'] = columns
+        csv_content_stream = await storage_provider.get_file(storage_path)
+        # Decode the stream with the determined encoding
+        # Handle potential decoding errors
+        decoded_stream = (line.decode(encoding, errors='replace') for line in csv_content_stream)
 
-        row_count = 0
-        field_count_mismatches = 0
+        # Use csv.reader with the specified delimiter
+        csv_reader = csv.reader(decoded_stream, delimiter=delimiter)
 
-        for i, row in enumerate(reader):
-            original_file_line_num = skip_rows + 1 + (i + 1)
-            if row is None: continue
-            if len(row) != len(reader.fieldnames):
-                field_count_mismatches += 1
-                if field_count_mismatches <= 5: logging.warning(f"Field count mismatch line ~{original_file_line_num} (DS {datasource_id})")
+        header = []
+        processed_row_count = 0
+        empty_header_names = False
 
-            sanitized_row = _sanitize_csv_row(row)
-            sanitized_row_filtered = {k: v for k, v in sanitized_row.items() if k in columns}
-            if not sanitized_row_filtered: continue
-            text_content = "\\n".join([f"{cn}: {cv}" for cn, cv in sanitized_row_filtered.items()])
-            if not text_content.strip(): continue
+        # Process rows
+        for i, row in enumerate(csv_reader):
+            current_row_number = i + 1 # 1-based row number
 
-            event_ts = None
-            timestamp_column = origin_details.get('event_timestamp_column')
-            if timestamp_column and timestamp_column in sanitized_row_filtered:
-                timestamp_str = sanitized_row_filtered[timestamp_column]
-                if timestamp_str:
-                    try:
-                        parsed_dt = dateutil.parser.parse(timestamp_str)
-                        if parsed_dt.tzinfo is None: event_ts = parsed_dt.replace(tzinfo=timezone.utc)
-                        else: event_ts = parsed_dt
-                    except Exception as parse_err: logging.warning(f"Could not parse timestamp '{timestamp_str}' (DS {datasource_id}): {parse_err}")
+            # Handle header row
+            if i == 0:
+                header = [h.strip() for h in row] # Clean header names
+                if not all(header): # Check if any header name is empty
+                    logger.warning(f"CSV header has empty names (DS {datasource_id})")
+                    empty_header_names = True
+                if not header: # Handle completely empty header row
+                     logger.error(f"CSV file for DS {datasource_id} has an empty or invalid header row. Cannot process.")
+                     raise ValueError("Empty or invalid CSV header")
+                # Set source metadata immediately after reading header
+                source_metadata_update['columns'] = header
+                source_metadata_update['delimiter_used'] = delimiter
+                source_metadata_update['encoding_used'] = encoding
+                source_metadata_update['rows_skipped'] = skip_rows
+                continue # Skip header row from data processing
 
-            record_meta = {'row_number': original_file_line_num, 'source_columns': sanitized_row_filtered}
-            local_records_data.append({
+            # Skip initial rows if specified
+            if current_row_number <= skip_rows + 1: # +1 because header is row 1
+                continue
+
+            # Check for row length mismatch (only if header wasn't empty)
+            if not empty_header_names and len(row) != len(header):
+                logger.warning(f"Row {current_row_number} length mismatch in DS {datasource_id}. Expected {len(header)}, got {len(row)}. Skipping.")
+                source_metadata_update['mismatched_rows'] = source_metadata_update.get('mismatched_rows', 0) + 1
+                continue
+
+            # Create row data dictionary
+            row_data = {header[j]: (row[j].strip() if row[j] is not None else None) for j in range(len(header)) if j < len(row)}
+
+            # Determine text_content
+            text_content_value = ""
+            if text_column and text_column in row_data:
+                text_content_value = str(row_data[text_column] or "")
+            else:
+                # Concatenate all values if no specific column or column not found
+                text_content_value = " ".join(str(v or "") for v in row_data.values())
+
+            # Add record data to list for bulk creation
+            record_data = {
                 "datasource_id": datasource_id,
-                "text_content": text_content,
-                "source_metadata": record_meta,
-                "event_timestamp": event_ts
-            })
-            row_count += 1
+                "text_content": text_content_value,
+                "source_metadata": {
+                    "row_number": current_row_number,
+                    "source_columns": text_column if text_column else list(header) # Indicate source
+                },
+                "row_data": row_data # Store original row data
+            }
+            records_data_to_create.append(record_data)
+            processed_row_count += 1
 
-        source_metadata_update['row_count_processed'] = row_count
-        source_metadata_update['field_count_mismatches'] = field_count_mismatches
-        logging.info(f"[Sync] Processed {row_count} CSV rows for DS {datasource_id}, {field_count_mismatches} mismatches.")
-        return local_records_data
+            # Optional: Log progress periodically
+            if processed_row_count % 1000 == 0:
+                logger.info(f"[Async] Processed {processed_row_count} CSV rows for DS {datasource_id}")
 
-    records_data = await asyncio.to_thread(process_csv_sync)
-    return records_data, source_metadata_update
+        logger.info(f"[Sync] Processed {processed_row_count} CSV rows for DS {datasource_id}, {source_metadata_update.get('mismatched_rows', 0)} mismatches.")
+        source_metadata_update['row_count_processed'] = processed_row_count
+
+    except FileNotFoundError:
+        logger.error(f"CSV file not found in storage for DS {datasource_id} at path {storage_path}")
+        # Re-raise or handle as appropriate for the task status
+        raise
+    except UnicodeDecodeError as e:
+        logger.error(f"Encoding error processing CSV for DS {datasource_id} with encoding '{encoding}': {e}")
+        # Re-raise or set specific error message
+        raise ValueError(f"Encoding error ({encoding}). Please check file encoding or specify a different one.") from e
+    except csv.Error as e:
+        logger.error(f"CSV parsing error for DS {datasource_id} (delimiter='{delimiter}'): {e}")
+        raise ValueError(f"CSV parsing error. Check delimiter ('{delimiter}') and file format.") from e
+    except Exception as e:
+        logger.exception(f"Unexpected error processing CSV content for DS {datasource_id}: {e}")
+        raise # Re-raise unexpected errors
+
+    return records_data_to_create, source_metadata_update
+
 # --- End: CSV Processing Logic ---
 
 # --- Start: Record Batch Creation Logic Moved from IngestionService ---
@@ -307,16 +340,19 @@ class BaseIngestionTask(celery.Task):
 
 # Make the task asynchronous and use the base class
 @celery.task(bind=True, max_retries=3, base=BaseIngestionTask, autoretry_for=(ValueError,), retry_backoff=True, retry_backoff_max=60)
-def process_datasource(self, datasource_id: int):
+def process_datasource(self, datasource_id: int, task_origin_details_override: Optional[Dict[str, Any]] = None):
     """
     Background task to process a DataSource based on its type,
     extract text content, and create DataRecord entries directly.
+    Accepts optional origin_details_override for specific file processing (e.g., bulk PDF).
     The task manages the database transaction and lets exceptions propagate for handling by on_failure.
 
     Retries up to 3 times with exponential backoff if the datasource is not found,
     to handle race conditions with transaction commits.
     """
     logging.info(f"Starting ingestion task for DataSource ID: {datasource_id}")
+    if task_origin_details_override:
+        logging.info(f"Task received origin_details_override: {task_origin_details_override}")
     start_time = time.time()
     total_records_created = 0
 
@@ -338,44 +374,66 @@ def process_datasource(self, datasource_id: int):
                 logging.warning(f"DataSource {datasource_id} not found. Will retry. Attempt {self.request.retries + 1} of {self.max_retries + 1}")
                 raise ValueError(f"DataSource {datasource_id} not found.") # Trigger retry
 
-            if datasource.status != DataSourceStatus.PENDING:
-                logging.warning(f"DataSource {datasource_id} is not PENDING (status: {datasource.status}). Skipping task run.")
+            # --- MODIFIED STATUS CHECK ---
+            # Allow processing if it's PENDING OR if it's a specific file task (override is present)
+            # We still want to skip if it's FAILED or something unexpected happened before this task ran.
+            if datasource.status != DataSourceStatus.PENDING and not task_origin_details_override:
+                logging.warning(f"DataSource {datasource_id} status is {datasource.status} and no override present. Skipping task run.")
                 return # Task finishes successfully without doing work
+            elif datasource.status == DataSourceStatus.FAILED:
+                 logging.warning(f"DataSource {datasource_id} is FAILED. Skipping task run.")
+                 return
+            # --- END MODIFICATION ---
+
 
             # === Start: Main Processing Logic ===
             # Update status to PROCESSING (Directly using session)
-            datasource = _task_update_datasource_status(session, datasource, DataSourceStatus.PROCESSING)
+            # --- MODIFICATION: Only update to PROCESSING if it was PENDING ---
+            if datasource.status == DataSourceStatus.PENDING:
+                datasource = _task_update_datasource_status(session, datasource, DataSourceStatus.PROCESSING)
+            # --- END MODIFICATION ---
 
-            # CORRECTED: Read origin_details directly from the datasource object
-            origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
+            # Get the actual origin details from the fetched datasource object
+            actual_origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
 
             # --- Process based on type (using internal task helpers) ---
             if datasource.type == DataSourceType.CSV:
                 logging.info(f"Processing CSV DataSource: {datasource.id}")
-                object_name = origin_details.get('storage_path') # Use storage_path
+                object_name = actual_origin_details.get('storage_path') # Use storage_path
                 if not object_name: raise ValueError(f"Missing 'storage_path' for CSV DS {datasource.id}")
-                file_object = None
-                try:
+                # Remove fetching file_content_bytes here, helper will handle it
+                # file_object = None
+                # try:
                     # Use asyncio.run to call async storage method from sync task
-                    async def get_file_content():
-                         nonlocal file_object
-                         file_object = await storage_provider.get_file(object_name)
-                         return file_object.read() # Read the content within async context
-
-                    file_content_bytes = asyncio.run(get_file_content())
-                    # Call the async processing helper (also needs asyncio.run)
-                    records_data_to_create, source_metadata_update = asyncio.run(
-                         _task_process_csv_content(file_content_bytes, datasource_id, origin_details)
-                    )
-                finally:
-                     if file_object:
-                         try: asyncio.run(file_object.close()) # Close async if needed
-                         except Exception: pass
+                    # async def get_file_content():
+                    #      nonlocal file_object
+                    #      file_object = await storage_provider.get_file(object_name)
+                    #      return file_object.read() # Read the content within async context
+                # 
+                #    file_content_bytes = asyncio.run(get_file_content())
+                # Call the async processing helper correctly with storage_provider
+                records_data_to_create, source_metadata_update = asyncio.run(
+                     _task_process_csv_content(
+                         datasource_id=datasource_id,
+                         storage_path=object_name, 
+                         origin_details=actual_origin_details,
+                         storage_provider=storage_provider
+                     )
+                )
+                # finally:
+                #      if file_object:
+                #          try: asyncio.run(file_object.close()) # Close async if needed
+                #          except Exception: pass
 
             elif datasource.type == DataSourceType.PDF:
                 logging.info(f"Processing PDF DataSource: {datasource.id}")
-                object_name = origin_details.get('storage_path') # Use storage_path
-                if not object_name: raise ValueError(f"Missing 'storage_path' for PDF DS {datasource.id}")
+                # Use the OVERRIDE if provided (for bulk), else use actual details (for single)
+                effective_origin_details = task_origin_details_override or actual_origin_details
+                object_name = effective_origin_details.get('storage_path')
+                if not object_name:
+                    # If object_name is missing, especially in bulk override, fail clearly
+                    missing_detail = "task_origin_details_override" if task_origin_details_override else "datasource.origin_details"
+                    raise ValueError(f"Missing 'storage_path' in {missing_detail} for PDF DS {datasource.id}")
                 file_object = None
                 try:
                     async def get_pdf_content():
@@ -385,7 +443,12 @@ def process_datasource(self, datasource_id: int):
 
                     pdf_data = asyncio.run(get_pdf_content())
                     records_data_to_create, source_metadata_update = asyncio.run(
-                         _task_process_pdf_content(pdf_data, datasource_id, origin_details)
+                         _task_process_pdf_content(
+                             pdf_data,
+                             datasource_id,
+                             origin_details_override=task_origin_details_override,
+                             actual_datasource_origin_details=actual_origin_details
+                         )
                     )
                 finally:
                     if file_object:
@@ -395,7 +458,7 @@ def process_datasource(self, datasource_id: int):
             elif datasource.type == DataSourceType.URL_LIST:
                 logging.info(f"Processing URL_LIST DataSource: {datasource.id}")
                 # Use the correctly fetched origin_details from above
-                urls = origin_details.get('urls') 
+                urls = actual_origin_details.get('urls') 
                 if not urls or not isinstance(urls, list): raise ValueError(f"Missing/invalid 'urls' list for DS {datasource.id}")
                 processed_count = 0
                 failed_urls = []
@@ -483,7 +546,7 @@ def process_datasource(self, datasource_id: int):
             elif datasource.type == DataSourceType.TEXT_BLOCK:
                 logging.info(f"Processing TEXT_BLOCK DataSource: {datasource.id}")
                 # Assuming text content is stored in source_metadata by the creation route
-                text_content = origin_details.get('text_content')
+                text_content = actual_origin_details.get('text_content')
                 if text_content and isinstance(text_content, str):
                     text_content = text_content.strip()
                     if text_content:
@@ -511,27 +574,57 @@ def process_datasource(self, datasource_id: int):
             if records_data_to_create:
                 total_records_created = _task_create_records_batch(session, records_data_to_create)
                 logging.info(f"Successfully created {total_records_created} DataRecords for DataSource {datasource_id}")
+                # --- IMPORTANT for Bulk: Update parent count ---
+                # We need to update the parent's count potentially incrementally.
+                # This is tricky because tasks run in parallel.
+                # Option 1: Update count here (prone to race conditions without locking).
+                # Option 2: Have a separate task/mechanism to periodically update counts.
+                # Option 3 (Chosen): Update the count at the END of the task, but this only reflects THIS task's records.
+                # Let's update based on *this task's* contribution.
+                # The final status update might need adjustment for bulk.
+                try:
+                    # Use a SELECT FOR UPDATE if high concurrency is expected, or accept potential minor inaccuracy
+                    # For simplicity, just update based on this task's result:
+                    datasource = session.get(DataSource, datasource_id) # Re-fetch latest state
+                    if datasource:
+                        current_count = datasource.data_record_count or 0
+                        datasource.data_record_count = current_count + total_records_created
+                        session.add(datasource)
+                        session.flush()
+                        logging.info(f"Incremented data_record_count on DS {datasource_id} by {total_records_created}")
+                    else:
+                        logging.warning(f"Could not find DS {datasource_id} to update record count after batch creation.")
+                except Exception as count_update_err:
+                     logging.error(f"Error updating record count for DS {datasource_id}: {count_update_err}", exc_info=True)
 
             # === End: Main Processing Logic ===
 
-            # Update the final data_record_count on the datasource object before the final status update
-            if datasource and total_records_created >= 0: # Ensure we have a count
-                 datasource.data_record_count = total_records_created
-                 session.add(datasource) # Make sure the change is tracked
-                 session.flush() # Flush this update before the final status change
-                 logger.info(f"Set final data_record_count to {total_records_created} for DataSource {datasource_id}")
-
-            # Final status update to COMPLETE
-            datasource = _task_update_datasource_status(
+            # Update final status: For BULK PDF, this logic might need refinement.
+            # The parent DS should only be marked COMPLETE when ALL its child tasks are done.
+            # This simple approach marks it COMPLETE after the *first* task finishes.
+            # A more robust solution would involve tracking task completion (e.g., in Redis, DB).
+            # For now, let's stick to the simple approach, but acknowledge the limitation.
+            # If *this task* had no errors, mark complete (even if others might fail)
+            # --- RE-ADDED FINAL STATUS UPDATE ---
+            final_status = DataSourceStatus.COMPLETE # Assume success for this task run
+            # Re-fetch datasource before final status update to avoid stale state issues
+            datasource_final = session.get(DataSource, datasource_id) 
+            if not datasource_final:
+                 # Should not happen if we got this far, but safety check
+                 raise Exception(f"DataSource {datasource_id} disappeared before final status update.")
+                 
+            datasource_final = _task_update_datasource_status(
                 session,
-                datasource,
-                DataSourceStatus.COMPLETE,
-                metadata_updates=source_metadata_update
+                datasource_final, # Use the re-fetched object
+                final_status, # Mark based on this task's success
+                error_message=None, # Clear error on success
+                metadata_updates=source_metadata_update # Pass final metadata updates
             )
+            logging.info(f"Set final status for DataSource {datasource_id} to {final_status}")
+            # --- END RE-ADDED ---
 
-            # Commit the entire transaction
             session.commit()
-            logging.info(f"Successfully committed ingestion for DataSource {datasource_id}")
+            logging.info(f"Successfully committed final status and ingestion actions for DataSource {datasource_id}")
 
         except Exception as e:
             # Log error and rollback transaction

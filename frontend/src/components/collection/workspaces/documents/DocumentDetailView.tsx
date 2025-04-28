@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo, ChangeEvent } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, ChangeEvent, useRef } from 'react';
 import { Separator } from "@/components/ui/separator";
 import {
   Avatar,
@@ -13,20 +13,17 @@ import { ClassificationSchemeRead, FieldType, EnhancedClassificationResultRead, 
 import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ClassificationResultsService, ClassificationSchemesService, ClassificationJobsService } from '@/client/services';
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import ClassificationResultDisplay from '../classifications/ClassificationResultDisplay';
-import { PlusCircle, Lock, Unlock, ArrowRight, Loader2, Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw, AlertCircle, Info, Search, ArrowUp, ArrowDown, Download, Eye, X, Save, Trash2, Pencil, AlertTriangle } from "lucide-react"; // Added Search, ArrowUp, ArrowDown, Download, Eye, X, Save, Trash2, Pencil, AlertTriangle
 import { useToast } from '@/components/ui/use-toast';
 import { Toaster } from '@/components/ui/toaster';
 import { useClassificationJobsStore, useClassificationJobsActions, useIsClassificationJobsLoading, useClassificationJobsError } from "@/zustand_stores/storeClassificationJobs";
 import { DatarecordsService, DatasourcesService } from '@/client/services';
-import { DataRecordRead, DataSourceRead as ClientDataSourceReadAlias, DataSourceType, DataSourceStatus, DataSourceUpdate } from '@/client/models'; // Use Alias, import DataSourceUpdate
-import { useDataSourceStore } from '@/zustand_stores/storeDataSources'; // Import DataSource store
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { DataRecordRead, DataSourceRead as ClientDataSourceReadAlias, DataSourceType, DataSourceStatus, DataSourceUpdate } from '@/client/models'; // Use Alias, import DataSourceUpdate
 import {
   Table,
   TableBody,
@@ -61,7 +58,16 @@ import { Textarea } from "@/components/ui/textarea"
 import Link from 'next/link';
 import { useDatasetStore } from '@/zustand_stores/storeDatasets';
 import DatasetCreateDialog from '../datasets/DatasetCreateDialog';
+import { adaptDataSourceReadToDataSource } from '@/lib/classification/adapters'; // Ensure correct adapters are imported
+import { useDataSourceStore } from '@/zustand_stores/storeDataSources'; // Import store
+import { toast } from 'sonner';
+import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X } from 'lucide-react'; // Added FileText, List
+import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { AlertCircle, ArrowUp, ArrowDown, Files, Type } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 // Define Sort Direction type
 type SortDirection = 'asc' | 'desc' | null;
 
@@ -144,6 +150,18 @@ const DataRecordDetailView = ({
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [isFetchingPdfForView, setIsFetchingPdfForView] = useState(false);
 
+  // --- NEW: State for selected individual PDF record ---
+  const [selectedIndividualRecord, setSelectedIndividualRecord] = useState<DataRecordRead | null>(null);
+  // --- END NEW ---
+
+  // ---> ADDED: Ref to track previous dataSource ID
+  const prevDataSourceIdRef = useRef<number | null>(null);
+  // <--- END ADDED
+
+  // ---> MOVED: State for PDF viewer tracking
+  const [currentlyViewedRecordId, setCurrentlyViewedRecordId] = useState<number | null>(null);
+  // <--- END MOVED
+
   // --- Custom Hook Calls --- (Should come after state)
   const { classificationJobs: availableJobsFromStore } = useClassificationJobsStore();
   const { fetchClassificationJobs } = useClassificationJobsActions();
@@ -157,10 +175,10 @@ const DataRecordDetailView = ({
   const { updateDataSource, refetchDataSource } = useDataSourceStore();
 
   // Get necessary functions from store
-  const { 
-    addUrlToDataSource, 
-    updateDataSourceUrls, 
-    getDataSourceUrls 
+  const {
+    addUrlToDataSource,
+    updateDataSourceUrls,
+    getDataSourceUrls
   } = useDataSourceStore();
 
   const { createDataset } = useDatasetStore();
@@ -169,10 +187,43 @@ const DataRecordDetailView = ({
 
   // First, add state for time axis configuration
   const [timeAxisConfig, setTimeAxisConfig] = useState<TimeAxisConfig>({
-    selectedField: null,
-    selectedScheme: null,
-    timeRange: null
+    type: 'default',
+    schemeId: undefined,
+    fieldKey: 'event_timestamp'
   });
+
+  // --- NEW: State for data records associated with a bulk PDF source ---
+  const [associatedRecords, setAssociatedRecords] = useState<DataRecordRead[]>([]);
+  const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+
+  // Fetch associated records when a bulk PDF datasource is selected
+  useEffect(() => {
+      const fetchRecords = async () => {
+          if (dataSource && dataSource.type === 'pdf' && dataSource.source_metadata && typeof dataSource.source_metadata.file_count === 'number' && dataSource.source_metadata.file_count > 1 && activeWorkspace) {
+              setIsLoadingRecords(true);
+              try {
+                  // Fetch all records for this datasource
+                  const records = await DatarecordsService.listDatarecords({
+                      workspaceId: activeWorkspace.id,
+                      datasourceId: dataSource.id,
+                      limit: 1000 // Adjust limit as needed
+                  });
+                  setAssociatedRecords(records || []); // Assuming service returns array or null/undefined
+              } catch (error) {
+                  console.error("Error fetching associated data records:", error);
+                  toast({ title: "Error", description: "Could not load individual file records.", variant: "destructive" });
+                  setAssociatedRecords([]);
+              } finally {
+                  setIsLoadingRecords(false);
+              }
+          } else {
+              // Clear records if it's not a bulk PDF
+              setAssociatedRecords([]);
+          }
+      };
+
+      fetchRecords();
+  }, [dataSource, activeWorkspace?.id, toast]); // Rerun when datasource or workspace changes
 
   // --- Callbacks (useCallback) --- (Define fetchAll, fetchUrls etc. here)
 
@@ -486,177 +537,216 @@ const DataRecordDetailView = ({
   // Revert handleDownloadPdf to use authenticated fetch and trigger download
   // This time, get the token directly from localStorage
   const handleDownloadPdf = useCallback(async () => {
-    if (dataSource?.type === 'pdf' && activeWorkspace?.id && dataSource.id) {
-      // Construct the download endpoint URL
-      const downloadUrl = `/api/v1/workspaces/${activeWorkspace.id}/datasources/${dataSource.id}/pdf_download`;
-      toast({ title: "Starting Download", description: "Preparing PDF file..." });
+    // --- MODIFIED: Determine target URL based on context ---
+    let downloadUrl: string | null = null;
+    let isRecordDownload = false;
+    const isBulkSource = dataSource?.type === 'pdf' && (dataSource.source_metadata as any)?.file_count > 1;
 
-      // Retrieve token directly from localStorage
-      const token = typeof window !== 'undefined' ? localStorage.getItem("access_token") : null;
-
-      if (!token) {
-        console.error("Cannot download PDF: Authentication token not found.");
-        toast({
-          title: "Authentication Error",
-          description: "Could not find authentication token. Please log in again.",
-          variant: "destructive",
-        });
-        return; // Stop if no token
-      }
-
-      try {
-        const response = await fetch(downloadUrl, {
-          method: 'GET',
-          headers: {
-            // Set the Authorization header using the retrieved token
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-
-        if (!response.ok) {
-          let errorDetail = `HTTP error! Status: ${response.status}`;
-          try {
-            // Try to get more specific error detail from the response body
-            const errorData = await response.json();
-            errorDetail = errorData.detail || errorDetail;
-          } catch (e) { /* Ignore if response is not JSON */ }
-          throw new Error(errorDetail);
-        }
-
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        
-        // Extract filename from Content-Disposition header
-        const disposition = response.headers.get('content-disposition');
-        let filename = `datasource_${dataSource.id}.pdf`; // Default filename
-        if (disposition && disposition.includes('attachment')) {
-            // Regex to extract filename, handling quotes correctly
-            const filenameRegex = /filename[^;=\n]*=((['"])(.*?)\2|([^;\n]*))/;
-            const matches = filenameRegex.exec(disposition);
-            if (matches?.[3]) { 
-              filename = matches[3].replace(/^"|"$/g, ''); // Filename in quotes
-            } else if (matches?.[4]) {
-              filename = matches[4]; // Filename without quotes
-            }
-        }
-
-        // Create temporary link and trigger download
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        
-        // Clean up the temporary link and blob URL
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-        
-        toast({ title: "Download Started", description: `Downloading ${filename}.` });
-
-      } catch (error: any) {
-        console.error("Failed to download PDF:", error);
-        toast({
-          title: "Download Failed",
-          description: error.message || "Could not download the PDF file.",
-          variant: "destructive",
-        });
-      }
+    if (isBulkSource && selectedIndividualRecord?.id && activeWorkspace?.id) {
+      // Bulk PDF: Use the DataRecord content endpoint
+      downloadUrl = `/api/v1/workspaces/${activeWorkspace.id}/datarecords/${selectedIndividualRecord.id}/content`;
+      isRecordDownload = true;
+      toast({ title: "Starting Download", description: `Preparing file: ${(selectedIndividualRecord.source_metadata as any)?.original_filename || `Record ${selectedIndividualRecord.id}`}...` });
+    } else if (dataSource?.type === 'pdf' && !isBulkSource && activeWorkspace?.id && dataSource.id) {
+      // Single PDF: Use the DataSource download endpoint
+      downloadUrl = `/api/v1/workspaces/${activeWorkspace.id}/datasources/${dataSource.id}/pdf_download`;
+      isRecordDownload = false;
+      toast({ title: "Starting Download", description: `Preparing file: ${dataSource.name}...` });
     } else {
-      // Log if the initial conditions aren't met
-      console.error("Cannot initiate PDF download: Missing workspace, datasource ID, or incorrect type.");
+      // Conditions not met
+      console.error("Cannot initiate PDF download: Missing workspace, datasource ID, record selection, or incorrect type.", { isBulkSource, selectedIndividualRecord, dataSource, activeWorkspace });
       toast({
         title: "Download Error",
-        description: "Could not initiate PDF download. Check source details.",
+        description: isBulkSource ? "Please select an individual file to download." : "Could not determine the file to download.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // --- END MODIFICATION ---
+
+    // Retrieve token directly from localStorage
+    const token = typeof window !== 'undefined' ? localStorage.getItem("access_token") : null;
+
+    if (!token) {
+      console.error("Cannot download PDF: Authentication token not found.");
+      toast({
+        title: "Authentication Error",
+        description: "Could not find authentication token. Please log in again.",
+        variant: "destructive",
+      });
+      return; // Stop if no token
+    }
+
+    try {
+      const response = await fetch(downloadUrl, {
+        method: 'GET',
+        headers: {
+          // Set the Authorization header using the retrieved token
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        let errorDetail = `HTTP error! Status: ${response.status}`;
+        try {
+          // Try to get more specific error detail from the response body
+          const errorData = await response.json();
+          errorDetail = errorData.detail || errorDetail;
+        } catch (e) { /* Ignore if response is not JSON */ }
+        throw new Error(errorDetail);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      // Extract filename from Content-Disposition header
+      const disposition = response.headers.get('content-disposition');
+      let filename = `download.pdf`; // Default filename
+      if (isRecordDownload && selectedIndividualRecord) {
+        // Try getting filename from record metadata first for record downloads
+        filename = (selectedIndividualRecord.source_metadata as any)?.original_filename || filename;
+      }
+      if (disposition) {
+        const filenameRegex = /filename[^;=\n]*=((['"])(.*?)\2|([^;\n]*))/;
+        const matches = filenameRegex.exec(disposition);
+        if (matches?.[3]) {
+          filename = matches[3].replace(/^"|"$/g, ''); // Use header filename if found
+        } else if (matches?.[4]) {
+          filename = matches[4]; // Use header filename if found
+        }
+      } else if (!isRecordDownload && dataSource) {
+          // Fallback for DataSource download if header missing
+          // --- LINTER FIX (Attempt 2): Ensure default string ---
+          const originDetails = dataSource.origin_details;
+          if (typeof originDetails === 'object' && originDetails !== null && typeof (originDetails as any).filename === 'string' && (originDetails as any).filename) {
+             filename = (originDetails as any).filename;
+          } else if (dataSource.name) {
+             filename = dataSource.name;
+          } else {
+             filename = `datasource_${dataSource.id}.pdf`; // Guaranteed string fallback
+          }
+          // --- END LINTER FIX ---
+      }
+
+      // Create temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+
+      // Clean up the temporary link and blob URL
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({ title: "Download Started", description: `Downloading ${filename}.` });
+
+    } catch (error: any) {
+      console.error("Failed to download PDF:", error);
+      toast({
+        title: "Download Failed",
+        description: error.message || "Could not download the PDF file.",
         variant: "destructive",
       });
     }
-  // Dependency array remains the same as token is retrieved inside the callback
-  }, [dataSource, activeWorkspace?.id, toast]);
+  // Dependencies updated
+  }, [dataSource, activeWorkspace?.id, toast, selectedIndividualRecord]);
 
-  // --- NEW: Callback to handle viewing PDF inline ---
+  // ---> NEW: Reusable function to fetch and set PDF blob URL <---
+  const fetchAndSetPdfBlob = useCallback(async (recordToView: DataRecordRead | null): Promise<string | null> => {
+    if (!recordToView?.id || !activeWorkspace?.id) {
+      console.error("Cannot fetch PDF blob: Missing record ID or workspace ID.");
+      // Don't toast here, let the caller decide based on context
+      return null;
+    }
+
+    const viewUrl = `/api/v1/workspaces/${activeWorkspace.id}/datarecords/${recordToView.id}/content`;
+    const token = typeof window !== 'undefined' ? localStorage.getItem("access_token") : null;
+
+    if (!token) {
+      toast({ title: "Authentication Error", description: "Could not find authentication token.", variant: "destructive" });
+      return null;
+    }
+
+    try {
+      const response = await fetch(viewUrl, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        let errorDetail = `HTTP error! Status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorDetail = errorData.detail || errorDetail;
+        } catch (e) { /* Ignore */ }
+        throw new Error(errorDetail);
+      }
+
+      const blob = await response.blob();
+      if (blob.size === 0 || blob.type !== 'application/pdf') {
+        throw new Error(blob.type !== 'application/pdf' ? "Received file is not a PDF." : "Received empty PDF file.");
+      }
+
+      const objectUrl = window.URL.createObjectURL(blob);
+      return objectUrl; // Return the new URL on success
+
+    } catch (error: any) {
+      console.error("Failed to fetch PDF blob:", error);
+      toast({
+        title: "PDF Load Failed",
+        description: error.message || "Could not load the PDF file.",
+        variant: "destructive"
+      });
+      return null; // Return null on failure
+    }
+  }, [activeWorkspace?.id, toast]);
+  // ---> END NEW FUNCTION <---
+
+  // --- MODIFIED: Callback to handle viewing PDF inline ---
   const handleViewPdf = useCallback(async () => {
-    // If viewer is already open, close it and revoke URL
-    if (isPdfViewerOpen && pdfBlobUrl) {
+    // If viewer is already open, just close it
+    if (isPdfViewerOpen) {
       setIsPdfViewerOpen(false);
-      window.URL.revokeObjectURL(pdfBlobUrl);
-      setPdfBlobUrl(null);
+      if (pdfBlobUrl) {
+        window.URL.revokeObjectURL(pdfBlobUrl);
+        setPdfBlobUrl(null);
+      }
+      setCurrentlyViewedRecordId(null); // Clear viewed ID when closing
       return;
     }
 
-    // If viewer is closed, fetch PDF and open it
-    if (dataSource?.type === 'pdf' && activeWorkspace?.id && dataSource.id) {
-      setIsFetchingPdfForView(true); // Start loading indicator
+    // Determine which record to view when opening
+    const recordToView = selectedIndividualRecord || (dataSource?.type === 'pdf' && associatedRecords.length === 1 ? associatedRecords[0] : null);
+    const isBulkSource = dataSource?.type === 'pdf' && (dataSource.source_metadata as any)?.file_count > 1;
 
-      // Check metadata first
-      const storagePath = dataSource.source_metadata?.storage_path;
-      if (!storagePath) {
-        toast({ 
-          title: "Error", 
-          description: "PDF file location not found. The file might not be properly uploaded.", 
-          variant: "destructive" 
-        });
-        setIsFetchingPdfForView(false);
-        return;
-      }
-
-      const viewUrl = `/api/v1/workspaces/${activeWorkspace.id}/datasources/${dataSource.id}/content`;
-
-      const token = typeof window !== 'undefined' ? localStorage.getItem("access_token") : null;
-
-      if (!token) {
-        toast({ 
-          title: "Authentication Error", 
-          description: "Could not find authentication token.", 
-          variant: "destructive" 
-        });
-        setIsFetchingPdfForView(false);
-        return;
-      }
-
-      try {
-        const response = await fetch(viewUrl, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-
-        if (!response.ok) {
-          let errorDetail = `HTTP error! Status: ${response.status}`;
-          try { 
-            const errorData = await response.json(); 
-            errorDetail = errorData.detail || errorDetail; 
-          } catch (e) { /* Ignore */ }
-          throw new Error(errorDetail);
-        }
-
-        const blob = await response.blob();
-        if (blob.size === 0) {
-          throw new Error("Received empty PDF file");
-        }
-
-        const objectUrl = window.URL.createObjectURL(blob);
-        setPdfBlobUrl(objectUrl);
-        setIsPdfViewerOpen(true);
-
-      } catch (error: any) {
-        console.error("Failed to fetch PDF for viewing:", error);
-        toast({ 
-          title: "View Failed", 
-          description: error.message || "Could not load PDF for viewing.", 
-          variant: "destructive" 
-        });
-        setIsPdfViewerOpen(false);
-        setPdfBlobUrl(null);
-      } finally {
-        setIsFetchingPdfForView(false);
-      }
-    } else {
-      toast({ 
-        title: "View Error", 
-        description: "Not a valid PDF source.", 
-        variant: "destructive" 
-      });
+    if (!recordToView) {
+      toast({ title: "Cannot View PDF", description: isBulkSource ? "Please select an individual PDF file to view." : "Cannot identify PDF record to view.", variant: "destructive" });
+      return;
     }
-  }, [dataSource, activeWorkspace?.id, toast, isPdfViewerOpen, pdfBlobUrl]);
+
+    setIsFetchingPdfForView(true);
+    // Revoke any existing URL before fetching a new one
+    if (pdfBlobUrl) {
+      window.URL.revokeObjectURL(pdfBlobUrl);
+      setPdfBlobUrl(null);
+    }
+    setCurrentlyViewedRecordId(null); // Clear potentially stale ID before fetching
+
+    const newBlobUrl = await fetchAndSetPdfBlob(recordToView); // Use the extracted function
+
+    setIsFetchingPdfForView(false);
+    if (newBlobUrl) {
+      setPdfBlobUrl(newBlobUrl);
+      setIsPdfViewerOpen(true); // Open viewer only if fetch succeeded
+      setCurrentlyViewedRecordId(recordToView.id); // Set viewed ID on successful open
+    } else {
+      // Error handled within fetchAndSetPdfBlob
+      setIsPdfViewerOpen(false); // Ensure viewer remains closed on error
+      setCurrentlyViewedRecordId(null); // Ensure ID is cleared on error
+    }
+    // Dependencies updated
+  }, [activeWorkspace?.id, toast, isPdfViewerOpen, pdfBlobUrl, selectedIndividualRecord, dataSource, associatedRecords, fetchAndSetPdfBlob]); // Added fetchAndSetPdfBlob dependency
 
   // --- Memoized Values (useMemo) --- (Define after callbacks)
 
@@ -762,57 +852,108 @@ const DataRecordDetailView = ({
 
   // Effect: Fetch records, URLs, or PDF metadata when the dataSource state changes
   useEffect(() => {
-    if (!dataSource || !activeWorkspace?.id) return;
+    // --- ADDED LOG --- 
+    console.log(`Effect[dataSource]: Running due to dataSource change. ID: ${dataSource?.id}, Type: ${dataSource?.type}`);
+    const currentId = dataSource?.id;
+    const previousId = prevDataSourceIdRef.current;
 
-    console.log(`DataSource state updated. Type: ${dataSource.type}. Triggering type-specific actions.`);
-
-    // Clear states for other types initially
-    setEditableUrls([]);
-    setPdfBlobUrl(null);
-    setDataRecords([]); // Clear general records
-    setSelectedRowData(null); // Clear CSV selection
-    setCsvData(null); // Clear raw CSV data
-    setSelectedRowResults([]); // Clear results for selected row
-
-    // Trigger actions based on type
-    if (dataSource.type === 'csv') {
-      fetchCsvData(activeWorkspace.id, dataSource.id, 1);
-    } else if (dataSource.type === 'url_list') {
-      // Initialize editableUrls from the fetched dataSource
-      const initialUrls = (dataSource.origin_details as any)?.urls || [];
-      setEditableUrls(initialUrls);
-      // Fetch associated data records (scraped content)
-      fetchUrlListData(activeWorkspace.id, dataSource.id, 1, dataSource.data_record_count ?? 0);
-    } else if (dataSource.type === 'pdf') {
-      // Fetch the single data record associated with the PDF
-      DatarecordsService.listDatarecords({
-          workspaceId: activeWorkspace.id,
-          datasourceId: dataSource.id,
-          limit: 1
-      }).then(recordsResponse => {
-          setDataRecords(recordsResponse || []);
-          console.log("Fetched single record for PDF source:", recordsResponse);
-      }).catch(err => {
-          console.error("Failed to fetch record for PDF source:", err);
-          setDataRecords([]);
-      });
-    } else if (dataSource.type === 'text_block') {
-      // Fetch the single data record for the text block
-      DatarecordsService.listDatarecords({
-          workspaceId: activeWorkspace.id,
-          datasourceId: dataSource.id,
-          limit: 1
-      }).then(recordsResponse => {
-          setDataRecords(recordsResponse || []);
-      }).catch(err => {
-          console.error("Failed to fetch record for text_block source:", err);
-          setDataRecords([]);
-      });
-    } else {
-      console.warn(`Unsupported or unknown dataSource type: ${dataSource.type}. Resetting.`);
+    if (!dataSource || !activeWorkspace?.id) {
+        console.log("Effect[dataSource]: dataSource or activeWorkspace missing, returning.");
+        // Store current ID (or null) before returning
+        prevDataSourceIdRef.current = currentId ?? null;
+        return;
     }
 
-  }, [dataSource, activeWorkspace?.id, fetchCsvData, fetchUrlListData]); // Removed fetchUrls dependency
+    // --- MODIFICATION: Only reset selections if ID actually changed ---
+    const hasIdChanged = currentId !== previousId;
+    if (hasIdChanged) {
+        console.log(`Effect[dataSource]: ID changed from ${previousId} to ${currentId}. Resetting selections.`);
+        setSelectedIndividualRecord(null);
+        setEditableUrls([]);
+        setDataRecords([]); // Clear general records
+        setSelectedRowData(null); // Clear CSV selection
+        setCsvData(null); // Clear raw CSV data
+        setSelectedRowResults([]); // Clear results for selected row
+        // Also close viewer and revoke URL if ID changes
+        if (pdfBlobUrl) {
+            window.URL.revokeObjectURL(pdfBlobUrl);
+            setPdfBlobUrl(null);
+        }
+        setIsPdfViewerOpen(false);
+    }
+    // --- END MODIFICATION ---
+
+    console.log(`Effect[dataSource]: ID ${currentId}. Type: ${dataSource.type}. Triggering type-specific actions. ID Changed: ${hasIdChanged}`);
+
+    // Clear states for other types initially (MOVED this reset above)
+    // setEditableUrls([]); 
+    // setPdfBlobUrl(null); 
+    // setDataRecords([]); 
+    // setSelectedRowData(null); 
+    // setCsvData(null); 
+    // setSelectedRowResults([]); 
+
+    // Trigger actions based on type (only fetch if ID changed or data not present)
+    if (hasIdChanged || dataSource.type === 'csv' && !csvData) {
+        if (dataSource.type === 'csv') {
+            console.log(`Effect[dataSource]: Fetching CSV data for ID ${currentId}`);
+            fetchCsvData(activeWorkspace.id, dataSource.id, 1);
+        }
+    }
+    if (hasIdChanged || dataSource.type === 'url_list' && editableUrls.length === 0) {
+        if (dataSource.type === 'url_list') {
+             console.log(`Effect[dataSource]: Fetching URL list data/setting initial URLs for ID ${currentId}`);
+            // Initialize editableUrls from the fetched dataSource
+            const initialUrls = (dataSource.origin_details as any)?.urls || [];
+            setEditableUrls(initialUrls);
+            // Fetch associated data records (scraped content)
+            fetchUrlListData(activeWorkspace.id, dataSource.id, 1, dataSource.data_record_count ?? 0);
+        }
+    }
+    if (hasIdChanged || dataSource.type === 'pdf' && dataRecords.length === 0) {
+        if (dataSource.type === 'pdf') {
+          console.log(`Effect[dataSource]: Fetching records for PDF source ID ${currentId}`);
+          // Fetch the single data record associated with the PDF (or all for bulk)
+          const isBulk = dataSource.source_metadata && typeof dataSource.source_metadata.file_count === 'number' && dataSource.source_metadata.file_count > 1;
+          const limit = isBulk ? 1000 : 1; // Fetch all for bulk, 1 for single
+          DatarecordsService.listDatarecords({
+              workspaceId: activeWorkspace.id,
+              datasourceId: dataSource.id,
+              limit: limit
+          }).then(recordsResponse => {
+              // Use setAssociatedRecords for bulk, setDataRecords for single?
+              // Let's use associatedRecords for consistency, the file list rendering already handles it.
+              setAssociatedRecords(recordsResponse || []);
+              console.log(`Effect[dataSource]: Fetched ${recordsResponse?.length || 0} records for PDF source ${currentId}`);
+          }).catch(err => {
+              console.error(`Effect[dataSource]: Failed to fetch records for PDF source ${currentId}:`, err);
+              setAssociatedRecords([]); // Use associatedRecords setter
+          });
+        }
+    }
+    if (hasIdChanged || dataSource.type === 'text_block' && dataRecords.length === 0) {
+        if (dataSource.type === 'text_block') {
+           console.log(`Effect[dataSource]: Fetching record for text_block source ID ${currentId}`);
+          // Fetch the single data record for the text block
+          DatarecordsService.listDatarecords({
+              workspaceId: activeWorkspace.id,
+              datasourceId: dataSource.id,
+              limit: 1
+          }).then(recordsResponse => {
+              setDataRecords(recordsResponse || []); // Keep using setDataRecords here?
+              // Maybe use associatedRecords here too for consistency?
+              setAssociatedRecords(recordsResponse || []);
+          }).catch(err => {
+              console.error(`Effect[dataSource]: Failed to fetch record for text_block source ${currentId}:`, err);
+              setDataRecords([]);
+              setAssociatedRecords([]);
+          });
+        }
+    }
+    // Store the current ID for the next run
+    prevDataSourceIdRef.current = currentId ?? null;
+
+  }, [dataSource, activeWorkspace?.id, fetchCsvData, fetchUrlListData]); // Removed dataRecords, csvData, editableUrls from deps
 
   useEffect(() => {
     if (dataSource?.type === 'csv' && selectedRowData) {
@@ -1010,72 +1151,43 @@ const DataRecordDetailView = ({
 
   // --- Rendering Logic Starts Here ---
 
-  if (isLoadingSource && !dataSource) {
-    return (
-      <div className="mt-4 p-4 rounded-lg bg-muted/20 shadow-sm">
-        <h4 className="text-md font-semibold mb-3 flex items-center">
-          Details for Row {selectedRowData?.row_number}
-          <Badge variant="outline" className="ml-2 text-xs">Selected Row</Badge>
-        </h4>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="space-y-2 rounded-md p-3 bg-background/50 shadow-sm">
-            <h5 className="text-sm font-medium mb-2 pb-1 border-b">Row Data</h5>
-            <div className="max-h-[350px] overflow-y-auto pr-1">
-              {csvData?.columns.map((column, colIndex) => (
-                <div key={`${column}-${colIndex}`} className="grid grid-cols-3 gap-2 text-sm border-b py-1 last:border-b-0">
-                  <span className="font-medium col-span-1 break-words">{column}</span>
-                  <span className="col-span-2 break-words text-muted-foreground">
-                    {typeof selectedRowData?.row_data?.[column] === 'object'
-                      ? JSON.stringify(selectedRowData?.row_data?.[column])
-                      : String(selectedRowData?.row_data?.[column] ?? '(empty)')}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+  // ---> MOVED: Effects related to PDF viewer logic (moved here because it depends on hooks defined above)
+  useEffect(() => {
+    const updateViewerContent = async () => {
+      // Only run if viewer is open, a record is selected, AND it's a different record than currently viewed
+      if (isPdfViewerOpen && selectedIndividualRecord && selectedIndividualRecord.id !== currentlyViewedRecordId) {
+        console.log(`Live updating PDF viewer for record ID: ${selectedIndividualRecord.id}`);
+        setIsFetchingPdfForView(true); // Indicate loading
 
-          <div className="space-y-2 rounded-md p-3 bg-background/50 shadow-sm">
-            <h5 className="text-sm font-medium mb-2 pb-1 border-b">Classifications for this Row</h5>
-            <div className="max-h-[350px] overflow-y-auto pr-1">
-              {selectedRowResults.length > 0 ? (
-                selectedRowResults.map((result) => {
-                  const scheme = schemes.find(s => s.id === result.scheme_id);
-                  if (!scheme) return null;
-                  const job = result.job_id ? availableJobsFromStore[result.job_id] : null;
-                  const jobName = job?.name || (result.job_id ? `Job ${result.job_id}` : 'N/A');
-                  return (
-                    <div
-                      key={result.id}
-                      className="p-2 bg-card rounded border text-xs cursor-pointer hover:bg-muted/50"
-                       onClick={() => {
-                         setSelectedResult(result);
-                         setIsResultDialogOpen(true);
-                       }}
-                    >
-                       <div className="flex items-center gap-1 mb-1">
-                         <span className="font-semibold">{scheme.name}</span>
-                         <Badge variant="outline" className="text-xs font-normal">{jobName}</Badge>
-                       </div>
-                      <ClassificationResultDisplay
-                        result={result}
-                        scheme={scheme}
-                        compact={true}
-                      />
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-xs text-muted-foreground italic">
-                  No classification results found for this row {selectedJobId !== null ? `in ${jobNameForDialog}` : '(across all jobs)'}.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+        // Revoke old blob URL if it exists
+        if (pdfBlobUrl) {
+          window.URL.revokeObjectURL(pdfBlobUrl);
+          setPdfBlobUrl(null); // Clear immediately
+          setCurrentlyViewedRecordId(null); // Clear viewed ID
+        }
 
+        const newBlobUrl = await fetchAndSetPdfBlob(selectedIndividualRecord);
+        setIsFetchingPdfForView(false); // Loading finished
+
+        if (newBlobUrl) {
+          setPdfBlobUrl(newBlobUrl);
+          setCurrentlyViewedRecordId(selectedIndividualRecord.id); // Update viewed ID
+        } else {
+          // Fetch failed
+          // Close the viewer as we couldn't load the new content
+          setIsPdfViewerOpen(false);
+          setCurrentlyViewedRecordId(null);
+          toast({ title: "PDF Load Failed", description: "Could not switch PDF view.", variant: "destructive" });
+        }
+      }
+    };
+
+    updateViewerContent();
+    // Dependencies: Ensures effect runs when selection changes while viewer is open, or when viewer opens/closes
+  }, [selectedIndividualRecord, isPdfViewerOpen, currentlyViewedRecordId, pdfBlobUrl, fetchAndSetPdfBlob, toast, setCurrentlyViewedRecordId, setIsPdfViewerOpen, setPdfBlobUrl]); // Add state setters to dependencies
+  // <--- END MOVED
+
+  // ---> RE-INSERTED RENDER FUNCTIONS - START <---
   const renderScheduledIngestionCard = () => {
      if (!dataSource || dataSource.type !== 'url_list') {
          return null;
@@ -1190,7 +1302,7 @@ const DataRecordDetailView = ({
       const resultsByScheme = filteredResults.reduce((acc, result) => {
         const scheme = schemes.find(s => s.id === result.scheme_id);
         if (!scheme) return acc;
-        
+
         if (!acc[scheme.id]) {
           acc[scheme.id] = {
             scheme,
@@ -1203,68 +1315,113 @@ const DataRecordDetailView = ({
 
       return (
         <div className="space-y-4">
-          {Object.values(resultsByScheme).map(({ scheme, results }) => (
-            <Card key={scheme.id} className="p-4">
-              <CardHeader className="p-0 pb-4">
-                <CardTitle className="text-base flex items-center justify-between">
-                  {scheme.name}
-                  <Badge variant="outline" className="ml-2">
-                    {results.length} results
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <div className="space-y-2">
-                {results.map(result => (
-                  <div
-                    key={result.id}
-                    className="p-2 bg-muted/20 rounded border text-sm cursor-pointer hover:bg-muted/30"
-                    onClick={() => {
-                      setSelectedResult(result);
-                      setIsResultDialogOpen(true);
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-1">
+            {Object.values(resultsByScheme).map(({ scheme, results }) => (
+              <Card key={scheme.id} className="p-4">
+                <CardHeader className="p-0 pb-4">
+                  <CardTitle className="text-base flex items-center justify-between">
+                    {scheme.name}
+                    <Badge variant="outline" className="ml-2">
+                      {results.length} results
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <div className="space-y-2">
+                  {results.map(result => (
+                    <div
+                      key={result.id}
+                      className="p-2 bg-muted/20 rounded border text-sm cursor-pointer hover:bg-muted/30"
+                      onClick={() => {
+                        setSelectedResult(result);
+                        setIsResultDialogOpen(true);
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2">
-                        {result.job_id && (
-                          <Badge variant="outline" className="text-xs">
-                            {availableJobsFromStore[result.job_id]?.name || `Job ${result.job_id}`}
-                          </Badge>
-                        )}
-                        {result.timestamp && (
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(result.timestamp), "PP")}
-                          </span>
-                        )}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (result.job_id && onLoadIntoRunner) {
-                            handleLoadIntoRunner(result);
-                          }
-                        }}
-                        disabled={!result.job_id || !onLoadIntoRunner}
-                      >
+                          {result.job_id && (
+                            <Badge variant="outline" className="text-xs">
+                              {availableJobsFromStore[result.job_id]?.name || `Job ${result.job_id}`}
+                            </Badge>
+                          )}
+                          {result.timestamp && (
+                            <span className="text-xs text-muted-foreground">
+                              {format(new Date(result.timestamp), "PP")}
+                            </span>
+                           )}
+                        </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (result.job_id && onLoadIntoRunner) {
+                                    handleLoadIntoRunner(result);
+                                  }
+                                }}
+                                disabled={!result.job_id || !onLoadIntoRunner}
+                              >
                         <ExternalLink className="h-3 w-3 mr-1" />
                         Load in Runner
-                      </Button>
+                              </Button>
+                      </div>
+                      <ClassificationResultDisplay
+                        result={result}
+                        scheme={scheme}
+                        compact={true}
+                      />
                     </div>
-                    <ClassificationResultDisplay
-                      result={result}
-                      scheme={scheme}
-                      compact={true}
-                    />
-                  </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+      );
+    };
+
+    const renderJobSelector = () => {
+      if (jobsWithResultsForDataSource.length === 0 && !isLoadingResults && !isLoadingSource) {
+        return (
+          <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium">Available Jobs</h4>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              No classification jobs found for this data source.
+            </p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">Filter by Job</h4>
+            {(isLoadingResults || isLoadingSource) && <Loader2 className="h-4 w-4 animate-spin" />}
+          </div>
+          <div className="mt-2">
+            <Select
+              value={selectedJobId || "all"}
+              onValueChange={handleJobSelect}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a job to filter results" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  All jobs for this data source ({classificationResults.length} results)
+                </SelectItem>
+                {jobsWithResultsForDataSource.map((job) => (
+                  <SelectItem key={job.id} value={job.id.toString()}>
+                    {job.name || `Job ${job.id}`} ({format(new Date(job.created_at), "PP")}) - {jobResultCounts[job.id] || 0} results
+                  </SelectItem>
                 ))}
-              </div>
-            </Card>
-          ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       );
     };
+
 
     return (
       <div className="p-4 w-full bg-card rounded-lg shadow-sm border">
@@ -1288,21 +1445,21 @@ const DataRecordDetailView = ({
               <TabsTrigger value="list">List View</TabsTrigger>
               <TabsTrigger value="chart">Time Series</TabsTrigger>
             </TabsList>
-            
+
             <TabsContent value="list" className="min-h-[400px]">
               {renderTimeSeriesChart()}
             </TabsContent>
-            
+
             <TabsContent value="chart" className="min-h-[400px]">
               {filteredResults.length > 0 ? (
                 <div className="space-y-4">
-                  <div className="p-4 border rounded-lg">
-                    <ClassificationTimeAxisControls
-                      config={timeAxisConfig}
-                      onChange={setTimeAxisConfig}
-                      schemes={schemes}
-                    />
-                  </div>
+                    <div className="p-4 border rounded-lg">
+                      <ClassificationTimeAxisControls
+                        schemes={schemes}
+                        initialConfig={timeAxisConfig}
+                        onTimeAxisConfigChange={timeAxisConfig => setTimeAxisConfig(timeAxisConfig || { type: 'default' })}
+                      />
+                    </div>
                   <div className="p-4 border rounded-lg">
                     <ResultsChart
                       results={filteredResults.map(adaptEnhancedResultReadToFormattedResult)}
@@ -1326,409 +1483,489 @@ const DataRecordDetailView = ({
   };
 
   const renderContent = () => {
-    if (!dataSource) {
-      return null;
+    if (isLoadingSource || !dataSource) {
+        return <div className="p-4 text-center">Loading data source details...</div>;
     }
 
-    // Extract text content logic (similar to text_block)
-    let displayTextContent: string | null = null;
-    if (dataSource.type === 'pdf' || dataSource.type === 'text_block') {
-      if (dataRecords.length > 0 && dataRecords[0].text_content) {
-          displayTextContent = dataRecords[0].text_content;
-      } else if (!sourceError && !isLoadingSource) {
-          displayTextContent = "(No text content extracted or available for this source)";
-      }
-    }
+    const isBulkPdf = dataSource.type === 'pdf' && dataSource.source_metadata && typeof dataSource.source_metadata.file_count === 'number' && dataSource.source_metadata.file_count > 1;
 
     const renderTextDisplay = (text: string | null) => (
-      <div
-        className={cn(
-          "whitespace-pre-wrap text-sm bg-secondary/30 p-3 rounded-lg relative border border-border/30",
-          "max-h-[65vh] overflow-auto mt-4" // Add margin top if viewer is above
-        )}
-      >
-        {isLoadingSource && !text ? (
-          <span className="text-muted-foreground italic">Loading text content...</span>
-        ) : text ? (
-          text
-        ) : sourceError ? (
-          <span className="text-red-500 italic">{sourceError}</span>
-        ) : (
-          <span className="text-muted-foreground italic">(No text content available)</span>
-        )}
-      </div>
+        <ScrollArea className="h-[200px] w-full rounded-md border p-3 text-sm bg-background">
+            {text || <span className="text-muted-foreground italic">No text content available.</span>}
+        </ScrollArea>
     );
 
     switch (dataSource.type) {
-      case 'csv':
-        return (
-          <div className="space-y-3 h-full flex flex-col">
-            {isLoadingCsv ? (
-               <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
-                 <Loader2 className="h-4 w-4 animate-spin" /> Loading CSV data...
-               </div>
-             ) : csvError ? (
-               <div className="text-center py-4 text-red-600">
-                 {csvError}
-               </div>
-             ) : csvData && csvData.columns && csvData.columns.length > 0 && csvData.data ? (
-               <>
-                 <div className="relative max-w-xs">
-                   <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                   <Input
-                     placeholder="Search this page..."
-                     value={csvSearchTerm}
-                     onChange={(e) => {
-                       setCsvSearchTerm(e.target.value);
-                       setSelectedRowData(null);
-                     }}
-                     className="pl-8 h-8 text-sm"
-                   />
-                 </div>
+        case 'pdf':
+            // Handle both single and bulk PDF here
+            const pageCount = dataSource.source_metadata?.page_count as number | undefined;
+            const processedPages = dataSource.source_metadata?.processed_page_count as number | undefined;
+            const fileCount = dataSource.source_metadata?.file_count as number | undefined;
+            // --- Fix: Ensure displayFilename is string or default ---
+            const filenameFromDetails = dataSource.origin_details?.filename as string | undefined;
+            const displayFilename = isBulkPdf ? dataSource.name : (filenameFromDetails || dataSource.name || `DataSource ${dataSource.id}`);
+            // --- End Fix ---
 
-                 <div className="border rounded-md overflow-auto relative w-full max-h-[30vh] max-w-[50vw] flex-grow">
-                   <Table className="text-xs max-w-screen-3xl">
-                     <TableHeader className="sticky top-0 bg-muted z-10">
-                       <TableRow>
-                         <TableHead className="w-[80px] px-2 py-2 font-semibold sticky left-0 bg-muted z-10 border-r shadow-sm">Row</TableHead>
-                         {csvData.columns.map((col, colIndex) => (
-                           <TableHead
-                             key={`${col}-${colIndex}`}
-                             className="px-2 py-2 font-semibold whitespace-nowrap overflow-hidden text-ellipsis cursor-pointer hover:bg-muted-foreground/10"
-                             onClick={() => handleSort(col)}
-                           >
-                             <div className="flex items-center gap-1">
-                               {col}
-                               {sortColumn === col && sortDirection === 'asc' && <ArrowUp className="h-3 w-3" />}
-                               {sortColumn === col && sortDirection === 'desc' && <ArrowDown className="h-3 w-3" />}
-                             </div>
-                           </TableHead>
-                         ))}
-                       </TableRow>
-                     </TableHeader>
-                     <TableBody>
-                       {filteredAndSortedCsvData.length > 0 ? (
-                         filteredAndSortedCsvData.map((row: CsvRowData) => (
-                           <TableRow
-                             key={row.row_number}
-                             onClick={() => {
-                               setSelectedRowData(prev => prev?.row_number === row.row_number ? null : row);
-                             }}
-                             className={cn(
-                               "cursor-pointer hover:bg-muted/50",
-                               selectedRowData?.row_number === row.row_number && "bg-primary/10 hover:bg-primary/20"
-                             )}
-                           >
-                             <TableCell className="px-2 py-1 text-foreground sticky left-0 bg-muted z-10 border-r">{row.row_number}</TableCell>
+            // --- Add Check for status before rendering badge ---
+            const statusBadge = dataSource.status ? (
+                <Badge variant={
+                    dataSource.status === 'complete' ? 'default'
+                    : dataSource.status === 'failed' ? 'destructive'
+                    : dataSource.status === 'processing' ? 'secondary'
+                    : dataSource.status === 'pending' ? 'secondary'
+                    : 'outline' // Fallback variant
+                }
+                    className="capitalize flex items-center gap-1"
+                >
+                    {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {/* Display user-friendly status */}
+                    {dataSource.status === 'complete' ? 'Completed'
+                     : dataSource.status === 'failed' ? 'Failed'
+                     : dataSource.status === 'processing' ? 'Processing'
+                     : dataSource.status === 'pending' ? 'Pending'
+                     : dataSource.status} {/* Raw status as fallback */}
+                </Badge>
+            ) : (
+                <Badge variant="outline">Unknown</Badge> // Fallback badge if status is missing
+            );
+            // --- End Check ---
+
+            return (
+                <div className="p-4 border rounded-lg bg-muted/30 h-full flex flex-col">
+                    <h3 className="text-lg font-semibold mb-3 flex items-center">
+                       {isBulkPdf ? <Files className="h-5 w-5 mr-2 text-primary" /> : <FileText className="h-5 w-5 mr-2 text-primary" />}
+                       {isBulkPdf ? 'Bulk PDF Details' : 'PDF Details'}
+                    </h3>
+                    <div className="space-y-2 mb-4 text-sm flex-grow">
+                        <p><strong>Source Name:</strong> {displayFilename}</p>
+                        {isBulkPdf && fileCount !== undefined && <p><strong>Files Included:</strong> {fileCount}</p>}
+                        {!isBulkPdf && pageCount !== undefined && <p><strong>Total Pages:</strong> {pageCount}</p>}
+                        {!isBulkPdf && processedPages !== undefined && <p><strong>Processed Pages:</strong> {processedPages}</p>}
+                        <div className="flex items-center gap-1"><strong>Overall Status:</strong> {statusBadge}</div> {/* Changed p to div */}
+                        {dataSource.status === 'failed' && dataSource.error_message && (
+                            <p className="text-destructive text-xs"><strong>Error:</strong> {dataSource.error_message}</p>
+                        )}
+
+                        {isBulkPdf && (
+                            <div className="mt-3 pt-3 border-t">
+                                <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Individual Files ({associatedRecords.length}):</h4>
+                                {isLoadingRecords ? (
+                                    <p className="text-xs italic text-muted-foreground">Loading file list...</p>
+                                ) : associatedRecords.length > 0 ? (
+                                    // --- ADDED ScrollArea --- 
+                                    <ScrollArea className="max-h-32 pr-2">
+                                        <ul className="space-y-1 text-xs">
+                                            {associatedRecords.map(record => {
+                                                const originalFilename = (record.source_metadata as any)?.original_filename;
+                                                const isSelected = selectedIndividualRecord?.id === record.id;
+                                                return (
+                                                    <li key={record.id}
+                                                        className={cn(
+                                                            "truncate p-1 rounded border cursor-pointer hover:bg-muted/80",
+                                                            isSelected ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "bg-background"
+                                                        )}
+                                                        title={originalFilename || `Record ${record.id}`}
+                                                        onClick={() => setSelectedIndividualRecord(record)} // Set selected record
+                                                    >
+                                                        <FileText className="h-3 w-3 inline-block mr-1.5 align-middle" />
+                                                        {originalFilename || `Record ${record.id}`}
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    </ScrollArea>
+                                    // --- END ADDED ScrollArea ---
+                                ) : (
+                                    <p className="text-xs italic text-muted-foreground">No individual file records found (or still processing).</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* --- Text Content Display (Moved & Modified) --- */}
+                    {(() => {
+                       const recordForTextDisplay = isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null);
+                       if (recordForTextDisplay) {
+                           const textTitle = isBulkPdf
+                               ? `Text Content for: ${(recordForTextDisplay.source_metadata as any)?.original_filename || `Record ${recordForTextDisplay.id}`}`
+                               : 'Extracted Text Content';
+                           return (
+                               <div className="mt-3 pt-3 border-t">
+                                   <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">{textTitle}</h4>
+                                   {renderTextDisplay(recordForTextDisplay.text_content)}
+                               </div>
+                           );
+                       }
+                       // Optionally show a message if no record/text found for single PDF
+                       else if (!isBulkPdf && !isLoadingRecords) {
+                           return (
+                               <div className="mt-3 pt-3 border-t">
+                                   <p className="text-xs italic text-muted-foreground">No text content record found.</p>
+                               </div>
+                           );
+                       }
+                       return null;
+                    })()}
+                    {/* --- END Text Content Display --- */}
+
+                    {/* --- MODIFICATION: Conditional PDF Buttons --- */}
+                    <div className="flex items-center gap-2 mb-4 border-t pt-4 mt-auto">
+                      <Button onClick={handleViewPdf} variant="outline" size="sm" disabled={isFetchingPdfForView || (isBulkPdf && !selectedIndividualRecord)} title={isBulkPdf && !selectedIndividualRecord ? "Select an individual file above to view" : ""}>
+                        {isFetchingPdfForView ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : isPdfViewerOpen ? (
+                          <X className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Eye className="mr-2 h-4 w-4" />
+                        )}
+                        {isPdfViewerOpen ? 'Close Viewer' : (isBulkPdf ? 'View Selected PDF' : 'View Inline')}
+                      </Button>
+                      <Button onClick={handleDownloadPdf} variant="outline" size="sm" disabled={isBulkPdf && !selectedIndividualRecord} title={isBulkPdf && !selectedIndividualRecord ? "Select an individual file above to download" : ""}>
+                        <Download className="mr-2 h-4 w-4" />
+                        {isBulkPdf ? 'Download Selected PDF' : 'Download PDF'}
+                      </Button>
+                    </div>
+                    {/* --- END MODIFICATION --- */}
+                </div>
+            );
+
+        case 'url_list':
+            const originalUrls = (dataSource.origin_details as any)?.urls || [];
+            const hasUrlListChanged = JSON.stringify([...editableUrls].sort()) !== JSON.stringify([...originalUrls].sort());
+    
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* --- Left Column: URL Editor --- */}
+                  <div className="space-y-3">
+                      <h4 className="text-md font-semibold flex items-center justify-between">
+                          Source URLs ({editableUrls.length})
+                          <Button onClick={handleRefetch} variant="outline" size="sm" disabled={isRefetching || isSavingUrls}>
+                              {isRefetching ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                              Re-fetch All
+                          </Button>
+                      </h4>
+                      <ScrollArea className="h-[250px] w-full border rounded-md p-3">
+                          <div className="space-y-2 ">
+                              {editableUrls.map((url, index) => (
+                                  <div key={index} className="flex items-center justify-between gap-2 text-sm bg-background p-1.5 rounded">
+                                      <a href={url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-blue-600 flex-1" title={url}>
+                                          {url}
+                                      </a>
+                                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0" onClick={() => handleRemoveUrl(url)} disabled={isSavingUrls}>
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                  </div>
+                              ))}
+                              {editableUrls.length === 0 && (
+                                  <p className="text-sm text-muted-foreground italic text-center py-2">No URLs added yet.</p>
+                              )}
+                          </div>
+                      </ScrollArea>
+                      <div className="flex items-center gap-2">
+                          <Input
+                              type="url"
+                              placeholder="Add new URL (e.g., https://...)"
+                              value={newUrlInput}
+                              onChange={(e: ChangeEvent<HTMLInputElement>) => setNewUrlInput(e.target.value)}
+                              className="h-9 text-sm"
+                              onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
+                              disabled={isSavingUrls}
+                          />
+                          <Button onClick={handleAddUrl} size="sm" disabled={isSavingUrls || !newUrlInput.trim()}>
+                              <PlusCircle className="h-4 w-4 mr-1" /> Add
+                          </Button>
+                      </div>
+                      <Button onClick={handleSaveUrls} size="sm" disabled={isSavingUrls || !hasUrlListChanged}>
+                          {isSavingUrls ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                          Save URL List Changes
+                      </Button>
+                  </div>
+    
+                  {/* --- Right Column: Scraped Records --- */}
+                  <div className="space-y-3">
+                      <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
+                      {/* ---> ADDED: View Mode Toggle Buttons --- */}
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Button
+                          variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
+                          size="sm"
+                          onClick={() => setScrapedContentViewMode('flat')}
+                        >
+                          Flat List (Time)
+                        </Button>
+                        <Button
+                          variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
+                          size="sm"
+                          onClick={() => setScrapedContentViewMode('grouped')}
+                        >
+                          Grouped by URL
+                        </Button>
+                      </div>
+                      {/* <--- END ADDED --- */}
+    
+                      {isLoadingUrlList ? (
+                           <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...</div>
+                      ) : urlListError ? (
+                           <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Error Loading Records</AlertTitle><AlertDescription>{urlListError}</AlertDescription></Alert>
+                      ) : urlListDataRecords.length > 0 ? (
+                          <>
+                              <ScrollArea className="h-[400px] w-full border rounded-md p-3">
+                                  <div className="space-y-3">
+                                      {scrapedContentViewMode === 'flat' ? (
+                                          // --- Flat List View (Sorted by Time) ---
+                                          sortedFlatList.map((record) => {
+                                              const originalUrl = (record.source_metadata as any)?.original_url;
+                                              return (
+                                                  <div
+                                                    key={record.id}
+                                                    className={cn(
+                                                      "p-2 rounded bg-background space-y-1 border cursor-pointer transition-colors",
+                                                      highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
+                                                    )}
+                                                    onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
+                                                  >
+                                                      <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+                                                          <span>Record ID: {record.id}</span>
+                                                          {originalUrl &&
+                                                              <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-primary hover:underline inline-flex items-center text-xs" title={originalUrl}>
+                                                                  <span className="truncate max-w-[200px]">{originalUrl}</span>
+                                                                  <ExternalLink className="h-3 w-3 ml-1 shrink-0" />
+                                                              </a>
+                                                          }
+                                                          <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                                                             {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
+                                                          </span>
+                                                      </div>
+                                                      <p className={cn(
+                                                        "text-sm whitespace-pre-wrap bg-secondary/30 p-1.5 rounded border",
+                                                        highlightedRecordId === record.id ? "max-h-none" : "max-h-[100px] overflow-y-auto"
+                                                      )}>
+                                                          {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
+                                                      </p>
+                                                  </div>
+                                              );
+                                          })
+                                      ) : (
+                                          Object.entries(groupedRecords).map(([url, recordsInGroup]) => (
+                                              <div key={url} className="mb-4 border rounded-md">
+                                                  <div className="bg-muted/50 px-3 py-1.5 border-b">
+                                                      <a href={url !== 'Unknown URL' ? url : undefined} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary hover:underline flex items-center" title={url}>
+                                                          {url}
+                                                          {url !== 'Unknown URL' && <ExternalLink className="h-3.5 w-3.5 ml-1.5 shrink-0" />}
+                                                      </a>
+                                                  </div>
+                                                  <div className="p-2 space-y-2">
+                                                      {recordsInGroup.map((record) => (
+                                                          <div
+                                                            key={record.id}
+                                                            className={cn(
+                                                              "p-1.5 rounded bg-background space-y-0.5 border cursor-pointer transition-colors",
+                                                              highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
+                                                            )}
+                                                            onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
+                                                          >
+                                                              <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+                                                                  <span>Record ID: {record.id}</span>
+                                                                  <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                                                                     {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
+                                                                  </span>
+                                                              </div>
+                                                              <p className={cn(
+                                                                "text-sm whitespace-pre-wrap bg-secondary/30 p-1 rounded border",
+                                                                highlightedRecordId === record.id ? "max-h-none" : "max-h-[80px] overflow-y-auto"
+                                                              )}>
+                                                                  {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
+                                                              </p>
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              </div>
+                                          ))
+                                      )}
+                                  </div>
+                              </ScrollArea>
+                              {urlListTotalPages > 0 && (
+                                  <div className="flex justify-center items-center pt-1 flex-none">
+                                      <Pagination>
+                                          <PaginationContent>
+                                              <PaginationItem><PaginationPrevious href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage - 1); }} className={cn(urlListCurrentPage === 1 ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
+                                              <PaginationItem><span className="px-3 text-sm">Page {urlListCurrentPage} of {urlListTotalPages}</span></PaginationItem>
+                                              <PaginationItem><PaginationNext href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage + 1); }} className={cn(urlListCurrentPage === urlListTotalPages ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
+                                          </PaginationContent>
+                                      </Pagination>
+                                  </div>
+                              )}
+                          </>
+                      ) : (
+                          <div className="text-center py-4 text-muted-foreground italic">No scraped content records found for this URL list source.</div>
+                      )}
+                  </div>
+                </div>
+            );
+        case 'csv':
+            return (
+              <div className="space-y-3 h-full flex flex-col">
+                {isLoadingCsv ? (
+                   <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
+                     <Loader2 className="h-4 w-4 animate-spin" /> Loading CSV data...
+                   </div>
+                 ) : csvError ? (
+                   <div className="text-center py-4 text-red-600">
+                     {csvError}
+                   </div>
+                 ) : csvData && csvData.columns && csvData.columns.length > 0 && csvData.data ? (
+                   <>
+                     <div className="relative max-w-xs">
+                       <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                       <Input
+                         placeholder="Search this page..."
+                         value={csvSearchTerm}
+                         onChange={(e) => {
+                           setCsvSearchTerm(e.target.value);
+                           setSelectedRowData(null);
+                         }}
+                         className="pl-8 h-8 text-sm"
+                       />
+                     </div>
+
+                     <div className="border rounded-md overflow-auto relative w-full max-h-[30vh] max-w-[50vw] flex-grow">
+                       <Table className="text-xs max-w-screen-3xl">
+                         <TableHeader className="sticky top-0 bg-muted z-10">
+                           <TableRow>
+                             <TableHead className="w-[80px] px-2 py-2 font-semibold sticky left-0 bg-muted z-10 border-r shadow-sm">Row</TableHead>
                              {csvData.columns.map((col, colIndex) => (
-                               <TableCell
-                                 key={`${row.row_number}-${col}-${colIndex}`}
-                                 className="px-2 py-1 max-w-[300px] truncate whitespace-nowrap"
-                                 title={typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                               <TableHead
+                                 key={`${col}-${colIndex}`}
+                                 className="px-2 py-2 font-semibold whitespace-nowrap overflow-hidden text-ellipsis cursor-pointer hover:bg-muted-foreground/10"
+                                 onClick={() => handleSort(col)}
                                >
-                                 {typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
-                               </TableCell>
+                                 <div className="flex items-center gap-1">
+                                   {col}
+                                   {sortColumn === col && sortDirection === 'asc' && <ArrowUp className="h-3 w-3" />}
+                                   {sortColumn === col && sortDirection === 'desc' && <ArrowDown className="h-3 w-3" />}
+                                 </div>
+                               </TableHead>
                              ))}
                            </TableRow>
-                         ))
-                       ) : (
-                         <TableRow>
-                           <TableCell colSpan={(csvData.columns?.length ?? 0) + 1} className="h-24 text-center text-muted-foreground italic">
-                             {csvSearchTerm ? 'No results found for your search.' : 'No data available for the current page.'}
-                           </TableCell>
-                         </TableRow>
-                       )}
-                     </TableBody>
-                   </Table>
+                         </TableHeader>
+                         <TableBody>
+                           {filteredAndSortedCsvData.length > 0 ? (
+                             filteredAndSortedCsvData.map((row: CsvRowData) => (
+                               <TableRow
+                                 key={row.row_number}
+                                 onClick={() => {
+                                   setSelectedRowData(prev => prev?.row_number === row.row_number ? null : row);
+                                 }}
+                                 className={cn(
+                                   "cursor-pointer hover:bg-muted/50",
+                                   selectedRowData?.row_number === row.row_number && "bg-primary/10 hover:bg-primary/20"
+                                 )}
+                               >
+                                 <TableCell className="px-2 py-1 text-foreground sticky left-0 bg-muted z-10 border-r">{row.row_number}</TableCell>
+                                 {csvData.columns.map((col, colIndex) => (
+                                   <TableCell
+                                     key={`${row.row_number}-${col}-${colIndex}`}
+                                     className="px-2 py-1 max-w-[300px] truncate whitespace-nowrap"
+                                     title={typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                                   >
+                                     {typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                                   </TableCell>
+                                 ))}
+                               </TableRow>
+                             ))
+                           ) : (
+                             <TableRow>
+                               <TableCell colSpan={(csvData.columns?.length ?? 0) + 1} className="h-24 text-center text-muted-foreground italic">
+                                 {csvSearchTerm ? 'No results found for your search.' : 'No data available for the current page.'}
+                               </TableCell>
+                             </TableRow>
+                           )}
+                         </TableBody>
+                       </Table>
+                     </div>
+
+                     {totalPages > 0 && (
+                        <div className="flex justify-center items-center pt-2 flex-none">
+                           <Pagination>
+                             <PaginationContent>
+                               <PaginationItem>
+                                 <PaginationPrevious
+                                   href="#"
+                                   onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }}
+                                   className={cn(
+                                     currentPage === 1 ? "pointer-events-none opacity-50" : "",
+                                     "h-8 px-2" // Smaller pagination buttons
+                                   )}
+                                 />
+                               </PaginationItem>
+                               <PaginationItem>
+                                 <span className="px-3 text-sm">Page {currentPage} of {totalPages}</span>
+                               </PaginationItem>
+                               <PaginationItem>
+                                 <PaginationNext
+                                   href="#"
+                                   onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }}
+                                   className={cn(
+                                     currentPage === totalPages ? "pointer-events-none opacity-50" : "",
+                                     "h-8 px-2" // Smaller pagination buttons
+                                   )}
+                                 />
+                               </PaginationItem>
+                             </PaginationContent>
+                           </Pagination>
+                        </div>
+                     )}
+                     {renderSelectedRowDetail()}
+                   </>
+                 ) : (
+                   <div className="text-center py-4 text-muted-foreground italic">
+                     No rows found in this CSV file or the data format is unexpected (and not loading/error).
+                   </div>
+                    )}
                  </div>
-
-                 {totalPages > 0 && (
-                    <div className="flex justify-center items-center pt-2 flex-none">
-                       <Pagination>
-                         <PaginationContent>
-                           <PaginationItem>
-                             <PaginationPrevious
-                                href="#"
-                                onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }}
-                                className={cn(
-                                  currentPage === 1 ? "pointer-events-none opacity-50" : "",
-                                  "h-8 px-2" // Smaller pagination buttons
-                                )}
-                             />
-                           </PaginationItem>
-                           <PaginationItem>
-                             <span className="px-3 text-sm">Page {currentPage} of {totalPages}</span>
-                           </PaginationItem>
-                           <PaginationItem>
-                             <PaginationNext
-                               href="#"
-                               onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }}
-                               className={cn(
-                                 currentPage === totalPages ? "pointer-events-none opacity-50" : "",
-                                 "h-8 px-2" // Smaller pagination buttons
-                               )}
-                             />
-                           </PaginationItem>
-                         </PaginationContent>
-                       </Pagination>
+             );
+        case 'text_block':
+            const charCount = dataSource.source_metadata?.character_count as number | undefined;
+            return (
+                <div className="p-4 border rounded-lg bg-muted/30 h-full flex flex-col">
+                    <h3 className="text-lg font-semibold mb-3 flex items-center">
+                        <Type className="h-5 w-5 mr-2 text-primary" /> Text Block Content
+                    </h3>
+                    <div className="space-y-2 mb-4 text-sm flex-grow">
+                        <p><strong>Source Name:</strong> {dataSource.name || `DataSource ${dataSource.id}`}</p>
+                        {charCount !== undefined && <p><strong>Character Count:</strong> {charCount}</p>}
+                        {/* Displaying the text content using the helper */}
+                        <Label className="text-xs font-semibold text-muted-foreground">Content:</Label>
+                        {renderTextDisplay(dataSource.origin_details?.text_content as string || null)}
                     </div>
-                 )}
-                 {renderSelectedRowDetail()}
-               </>
-             ) : (
-               <div className="text-center py-4 text-muted-foreground italic">
-                 No rows found in this CSV file or the data format is unexpected (and not loading/error).
-               </div>
-             )}
-          </div>
-        );
-      case 'url_list':
-        const originalUrls = (dataSource.origin_details as any)?.urls || [];
-        const hasUrlListChanged = JSON.stringify([...editableUrls].sort()) !== JSON.stringify([...originalUrls].sort());
-
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* --- Left Column: URL Editor --- */}
-              <div className="space-y-3">
-                  <h4 className="text-md font-semibold flex items-center justify-between">
-                      Source URLs ({editableUrls.length})
-                      <Button onClick={handleRefetch} variant="outline" size="sm" disabled={isRefetching || isSavingUrls}>
-                          {isRefetching ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                          Re-fetch All
-                      </Button>
-                  </h4>
-                  <ScrollArea className="h-[250px] w-full border rounded-md p-3">
-                      <div className="space-y-2 ">
-                          {editableUrls.map((url, index) => (
-                              <div key={index} className="flex items-center justify-between gap-2 text-sm bg-background p-1.5 rounded">
-                                  <a href={url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-blue-600 flex-1" title={url}>
-                                      {url}
-                                  </a>
-                                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0" onClick={() => handleRemoveUrl(url)} disabled={isSavingUrls}>
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                              </div>
-                          ))}
-                          {editableUrls.length === 0 && (
-                              <p className="text-sm text-muted-foreground italic text-center py-2">No URLs added yet.</p>
-                          )}
-                      </div>
-                  </ScrollArea>
-                  <div className="flex items-center gap-2">
-                      <Input
-                          type="url"
-                          placeholder="Add new URL (e.g., https://...)"
-                          value={newUrlInput}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) => setNewUrlInput(e.target.value)}
-                          className="h-9 text-sm"
-                          onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
-                          disabled={isSavingUrls}
-                      />
-                      <Button onClick={handleAddUrl} size="sm" disabled={isSavingUrls || !newUrlInput.trim()}>
-                          <PlusCircle className="h-4 w-4 mr-1" /> Add
-                      </Button>
-                  </div>
-                  <Button onClick={handleSaveUrls} size="sm" disabled={isSavingUrls || !hasUrlListChanged}>
-                      {isSavingUrls ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
-                      Save URL List Changes
-                  </Button>
-              </div>
-
-              {/* --- Right Column: Scraped Records --- */}
-              <div className="space-y-3">
-                  <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
-                  {/* ---> ADDED: View Mode Toggle Buttons --- */}
-                  <div className="flex items-center space-x-2 mb-2">
-                    <Button
-                      variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
-                      size="sm"
-                      onClick={() => setScrapedContentViewMode('flat')}
-                    >
-                      Flat List (Time)
-                    </Button>
-                    <Button
-                      variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
-                      size="sm"
-                      onClick={() => setScrapedContentViewMode('grouped')}
-                    >
-                      Grouped by URL
-                    </Button>
-                  </div>
-                  {/* <--- END ADDED --- */}
-
-                  {isLoadingUrlList ? (
-                       <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...</div>
-                  ) : urlListError ? (
-                       <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Error Loading Records</AlertTitle><AlertDescription>{urlListError}</AlertDescription></Alert>
-                  ) : urlListDataRecords.length > 0 ? (
-                      <>
-                          <ScrollArea className="h-[400px] w-full border rounded-md p-3">
-                              <div className="space-y-3">
-                                  {scrapedContentViewMode === 'flat' ? (
-                                      // --- Flat List View (Sorted by Time) ---
-                                      sortedFlatList.map((record) => {
-                                          const originalUrl = (record.source_metadata as any)?.original_url;
-                                          return (
-                                              <div
-                                                key={record.id}
-                                                className={cn(
-                                                  "p-2 rounded bg-background space-y-1 border cursor-pointer transition-colors",
-                                                  highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
-                                                )}
-                                                onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
-                                              >
-                                                  <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
-                                                      <span>Record ID: {record.id}</span>
-                                                      {originalUrl &&
-                                                          <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-primary hover:underline inline-flex items-center text-xs" title={originalUrl}>
-                                                              <span className="truncate max-w-[200px]">{originalUrl}</span>
-                                                              <ExternalLink className="h-3 w-3 ml-1 shrink-0" />
-                                                          </a>
-                                                      }
-                                                      <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
-                                                         {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
-                                                      </span>
-                                                  </div>
-                                                  <p className={cn(
-                                                    "text-sm whitespace-pre-wrap bg-secondary/30 p-1.5 rounded border",
-                                                    highlightedRecordId === record.id ? "max-h-none" : "max-h-[100px] overflow-y-auto"
-                                                  )}>
-                                                      {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
-                                                  </p>
-                                              </div>
-                                          );
-                                      })
-                                  ) : (
-                                      Object.entries(groupedRecords).map(([url, recordsInGroup]) => (
-                                          <div key={url} className="mb-4 border rounded-md">
-                                              <div className="bg-muted/50 px-3 py-1.5 border-b">
-                                                  <a href={url !== 'Unknown URL' ? url : undefined} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary hover:underline flex items-center" title={url}>
-                                                      {url}
-                                                      {url !== 'Unknown URL' && <ExternalLink className="h-3.5 w-3.5 ml-1.5 shrink-0" />}
-                                                  </a>
-                                              </div>
-                                              <div className="p-2 space-y-2">
-                                                  {recordsInGroup.map((record) => (
-                                                      <div
-                                                        key={record.id}
-                                                        className={cn(
-                                                          "p-1.5 rounded bg-background space-y-0.5 border cursor-pointer transition-colors",
-                                                          highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
-                                                        )}
-                                                        onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
-                                                      >
-                                                          <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
-                                                              <span>Record ID: {record.id}</span>
-                                                              <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
-                                                                 {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
-                                                              </span>
-                                                          </div>
-                                                          <p className={cn(
-                                                            "text-sm whitespace-pre-wrap bg-secondary/30 p-1 rounded border",
-                                                            highlightedRecordId === record.id ? "max-h-none" : "max-h-[80px] overflow-y-auto"
-                                                          )}>
-                                                              {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
-                                                          </p>
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                          </div>
-                                      ))
-                                  )}
-                              </div>
-                          </ScrollArea>
-                          {urlListTotalPages > 0 && (
-                              <div className="flex justify-center items-center pt-1 flex-none">
-                                  <Pagination>
-                                      <PaginationContent>
-                                          <PaginationItem><PaginationPrevious href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage - 1); }} className={cn(urlListCurrentPage === 1 ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
-                                          <PaginationItem><span className="px-3 text-sm">Page {urlListCurrentPage} of {urlListTotalPages}</span></PaginationItem>
-                                          <PaginationItem><PaginationNext href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage + 1); }} className={cn(urlListCurrentPage === urlListTotalPages ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
-                                      </PaginationContent>
-                                  </Pagination>
-                              </div>
-                          )}
-                      </>
-                  ) : (
-                      <div className="text-center py-4 text-muted-foreground italic">No scraped content records found for this URL list source.</div>
-                  )}
-              </div>
-          </div>
-        );
-      case 'pdf':
-        return (
-          <div className="space-y-3">
-            {renderPdfButtons()}
-            {isPdfViewerOpen && pdfBlobUrl && (
-              <div className="border rounded-md overflow-hidden">
-                <iframe
-                  src={pdfBlobUrl}
-                  width="100%"
-                  height="600px" // Adjust height as needed
-                  title={`PDF Viewer - ${dataSource.name}`}
-                  style={{ border: 'none' }}
-                />
-              </div>
-            )}
-            {renderTextDisplay(displayTextContent)}
-          </div>
-        );
-      case 'text_block':
-         return renderTextDisplay(displayTextContent);
-      default:
-        return <div className="text-center text-muted-foreground p-8">Unsupported data source type for detailed view.</div>;
+                    {/* Add actions if needed, e.g., edit? */}
+                </div>
+            );
+        default:
+            return <div className="p-4 text-center text-muted-foreground">Unsupported data source type or details not loaded.</div>;
     }
   };
+  // ---> RE-INSERTED RENDER FUNCTIONS - END <---
 
-  const renderJobSelector = () => {
-    if (jobsWithResultsForDataSource.length === 0 && !isLoadingResults && !isLoadingSource) {
-      return (
-        <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">Available Jobs</h4>
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            No classification jobs found for this data source.
-          </p>
-        </div>
-      );
-    }
 
+  if (isLoadingSource && !dataSource) {
     return (
-      <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">Filter by Job</h4>
-          {(isLoadingResults || isLoadingSource) && <Loader2 className="h-4 w-4 animate-spin" />}
-        </div>
-        <div className="mt-2">
-          <Select
-            value={selectedJobId || "all"}
-            onValueChange={handleJobSelect}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a job to filter results" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                All jobs for this data source ({classificationResults.length} results)
-              </SelectItem>
-              {jobsWithResultsForDataSource.map((job) => (
-                <SelectItem key={job.id} value={job.id.toString()}>
-                  {job.name || `Job ${job.id}`} ({format(new Date(job.created_at), "PP")}) - {jobResultCounts[job.id] || 0} results
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="flex items-center justify-center h-full p-6">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        Loading data source details...
       </div>
     );
-  };
+  }
+
+  // --- Rendering Logic Starts Here ---
+  // ---> REMOVED hooks from here: jobNameForDialog useMemo, currentlyViewedRecordId useState, useEffect
+
 
   return (
     <div className="flex flex-col h-full">
       {/* Add header with actions */}
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">{displayTitle(dataSource)}</h2>
+        <h2 className="text-xl font-semibold ml-4 mt-1">{displayTitle(dataSource)}</h2>
         {renderHeaderActions()}
       </div>
 
@@ -1757,8 +1994,13 @@ const DataRecordDetailView = ({
                     className="capitalize flex items-center gap-1"
                   >
                     {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
-                    {dataSource.status === 'complete' ? 'Completed' : dataSource.status === 'failed' ? 'Failed' : dataSource.status === 'processing' ? 'Processing' : dataSource.status === 'pending' ? 'Pending' : 'Not Started'}
-                  </Badge>
+                    {/* Display user-friendly status */}
+                    {dataSource.status === 'complete' ? 'Completed'
+                     : dataSource.status === 'failed' ? 'Failed'
+                     : dataSource.status === 'processing' ? 'Processing'
+                     : dataSource.status === 'pending' ? 'Pending'
+                     : dataSource.status} {/* Raw status as fallback */}
+                </Badge>
                 </div>
                 <div className="text-xs">
                   <TooltipProvider delayDuration={100}>
@@ -1803,9 +2045,22 @@ const DataRecordDetailView = ({
             </TabsList>
 
             <TabsContent value="content" className="mt-2 rounded-md p-1">
+               {/* --- NEW POSITION for PDF Viewer --- */}
+               {/* --- END NEW POSITION --- */}
                <div className="space-y-4">
                 {renderContent()}
               </div>
+               {dataSource?.type === 'pdf' && isPdfViewerOpen && pdfBlobUrl && (
+                  <div className="mb-4 border rounded-lg overflow-hidden shadow-md flex-shrink-0" style={{ height: '60vh', maxHeight: '500px' }}>
+                     <iframe
+                        src={pdfBlobUrl}
+                        title={selectedIndividualRecord ? (selectedIndividualRecord.source_metadata as any)?.original_filename || `Record ${selectedIndividualRecord.id}` : dataSource?.name || 'PDF Viewer'}
+                        width="100%"
+                        height="100%"
+                        style={{ border: 'none' }}
+                     />
+                  </div>
+               )}
             </TabsContent>
 
             <TabsContent value="results" className="mt-2 border rounded-md p-1">

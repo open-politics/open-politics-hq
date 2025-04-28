@@ -166,6 +166,8 @@ interface GroupedDataPoint {
   valueKey: string;    // Original value key used for grouping
 }
 
+export type { ChartDataPoint, GroupedDataPoint };
+
 // Helper to get the primary value from a result, prioritizing numerical types for plotting
 const getPlottableValue = (result: ClassificationResultRead, scheme: ClassificationSchemeRead): number | string | null => {
   if (!result || !result.value || !scheme || !scheme.fields || scheme.fields.length === 0) {

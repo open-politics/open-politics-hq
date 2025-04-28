@@ -8,10 +8,11 @@ import {
     DataSourceStatus as ClientDataSourceStatus,
     DataSourceUpdate,
     Message,
+    DataRecordRead as ClientDataRecordRead,
 } from '@/client/models';
 import { DatarecordsService } from '@/client/services';
-import { DataSource, DataSourceType, DataSourceStatus } from '@/lib/classification/types';
-import { adaptDataSourceReadToDataSource } from '@/lib/classification/adapters';
+import { DataSource, DataSourceType, DataSourceStatus, DataRecord } from '@/lib/classification/types';
+import { adaptDataSourceReadToDataSource, adaptDataRecordReadToDataRecord } from '@/lib/classification/adapters';
 import { toast } from 'sonner';
 
 // TODO: Update imports when client is regenerated
@@ -35,12 +36,18 @@ interface DataSourceState {
   addUrlToDataSource: (dataSourceId: number, url: string) => Promise<boolean>;
   updateDataSourceUrls: (dataSourceId: number, newUrls: string[]) => Promise<boolean>;
   getDataSourceUrls: (dataSourceId: number) => Promise<string[]>;
+  selectedDataSourceRecords: DataRecord[];
+  isLoadingRecords: boolean;
+  fetchDataRecordsForSource: (dataSourceId: number) => Promise<void>;
+  clearSelectedDataSourceRecords: () => void;
 }
 
 export const useDataSourceStore = create<DataSourceState>((set, get) => ({
   dataSources: [],
   isLoading: false,
   error: null,
+  selectedDataSourceRecords: [],
+  isLoadingRecords: false,
 
   fetchDataSources: async () => {
     const { activeWorkspace } = useWorkspaceStore.getState();
@@ -448,4 +455,42 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     }
   },
   // --- END ADDED --- 
+
+  // --- ADDED: Functions to fetch and manage DataRecords --- 
+  fetchDataRecordsForSource: async (dataSourceId: number) => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    if (!activeWorkspace?.id) {
+      set({ error: "No active workspace selected to fetch records", selectedDataSourceRecords: [], isLoadingRecords: false });
+      return;
+    }
+
+    set({ isLoadingRecords: true, error: null });
+    try {
+      // Use the DatarecordsService to list records
+      const response: ClientDataRecordRead[] = await DatarecordsService.listDatarecords({
+        workspaceId: activeWorkspace.id,
+        datasourceId: dataSourceId,
+        limit: 2000, // TODO: Consider pagination if needed
+      });
+
+      const adaptedRecords: DataRecord[] = response.map(adaptDataRecordReadToDataRecord);
+      set({ selectedDataSourceRecords: adaptedRecords, isLoadingRecords: false });
+
+    } catch (err: any) {
+      console.error(`Error fetching data records for source ${dataSourceId}:`, err);
+      let errorMsg = "Failed to fetch data records";
+      if (err.body?.detail) {
+        errorMsg = `Fetch Records Failed: ${typeof err.body.detail === 'string' ? err.body.detail : JSON.stringify(err.body.detail)}`;
+      } else if (err.message) {
+        errorMsg = `Fetch Records Failed: ${err.message}`;
+      }
+      set({ error: errorMsg, isLoadingRecords: false, selectedDataSourceRecords: [] });
+      toast.error(errorMsg);
+    }
+  },
+
+  clearSelectedDataSourceRecords: () => {
+    set({ selectedDataSourceRecords: [], isLoadingRecords: false });
+  },
+  // --- END ADDED ---
 })); 

@@ -19,6 +19,7 @@ interface DatasetCreateDialogProps {
     initialJobIds?: number[];
 }
 
+export type { DatasetCreateDialogProps };
 const DatasetCreateDialog: React.FC<DatasetCreateDialogProps> = ({
     open,
     onOpenChange,

@@ -171,7 +171,7 @@ def list_classification_jobs(
                 results_count_query = select(func.count(ClassificationResult.id)).where(
                     ClassificationResult.job_id == job.id
                 )
-                job_read.results_count = session.exec(results_count_query).one() or 0
+                job_read.result_count = session.exec(results_count_query).one() or 0
                 
                 # Can also add datasource record count if needed
                 # This would require a join to datasource and then to datarecords
@@ -231,7 +231,7 @@ def get_classification_job(
             results_count_query = select(func.count(ClassificationResult.id)).where(
                 ClassificationResult.job_id == job.id
             )
-            job_read.results_count = session.exec(results_count_query).one() or 0
+            job_read.result_count = session.exec(results_count_query).one() or 0
         
         return job_read
     

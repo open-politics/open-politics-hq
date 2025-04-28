@@ -30,6 +30,7 @@ interface ClassificationTimeAxisControlsProps {
   onTimeAxisConfigChange: (config: TimeAxisConfig | null) => void;
 }
 
+export type { ClassificationTimeAxisControlsProps };
 export const ClassificationTimeAxisControls: React.FC<ClassificationTimeAxisControlsProps> = ({
   schemes,
   initialConfig = { type: 'default' }, // Default to using DataRecord timestamp

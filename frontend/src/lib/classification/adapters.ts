@@ -22,6 +22,7 @@ import {
   DictKeyDefinition as ClientDictKeyDefinition,
   ClassificationResultRead,
   ClassificationSchemeRead,
+  DataRecordRead as ClientDataRecordRead,
 } from '@/client/models';
 
 /**
@@ -180,19 +181,22 @@ export function adaptDataSourceReadToDataSource(dataSourceRead: ClientDataSource
 }
 
 // Convert API DataRecordRead to frontend DataRecord
-// Commented out as ClientDataRecordRead is not exported
-/*
-export function adaptDataRecordReadToDataRecord(dataRecordRead: ClientDataRecordRead): DataRecord {
-    return {
-        id: dataRecordRead.id,
-        datasource_id: dataRecordRead.datasource_id,
-        text_content: dataRecordRead.text_content,
-        source_metadata: dataRecordRead.source_metadata,
-        created_at: dataRecordRead.created_at,
-        datasource: undefined
-    };
-}
-*/
+export const adaptDataRecordReadToDataRecord = (clientRecord: ClientDataRecordRead): DataRecord => {
+  // Basic mapping, adjust based on your internal DataRecord definition
+  return {
+    id: clientRecord.id,
+    datasource_id: clientRecord.datasource_id,
+    text_content: clientRecord.text_content,
+    source_metadata: clientRecord.source_metadata || {},
+    event_timestamp: clientRecord.event_timestamp ? new Date(clientRecord.event_timestamp) : null, // Convert string to Date
+    created_at: new Date(clientRecord.created_at), // Convert string to Date
+    // Add other fields as needed based on your DataRecord type
+    // e.g., content_hash, url_hash if they exist in ClientDataRecordRead
+    content_hash: clientRecord.content_hash,
+    // url_hash: clientRecord.url_hash, // Commented out as it might not exist on client model
+    // Ensure all required fields of your internal DataRecord type are mapped
+  };
+};
 
 // Convert API ClassificationJobRead to frontend ClassificationJob
 export function adaptJobReadToJob(jobRead: ClientClassificationJobRead): ClassificationJob {

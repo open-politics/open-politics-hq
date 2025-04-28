@@ -59,8 +59,15 @@ def process_classification_job(self, job_id: int):
                 return
 
             # 2. Update status to RUNNING using the service (DO NOT COMMIT)
-            service.update_job_status(job_id, ClassificationJobStatus.RUNNING)
-            # No refresh needed here as we don't use the refreshed object immediately
+            # service.update_job_status(job_id, ClassificationJobStatus.RUNNING)
+            # PASS Job OBJECT instead of ID
+            job = service.update_job_status(job, ClassificationJobStatus.RUNNING)
+            # --- FIX: Commit the status update immediately ---
+            session.commit()
+            logging.info(f"Committed RUNNING status for Job {job_id}")
+            # --- FIX: Refresh job object AFTER commit to get updated status ---
+            session.refresh(job)
+            # --- END FIX ---
 
             # 3. Load Configuration
             config = job.configuration or {}
@@ -71,7 +78,7 @@ def process_classification_job(self, job_id: int):
             if not datasource_ids or not scheme_ids:
                  # Mark as failed immediately if config is invalid
                  # Use service to update status (method will commit failure)
-                 service.update_job_status(job_id, ClassificationJobStatus.FAILED, error_message="Job configuration missing datasource_ids or scheme_ids")
+                 service.update_job_status(job, ClassificationJobStatus.FAILED, error_message="Job configuration missing datasource_ids or scheme_ids")
                  raise ValueError("Job configuration missing datasource_ids or scheme_ids")
 
             # 4. Fetch Target DataRecords (Keep direct query for now)
@@ -81,7 +88,7 @@ def process_classification_job(self, job_id: int):
                  logging.warning(f"No DataRecords found for Job {job_id}. Marking as complete.")
                  final_status = ClassificationJobStatus.COMPLETED
                  # Update final status using service (method will commit)
-                 service.update_job_status(job_id, final_status)
+                 service.update_job_status(job, final_status)
                  # Need to handle recurring task update in finally block even in this case
                  return
             logging.info(f"Found {len(data_records)} DataRecords to classify for Job {job_id}.")
@@ -91,7 +98,7 @@ def process_classification_job(self, job_id: int):
             schemes = session.exec(scheme_stmt).all()
             if len(schemes) != len(scheme_ids):
                  error_msg = f"Could not find all specified ClassificationSchemes: {scheme_ids}"
-                 service.update_job_status(job_id, ClassificationJobStatus.FAILED, error_message=error_msg)
+                 service.update_job_status(job, ClassificationJobStatus.FAILED, error_message=error_msg)
                  raise ValueError(error_msg)
             logging.info(f"Loaded {len(schemes)} ClassificationSchemes for Job {job_id}.")
             
@@ -136,7 +143,8 @@ def process_classification_job(self, job_id: int):
 
                         # Write batch to DB periodically using service (DO NOT COMMIT)
                         if len(results_batch_data) >= batch_size:
-                            service.create_results_batch(results_batch_data)
+                            # Pass job_id to the service method
+                            service.create_results_batch(job_id=job_id, results_data=results_batch_data)
                             results_batch_data = [] # Reset batch
                     
                     except Exception as classify_error:
@@ -148,7 +156,8 @@ def process_classification_job(self, job_id: int):
 
             # 7. Create final batch of results using service (DO NOT COMMIT)
             if results_batch_data:
-                service.create_results_batch(results_batch_data)
+                # Pass job_id to the service method
+                service.create_results_batch(job_id=job_id, results_data=results_batch_data)
             
             # 8. Update final job status using service (DO NOT COMMIT)
             final_job_message = f"Classification finished. Success: {success_count}, Errors: {error_count}"
@@ -156,7 +165,9 @@ def process_classification_job(self, job_id: int):
                  final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
             else:
                  final_status = ClassificationJobStatus.COMPLETED
-            service.update_job_status(job_id, final_status, error_message=final_job_message if error_count > 0 else None)
+            # service.update_job_status(job_id, final_status, error_message=final_job_message if error_count > 0 else None)
+            # PASS Job OBJECT instead of ID
+            job = service.update_job_status(job, final_status, error_message=final_job_message if error_count > 0 else None)
             
             # 9. Commit the entire transaction for this job run
             session.commit()
@@ -174,7 +185,13 @@ def process_classification_job(self, job_id: int):
                 with SQLModelSession(engine) as error_session:
                     error_provider = get_classification_provider()
                     error_service = ClassificationService(session=error_session, classification_provider=error_provider)
-                    error_service.update_job_status(job_id, ClassificationJobStatus.FAILED, error_message=final_job_message)
+                    # Fetch job again in separate session before passing to update_job_status
+                    job_to_fail = error_session.get(ClassificationJob, job_id)
+                    if job_to_fail:
+                        error_service.update_job_status(job_to_fail, ClassificationJobStatus.FAILED, error_message=final_job_message)
+                        logging.info(f"Job {job_id} status updated to FAILED.")
+                    else:
+                        logging.error(f"Could not find job {job_id} to mark as FAILED.")
                 logging.info(f"Job {job_id} status updated to FAILED.")
             except Exception as final_status_err:
                 logging.error(f"CRITICAL: Failed to update Job {job_id} status to FAILED after error: {final_status_err}")

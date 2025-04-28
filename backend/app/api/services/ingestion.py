@@ -1695,7 +1695,7 @@ class IngestionService:
                     # --- Create New DataSource ---
                     new_ds = DataSource(
                         # Copy relevant fields
-                        name=f"{original_ds.name}{' (Copy)' if is_copy else ''}",
+                        name=f"{original_ds.name}",
                         type=original_ds.type,
                         description=getattr(original_ds, 'description', None), # Use getattr with default None
                         origin_details=new_origin_details, # Use updated details

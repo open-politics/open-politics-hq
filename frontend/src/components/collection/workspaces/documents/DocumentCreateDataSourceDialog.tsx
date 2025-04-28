@@ -21,6 +21,8 @@ import { Switch } from '@/components/ui/switch';
 import { useRecurringTasksStore, RecurringTaskCreate } from '@/zustand_stores/storeRecurringTasks';
 import Cronstrue from 'cronstrue';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface CreateDataSourceDialogProps {
   open: boolean;
@@ -65,6 +67,9 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
   const [isSubmittingRecurring, setIsSubmittingRecurring] = useState(false); // Track second API call
   // NEW State for timestamp picker
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]); // State for selected files (can be multiple)
+  const [generatedName, setGeneratedName] = useState<string | null>(null); // State for generated name
+  const [userModifiedName, setUserModifiedName] = useState(false); // State for user modification
   // --- End State ---
 
   const selectedTypeInfo = useMemo(() => dataSourceTypes.find(t => t.value === type), [type]);
@@ -92,6 +97,9 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
     setCronExplanation('');
     setIsSubmittingRecurring(false);
     setSelectedDate(undefined); // ADDED: Reset date
+    setSelectedFiles([]); // Reset files on close
+    setGeneratedName(null); // Reset generated name
+    setUserModifiedName(false); // Reset user modification
   }, []);
 
   const handleClose = () => {
@@ -122,49 +130,39 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
         setManualName('');
         setIsNameAutoFilled(false);
     }
+    // Reset files if type changes away from file-based types
+    if (newType !== 'csv' && newType !== 'pdf') {
+        setSelectedFiles([]);
+    }
+    // Reset name helper state when type changes
+    setGeneratedName(null);
+    setUserModifiedName(false);
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = event.target.files ? Array.from(event.target.files) : [];
-    setFiles(selectedFiles);
+    if (event.target.files) {
+      const filesArray = Array.from(event.target.files);
+      setSelectedFiles(filesArray); // Store all selected files
 
-    if (selectedFiles.length > 0) {
-        // Clear URL-based autofill if file(s) are selected
-        setIsNameAutoFilledFromUrl(false);
-
-        // --- Name Autofill Logic for SINGLE file ONLY --- 
-        if (selectedFiles.length === 1) {
-            const selectedFile = selectedFiles[0];
-            // Only auto-fill name if current name is empty or was previously auto-filled
-            if (name.trim() === '' || isNameAutoFilled) {
-                if (!isNameAutoFilled && name.trim() !== '') {
-                   setManualName(name);
-                } else if (!isNameAutoFilled && name.trim() === '') {
-                   setManualName('');
-                }
-                const fileNameWithoutExtension = selectedFile.name.replace(/\.(csv|pdf)$/i, '');
-                setName(fileNameWithoutExtension);
-                setIsNameAutoFilled(true);
-            } else {
-                setManualName(name);
-                setIsNameAutoFilled(false);
-            }
+      // If a name hasn't been user-modified, suggest one based on files
+      if (!userModifiedName && filesArray.length > 0) {
+        let suggestedName = '';
+        if (filesArray.length === 1) {
+          suggestedName = filesArray[0].name;
         } else {
-             // --- MULTIPLE FILES: Do NOT auto-fill, clear manual name backup --- 
-             // User must provide a name for the batch/group OR rely on backend metadata naming
-             if (isNameAutoFilled) {
-                  setName(''); // Clear potentially auto-filled name
-             }
-             setIsNameAutoFilled(false);
-             setManualName('');
+          // Generate a name for bulk upload, e.g., "PDF Upload (3 files)"
+          const fileType = filesArray[0].type === 'text/csv' ? 'CSV' : 'PDF'; // Simple type check
+          suggestedName = `${fileType} Upload (${filesArray.length} files)`;
         }
-    } else {
-         // No files selected, reset name state if it was auto-filled
-         if (isNameAutoFilled) {
-              setName('');
-              setManualName('');
-              setIsNameAutoFilled(false);
-         }
+         // Ensure suggestedName doesn't exceed a reasonable length
+        const maxLength = 100;
+        if (suggestedName.length > maxLength) {
+            suggestedName = suggestedName.substring(0, maxLength - 3) + '...';
+        }
+        setGeneratedName(suggestedName);
+        setName(suggestedName); // Update the main name state
+      }
+      setFormError(null); // Clear validation error on file change
     }
   };
 
@@ -174,6 +172,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
       setIsNameAutoFilled(false);
       setIsNameAutoFilledFromUrl(false); // User is typing manually
       setManualName('');
+      setUserModifiedName(true); // Mark as user modified
   };
 
   const handleRevertName = () => {
@@ -181,6 +180,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
           setName(manualName);
           setIsNameAutoFilled(false);
           setManualName('');
+          setUserModifiedName(false); // Mark as user modified
       }
   }
 
@@ -191,13 +191,32 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
       return false;
     }
 
+    // --- CORRECTED: Simplify file validation checks ---
+    if (type === 'pdf' || type === 'csv') {
+      if (selectedFiles.length === 0) {
+        setFormError('Please select one or more files.');
+        return false;
+      }
+      // Check file types if CSV is selected
+      if (type === 'csv' && selectedFiles.some(f => f.type !== 'text/csv')) {
+        setFormError('Only CSV files are allowed for CSV type.');
+        return false;
+      }
+      // Check file types if PDF is selected
+      if (type === 'pdf' && selectedFiles.some(f => f.type !== 'application/pdf')) {
+        setFormError('Only PDF files are allowed for PDF type.');
+        return false;
+      }
+    }
+    // --- END CORRECTION ---
+
     switch (type) {
       case 'csv':
-        if (files.length === 0) {
+        if (selectedFiles.length === 0) {
           setFormError(`A CSV file is required.`);
           return false;
         }
-        if (files.length > 1) {
+        if (selectedFiles.length > 1) {
              setFormError(`Only one CSV file can be uploaded at a time.`);
              return false;
         }
@@ -216,7 +235,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
         }
         break;
       case 'pdf':
-        if (files.length === 0) {
+        if (selectedFiles.length === 0) {
           setFormError(`At least one PDF file is required.`);
           return false;
         }
@@ -244,35 +263,40 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
       return;
     }
 
+    setIsSubmittingRecurring(true); // Set submitting state
     const formData = new FormData();
     formData.append('name', name);
-    formData.append('type', type); // Type is guaranteed by selection buttons
+
+    // --- REVERTED: Send the component's current 'type' state directly ---
+    // let finalTypeToSend: string = type;
+    // if (type === 'pdf' && selectedFiles.length > 1) {
+    //   finalTypeToSend = 'bulk_pdf'; 
+    // }
+    // formData.append('type', finalTypeToSend);
+    formData.append('type', type); // Always send the selected type ('pdf', 'csv', etc.)
+    // --- END REVERSION ---
 
     // Create originDetails separately, it might remain empty
     const originDetails: Record<string, any> = {};
     let sourceUrlList: string[] = []; // Keep track of URLs for recurring task config
 
     if (type === 'csv') {
-        if (files.length === 1) {
-            // formData.append('file', files[0]); // Send single file with key 'file' for CSV
-            // CORRECTED: Use 'files' key as expected by the backend List[UploadFile]
-            formData.append('files', files[0]);
+        if (selectedFiles.length === 1) {
+            formData.append('files', selectedFiles[0]);
             // Append skip_rows and delimiter DIRECTLY to FormData if set
             if (showAdvancedCsv) {
                 const skipRowsNum = parseInt(skipRows, 10);
-                // Send skip_rows as a string, FastAPI handles conversion
                 if (!isNaN(skipRowsNum) && skipRowsNum >= 0) {
-                     formData.append('skip_rows', skipRows.toString()); // Send as string
+                     formData.append('skip_rows', skipRows.toString());
                 }
                 if (delimiter && delimiter.length === 1) {
-                     formData.append('delimiter', delimiter); // Send delimiter directly
+                     formData.append('delimiter', delimiter);
                 }
             }
         }
     } else if (type === 'pdf') {
-        if (files.length > 0) {
-            files.forEach((pdfFile, index) => {
-               // Use the key 'files' for potentially multiple uploads
+        if (selectedFiles.length > 0) {
+            selectedFiles.forEach((pdfFile) => {
                formData.append('files', pdfFile, pdfFile.name);
             });
         }
@@ -280,84 +304,65 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
         sourceUrlList = urls.split('\n').map(u => u.trim()).filter(Boolean);
         originDetails.urls = sourceUrlList;
     } else if (type === 'text_block') {
-        // Put text content *inside* originDetails JSON
         originDetails.text_content = textContent;
     }
 
-    // Always append origin_details, even if it's empty
-    // This ensures the field is present, even if it's just "{}"
     formData.append('origin_details', JSON.stringify(originDetails));
 
-    // --- REMOVED: Append Timestamp if selected ---
-    /*
-    if (selectedDate) {
-       try {
-          formData.append('user_provided_timestamp', selectedDate.toISOString());
-       } catch (e) {
-          console.error("Error converting date to ISO string:", e);
-          // Optionally set formError here if date conversion fails?
-       }
+    // Log FormData content before sending
+    console.log("Dialog submitting FormData keys:", Array.from(formData.keys()));
+    console.log("Dialog submitting FormData type:", formData.get('type'));
+    console.log("Dialog submitting FormData files count:", formData.getAll('files').length);
+    // You can iterate and log other values if needed, but avoid logging file content
+
+    try {
+      const createdDataSource = await createDataSource(formData); // Pass the constructed FormData
+
+      // Handle recurring task creation *after* successful datasource creation
+      if (createdDataSource && enableScheduledIngestion && type === 'url_list') {
+         console.log("Creating recurring task for new URL List DataSource:", createdDataSource.id);
+         setIsSubmittingRecurring(true); // Indicate second API call
+         const recurringTaskData: RecurringTaskCreate = {
+            name: `Scheduled Ingest: ${createdDataSource.name}`,
+            description: `Automatically re-scrape URLs for DataSource ${createdDataSource.id}`,
+            type: 'ingest', // Use the correct enum value string
+            schedule: ingestionSchedule,
+            configuration: {
+              target_datasource_id: createdDataSource.id,
+              source_urls: sourceUrlList,
+              // Add any other default ingestion config here if needed
+            },
+            status: 'active' // Start active by default
+         };
+         try {
+           await createRecurringTask(recurringTaskData);
+           toast({title: "Scheduled ingestion task created successfully."});
+         } catch (recurringError) {
+           console.error("Error creating recurring task:", recurringError);
+           toast({title: "Data source created, but failed to create scheduled task."});
+           // Don't re-throw, the main operation succeeded
+         } finally {
+           setIsSubmittingRecurring(false);
+         }
+      }
+
+      if (createdDataSource) {
+         toast({title: `Data source "${createdDataSource.name}" created successfully.`});
+         handleClose();
+      } else {
+          // Error toast is likely handled within the store, but maybe add a fallback
+          // toast.error("Failed to create data source. See console for details.");
+      }
+    } catch (error) {
+      // Store likely handles the error toast, log here just in case
+      console.error("Submission error caught in component:", error);
+       // Explicitly set error state based on component-level catch if needed
+      // setFormError("An unexpected error occurred during submission.");
+      // toast.error("Submission Failed", { description: "An unexpected error occurred." });
+    } finally {
+      // Always reset the main submitting flag
+       setIsSubmittingRecurring(false);
     }
-    */
-    // --- END REMOVED ---
-
-    // --- Call createDataSource ---
-    const createdSource = await createDataSource(formData);
-
-    if (createdSource) {
-        toast({
-            title: "Data Source Created",
-            description: `Source "${createdSource.name}" added successfully and is now processing.`,
-        });
-
-        // --- NEW: Create Recurring Task if enabled --- 
-        if (type === 'url_list' && enableScheduledIngestion) {
-            setIsSubmittingRecurring(true);
-            const recurringTaskPayload: RecurringTaskCreate = {
-              name: `Scheduled Ingest: ${createdSource.name}`,
-              description: `Automatically scrapes URLs for DataSource ${createdSource.name} (ID: ${createdSource.id})`,
-              type: 'ingest',
-              schedule: ingestionSchedule,
-              configuration: { 
-                  target_datasource_id: createdSource.id,
-                  source_urls: sourceUrlList, // Use the URLs from the form
-                  deduplication_strategy: 'url_hash' // Default or make configurable?
-              },
-              status: 'active' // Start as active if enabled
-            };
-            
-            console.log("Attempting to create recurring task:", recurringTaskPayload);
-            try {
-                const createdRecurringTask = await createRecurringTask(recurringTaskPayload);
-                if (createdRecurringTask) {
-                    toast({
-                        title: "Scheduled Ingestion Enabled",
-                        description: `Task "${createdRecurringTask.name}" created. It will run first according to the schedule (${ingestionSchedule}).`,
-                        variant: "default" // Use different variant?
-                    });
-                } else {
-                     // createRecurringTask should handle its own errors/toasts via the store
-                     toast({
-                        title: "Scheduling Failed",
-                        description: "Could not create the scheduled ingestion task automatically. Please create it manually if needed.",
-                        variant: "destructive"
-                    });
-                }
-            } catch (error) {
-                 console.error("Error creating recurring task:", error);
-                 toast({
-                    title: "Scheduling Error",
-                    description: "An unexpected error occurred while trying to create the scheduled ingestion task.",
-                    variant: "destructive"
-                });
-            } finally {
-                setIsSubmittingRecurring(false);
-            }
-        }
-        // --- End NEW Section ---
-
-        handleClose();
-    } // Error handled via storeError display
   };
 
   // --- NEW: Effect to scrape title from first URL ---
@@ -453,20 +458,20 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
                 type="file"
                 accept=".csv"
                 onChange={handleFileChange}
-                className={cn(files.length > 0 ? "opacity-0 pointer-events-none" : "")}
+                className={cn(selectedFiles.length > 0 ? "opacity-0 pointer-events-none" : "")}
                 disabled={isLoading}
                 multiple
               />
-              {files.length === 1 && (
+              {selectedFiles.length === 1 && (
                 <div className="absolute inset-0 flex items-center justify-between text-sm p-3 bg-muted rounded-md border border-input">
                   <span className="truncate flex items-center gap-2">
                     <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground"/>
-                    {files[0].name}
+                    {selectedFiles[0].name}
                   </span>
                   <Button
                     variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0"
                     onClick={(e) => {
-                        e.preventDefault(); setFiles([]);
+                        e.preventDefault(); setSelectedFiles([]);
                         const fileInput = document.getElementById('file-upload') as HTMLInputElement;
                         if (fileInput) fileInput.value = '';
                     }}
@@ -544,20 +549,20 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
                 type="file"
                 accept=".pdf"
                 onChange={handleFileChange}
-                className={cn(files.length > 0 ? "opacity-0 pointer-events-none" : "")}
+                className={cn(selectedFiles.length > 0 ? "opacity-0 pointer-events-none" : "")}
                 disabled={isLoading}
                 multiple
               />
-              {files.length > 0 && (
+              {selectedFiles.length > 0 && (
                 <div className="absolute inset-0 flex items-center justify-between text-sm p-3 bg-muted rounded-md border border-input">
                   <span className="truncate flex items-center gap-2">
                     <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground"/>
-                    {files.length === 1 ? files[0].name : `${files.length} PDF files selected`}
+                    {selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} PDF files selected`}
                   </span>
                   <Button
                     variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0"
                     onClick={(e) => {
-                        e.preventDefault(); setFiles([]);
+                        e.preventDefault(); setSelectedFiles([]);
                         const fileInput = document.getElementById('file-upload') as HTMLInputElement;
                         if (fileInput) fileInput.value = '';
                     }}

@@ -461,7 +461,7 @@ const DocumentSelectorForRun: React.FC<DocumentSelectorForRunProps> = ({
 
   const filteredDocuments = useMemo(() => {
     return allDataSources.filter(source =>
-      source.name.toLowerCase().includes(searchTerm.toLowerCase())
+      (source.name ?? '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [allDataSources, searchTerm]);
 
@@ -501,8 +501,8 @@ const DocumentSelectorForRun: React.FC<DocumentSelectorForRunProps> = ({
                   onCheckedChange={() => onToggleDoc(doc.id)}
                   className="shrink-0"
                 />
-                <Label htmlFor={`doc-${doc.id}`} className="truncate cursor-pointer" title={doc.name}>
-                  {doc.name}
+                <Label htmlFor={`doc-${doc.id}`} className="truncate cursor-pointer" title={doc.name ?? `DataSource ${doc.id}`}>
+                  {doc.name ?? `DataSource ${doc.id}`}
                 </Label>
               </div>
             </div>

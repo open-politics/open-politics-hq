@@ -522,7 +522,6 @@ class ClassificationJobRead(ClassificationJobBase):
     result_count: Optional[int] = None
     datarecord_count: Optional[int] = None # Total records targeted by the job
 
-    # Added computed fields
     @computed_field
     @property
     def target_scheme_ids(self) -> List[int]:
@@ -640,7 +639,7 @@ class EnhancedClassificationResultRead(ClassificationResultBase):
         elif isinstance(value, dict):
              extracted = {}
              if scheme_fields:
-                 field_names = [f.get('name') for f in scheme_fields if f.get('name')]
+                 field_names = [f.name for f in scheme_fields if hasattr(f, 'name') and f.name]
                  for name in field_names:
                      if name in value:
                          extracted[name] = value[name]

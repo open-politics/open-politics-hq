@@ -25,11 +25,13 @@ export interface DataSource {
 
 export interface DataRecord {
   id: number;
-  datasource_id: number;
+  datasource_id?: number | null;
   text_content: string;
-  // JSON field storing context about origin within the DataSource
-  source_metadata: Record<string, any>; // e.g., { row_number: 5 } or { page_number: 2 } or { url: "..." }
-  created_at: string;
+  source_metadata: Record<string, any>;
+  event_timestamp?: Date | null;
+  created_at: Date;
+  content_hash?: string | null;
+  url_hash?: string | null;
   datasource?: DataSource; // Optional link for context
 }
 

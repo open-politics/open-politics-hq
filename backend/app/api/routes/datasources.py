@@ -44,6 +44,8 @@ from app.api.deps import (
 )
 from app.api.services.service_utils import validate_workspace_access
 from app.api.services.ingestion import IngestionService
+from app.core.celery_app import celery # Import celery app instance
+from app.api.tasks.ingestion import process_datasource # Import task
 
 logger = logging.getLogger(__name__)
 
@@ -102,57 +104,241 @@ async def create_datasource(
     type: DataSourceType = Form(...),
     origin_details: Optional[str] = Form("{}"),
     files: Optional[List[UploadFile]] = File(None),
-    skip_rows: Optional[int] = Form(0, ge=0, description="Number of initial rows to skip (for CSV)"),
+    skip_rows: Optional[int] = Form(None, ge=0, description="Number of initial rows to skip (for CSV)"),
     delimiter: Optional[str] = Form(None, description="Single character delimiter (for CSV)"),
     session: SessionDep,
+    storage_provider: StorageProviderDep,
     ingestion_service: IngestionService = Depends(get_ingestion_service)
 ) -> DataSourcesOut:
-    """Create a new DataSource."""
+    """
+    Creates a new DataSource. Handles single/bulk PDF uploads based on file count.
+    """
+    validate_workspace_access(session, workspace_id, current_user.id)
+    files = files or [] # Ensure files is a list
+
     try:
-        # Validate workspace access
-        validate_workspace_access(session, workspace_id, current_user.id)
-        
-        # Call the service to handle creation logic
-        created_sources = await ingestion_service.create_datasource(
-            workspace_id=workspace_id,
-            user_id=current_user.id,
-            name=name,
-            type=type,
-            origin_details_str=origin_details,
-            files=files,
-            skip_rows=skip_rows,
-            delimiter=delimiter,
-        )
-        
-        # Commit the transaction (Service does not commit)
-        session.commit()
+        parsed_origin_details = json.loads(origin_details or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format for origin_details")
 
-        # Queue ingestion tasks for each created source
-        for ds in created_sources:
+    # List to hold created datasources (will be one unless error)
+    created_datasources: List[DataSource] = []
+    datasource_to_return = None # Will hold the single DS to return
+
+    # --- START MODIFIED PDF HANDLING ---
+    if type == DataSourceType.PDF:
+        if not files:
+            raise HTTPException(status_code=400, detail="No PDF files provided")
+
+        if len(files) == 1:
+            # --- Single PDF Upload ---
+            file = files[0]
+            if file.content_type != 'application/pdf':
+                raise HTTPException(status_code=400, detail=f"Invalid file type for PDF: {file.content_type}")
+
+            datasource_uuid = str(uuid.uuid4())
+            # Use original filename from UploadFile object
+            original_filename = file.filename or f"upload_{datasource_uuid}.pdf"
+            storage_path = f"datasources/{datasource_uuid}/{original_filename}"
+
+            # Create origin details for this single file
+            file_origin_details = { "filename": original_filename, "storage_path": storage_path }
+            file_origin_details.update(parsed_origin_details) # Add any other details passed
+
+            datasource = DataSource(
+                name=name, # Use the provided name
+                type=DataSourceType.PDF, # Set type explicitly
+                origin_details=file_origin_details,
+                workspace_id=workspace_id,
+                user_id=current_user.id,
+                status=DataSourceStatus.PENDING,
+                entity_uuid=datasource_uuid,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            session.add(datasource)
+            session.flush()
+            session.refresh(datasource)
+            datasource_to_return = datasource # This is the one we return
+            created_datasources.append(datasource)
+
+            # Upload the file
+            logger.info(f"Uploading single PDF '{original_filename}' to {storage_path}")
+            await storage_provider.upload_file(file=file, object_name=storage_path)
+
+            # --- Commit BEFORE queueing --- 
+            # Commit the datasource creation so the task can find it
             try:
-                from app.api.tasks.ingestion import process_datasource
-                process_datasource.delay(ds.id)
-                logger.info(f"Queued ingestion task for DataSource {ds.id}")
+                session.commit()
+                logger.info(f"Committed single PDF DataSource {datasource.id} before task queueing.")
+                # Refresh after commit to ensure the object reflects the committed state
+                session.refresh(datasource)
             except Exception as e:
-                logger.error(f"Failed to queue ingestion task for DataSource {ds.id}: {e}")
+                session.rollback()
+                logger.error(f"Error committing single PDF DataSource {datasource.id} before task queueing: {e}", exc_info=True)
+                # Attempt to delete the uploaded file if commit failed
+                try: await storage_provider.delete_file(storage_path)
+                except: logger.error(f"Failed to clean up storage file {storage_path} after commit failure.")
+                raise HTTPException(status_code=500, detail="Database error creating DataSource record.")
+            # --- End Commit BEFORE queueing ---
 
-        return DataSourcesOut(
-            data=[DataSourceRead.model_validate(ds) for ds in created_sources],
-            count=len(created_sources)
+            # Queue the single ingestion task
+            logger.info(f"Queuing ingestion task for single PDF DataSource {datasource.id}")
+            process_datasource.delay(datasource.id)
+
+        else:
+            # --- Bulk PDF Upload ---
+            # Create ONE parent DataSource
+            parent_datasource_uuid = str(uuid.uuid4())
+            parent_datasource = DataSource(
+                name=name, # Use the provided name
+                type=DataSourceType.PDF, # Keep type as PDF, distinguish by metadata/record association
+                origin_details={ # Minimal origin details for parent
+                     "upload_type": "bulk",
+                     "file_count": len(files),
+                     **(parsed_origin_details or {}) # Include any other passed details
+                 },
+                source_metadata={"file_count": len(files)}, # Add file count metadata
+                workspace_id=workspace_id,
+                user_id=current_user.id,
+                status=DataSourceStatus.COMPLETE, 
+                entity_uuid=parent_datasource_uuid,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            session.add(parent_datasource)
+            session.flush()
+            session.refresh(parent_datasource)
+            datasource_to_return = parent_datasource # This is the one we return
+            created_datasources.append(parent_datasource) # Keep track
+
+            logger.info(f"Created parent DataSource {parent_datasource.id} for bulk PDF upload ({len(files)} files)")
+
+            # Loop through each file, upload, and queue task associated with the PARENT DS
+            for file in files:
+                if file.content_type != 'application/pdf':
+                    # Log warning but continue with others? Or fail whole batch? Let's log and skip.
+                    logger.warning(f"Skipping invalid file type '{file.content_type}' in bulk PDF upload for DS {parent_datasource.id}")
+                    continue
+
+                individual_uuid = str(uuid.uuid4()) # Unique identifier for storage if needed
+                original_filename = file.filename or f"upload_{individual_uuid}.pdf"
+                # Store individual files under the PARENT datasource's UUID path
+                storage_path = f"datasources/{parent_datasource_uuid}/{original_filename}"
+
+                logger.info(f"Uploading bulk PDF '{original_filename}' to {storage_path} for parent DS {parent_datasource.id}")
+                await storage_provider.upload_file(file=file, object_name=storage_path)
+
+                # Queue ingestion task, passing PARENT ID and the specific file details
+                task_origin_details = {
+                    "filename": original_filename,
+                    "storage_path": storage_path,
+                    # Add any other details relevant for the *task* if needed
+                }
+                logger.info(f"Queuing ingestion task for file '{original_filename}' linked to parent DS {parent_datasource.id}")
+                # Pass parent ID and details needed by the task to process this specific file
+                process_datasource.delay(parent_datasource.id, task_origin_details_override=task_origin_details)
+
+            # The parent DS status will be updated by the tasks as they complete/fail.
+            # For now, it remains COMPLETE.
+
+    # --- END MODIFIED PDF HANDLING ---
+
+    elif type == DataSourceType.CSV:
+        if not files or len(files) != 1:
+            raise HTTPException(status_code=400, detail="Exactly one CSV file is required")
+        file = files[0]
+        if file.content_type != 'text/csv':
+             raise HTTPException(status_code=400, detail=f"Invalid file type for CSV: {file.content_type}")
+
+        datasource_uuid = str(uuid.uuid4())
+        original_filename = file.filename or f"upload_{datasource_uuid}.csv"
+        storage_path = f"datasources/{datasource_uuid}/{original_filename}"
+
+        # Add CSV specific details to origin_details
+        csv_origin_details = {
+            "filename": original_filename,
+            "storage_path": storage_path,
+            "skip_rows": skip_rows, # Will be None if not provided
+            "delimiter": delimiter # Will be None if not provided
+        }
+        csv_origin_details.update(parsed_origin_details)
+
+        datasource = DataSource(
+            name=name, type=DataSourceType.CSV, origin_details=csv_origin_details,
+            workspace_id=workspace_id, user_id=current_user.id, status=DataSourceStatus.PENDING,
+            entity_uuid=datasource_uuid,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)
         )
+        session.add(datasource)
+        session.flush(); session.refresh(datasource)
+        datasource_to_return = datasource
+        created_datasources.append(datasource)
 
-    except ValueError as ve:
-        # Specific validation errors from the service or route
-        logger.warning(f"Datasource creation validation error: {ve}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+        logger.info(f"Uploading CSV '{original_filename}' to {storage_path}")
+        await storage_provider.upload_file(file=file, object_name=storage_path)
+        logger.info(f"Queuing ingestion task for CSV DataSource {datasource.id}")
+        process_datasource.delay(datasource.id)
+
+    elif type == DataSourceType.URL_LIST:
+        if "urls" not in parsed_origin_details or not isinstance(parsed_origin_details["urls"], list) or not parsed_origin_details["urls"]:
+            raise HTTPException(status_code=400, detail="Missing or invalid 'urls' list in origin_details")
+
+        datasource_uuid = str(uuid.uuid4())
+        datasource = DataSource(
+            name=name, type=DataSourceType.URL_LIST, origin_details=parsed_origin_details,
+            workspace_id=workspace_id, user_id=current_user.id, status=DataSourceStatus.PENDING,
+            entity_uuid=datasource_uuid,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)
+        )
+        session.add(datasource)
+        session.flush(); session.refresh(datasource)
+        datasource_to_return = datasource
+        created_datasources.append(datasource)
+        logger.info(f"Queuing ingestion task for URL_LIST DataSource {datasource.id}")
+        process_datasource.delay(datasource.id)
+
+    elif type == DataSourceType.TEXT_BLOCK:
+        if "text_content" not in parsed_origin_details or not parsed_origin_details["text_content"].strip():
+             raise HTTPException(status_code=400, detail="Missing or empty 'text_content' in origin_details")
+
+        datasource_uuid = str(uuid.uuid4())
+        datasource = DataSource(
+            name=name, type=DataSourceType.TEXT_BLOCK, origin_details=parsed_origin_details,
+            workspace_id=workspace_id, user_id=current_user.id, status=DataSourceStatus.PENDING,
+            entity_uuid=datasource_uuid,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)
+        )
+        session.add(datasource)
+        session.flush(); session.refresh(datasource)
+        datasource_to_return = datasource
+        created_datasources.append(datasource)
+        logger.info(f"Queuing ingestion task for TEXT_BLOCK DataSource {datasource.id}")
+        process_datasource.delay(datasource.id)
+
+    else:
+        # Should not happen if using Enum, but good practice
+        raise HTTPException(status_code=400, detail=f"Unsupported DataSource type: {type}")
+
+    # Commit transaction
+    try:
+        session.commit()
+        logger.info(f"Committed creation for DataSource(s): {[ds.id for ds in created_datasources]}")
+        # Refresh the object we intend to return to ensure it reflects committed state
+        if datasource_to_return:
+             session.refresh(datasource_to_return)
+
     except Exception as e:
-        # Catch-all for unexpected errors during service call or task queuing
-        logger.error(f"Error creating DataSource (workspace {workspace_id}): {e}", exc_info=True)
-        # Rollback is implicitly handled by FastAPI/SQLModel session management on exception
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred: {e}",
-        )
+        session.rollback()
+        logger.error(f"Error committing DataSource creation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Database error during DataSource creation.")
+
+    # Return the single created DataSource (either single PDF/CSV/URL/Text or the parent Bulk PDF)
+    if not datasource_to_return:
+         # This case should ideally not be reached if validation is correct
+         raise HTTPException(status_code=500, detail="Failed to create or retrieve the DataSource object after processing.")
+
+    return DataSourcesOut(data=[datasource_to_return], count=1)
 
 @router.get("", response_model=DataSourcesOut)
 @router.get("/", response_model=DataSourcesOut)
@@ -340,8 +526,12 @@ async def read_datasource_rows(
         
         # Get file path from metadata
         storage_path = None
-        if datasource.source_metadata and isinstance(datasource.source_metadata, dict):
-            storage_path = datasource.source_metadata.get('storage_path')
+        if datasource.origin_details and isinstance(datasource.origin_details, dict):
+            storage_path = datasource.origin_details.get('storage_path')
+        
+        if not storage_path and datasource.source_metadata and isinstance(datasource.source_metadata, dict):
+             # Fallback (less likely to work based on creation logic)
+             storage_path = datasource.source_metadata.get('storage_path')
         
         if not storage_path:
             raise HTTPException(
@@ -611,7 +801,6 @@ async def refetch_datasource(
         # --- End Status Update ---
 
         # Queue ingestion task
-        from app.api.tasks.ingestion import process_datasource
         process_datasource.delay(datasource_id)
         logger.info(f"Queued refetch ingestion task for DataSource {datasource_id}")
 
@@ -667,14 +856,16 @@ async def get_datasource_content(
 
         # Get file path from metadata
         storage_path = None
-        if datasource.source_metadata and isinstance(datasource.source_metadata, dict):
-            storage_path = datasource.source_metadata.get('storage_path')
+        if datasource.origin_details and isinstance(datasource.origin_details, dict):
+            storage_path = datasource.origin_details.get('storage_path')
+        
+        if not storage_path:
+            # Fallback to origin_details for single PDFs
+            if datasource.origin_details and isinstance(datasource.origin_details, dict):
+                storage_path = datasource.origin_details.get('storage_path')
 
         if not storage_path:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="PDF file storage path not found in metadata"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="PDF file storage path not found in metadata or origin details")
 
         # Get file stream from storage
         try:
@@ -741,7 +932,12 @@ async def download_datasource_pdf(
         # Get file path from metadata
         storage_path = datasource.source_metadata.get('storage_path') if datasource.source_metadata and isinstance(datasource.source_metadata, dict) else None
         if not storage_path:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="PDF file storage path not found in metadata")
+            # Fallback to origin_details for single PDFs
+            if datasource.origin_details and isinstance(datasource.origin_details, dict):
+                storage_path = datasource.origin_details.get('storage_path')
+
+        if not storage_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="PDF file storage path not found in metadata or origin details")
 
         # Get file stream from storage
         try:
