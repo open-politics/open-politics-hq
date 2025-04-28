@@ -30,9 +30,12 @@ from app.models import (
     Workspace,
     User,
     DataSourceRead,
+    DataSourceUpdate,
     CsvRowsOut,
     CsvRowData,
-    ClassificationResult # Added for export/import
+    ClassificationResult, # Added for export/import
+    DataSourceTransferRequest, # Add new model
+    DataSourceTransferResponse, # Add new model
 )
 from app.api.services.providers.base import StorageProvider, ScrapingProvider
 from app.api.services.service_utils import validate_workspace_access
@@ -346,7 +349,8 @@ class IngestionService:
                     workspace_id=workspace_id,
                     user_id=user_id,
                     status=DataSourceStatus.PENDING,
-                    source_metadata=origin_details
+                    source_metadata=origin_details,
+                    origin_details=origin_details
                 )
                 self.session.add(datasource)
                 # Flush to get ID but don't commit yet
@@ -382,7 +386,7 @@ class IngestionService:
                     workspace_id=workspace_id,
                     user_id=user_id,
                     status=DataSourceStatus.PENDING,
-                    source_metadata=origin_details
+                    origin_details=origin_details
                 )
                 self.session.add(datasource)
                 self.session.flush() # Get ID but don't commit
@@ -416,7 +420,7 @@ class IngestionService:
                         workspace_id=workspace_id,
                         user_id=user_id,
                         status=DataSourceStatus.PENDING,
-                        source_metadata=file_origin_details
+                        origin_details=file_origin_details
                     )
                     self.session.add(datasource)
                     self.session.flush() # Get ID but don't commit
@@ -435,7 +439,7 @@ class IngestionService:
                     workspace_id=workspace_id,
                     user_id=user_id,
                     status=DataSourceStatus.PENDING,
-                    source_metadata=origin_details
+                    origin_details=origin_details
                 )
                 self.session.add(datasource)
                 self.session.flush() # Get ID but don't commit
@@ -449,7 +453,7 @@ class IngestionService:
                     workspace_id=workspace_id,
                     user_id=user_id,
                     status=DataSourceStatus.PENDING,
-                    source_metadata=origin_details
+                    origin_details=origin_details
                 )
                 self.session.add(datasource)
                 self.session.flush() # Get ID but don't commit
@@ -472,44 +476,65 @@ class IngestionService:
             # Re-raise original exception for the route to handle
             raise
     
-    async def update_datasource_status(
+    async def update_datasource( # Renamed from update_datasource_status
         self,
         datasource_id: int,
-        status: DataSourceStatus,
-        error_message: Optional[str] = None,
-        metadata_updates: Optional[Dict[str, Any]] = None,
+        workspace_id: int, # Added for user update validation
+        user_id: int, # Added for user update validation
+        update_data: DataSourceUpdate, # Use the updated model
+        # Removed status, error_message, metadata_updates as separate args
     ) -> DataSource:
-        """Updates the status and optionally metadata of a DataSource."""
+        """
+        Updates a DataSource. Can handle updates from user API calls
+        (name, description, origin_details) or internal task updates (status, etc.).
+        Ensures proper authorization for user updates.
+        Does not commit the session.
+        """
 
         def _update_sync():
-            # Validate workspace access implicitly handled by caller context usually
+            # Validate workspace access for user-initiated updates
+            if update_data.name is not None or update_data.description is not None or update_data.origin_details is not None:
+                 validate_workspace_access(self.session, workspace_id, user_id)
+            
             # Fetch the datasource within the session
             datasource = self.session.get(DataSource, datasource_id)
             if not datasource:
-                # Consider raising an error here or logging more prominently
-                logger.error(f"update_datasource_status: DataSource {datasource_id} not found in session.")
-                # Raise specific error to be caught below
+                logger.error(f"update_datasource: DataSource {datasource_id} not found in session.")
                 raise ValueError(f"DataSource {datasource_id} not found")
+            
+            # Check workspace match if user is updating sensitive fields
+            if update_data.name is not None or update_data.description is not None or update_data.origin_details is not None:
+                if datasource.workspace_id != workspace_id:
+                    raise ValueError(f"DataSource {datasource_id} does not belong to workspace {workspace_id}")
 
-            logger.info(f"Updating DataSource {datasource_id} status to {status}")
-            datasource.status = status
+            logger.info(f"Updating DataSource {datasource_id}")
+            
+            # Apply updates from the DataSourceUpdate model
+            updated_fields = False
+            for field, value in update_data.model_dump(exclude_unset=True).items():
+                 # Only update if the field exists on the model and the value is not None
+                 # (model_dump(exclude_unset=True) handles the 'not None' check implicitly)
+                 if hasattr(datasource, field):
+                     setattr(datasource, field, value)
+                     logger.debug(f"Updated field '{field}' for DS {datasource_id}")
+                     updated_fields = True
+                 else:
+                      logger.warning(f"Field '{field}' from update data not found on DataSource model.")
+
+            if not updated_fields:
+                 logger.info(f"No fields were updated for DataSource {datasource_id} (update_data was empty or fields didn't change).")
+                 return datasource # Return unchanged object if nothing was updated
+
+            # Always update the timestamp if any field was changed
             datasource.updated_at = datetime.now(timezone.utc)
-            if error_message is not None: # Allow clearing the error message
-                datasource.error_message = error_message
-            if metadata_updates:
-                current_metadata = datasource.source_metadata or {}
-                current_metadata.update(metadata_updates)
-                datasource.source_metadata = current_metadata # Ensure dict is re-assigned for change detection
 
             self.session.add(datasource)
             try:
                  self.session.flush()
-                 # Refresh is important to get the updated state, esp. updated_at
                  self.session.refresh(datasource)
-                 logger.info(f"Flushed status update for DataSource {datasource_id}")
+                 logger.info(f"Flushed updates for DataSource {datasource_id}")
             except Exception as e:
-                 logger.error(f"Failed to flush status update for DataSource {datasource_id}: {e}")
-                 # Don't rollback here, let the caller handle transaction
+                 logger.error(f"Failed to flush updates for DataSource {datasource_id}: {e}")
                  raise # Re-raise flush error
             return datasource
 
@@ -518,14 +543,101 @@ class IngestionService:
             updated_datasource = await asyncio.to_thread(_update_sync)
             return updated_datasource
         except ValueError as ve:
-             # Propagate specific errors like not found
+             # Propagate specific errors like not found or validation error
              raise ve
+        except HTTPException as he:
+             # Propagate HTTP exceptions from validate_workspace_access
+             raise he
         except Exception as e:
              # Catch other potential errors from the thread/sync code
-             logger.exception(f"Error in update_datasource_status thread for DS {datasource_id}: {e}")
-             # Re-raise or handle as appropriate, maybe wrap in a service-specific exception
-             # Use HTTPException for errors intended for API responses if called directly
-             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed status update: {e}")
+             logger.exception(f"Error in update_datasource thread for DS {datasource_id}: {e}")
+             # Re-raise as a generic server error
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed datasource update: {e}")
+
+    def update_datasource_urls(
+        self,
+        datasource_id: int,
+        workspace_id: int,
+        user_id: int,
+        new_urls: List[str]
+    ) -> DataSource:
+        """
+        Updates the URL list in the origin_details for a URL_LIST DataSource.
+        Does not commit the session.
+        """
+        # Use the utility function for validation
+        validate_workspace_access(self.session, workspace_id, user_id)
+
+        # Fetch the datasource
+        datasource = self.session.get(DataSource, datasource_id)
+        if not datasource:
+            raise ValueError(f"DataSource {datasource_id} not found")
+
+        # Check workspace match
+        if datasource.workspace_id != workspace_id:
+            raise ValueError(f"DataSource {datasource_id} does not belong to workspace {workspace_id}")
+
+        # Check type
+        if datasource.type != DataSourceType.URL_LIST:
+            raise ValueError("Updating URLs is only supported for URL_LIST datasources")
+
+        # Validate new_urls format (basic check)
+        if not isinstance(new_urls, list) or not all(isinstance(url, str) for url in new_urls):
+            raise ValueError("Invalid format for new_urls. Expected a list of strings.")
+
+        # Get current details or initialize
+        origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
+        old_urls = set(origin_details.get('urls', []))
+        new_urls_set = set(new_urls)
+
+        # --- ADDED: Logic to delete records for removed URLs --- 
+        urls_to_remove = old_urls - new_urls_set
+        if urls_to_remove:
+            logger.info(f"URLs to remove from DS {datasource_id}: {urls_to_remove}")
+            hashes_to_remove = {hashlib.sha256(url.encode()).hexdigest() for url in urls_to_remove}
+            
+            # Find records to delete
+            records_to_delete = self.session.exec(
+                select(DataRecord).where(
+                    DataRecord.datasource_id == datasource_id,
+                    DataRecord.url_hash.in_(list(hashes_to_remove))
+                )
+            ).all()
+            
+            deleted_count = 0
+            if records_to_delete:
+                logger.info(f"Found {len(records_to_delete)} DataRecords to delete for removed URLs in DS {datasource_id}")
+                for record in records_to_delete:
+                    self.session.delete(record)
+                    deleted_count += 1
+                
+                # Decrement count on the datasource
+                if datasource.data_record_count is not None:
+                    datasource.data_record_count = max(0, datasource.data_record_count - deleted_count)
+                else:
+                    # If count was None, try to recount (though this is less ideal)
+                    count_stmt = select(func.count(DataRecord.id)).where(DataRecord.datasource_id == datasource_id)
+                    current_count = self.session.scalar(count_stmt) or 0
+                    datasource.data_record_count = max(0, current_count - deleted_count) # Adjust based on remaining
+                logger.info(f"Marked {deleted_count} DataRecords for deletion and updated count for DS {datasource_id} to {datasource.data_record_count}")
+        # --- END ADDED --- 
+
+        # Update the URLs in origin_details
+        origin_details['urls'] = new_urls
+
+        # IMPORTANT: Reassign the dictionary to trigger SQLAlchemy change detection
+        datasource.origin_details = origin_details
+        datasource.updated_at = datetime.now(timezone.utc)
+
+        self.session.add(datasource)
+        try:
+            self.session.flush()
+            self.session.refresh(datasource)
+            logger.info(f"Flushed updated URL list for DataSource {datasource_id}")
+        except Exception as e:
+            logger.error(f"Failed to flush URL update for DataSource {datasource_id}: {e}")
+            raise # Re-raise flush error
+        return datasource
 
     async def create_record_from_url(
         self,
@@ -608,6 +720,21 @@ class IngestionService:
             self.session.refresh(record)
             
             logger.info(f"Created data record {record.id} from URL: {url}")
+            
+            # --- Increment DataSource Count --- 
+            datasource = self.session.get(DataSource, datasource_id)
+            if datasource:
+                if datasource.data_record_count is None:
+                    datasource.data_record_count = 1
+                else:
+                    datasource.data_record_count += 1
+                self.session.add(datasource)
+                self.session.flush() # Flush the count update
+                logger.info(f"Incremented count for DataSource {datasource_id} to {datasource.data_record_count}")
+            else:
+                logger.warning(f"Could not find DataSource {datasource_id} to increment count after URL record creation.")
+            # --- End Increment --- 
+            
             return record
             
         except Exception as e:
@@ -658,6 +785,23 @@ class IngestionService:
         self.session.refresh(record)
         
         logger.info(f"Created data record {record.id} from text content")
+        
+        # --- Increment DataSource Count --- 
+        # Re-fetch datasource in case session state changed, though unlikely here
+        datasource = self.session.get(DataSource, datasource_id)
+        if datasource: # Should always be found based on check above
+            if datasource.data_record_count is None:
+                datasource.data_record_count = 1
+            else:
+                datasource.data_record_count += 1
+            self.session.add(datasource)
+            self.session.flush() # Flush the count update
+            logger.info(f"Incremented count for DataSource {datasource_id} to {datasource.data_record_count}")
+        else:
+            # This case should ideally not happen due to the check at the start
+            logger.error(f"Could not find DataSource {datasource_id} to increment count after text record creation.")
+        # --- End Increment ---
+
         return record
     
     async def create_records_batch(
@@ -1187,6 +1331,35 @@ class IngestionService:
         self.session.refresh(db_record)
 
         logger.info(f"Service: Successfully appended DataRecord {db_record.id} to DataSource {datasource_id}")
+
+        # --- Increment DataSource Count & Update Origin Details --- 
+        datasource = self.session.get(DataSource, datasource_id)
+        if datasource: 
+            if datasource.data_record_count is None:
+                datasource.data_record_count = 1
+            else:
+                datasource.data_record_count += 1
+
+            # --- ADDED: Update origin_details --- 
+            origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
+            current_urls = origin_details.get('urls', [])
+            # Only add if it's a URL type and not already present
+            if content_type == 'url' and content not in current_urls:
+                current_urls.append(content)
+                origin_details['urls'] = current_urls
+                # Reassign to trigger SQLAlchemy change detection
+                datasource.origin_details = origin_details
+                logger.info(f"Service: Appended URL to origin_details for DataSource {datasource_id}")
+            # --- END ADDED --- 
+
+            self.session.add(datasource)
+            self.session.flush() # Flush the count and origin_details update
+            logger.info(f"Service: Incremented count for DataSource {datasource_id} to {datasource.data_record_count} and updated origin_details.")
+        else:
+            # This case should ideally not happen due to the check at the start
+            logger.error(f"Service: Could not find DataSource {datasource_id} to increment count/update origin_details after append record.")
+        # --- End Increment --- 
+
         return db_record
 
 
@@ -1430,3 +1603,188 @@ class IngestionService:
             self.session.refresh(new_record) # Ensure the ID is loaded
             logger.info(f"Successfully created imported DataRecord {new_record.id} (pending commit). Hash: {content_hash[:8]}...")
             return new_record 
+
+    async def transfer_datasources(
+        self,
+        user_id: int,
+        request_data: DataSourceTransferRequest
+    ) -> DataSourceTransferResponse:
+        """
+        Transfers (moves or copies) DataSources and their associated DataRecords
+        between workspaces for a given user. Handles associated file storage.
+        """
+        source_ws_id = request_data.source_workspace_id
+        target_ws_id = request_data.target_workspace_id
+        ds_ids_to_transfer = request_data.datasource_ids
+        is_copy = request_data.copy
+
+        logger.info(f"Initiating {'copy' if is_copy else 'move'} of {len(ds_ids_to_transfer)} datasources "
+                    f"from workspace {source_ws_id} to {target_ws_id} for user {user_id}.")
+
+        new_datasource_ids = []
+        failed_transfers: Dict[int, str] = {}
+
+        if source_ws_id == target_ws_id:
+            raise ValueError("Source and target workspace IDs cannot be the same.")
+        if not ds_ids_to_transfer:
+            raise ValueError("No DataSource IDs provided for transfer.")
+
+        # --- Authorization ---
+        # Ensure user has access to both workspaces (using self.session)
+        try:
+            validate_workspace_access(self.session, source_ws_id, user_id)
+            validate_workspace_access(self.session, target_ws_id, user_id)
+        except HTTPException as auth_err:
+            logger.warning(f"Authorization failed for datasource transfer: {auth_err.detail}")
+            # Re-raise as ValueError for consistent service-level error handling maybe?
+            # Or handle specifically in the route based on HTTPException
+            raise ValueError(f"Authorization failed: {auth_err.detail}")
+
+
+        # --- Transaction ---
+        try:
+            for ds_id in ds_ids_to_transfer:
+                logger.debug(f"Processing DataSource ID: {ds_id}")
+                try:
+                    # Fetch original DataSource with records
+                    original_ds = self.session.get(DataSource, ds_id)
+
+                    if not original_ds:
+                        failed_transfers[ds_id] = "Original DataSource not found."
+                        logger.warning(f"DataSource {ds_id} not found.")
+                        continue
+                    if original_ds.workspace_id != source_ws_id:
+                        failed_transfers[ds_id] = "DataSource does not belong to the source workspace."
+                        logger.warning(f"DataSource {ds_id} belongs to workspace {original_ds.workspace_id}, not {source_ws_id}.")
+                        continue
+
+                    # Fetch original records
+                    records_statement = select(DataRecord).where(DataRecord.datasource_id == ds_id)
+                    original_records = self.session.exec(records_statement).all()
+                    logger.debug(f"Found {len(original_records)} records for DataSource {ds_id}.")
+
+                    # --- Handle File Storage ---
+                    original_storage_path = original_ds.origin_details.get("storage_path") if isinstance(original_ds.origin_details, dict) else None
+                    new_storage_path = None
+                    new_origin_details = original_ds.origin_details.copy() if isinstance(original_ds.origin_details, dict) else {}
+
+                    if original_storage_path:
+                        # Generate a unique path/name for the new location
+                        # Example: target_ws_id/datasources/uuid/original_filename.ext
+                        original_filename = original_storage_path.split('/')[-1]
+                        new_object_name = f"ws_{target_ws_id}/ds_{uuid.uuid4()}/{original_filename}"
+
+                        try:
+                            if is_copy:
+                                logger.info(f"Copying storage file from '{original_storage_path}' to '{new_object_name}'")
+                                # Assuming storage provider has copy_object or similar
+                                await self.storage.copy_object(original_storage_path, new_object_name)
+                            else: # Move
+                                logger.info(f"Moving storage file from '{original_storage_path}' to '{new_object_name}'")
+                                await self.storage.move_file(original_storage_path, new_object_name)
+                            new_storage_path = new_object_name
+                            new_origin_details["storage_path"] = new_storage_path
+                            logger.debug(f"Storage file {'copied' if is_copy else 'moved'} successfully.")
+                        except Exception as storage_err:
+                            logger.error(f"Storage operation failed for DS {ds_id}: {storage_err}", exc_info=True)
+                            failed_transfers[ds_id] = f"Storage operation failed: {storage_err}"
+                            # If storage fails, we shouldn't proceed with this DS
+                            continue # Skip to next datasource_id
+
+
+                    # --- Create New DataSource ---
+                    new_ds = DataSource(
+                        # Copy relevant fields
+                        name=f"{original_ds.name}{' (Copy)' if is_copy else ''}",
+                        type=original_ds.type,
+                        description=getattr(original_ds, 'description', None), # Use getattr with default None
+                        origin_details=new_origin_details, # Use updated details
+                        source_metadata=original_ds.source_metadata.copy() if isinstance(original_ds.source_metadata, dict) else {},
+                        status=original_ds.status, # Copy status for now
+                        # Set new ownership and reset counts/errors
+                        workspace_id=target_ws_id,
+                        user_id=user_id, # Belongs to the user performing the action
+                        data_record_count=0, # Reset count, will be updated
+                        error_message=None,
+                        entity_uuid=str(uuid.uuid4()), # Generate new UUID
+                        imported_from_uuid=original_ds.entity_uuid if is_copy else None, # Link if copying
+                    )
+                    self.session.add(new_ds)
+                    self.session.flush() # Get the new ID
+                    new_ds_id = new_ds.id
+                    if new_ds_id is None: # Should not happen after flush
+                        raise Exception(f"Failed to get new ID for transferred DataSource {ds_id}")
+                    new_datasource_ids.append(new_ds_id)
+                    logger.debug(f"Created new DataSource {new_ds_id} in workspace {target_ws_id}.")
+
+                    # --- Transfer DataRecords ---
+                    new_record_count = 0
+                    for record in original_records:
+                        new_record = DataRecord(
+                            # Copy relevant fields
+                            text_content=record.text_content,
+                            source_metadata=record.source_metadata.copy() if isinstance(record.source_metadata, dict) else {},
+                            event_timestamp=record.event_timestamp,
+                            url_hash=record.url_hash,
+                            content_hash=record.content_hash,
+                            # Link to new DataSource
+                            datasource_id=new_ds_id,
+                            entity_uuid=str(uuid.uuid4()), # Generate new UUID
+                            imported_from_uuid=record.entity_uuid if is_copy else None, # Link if copying
+                        )
+                        self.session.add(new_record)
+                        new_record_count += 1
+
+                        # Delete original record if moving
+                        if not is_copy:
+                            self.session.delete(record)
+
+                    # Update count on the new DataSource
+                    new_ds.data_record_count = new_record_count
+                    self.session.add(new_ds) # Add again to track count change
+                    logger.debug(f"Transferred {new_record_count} records to new DataSource {new_ds_id}.")
+
+                    # --- Delete Original DataSource (if Moving) ---
+                    if not is_copy:
+                        # File was already moved/deleted implicitly by storage_provider.move_file
+                        # Just delete the DB record
+                        self.session.delete(original_ds)
+                        logger.info(f"Moved DataSource {ds_id} and its records. Original deleted.")
+
+                except Exception as item_err:
+                     # Catch errors processing a single item
+                     logger.error(f"Failed to process DataSource ID {ds_id}: {item_err}", exc_info=True)
+                     failed_transfers[ds_id] = f"Internal error during processing: {item_err}"
+                     # We might be mid-transaction here. The overall rollback will handle it.
+
+
+            # --- Final Commit / Rollback ---
+            if failed_transfers:
+                 # If any transfer failed, roll back the entire operation
+                 self.session.rollback()
+                 logger.warning(f"Datasource transfer failed for some items. Rolling back transaction. Failures: {failed_transfers}")
+                 return DataSourceTransferResponse(
+                     success=False,
+                     message=f"Failed to transfer some DataSources. See errors.",
+                     errors=failed_transfers
+                 )
+            else:
+                 # All processed successfully
+                 self.session.commit()
+                 action = "Copied" if is_copy else "Moved"
+                 logger.info(f"Successfully {action.lower()} {len(ds_ids_to_transfer)} datasources from workspace {source_ws_id} to {target_ws_id}.")
+                 return DataSourceTransferResponse(
+                     success=True,
+                     message=f"Successfully {action.lower()} {len(ds_ids_to_transfer)} DataSources.",
+                     new_datasource_ids=new_datasource_ids if is_copy else None # Only return new IDs if copied
+                 )
+
+        except ValueError as ve: # Catch validation errors raised earlier
+            self.session.rollback()
+            logger.error(f"Validation error during datasource transfer: {ve}")
+            raise ve # Re-raise for the route to handle as 4xx
+        except Exception as e:
+            self.session.rollback()
+            logger.exception(f"Unexpected error during datasource transfer: {e}")
+            # Raise a generic internal server error
+            raise Exception("An unexpected error occurred during the transfer.") from e 

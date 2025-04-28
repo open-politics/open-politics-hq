@@ -11,13 +11,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Literal, Union
 from werkzeug.utils import secure_filename
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, status, Depends
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, status, Depends, Body
 from fastapi.responses import StreamingResponse
 import chardet
 import dateutil.parser
 import fitz  # PyMuPDF
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 from app.models import (
     DataSourceRead,
     DataSourceType,
@@ -162,7 +162,6 @@ def list_datasources(
     workspace_id: int,
     skip: int = 0,
     limit: int = 100,
-    include_counts: bool = Query(False, description="Include count of data records for each source"),
     session: SessionDep
 ) -> DataSourcesOut:
     """List DataSources in a workspace."""
@@ -174,6 +173,7 @@ def list_datasources(
         query = (
             select(DataSource)
             .where(DataSource.workspace_id == workspace_id)
+            .order_by(DataSource.created_at.desc()) # Add default ordering
             .offset(skip)
             .limit(limit)
         )
@@ -181,22 +181,13 @@ def list_datasources(
         # Execute query
         datasources = session.exec(query).all()
         
-        # Get total count
-        count_query = select(DataSource).where(DataSource.workspace_id == workspace_id)
-        total_count = len(session.exec(count_query).all())
+        # Get total count (consider optimizing this if performance becomes an issue)
+        count_query = select(func.count(DataSource.id)).where(DataSource.workspace_id == workspace_id)
+        total_count = session.scalar(count_query) or 0
         
         # Convert to read models
-        result_datasources = []
-        for ds in datasources:
-            ds_read = DataSourceRead.model_validate(ds)
-            
-            # Add record count if requested
-            if include_counts:
-                count_query = select(DataRecord).where(DataRecord.datasource_id == ds.id)
-                record_count = len(session.exec(count_query).all())
-                ds_read.data_record_count = record_count
-            
-            result_datasources.append(ds_read)
+        # The DataSourceRead model should now ideally include the pre-calculated data_record_count
+        result_datasources = [DataSourceRead.model_validate(ds) for ds in datasources]
             
         return DataSourcesOut(data=result_datasources, count=total_count)
 
@@ -215,7 +206,6 @@ def get_datasource(
     current_user: CurrentUser,
     workspace_id: int,
     datasource_id: int,
-    include_counts: bool = Query(False, description="Include count of data records"),
     session: SessionDep
 ) -> DataSourceRead:
     """Get a specific DataSource."""
@@ -239,13 +229,8 @@ def get_datasource(
             )
         
         # Convert to read model
+        # The DataSourceRead model should include the data_record_count field populated by the ingestion task
         result = DataSourceRead.model_validate(datasource)
-        
-        # Add record count if requested
-        if include_counts:
-            count_query = select(DataRecord).where(DataRecord.datasource_id == datasource_id)
-            record_count = len(session.exec(count_query).all())
-            result.data_record_count = record_count
             
         return result
 
@@ -256,6 +241,63 @@ def get_datasource(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
+        )
+
+@router.get("/{datasource_id}/urls", response_model=List[str])
+def get_datasource_urls(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    datasource_id: int,
+    session: SessionDep
+) -> List[str]:
+    """Get the list of URLs for a URL_LIST DataSource."""
+    try:
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+
+        # Get datasource
+        datasource = session.get(DataSource, datasource_id)
+        if not datasource:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DataSource not found"
+            )
+
+        # Verify datasource belongs to workspace
+        if datasource.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DataSource not found in this workspace"
+            )
+
+        # Verify this is a URL_LIST datasource
+        if datasource.type != DataSourceType.URL_LIST:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Operation only supported for URL_LIST datasources"
+            )
+
+        # Get URLs from origin_details
+        origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
+        urls = origin_details.get('urls', [])
+
+        if not isinstance(urls, list):
+            logger.error(f"DataSource {datasource_id} origin_details['urls'] is not a list: {type(urls)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal error: URL list format is invalid."
+            )
+
+        return urls
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Error getting URLs for datasource {datasource_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error retrieving URLs"
         )
 
 @router.get("/{datasource_id}/rows", response_model=CsvRowsOut)
@@ -521,6 +563,72 @@ async def update_datasource(
             detail="Internal server error during update"
         )
 
+@router.post("/{datasource_id}/refetch", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
+async def refetch_datasource(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    datasource_id: int,
+    session: SessionDep,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+):
+    """Trigger a background re-ingestion task for a DataSource."""
+    try:
+        # Validate workspace access
+        validate_workspace_access(session, workspace_id, current_user.id)
+
+        # Get datasource
+        datasource = session.get(DataSource, datasource_id)
+        if not datasource:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DataSource not found"
+            )
+        
+        # Verify datasource belongs to workspace
+        if datasource.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DataSource not found in this workspace"
+            )
+        
+        # --- Set status to PENDING --- 
+        # This provides immediate feedback and ensures the task runs
+        try:
+            updated_datasource = await ingestion_service.update_datasource(
+                datasource_id=datasource_id,
+                workspace_id=workspace_id,
+                user_id=current_user.id,
+                update_data=DataSourceUpdate(status=DataSourceStatus.PENDING, error_message=None) # Also clear previous errors
+            )
+            session.commit() # Commit the status change
+            logger.info(f"Set DataSource {datasource_id} status to PENDING for refetch.")
+        except Exception as update_err:
+             session.rollback()
+             logger.error(f"Failed to set DataSource {datasource_id} status to PENDING: {update_err}", exc_info=True)
+             # Decide if we should proceed or raise error - let's raise for now
+             raise HTTPException(status_code=500, detail="Failed to update DataSource status before queueing refetch.")
+        # --- End Status Update ---
+
+        # Queue ingestion task
+        from app.api.tasks.ingestion import process_datasource
+        process_datasource.delay(datasource_id)
+        logger.info(f"Queued refetch ingestion task for DataSource {datasource_id}")
+
+        return Message(message="Datasource refetch task queued successfully.")
+
+    except HTTPException as he:
+        # Rollback might not be needed if status update failed and rolled back already
+        # session.rollback() 
+        raise he
+    except Exception as e:
+        # session.rollback() # Rollback if status update committed but task queuing failed? Complex.
+        logger.exception(f"Error triggering refetch for datasource {datasource_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during refetch trigger"
+        )
+
 @router.get("/{datasource_id}/content", response_class=StreamingResponse)
 async def get_datasource_content(
     *,
@@ -661,3 +769,62 @@ async def download_datasource_pdf(
     except Exception as e:
         logger.exception(f"Error initiating PDF download for datasource {datasource_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error initiating download")
+
+
+
+@router.put("/{datasource_id}/urls", response_model=DataSourceRead)
+def update_datasource_urls(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    datasource_id: int,
+    urls_input: List[str] = Body(..., embed=True, description="The complete new list of URLs for the DataSource"),
+    session: SessionDep,
+    ingestion_service: IngestionService = Depends(get_ingestion_service)
+) -> DataSourceRead:
+    """
+    Update the list of URLs for a URL_LIST DataSource.
+    Replaces the existing list entirely. If URLs are removed,
+    their corresponding DataRecords will be deleted.
+    """
+    try:
+        # Ensure the input is actually a list, Body(embed=True) requires a key matching the param name
+        # The frontend needs to send {"urls_input": ["url1", "url2"]}
+        if not isinstance(urls_input, list):
+             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Request body must be a JSON list of URLs under the key 'urls_input'.")
+        
+        updated_datasource = ingestion_service.update_datasource_urls(
+            datasource_id=datasource_id,
+            workspace_id=workspace_id,
+            user_id=current_user.id,
+            new_urls=urls_input # Pass the list directly
+        )
+        # Commit the transaction after successful service call
+        session.commit()
+        session.refresh(updated_datasource)
+        # Optionally trigger refetch here or leave it to the user?
+        # For now, let's not auto-trigger. User can click refetch button.
+        # try:
+        #     from app.api.tasks.ingestion import process_datasource
+        #     process_datasource.delay(updated_datasource.id)
+        #     logger.info(f"Queued automatic refetch task for DataSource {updated_datasource.id} after URL update.")
+        # except Exception as e:
+        #     logger.error(f"Failed to queue automatic refetch task for DataSource {updated_datasource.id} after URL update: {e}")
+
+        return updated_datasource
+
+    except ValueError as ve:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        session.rollback()
+        # Re-raise specific HTTPExceptions (like 422 from validation)
+        raise he
+    except Exception as e:
+        session.rollback()
+        logger.exception(f"Error updating URLs for datasource {datasource_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error updating URLs"
+        )
+# --- END NEW ENDPOINT ---

@@ -1,8 +1,7 @@
 import os
 import secrets
 import warnings
-from typing import Annotated, Any, Literal
-
+from typing import Annotated, Any, Literal, Dict, List, Optional, Union
 from pydantic import (
     AnyUrl,
     BeforeValidator,
@@ -10,10 +9,12 @@ from pydantic import (
     PostgresDsn,
     computed_field,
     model_validator,
+    Field,
 )
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
+import uuid
 
 
 
@@ -114,6 +115,9 @@ class Settings(BaseSettings):
     MINIO_ROOT_PASSWORD: str = os.environ.get("MINIO_ROOT_PASSWORD", "app_user_password")
     MINIO_BUCKET_NAME: str = os.environ.get("MINIO_BUCKET_NAME", "webapp-dev-user-documents")
     MINIO_SECURE: str = os.environ.get("MINIO_SECURE", "False")
+
+    # Instance identifier for data transfer
+    INSTANCE_ID: str = Field(default_factory=lambda: str(uuid.uuid4()), env="INSTANCE_ID")
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

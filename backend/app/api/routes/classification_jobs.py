@@ -14,7 +14,9 @@ from app.models import (
     ClassificationJobStatus,
     ClassificationScheme,
     DataSource,
-    ClassificationResult
+    ClassificationResult,
+    DataSourceTransferRequest,
+    DataSourceTransferResponse
 )
 # Deps: Remove SessionDep if not needed, keep CurrentUser
 from app.api.deps import SessionDep, CurrentUser, ClassificationProviderDep
@@ -52,19 +54,29 @@ def create_classification_job(
         # Validate workspace access
         validate_workspace_access(session, workspace_id, current_user.id)
         
-        # Validate that the datasource exists and belongs to the workspace
-        datasource = session.get(DataSource, job_in.datasource_id)
-        if not datasource:
-            raise ValueError(f"DataSource with ID {job_in.datasource_id} not found")
-        if datasource.workspace_id != workspace_id:
-            raise ValueError(f"DataSource with ID {job_in.datasource_id} does not belong to workspace {workspace_id}")
+        # Validate that the datasources exist and belong to the workspace
+        datasource_ids = job_in.configuration.get('datasource_ids', [])
+        if not datasource_ids:
+            raise ValueError("No datasource_ids provided in configuration")
+            
+        for ds_id in datasource_ids:
+            datasource = session.get(DataSource, ds_id)
+            if not datasource:
+                raise ValueError(f"DataSource with ID {ds_id} not found")
+            if datasource.workspace_id != workspace_id:
+                raise ValueError(f"DataSource with ID {ds_id} does not belong to workspace {workspace_id}")
         
-        # Validate that the classification scheme exists and belongs to the workspace
-        scheme = session.get(ClassificationScheme, job_in.scheme_id)
-        if not scheme:
-            raise ValueError(f"ClassificationScheme with ID {job_in.scheme_id} not found")
-        if scheme.workspace_id != workspace_id:
-            raise ValueError(f"ClassificationScheme with ID {job_in.scheme_id} does not belong to workspace {workspace_id}")
+        # Validate that the classification schemes exist and belong to the workspace
+        scheme_ids = job_in.configuration.get('scheme_ids', [])
+        if not scheme_ids:
+            raise ValueError("No scheme_ids provided in configuration")
+            
+        for scheme_id in scheme_ids:
+            scheme = session.get(ClassificationScheme, scheme_id)
+            if not scheme:
+                raise ValueError(f"ClassificationScheme with ID {scheme_id} not found")
+            if scheme.workspace_id != workspace_id:
+                raise ValueError(f"ClassificationScheme with ID {scheme_id} does not belong to workspace {workspace_id}")
         
         # Create the job object
         job = ClassificationJob(
@@ -73,6 +85,7 @@ def create_classification_job(
             configuration=job_in.configuration,
             status=ClassificationJobStatus.PENDING,
             workspace_id=workspace_id,
+            user_id=current_user.id,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )

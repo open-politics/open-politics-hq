@@ -27,7 +27,7 @@ export type ArticleResponse = {
 
 export type Body_datasets_import_dataset = {
 	/**
-	 * Dataset Package JSON file (.json)
+	 * Dataset Package file (.zip)
 	 */
 	file: Blob | File;
 };
@@ -47,6 +47,15 @@ export type Body_datasources_create_datasource = {
 	 * Single character delimiter (for CSV)
 	 */
 	delimiter?: string | null;
+};
+
+
+
+export type Body_datasources_update_datasource_urls = {
+	/**
+	 * The complete new list of URLs for the DataSource
+	 */
+	urls_input: Array<string>;
 };
 
 
@@ -140,6 +149,8 @@ export type ClassificationJobStatus = 'pending' | 'running' | 'paused' | 'comple
 export type ClassificationJobUpdate = {
 	status?: ClassificationJobStatus | null;
 	error_message?: string | null;
+	name?: string | null;
+	description?: string | null;
 	updated_at?: string;
 };
 
@@ -251,6 +262,42 @@ export type DataSourceStatus = 'pending' | 'processing' | 'complete' | 'failed';
 
 
 
+export type DataSourceTransferRequest = {
+	/**
+	 * ID of the workspace to transfer from
+	 */
+	source_workspace_id: number;
+	/**
+	 * ID of the workspace to transfer to
+	 */
+	target_workspace_id: number;
+	/**
+	 * List of DataSource IDs to transfer
+	 */
+	datasource_ids: Array<number>;
+	/**
+	 * If true, copy the datasources; if false, move them
+	 */
+	copy?: boolean;
+};
+
+
+
+export type DataSourceTransferResponse = {
+	success: boolean;
+	message: string;
+	/**
+	 * IDs of the newly created DataSources in the target workspace (if copied)
+	 */
+	new_datasource_ids?: Array<number> | null;
+	/**
+	 * Dictionary of DataSource IDs that failed and the reason
+	 */
+	errors?: Record<string, string> | null;
+};
+
+
+
 /**
  * Defines the type of data source.
  */
@@ -259,10 +306,12 @@ export type DataSourceType = 'csv' | 'pdf' | 'bulk_pdf' | 'url' | 'url_list' | '
 
 
 export type DataSourceUpdate = {
+	name?: string | null;
+	description?: string | null;
+	origin_details?: Record<string, unknown> | null;
 	status?: DataSourceStatus | null;
 	source_metadata?: Record<string, unknown> | null;
 	error_message?: string | null;
-	updated_at?: string;
 };
 
 

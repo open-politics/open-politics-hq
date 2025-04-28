@@ -346,7 +346,8 @@ def process_datasource(self, datasource_id: int):
             # Update status to PROCESSING (Directly using session)
             datasource = _task_update_datasource_status(session, datasource, DataSourceStatus.PROCESSING)
 
-            origin_details = datasource.source_metadata if isinstance(datasource.source_metadata, dict) else {}
+            # CORRECTED: Read origin_details directly from the datasource object
+            origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
 
             # --- Process based on type (using internal task helpers) ---
             if datasource.type == DataSourceType.CSV:
@@ -393,7 +394,8 @@ def process_datasource(self, datasource_id: int):
 
             elif datasource.type == DataSourceType.URL_LIST:
                 logging.info(f"Processing URL_LIST DataSource: {datasource.id}")
-                urls = origin_details.get('urls')
+                # Use the correctly fetched origin_details from above
+                urls = origin_details.get('urls') 
                 if not urls or not isinstance(urls, list): raise ValueError(f"Missing/invalid 'urls' list for DS {datasource.id}")
                 processed_count = 0
                 failed_urls = []
@@ -404,11 +406,41 @@ def process_datasource(self, datasource_id: int):
                         # Use asyncio.run for the scraping call
                         scraped_data = asyncio.run(scraping_provider.scrape_url(url))
 
-                        if scraped_data and scraped_data.get("text_content"):
-                            text_content = scraped_data["text_content"].replace('\\x00', '').strip()
-                            if text_content:
+                        # --- ADDED DETAILED LOGGING ---
+                        logger.info(f"DS {datasource.id} URL {url}: Scraped data raw type: {type(scraped_data)}")
+                        logger.info(f"DS {datasource.id} URL {url}: Scraped data raw content: {str(scraped_data)[:500]}") # Log first 500 chars
+                        has_text_content = scraped_data.get("text_content") if isinstance(scraped_data, dict) else None
+                        logger.info(f"DS {datasource.id} URL {url}: Has 'text_content' key with truthy value?: {bool(has_text_content)}")
+                        # --- END ADDED LOGGING ---
+
+                        # --- CORRECTED CONTENT CHECK ---
+                        # Check if scraped_data is a dict first
+                        text_content = None
+                        if isinstance(scraped_data, dict):
+                             # Prioritize top-level text_content if it's truthy
+                             top_level_content = scraped_data.get("text_content")
+                             if top_level_content:
+                                 text_content = top_level_content
+                             else:
+                                 # Fallback to checking inside original_data
+                                 original_data = scraped_data.get("original_data")
+                                 if isinstance(original_data, dict):
+                                      text_content = original_data.get("text_content")
+                        
+                        # Now check if we actually got some text_content
+                        if text_content: 
+                            text_content = text_content.replace('\\\\x00', '').strip() # Clean the final content
+                            logger.info(f"DS {datasource.id} URL {url}: Text content after cleaning (first 100 chars): {text_content[:100]}") # Log cleaned text
+                            
+                            if text_content: # Check if non-empty after stripping
                                 event_ts = None
-                                pub_date_str = scraped_data.get("publication_date")
+                                pub_date_str = None
+                                # Check both top-level and original_data for publication_date
+                                if isinstance(scraped_data, dict):
+                                     pub_date_str = scraped_data.get("publication_date")
+                                     if not pub_date_str and isinstance(scraped_data.get("original_data"), dict):
+                                         pub_date_str = scraped_data.get("original_data", {}).get("publication_date")
+
                                 if pub_date_str:
                                     try:
                                         parsed_dt = dateutil.parser.parse(pub_date_str)
@@ -481,6 +513,13 @@ def process_datasource(self, datasource_id: int):
                 logging.info(f"Successfully created {total_records_created} DataRecords for DataSource {datasource_id}")
 
             # === End: Main Processing Logic ===
+
+            # Update the final data_record_count on the datasource object before the final status update
+            if datasource and total_records_created >= 0: # Ensure we have a count
+                 datasource.data_record_count = total_records_created
+                 session.add(datasource) # Make sure the change is tracked
+                 session.flush() # Flush this update before the final status change
+                 logger.info(f"Set final data_record_count to {total_records_created} for DataSource {datasource_id}")
 
             # Final status update to COMPLETE
             datasource = _task_update_datasource_status(

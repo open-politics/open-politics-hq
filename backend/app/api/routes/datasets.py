@@ -2,11 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from typing import Any, Optional
 # Add Response for file download
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 import json
 import logging
+import tempfile
+import os
 
-from app.api.deps import SessionDep, CurrentUser, DatasetServiceDep, ShareableServiceDep
+from app.api.deps import SessionDep, CurrentUser, DatasetServiceDep, ShareableServiceDep, StorageProviderDep
 from app.models import (
     DatasetCreate, DatasetRead, DatasetUpdate, DatasetsOut, Message,
     # Import Dataset model for service return type check
@@ -15,6 +17,7 @@ from app.models import (
 )
 from app.api.services.dataset import DatasetService
 from app.api.services.shareable import ShareableService
+from app.api.services.package import DataPackage
 
 logger = logging.getLogger(__name__)
 
@@ -177,32 +180,52 @@ def delete_dataset(
 
 
 # --- NEW EXPORT ENDPOINT ---
-@router.post("/{dataset_id}/export", response_class=JSONResponse)
-def export_dataset(
+@router.post("/{dataset_id}/export", response_class=FileResponse)
+async def export_dataset(
     *,
     current_user: CurrentUser,
     workspace_id: int,
     dataset_id: int,
     include_content: bool = Query(False, description="Include full text content of data records"),
     include_results: bool = Query(False, description="Include associated classification results"),
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
 ) -> Any:
     """
-    Export a specific dataset as a self-contained package (JSON).
+    Export a specific dataset as a self-contained package (ZIP).
     """
     try:
-        package_data = service.export_dataset_package(
+        # Export the dataset to a package
+        package = await service.export_dataset_package(
             user_id=current_user.id,
             workspace_id=workspace_id,
             dataset_id=dataset_id,
             include_record_content=include_content,
             include_results=include_results
         )
-        filename = f"dataset_export_{dataset_id}.json"
-        return JSONResponse(
-            content=package_data,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-        )
+
+        # Create a temporary file for the ZIP
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_file:
+            temp_path = temp_file.name
+
+        try:
+            # Write the package to the ZIP file
+            package.to_zip(temp_path)
+
+            # Return the file for download
+            filename = f"dataset_export_{dataset_id}.zip"
+            return FileResponse(
+                path=temp_path,
+                filename=filename,
+                media_type="application/zip",
+                background=lambda: os.unlink(temp_path)
+            )
+
+        except Exception as e:
+            # Clean up temp file on error
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise e
+
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -218,25 +241,29 @@ async def import_dataset(
     *,
     current_user: CurrentUser,
     workspace_id: int,
-    file: UploadFile = File(..., description="Dataset Package JSON file (.json)"),
+    file: UploadFile = File(..., description="Dataset Package file (.zip)"),
     conflict_strategy: str = Query('skip', description="How to handle conflicts"),
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
 ) -> DatasetRead:
     """
     Import a dataset from an exported Dataset Package file.
     """
-    if not file.filename or not file.filename.lower().endswith('.json'):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only .json allowed.")
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only .zip allowed.")
 
     try:
-        package_data = await file.read()
-        imported_dataset = service.import_dataset_package(
+        # Create package from upload
+        package = await DataPackage.from_upload(file)
+
+        # Import the package
+        imported_dataset = await service.import_dataset_package(
             target_user_id=current_user.id,
             target_workspace_id=workspace_id,
-            package_data=package_data,
+            package=package,
             conflict_resolution_strategy=conflict_strategy
         )
         return imported_dataset
+
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except NotImplementedError as e:
@@ -297,7 +324,7 @@ async def import_dataset_from_token(
 
     # 2. Internally Export the Dataset Package
     try:
-        package_data = service.export_dataset_package(
+        package = await service.export_dataset_package(
             user_id=current_user.id,
             workspace_id=original_workspace_id,
             dataset_id=original_dataset_id,
@@ -314,10 +341,10 @@ async def import_dataset_from_token(
 
     # 3. Import the Dataset Package into the Target Workspace
     try:
-        imported_dataset = service.import_dataset_package(
+        imported_dataset = await service.import_dataset_package(
             target_user_id=current_user.id,
             target_workspace_id=workspace_id,
-            package_data=package_data,
+            package=package,
             conflict_resolution_strategy=conflict_strategy
         )
         logger.info(f"Import successful. New dataset ID: {imported_dataset.id} in workspace {workspace_id}")

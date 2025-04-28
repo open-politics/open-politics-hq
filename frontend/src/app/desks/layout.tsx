@@ -103,7 +103,7 @@ export default function DesksLayout({ children }: { children: React.ReactNode })
       <SidebarProvider>
         <AppSidebar className="fixed md:relative h-full md:h-auto" />
         <SidebarInset className="flex-1 flex flex-col pt-16">
-          <header className="flex h-12 shrink-0 items-center gap-2 px-4">
+          {/* <header className="flex h-12 shrink-0 items-center gap-2 px-4">
           {/* {user?.is_superuser &&
             <>
             <div className="flex items-center gap-2">
@@ -122,7 +122,7 @@ export default function DesksLayout({ children }: { children: React.ReactNode })
             </div>
             </>
           } */}
-          </header>
+          {/* </header> */}
           <main className="flex-1 overflow-hidden">
             {children}
           </main>

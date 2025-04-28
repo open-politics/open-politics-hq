@@ -1,144 +1,199 @@
-# Open Politics Backend Architecture Redesign
+# Open Politics Architecture
 
-This document outlines the architectural redesign of the Open Politics backend, addressing issues with the previous codebase including inconsistent patterns, poor separation of concerns, and tight coupling to specific implementations.
+## Overview
 
-## Goals of the Redesign
+The Open Politics platform follows a clean architecture pattern with clear separation of concerns, modular design, and standardized interfaces for external integrations.
 
-- **Clear Layers**: Separate API (Interface) from Service (Business Logic) from Data/Providers (DB/External Libs)
-- **Decoupling**: Use interfaces/adapters for external dependencies to enable easy swapping of implementations
-- **Consistent Patterns**: Establish standard approaches to common operations
-- **Testability**: Make the codebase easier to test with clear boundaries and dependencies
-- **Maintainability**: Improve code organization and documentation
-- **Scalability**: Support multiple search/classification engines as mentioned in system requirements
+## Core Architecture
 
-## Architecture Overview
+### 1. API Layer (`app/api/`)
+- FastAPI routes and endpoints
+- Request/response handling
+- Input validation
+- Authentication and authorization
+- Service orchestration
 
-### Components
+### 2. Service Layer (`app/services/`)
+- Business logic encapsulation
+- Workflow orchestration
+- Data validation and transformation
+- Provider integration
+- Transaction management
 
-1. **API Layer** (`app/api/`)
-   - Handles HTTP request/response cycles
-   - Validates and processes input
-   - Delegates business logic to services
-   - Formats responses
+### 3. Provider Layer (`app/services/providers/`)
+- Abstract interfaces for external dependencies
+- Concrete implementations for:
+  - Storage (MinIO)
+  - Classification (OPOL)
+  - Search (OPOL)
+  - Geospatial (OPOL)
+  - Scraping (OPOL)
 
-2. **Service Layer** (`app/services/`)
-   - Encapsulates business logic
-   - Orchestrates workflows
-   - Enforces business rules
-   - Uses providers for external operations
+### 4. Task Layer (`app/tasks/`)
+- Celery background tasks
+- Asynchronous processing
+- Progress tracking
+- Error handling and retries
 
-3. **Provider Layer** (`app/services/providers/`)
-   - Abstracts external dependencies (storage, search, classification, etc.)
-   - Defines interfaces and concrete implementations
+### 5. Data Layer (`app/models/`)
+- SQLModel database models
+- Data validation
+- Relationship management
+- Type definitions
 
-4. **Task Layer** (`app/tasks/`)
-   - Handles background processing via Celery
-   - Delegates business logic to services
-   - Manages task-specific concerns (retries, progress)
+## Universal Data Transfer System (90% Complete)
 
-5. **Data Layer** (`app/models/`)
-   - Defines database models (unchanged from previous architecture)
+The universal data transfer system enables seamless sharing of resources between instances while preserving relationships and content integrity.
 
-### Key Design Patterns
+### 1. Package Format (100% Complete)
+```
+package.zip/
+├── metadata.json       # Package metadata and version info
+├── manifest.json      # Entity relationships and dependencies
+├── entities/          # JSON files for each entity
+│   ├── dataset.json
+│   ├── records.json
+│   └── schemes.json
+└── files/            # Binary files referenced by entities
+    ├── file_1.pdf
+    └── file_2.csv
+```
 
-1. **Service Pattern**: Centralized business logic in service classes
-2. **Provider Pattern**: Abstract interfaces for external dependencies
-3. **Dependency Injection**: Configure services with specific provider implementations
-4. **Factory Functions**: Get service/provider instances for dependency injection
+### 2. Core Components (95% Complete)
+- `PackageBuilder`: Creates export packages
+- `PackageImporter`: Handles package imports
+- `DataPackage`: Represents package format
+- `PackageMetadata`: Package version and metadata
 
-## Implementation Progress
+### 3. Database Schema (100% Complete)
+- Entity UUID tracking
+- Cross-instance references
+- Relationship preservation
+- Migration support
 
-So far, we have implemented:
+### 4. Frontend Integration (85% Complete)
+- Dataset management UI
+- Export/import dialogs
+- Progress tracking
+- Error handling
+- Token-based sharing
 
-1. **Provider Interfaces**:
-   - `StorageProvider`: For file storage operations
-   - `ScrapingProvider`: For web scraping operations
-   - `SearchProvider`: For search operations
-   - `ClassificationProvider`: For text classification operations
-   - `GeospatialProvider`: For geospatial data operations
+### 5. API Endpoints (100% Complete)
+- Dataset CRUD operations
+- Export functionality
+- Import handling
+- Token-based sharing
+- Progress tracking
 
-2. **Provider Implementations**:
-   - `MinioStorageProvider`: MinIO implementation for storage
-   - `OpolScrapingProvider`: OPOL implementation for scraping
-   - `OpolSearchProvider`: OPOL implementation for search
-   - `OpolClassificationProvider`: OPOL implementation for classification
-   - `OpolGeospatialProvider`: OPOL implementation for geospatial data
+### 6. Service Layer (95% Complete)
+- `DatasetService`: Dataset management
+- `ShareableService`: Resource sharing
+- `PackageService`: Package handling
+- Error handling and validation
+- Transaction management
 
-3. **Services**:
-   - `WorkspaceService`: For workspace management
-   - `ClassificationService`: For classification operations
-   - `IngestionService`: For data ingestion
+## Implementation Status
 
-4. **Refactored Components**:
-   - `app/api/routes/workspaces.py`: API routes for workspace operations
-   - `app/tasks/classification.py`: Task for classification job processing
+### Completed Features
+✅ Package format definition
+✅ Database schema updates
+✅ Core export/import logic
+✅ Entity UUID tracking
+✅ File handling
+✅ Service integration
+✅ API endpoints
+✅ Frontend components
+✅ Basic error handling
+
+### In Progress
+🔄 Advanced error handling
+🔄 Progress tracking improvements
+🔄 Performance optimization
+🔄 Documentation updates
+
+### Pending
+❌ Comprehensive testing
+❌ Performance benchmarks
+❌ Edge case handling
+❌ Advanced validation
 
 ## Next Steps
 
-1. **Continue API Route Refactoring**:
-   - Refactor remaining API routes to use the service layer
-   - Start with high-priority routes like classification, ingestion, and search
+1. **Testing (Priority)**
+   - Unit tests for package handling
+   - Integration tests for export/import
+   - Performance testing
+   - Edge case validation
 
-2. **Complete Service Implementations**:
-   - Implement `SchedulingService` for recurring tasks
-   - Implement `SearchService` for search operations
+2. **Performance**
+   - Optimize large file handling
+   - Improve memory usage
+   - Add progress tracking
+   - Implement chunked transfers
 
-3. **Task Refactoring**:
-   - Refactor remaining Celery tasks to use the service layer
-   - Simplify task code by delegating business logic to services
+3. **Documentation**
+   - API documentation
+   - Usage examples
+   - Deployment guide
+   - Migration guide
 
-4. **Dependency Injection**:
-   - Implement a dependency injection system for FastAPI routes
-   - Simplify service/provider acquisition in routes
+4. **Frontend Enhancements**
+   - Improved error feedback
+   - Progress visualization
+   - Batch operations
+   - Preview functionality
 
-5. **Testing**:
-   - Add unit tests for services
-   - Add integration tests for API routes
-   - Create mock providers for testing
+## Design Patterns
 
-6. **Documentation**:
-   - Document API routes
-   - Document service methods
-   - Add usage examples
+1. **Service Pattern**
+   - Centralized business logic
+   - Clear interfaces
+   - Dependency injection
+   - Transaction management
 
-## Migration Strategy
+2. **Provider Pattern**
+   - Abstract interfaces
+   - Concrete implementations
+   - Dependency injection
+   - Easy swapping of implementations
 
-The migration should be incremental, focusing on one functional area at a time:
+3. **Repository Pattern**
+   - Data access abstraction
+   - Query encapsulation
+   - Caching support
+   - Transaction handling
 
-1. Start with core components (workspace, classification)
-2. Move to ingestion and data sources
-3. Refactor search, entities, and geospatial components
-4. Finally update scheduled tasks and background jobs
+4. **Factory Pattern**
+   - Service instantiation
+   - Provider creation
+   - Configuration management
+   - Dependency injection
 
-This approach allows for continuous operation during the migration, with gradual improvements to the codebase.
+## Contributing
 
-## Benefits
+When adding new features:
+1. Follow existing patterns
+2. Add appropriate tests
+3. Update documentation
+4. Consider backward compatibility
+5. Handle errors appropriately
 
-This new architecture offers several benefits:
+## Testing Strategy
 
-1. **Clearer Code Organization**: Code is organized by function, not by framework component
-2. **Easier Testing**: Services and providers can be tested in isolation
-3. **Improved Flexibility**: Easy to swap implementations (e.g., changing from OPOL to another search engine)
-4. **Consistency**: Standard patterns for common operations
-5. **Reduced Duplication**: Business logic centralized in services
-6. **Better Maintenance**: Clear boundaries and dependencies
+1. **Unit Tests**
+   - Service methods
+   - Provider implementations
+   - Utility functions
+   - Model validation
 
-## Getting Started for Developers
+2. **Integration Tests**
+   - API endpoints
+   - Service workflows
+   - Database operations
+   - File operations
 
-To work with the new architecture:
-
-1. **Creating a New Feature**:
-   - Define provider interfaces if needed
-   - Implement a service with the business logic
-   - Create API routes that use the service
-   - Implement tasks if background processing is needed
-
-2. **Updating Existing Code**:
-   - Move business logic from routes to services
-   - Replace direct external calls with provider calls
-   - Update route handlers to use services
-
-3. **Testing**:
-   - Create mock providers for testing services
-   - Test services in isolation
-   - Test API routes with mocked services 
+3. **End-to-End Tests**
+   - Complete workflows
+   - UI interactions
+   - Error scenarios
+   - Performance benchmarks 

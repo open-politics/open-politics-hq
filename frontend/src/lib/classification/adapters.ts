@@ -167,7 +167,7 @@ export function adaptDataSourceReadToDataSource(dataSourceRead: ClientDataSource
         id: dataSourceRead.id,
         workspace_id: dataSourceRead.workspace_id,
         user_id: dataSourceRead.user_id,
-        name: dataSourceRead.name,
+        name: dataSourceRead.name ?? '',
         type: dataSourceRead.type as DataSourceType,
         origin_details: (dataSourceRead.origin_details as Record<string, any>) || {},
         source_metadata: (dataSourceRead.source_metadata as Record<string, any>) || {},

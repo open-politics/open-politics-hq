@@ -167,34 +167,42 @@ class MinioStorageProvider(StorageProvider):
             raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list files.")
             
     async def move_file(self, source_object_name: str, destination_object_name: str) -> None:
+        if not self.bucket_name:
+            raise ValueError("Bucket name not configured")
         try:
-            def _move_sync():
-                # Minio typically uses copy + delete for move
-                # CORRECTED: Create CopySource object for the source
-                source = CopySource(self.bucket_name, source_object_name)
-                result = self.client.copy_object(
-                    self.bucket_name,
-                    destination_object_name,
-                    source # Pass the CopySource object
-                )
-                # Check result if necessary (e.g., log etag from result)
-                # Then delete the original object
-                self.client.remove_object(self.bucket_name, source_object_name)
-                
-            await asyncio.to_thread(_move_sync)
-            logging.info(f"Moved '{source_object_name}' to '{destination_object_name}'.")
-        except S3Error as e:
-            logging.error(f"Error moving file from {source_object_name} to {destination_object_name}: {e}")
-            # Attempt to clean up destination if copy succeeded but delete failed?
-            # For now, just raise the error
-            raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Could not move file: {e}")
-        except ValueError as ve:
-             # Catch potential ValueErrors like the one we saw
-             logging.error(f"ValueError during move_file: {ve}")
-             raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Configuration error during file move: {ve}")
+            logging.info(f"Moving object from '{source_object_name}' to '{destination_object_name}'")
+            # Copy the object first
+            source = CopySource(self.bucket_name, source_object_name)
+            self.client.copy_object(
+                 bucket_name=self.bucket_name,
+                 object_name=destination_object_name,
+                 source=source # Correct usage
+            )
+            # Then delete the original object
+            self.client.remove_object(self.bucket_name, source_object_name)
+            logging.info(f"Successfully moved object '{source_object_name}' to '{destination_object_name}'")
+        except Exception as e: # Catch broadly and log/re-raise
+            logging.error(f"Failed to move object '{source_object_name}' to '{destination_object_name}': {e}", exc_info=True)
+            raise Exception(f"MinIO move_file failed: {e}") from e
+
+    async def copy_object(self, source_object_name: str, destination_object_name: str) -> None:
+        """Copies an object within the same bucket."""
+        if not self.bucket_name:
+            raise ValueError("Bucket name not configured")
+        try:
+            logging.info(f"Attempting to copy object from '{source_object_name}' to '{destination_object_name}' in bucket '{self.bucket_name}'")
+            # Use client.copy_object for S3 compatible copy
+            source = CopySource(self.bucket_name, source_object_name)
+            result = self.client.copy_object(
+                bucket_name=self.bucket_name,
+                object_name=destination_object_name,
+                source=source # Pass the CopySource object
+            )
+            logging.info(f"Successfully copied object '{source_object_name}' to '{destination_object_name}', etag: {result.etag}")
         except Exception as e:
-            logging.error(f"Unexpected error moving file: {e}")
-            raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unexpected error moving file.")
+            logging.error(f"Failed to copy object '{source_object_name}' to '{destination_object_name}': {e}", exc_info=True)
+            # Re-raise the exception so the calling service knows it failed
+            raise Exception(f"MinIO copy_object failed: {e}") from e
 
 # Factory function moved here
 def get_storage_provider() -> MinioStorageProvider:

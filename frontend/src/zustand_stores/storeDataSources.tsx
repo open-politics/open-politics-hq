@@ -1,9 +1,18 @@
 import { create } from 'zustand';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 import { DatasourcesService } from '@/client/services';
-import { DataSourceRead as ClientDataSourceRead, DataSourceType as ClientDataSourceType, DataSourcesOut, DataSourceStatus as ClientDataSourceStatus } from '@/client/models';
+import { 
+    DataSourceRead as ClientDataSourceRead,
+    DataSourceType as ClientDataSourceType,
+    DataSourcesOut,
+    DataSourceStatus as ClientDataSourceStatus,
+    DataSourceUpdate,
+    Message,
+} from '@/client/models';
+import { DatarecordsService } from '@/client/services';
 import { DataSource, DataSourceType, DataSourceStatus } from '@/lib/classification/types';
 import { adaptDataSourceReadToDataSource } from '@/lib/classification/adapters';
+import { toast } from 'sonner';
 
 // TODO: Update imports when client is regenerated
 
@@ -18,10 +27,14 @@ interface DataSourceState {
   fetchDataSources: () => Promise<void>;
   createDataSource: (formData: FormData) => Promise<DataSource | null>;
   deleteDataSource: (dataSourceId: number) => Promise<void>;
-  // Add function to poll/update status
+  updateDataSource: (dataSourceId: number, updateData: DataSourceUpdate) => Promise<DataSource | null>;
+  refetchDataSource: (dataSourceId: number) => Promise<boolean>;
   startPollingDataSourceStatus: (dataSourceId: number) => void;
   stopPollingDataSourceStatus: (dataSourceId: number) => void;
   stopAllPolling: () => void;
+  addUrlToDataSource: (dataSourceId: number, url: string) => Promise<boolean>;
+  updateDataSourceUrls: (dataSourceId: number, newUrls: string[]) => Promise<boolean>;
+  getDataSourceUrls: (dataSourceId: number) => Promise<string[]>;
 }
 
 export const useDataSourceStore = create<DataSourceState>((set, get) => ({
@@ -38,7 +51,6 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       const response: DataSourcesOut = await DatasourcesService.listDatasources({
         workspaceId: activeWorkspace.id,
         limit: 1000,
-        includeCounts: true
       });
 
       const clientDataSources = response.data;
@@ -124,6 +136,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
          errorMsg = `Failed: ${err.message}`;
       }
       set({ error: errorMsg, isLoading: false });
+      toast.error(errorMsg);
       return null;
     }
   },
@@ -150,6 +163,86 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       console.error(`Error deleting data source ${dataSourceId}:`, err);
       set({ error: `Failed to delete data source ${dataSourceId}`, isLoading: false });
     }
+  },
+
+  updateDataSource: async (dataSourceId: number, updateData: DataSourceUpdate): Promise<DataSource | null> => {
+      const { activeWorkspace } = useWorkspaceStore.getState();
+      if (!activeWorkspace?.id) {
+        set({ error: "No active workspace selected for update" });
+        return null;
+      }
+      
+      set({ isLoading: true, error: null });
+      try {
+          console.log(`Updating DataSource ${dataSourceId} with data:`, updateData);
+          const updatedClientSource: ClientDataSourceRead = await DatasourcesService.updateDatasource({
+              workspaceId: activeWorkspace.id,
+              datasourceId: dataSourceId,
+              requestBody: updateData
+          });
+
+          const updatedAdaptedSource = adaptDataSourceReadToDataSource(updatedClientSource);
+
+          set(state => {
+              const index = state.dataSources.findIndex(ds => ds.id === dataSourceId);
+              if (index !== -1) {
+                  const newDataSources = [...state.dataSources];
+                  newDataSources[index] = updatedAdaptedSource;
+                  return { dataSources: newDataSources, isLoading: false };
+              } else {
+                  console.warn(`DataSource ${dataSourceId} not found in store during update.`);
+                  return { isLoading: false }; 
+              }
+          });
+          toast.success("DataSource updated successfully!");
+          return updatedAdaptedSource;
+      } catch (err: any) {
+          console.error(`Error updating data source ${dataSourceId}:`, err);
+          let errorMsg = "Failed to update data source";
+          if (err.body?.detail) {
+            errorMsg = typeof err.body.detail === 'string'
+              ? `Update Failed: ${err.body.detail}`
+              : `Update Failed: ${JSON.stringify(err.body.detail)}`;
+          } else if (err.message) {
+            errorMsg = `Update Failed: ${err.message}`;
+          }
+          set({ error: errorMsg, isLoading: false });
+          toast.error(errorMsg);
+          return null;
+      }
+  },
+
+  refetchDataSource: async (dataSourceId: number): Promise<boolean> => {
+      const { activeWorkspace } = useWorkspaceStore.getState();
+      if (!activeWorkspace?.id) {
+        set({ error: "No active workspace selected for refetch" });
+        return false;
+      }
+
+      set({ isLoading: true, error: null });
+      try {
+          const response: Message = await DatasourcesService.refetchDatasource({
+              workspaceId: activeWorkspace.id,
+              datasourceId: dataSourceId
+          });
+          set({ isLoading: false });
+          toast.info(response.message || "Refetch task queued successfully.");
+          
+          return true;
+      } catch (err: any) {
+          console.error(`Error triggering refetch for data source ${dataSourceId}:`, err);
+          let errorMsg = "Failed to trigger refetch";
+          if (err.body?.detail) {
+            errorMsg = typeof err.body.detail === 'string'
+              ? `Refetch Failed: ${err.body.detail}`
+              : `Refetch Failed: ${JSON.stringify(err.body.detail)}`;
+          } else if (err.message) {
+            errorMsg = `Refetch Failed: ${err.message}`;
+          }
+          set({ error: errorMsg, isLoading: false });
+          toast.error(errorMsg);
+          return false;
+      }
   },
 
   startPollingDataSourceStatus: (dataSourceId: number) => {
@@ -183,16 +276,24 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
           const index = state.dataSources.findIndex(ds => ds.id === dataSourceId);
           let updated = false;
           if (index !== -1) {
-            const currentStatus = state.dataSources[index].status;
-            if (currentStatus !== adaptedStatus) {
-              console.log(`DataSource ${dataSourceId} status changed from ${currentStatus} to ${adaptedStatus}`);
-              state.dataSources[index].status = adaptedStatus; // Immer handles this mutation
-              updated = true;
-              // Stop polling if it reached a terminal state
-              if (adaptedStatus === 'complete' || adaptedStatus === 'failed') {
-                get().stopPollingDataSourceStatus(dataSourceId);
-              }
+            // --- CORRECTED: Update the entire record --- 
+            const currentDataSource = state.dataSources[index];
+            const adaptedDataSource = adaptDataSourceReadToDataSource(updatedDataSourceRead);
+            
+            // Check if the entire object is different (or specific key fields like status, count)
+            // For simplicity, we can check status and count, or rely on object reference change
+            if (currentDataSource.status !== adaptedDataSource.status || currentDataSource.data_record_count !== adaptedDataSource.data_record_count) {
+                 console.log(`DataSource ${dataSourceId} updated. Status: ${adaptedDataSource.status}, Count: ${adaptedDataSource.data_record_count}`);
+                 // Replace the old object with the new adapted one
+                 state.dataSources[index] = adaptedDataSource;
+                 updated = true;
+
+                 // Stop polling if it reached a terminal state
+                 if (adaptedDataSource.status === 'complete' || adaptedDataSource.status === 'failed') {
+                     get().stopPollingDataSourceStatus(dataSourceId);
+                 }
             }
+            // --- END CORRECTION ---
           } else {
              console.warn(`DataSource ${dataSourceId} not found in store during poll update.`);
              get().stopPollingDataSourceStatus(dataSourceId); // Stop polling if not found
@@ -232,4 +333,119 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
      });
   },
 
+  // --- ADDED: URL List Management Functions ---
+  addUrlToDataSource: async (dataSourceId: number, url: string): Promise<boolean> => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace selected to add URL");
+      return false;
+    }
+
+    set({ isLoading: true, error: null });
+    try {
+      // Use the DatarecordsService (assuming client regeneration created it)
+      // Check your generated client for the correct service and method names
+      // It might be under DatarecordsService or similar.
+      // The route was POST /workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}/records
+
+      
+      await DatarecordsService.appendRecord({ 
+        workspaceId: activeWorkspace.id,
+        datasourceId: dataSourceId,
+        requestBody: { // Ensure requestBody structure matches the Pydantic model AppendRecordInput
+            content: url,
+            content_type: 'url',
+            // event_timestamp: undefined // or provide if needed
+        }
+      });
+
+      set({ isLoading: false });
+      toast.success(`URL added successfully: ${url}`);
+      // Optionally: Instead of full refetch, update the specific DS in the store 
+      // by fetching its updated state (including origin_details and count)
+      // For simplicity, let's trigger a full refresh for now.
+      get().fetchDataSources(); 
+      return true;
+    } catch (err: any) {
+      console.error(`Error adding URL ${url} to data source ${dataSourceId}:`, err);
+      let errorMsg = "Failed to add URL";
+      if (err.body?.detail) {
+        errorMsg = `Add URL Failed: ${typeof err.body.detail === 'string' ? err.body.detail : JSON.stringify(err.body.detail)}`;
+      } else if (err.message) {
+        errorMsg = `Add URL Failed: ${err.message}`;
+      }
+      set({ error: errorMsg, isLoading: false });
+      toast.error(errorMsg);
+      return false;
+    }
+  },
+
+  updateDataSourceUrls: async (dataSourceId: number, newUrls: string[]): Promise<boolean> => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace selected to update URLs");
+      return false;
+    }
+
+    set({ isLoading: true, error: null });
+    try {
+      // Use DatasourcesService.updateDatasourceUrls
+      // The route was PUT /workspaces/{workspace_id}/datasources/{datasource_id}/urls
+      await DatasourcesService.updateDatasourceUrls({ 
+          workspaceId: activeWorkspace.id,
+          datasourceId: dataSourceId,
+          requestBody: { // Body takes an object with the parameter name as key
+              urls_input: newUrls
+          }
+      });
+
+      set({ isLoading: false });
+      toast.success(`DataSource URL list updated successfully.`);
+      // Refetch to update the state
+      get().fetchDataSources(); 
+      return true;
+    } catch (err: any) {
+      console.error(`Error updating URLs for data source ${dataSourceId}:`, err);
+      let errorMsg = "Failed to update URL list";
+       if (err.body?.detail) {
+        errorMsg = `Update URLs Failed: ${typeof err.body.detail === 'string' ? err.body.detail : JSON.stringify(err.body.detail)}`;
+      } else if (err.message) {
+        errorMsg = `Update URLs Failed: ${err.message}`;
+      }
+      set({ error: errorMsg, isLoading: false });
+      toast.error(errorMsg);
+      return false;
+    }
+  },
+  
+  getDataSourceUrls: async (dataSourceId: number): Promise<string[]> => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace selected to get URLs");
+      return [];
+    }
+
+    // No loading state set here as it's just fetching data for display
+    try {
+      // Use DatasourcesService.getDatasourceUrls
+      // The route was GET /workspaces/{workspace_id}/datasources/{datasource_id}/urls
+      const urls = await DatasourcesService.getDatasourceUrls({ 
+          workspaceId: activeWorkspace.id,
+          datasourceId: dataSourceId
+      });
+      return urls;
+    } catch (err: any) {
+      console.error(`Error fetching URLs for data source ${dataSourceId}:`, err);
+      let errorMsg = "Failed to fetch URL list";
+       if (err.body?.detail) {
+        errorMsg = `Fetch URLs Failed: ${typeof err.body.detail === 'string' ? err.body.detail : JSON.stringify(err.body.detail)}`;
+      } else if (err.message) {
+        errorMsg = `Fetch URLs Failed: ${err.message}`;
+      }
+      // Don't set store error state, just toast and return empty
+      toast.error(errorMsg);
+      return [];
+    }
+  },
+  // --- END ADDED --- 
 })); 

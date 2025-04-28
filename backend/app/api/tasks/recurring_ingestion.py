@@ -158,6 +158,18 @@ def process_recurring_ingest(self, recurring_task_id: int):
                     session.add(db_record)
                     session.flush()
                     created_count += 1
+                    
+                    # --- Increment DataSource Count --- 
+                    if target_datasource:
+                        if target_datasource.data_record_count is None:
+                            target_datasource.data_record_count = 1
+                        else:
+                            target_datasource.data_record_count += 1
+                        session.add(target_datasource) # Ensure the change is tracked
+                        session.flush() # Flush the count update immediately
+                        logger.debug(f"Incremented count for DataSource {target_datasource_id} to {target_datasource.data_record_count} after URL {url}")
+                    # --- End Increment ---
+                    
                     # --- End: Logic moved from IngestionService.append_record ---
 
                 except ValueError as ve:

@@ -2437,6 +2437,103 @@
         ]
       }
     },
+    "/api/v1/workspaces/transfer/datasources": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Transfer Datasources Endpoint",
+        "description": "Transfer (copy or move) DataSources between workspaces.\nRequires ownership or appropriate permissions for both source and target workspaces.",
+        "operationId": "transfer_datasources_endpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (e.g., same workspace, no IDs)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not authorized to access workspaces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One or more workspaces/datasources not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error during transfer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/classification_schemes": {
       "post": {
         "tags": [
@@ -3931,18 +4028,6 @@
               "default": 100,
               "title": "Limit"
             }
-          },
-          {
-            "name": "include_counts",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Include count of data records for each source",
-              "default": false,
-              "title": "Include Counts"
-            },
-            "description": "Include count of data records for each source"
           }
         ],
         "responses": {
@@ -4069,18 +4154,6 @@
               "default": 100,
               "title": "Limit"
             }
-          },
-          {
-            "name": "include_counts",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Include count of data records for each source",
-              "default": false,
-              "title": "Include Counts"
-            },
-            "description": "Include count of data records for each source"
           }
         ],
         "responses": {
@@ -4139,18 +4212,6 @@
               "type": "integer",
               "title": "Datasource Id"
             }
-          },
-          {
-            "name": "include_counts",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "Include count of data records",
-              "default": false,
-              "title": "Include Counts"
-            },
-            "description": "Include count of data records"
           }
         ],
         "responses": {
@@ -4292,6 +4353,134 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/urls": {
+      "get": {
+        "tags": [
+          "datasources",
+          "datasources"
+        ],
+        "summary": "Get Datasource Urls",
+        "description": "Get the list of URLs for a URL_LIST DataSource.",
+        "operationId": "get_datasource_urls",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response Datasources-Get Datasource Urls"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "datasources",
+          "datasources"
+        ],
+        "summary": "Update Datasource Urls",
+        "description": "Update the list of URLs for a URL_LIST DataSource.\nReplaces the existing list entirely. If URLs are removed,\ntheir corresponding DataRecords will be deleted.",
+        "operationId": "update_datasource_urls",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_datasources-update_datasource_urls"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/rows": {
       "get": {
         "tags": [
@@ -4360,6 +4549,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CsvRowsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/refetch": {
+      "post": {
+        "tags": [
+          "datasources",
+          "datasources"
+        ],
+        "summary": "Refetch Datasource",
+        "description": "Trigger a background re-ingestion task for a DataSource.",
+        "operationId": "refetch_datasource",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datasource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datasource Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
                 }
               }
             }
@@ -5589,7 +5836,7 @@
           "datasets"
         ],
         "summary": "Export Dataset",
-        "description": "Export a specific dataset as a self-contained package (JSON).",
+        "description": "Export a specific dataset as a self-contained package (ZIP).",
         "operationId": "export_dataset",
         "security": [
           {
@@ -5642,14 +5889,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "title": "Response Datasets-Export Dataset"
-                }
-              }
-            }
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -7534,7 +7774,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-04-26",
+              "default": "2025-04-28",
               "title": "Timeframe To"
             }
           }
@@ -7624,7 +7864,7 @@
             "type": "string",
             "format": "binary",
             "title": "File",
-            "description": "Dataset Package JSON file (.json)"
+            "description": "Dataset Package file (.zip)"
           }
         },
         "type": "object",
@@ -7702,6 +7942,23 @@
           "type"
         ],
         "title": "Body_datasources-create_datasource"
+      },
+      "Body_datasources-update_datasource_urls": {
+        "properties": {
+          "urls_input": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Urls Input",
+            "description": "The complete new list of URLs for the DataSource"
+          }
+        },
+        "type": "object",
+        "required": [
+          "urls_input"
+        ],
+        "title": "Body_datasources-update_datasource_urls"
       },
       "Body_filestorage-file_upload": {
         "properties": {
@@ -8087,6 +8344,28 @@
               }
             ],
             "title": "Error Message"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           },
           "updated_at": {
             "type": "string",
@@ -8582,6 +8861,89 @@
         "title": "DataSourceStatus",
         "description": "Defines the processing status of a DataSource."
       },
+      "DataSourceTransferRequest": {
+        "properties": {
+          "source_workspace_id": {
+            "type": "integer",
+            "title": "Source Workspace Id",
+            "description": "ID of the workspace to transfer from"
+          },
+          "target_workspace_id": {
+            "type": "integer",
+            "title": "Target Workspace Id",
+            "description": "ID of the workspace to transfer to"
+          },
+          "datasource_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Datasource Ids",
+            "description": "List of DataSource IDs to transfer"
+          },
+          "copy": {
+            "type": "boolean",
+            "title": "Copy",
+            "description": "If true, copy the datasources; if false, move them",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_workspace_id",
+          "target_workspace_id",
+          "datasource_ids"
+        ],
+        "title": "DataSourceTransferRequest"
+      },
+      "DataSourceTransferResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "new_datasource_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Datasource Ids",
+            "description": "IDs of the newly created DataSources in the target workspace (if copied)"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors",
+            "description": "Dictionary of DataSource IDs that failed and the reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "DataSourceTransferResponse"
+      },
       "DataSourceType": {
         "type": "string",
         "enum": [
@@ -8597,6 +8959,40 @@
       },
       "DataSourceUpdate": {
         "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "origin_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Details"
+          },
           "status": {
             "anyOf": [
               {
@@ -8629,11 +9025,6 @@
               }
             ],
             "title": "Error Message"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
           }
         },
         "type": "object",

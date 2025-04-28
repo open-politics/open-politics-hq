@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_import_resource,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_import_resource,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
 
 export type AppData = {
         
@@ -255,134 +255,102 @@ DeleteWorkspace: {
                     workspaceId: number
                     
                 };
+TransferDatasourcesEndpoint: {
+                    requestBody: DataSourceTransferRequest
+                    
+                };
     }
 
 export type ClassificationSchemesData = {
         CreateClassificationScheme: {
-                    modelName?: string
-provider?: string
-requestBody: ClassificationSchemeCreate
+                    requestBody: ClassificationSchemeCreate
 workspaceId: number
                     
                 };
 CreateClassificationScheme1: {
-                    modelName?: string
-provider?: string
-requestBody: ClassificationSchemeCreate
+                    requestBody: ClassificationSchemeCreate
 workspaceId: number
                     
                 };
 ReadClassificationSchemes: {
                     limit?: number
-modelName?: string
-provider?: string
 skip?: number
 workspaceId: number
                     
                 };
 ReadClassificationSchemes1: {
                     limit?: number
-modelName?: string
-provider?: string
 skip?: number
 workspaceId: number
                     
                 };
 DeleteAllClassificationSchemes: {
-                    modelName?: string
-provider?: string
-workspaceId: number
+                    workspaceId: number
                     
                 };
 DeleteAllClassificationSchemes1: {
-                    modelName?: string
-provider?: string
-workspaceId: number
+                    workspaceId: number
                     
                 };
 CreateClassificationScheme2: {
-                    modelName?: string
-provider?: string
-requestBody: ClassificationSchemeCreate
+                    requestBody: ClassificationSchemeCreate
 workspaceId: number
                     
                 };
 CreateClassificationScheme3: {
-                    modelName?: string
-provider?: string
-requestBody: ClassificationSchemeCreate
+                    requestBody: ClassificationSchemeCreate
 workspaceId: number
                     
                 };
 ReadClassificationSchemes2: {
                     limit?: number
-modelName?: string
-provider?: string
 skip?: number
 workspaceId: number
                     
                 };
 ReadClassificationSchemes3: {
                     limit?: number
-modelName?: string
-provider?: string
 skip?: number
 workspaceId: number
                     
                 };
 DeleteAllClassificationSchemes2: {
-                    modelName?: string
-provider?: string
-workspaceId: number
+                    workspaceId: number
                     
                 };
 DeleteAllClassificationSchemes3: {
-                    modelName?: string
-provider?: string
-workspaceId: number
+                    workspaceId: number
                     
                 };
 ReadClassificationScheme: {
-                    modelName?: string
-provider?: string
-schemeId: number
+                    schemeId: number
 workspaceId: number
                     
                 };
 ReadClassificationScheme1: {
-                    modelName?: string
-provider?: string
-schemeId: number
+                    schemeId: number
 workspaceId: number
                     
                 };
 UpdateClassificationScheme: {
-                    modelName?: string
-provider?: string
-requestBody: ClassificationSchemeUpdate
+                    requestBody: ClassificationSchemeUpdate
 schemeId: number
 workspaceId: number
                     
                 };
 UpdateClassificationScheme1: {
-                    modelName?: string
-provider?: string
-requestBody: ClassificationSchemeUpdate
+                    requestBody: ClassificationSchemeUpdate
 schemeId: number
 workspaceId: number
                     
                 };
 DeleteClassificationScheme: {
-                    modelName?: string
-provider?: string
-schemeId: number
+                    schemeId: number
 workspaceId: number
                     
                 };
 DeleteClassificationScheme1: {
-                    modelName?: string
-provider?: string
-schemeId: number
+                    schemeId: number
 workspaceId: number
                     
                 };
@@ -390,16 +358,12 @@ workspaceId: number
 
 export type ClassificationResultsData = {
         GetClassificationResult: {
-                    modelName?: string
-provider?: string
-resultId: number
+                    resultId: number
 workspaceId: number
                     
                 };
 GetClassificationResult1: {
-                    modelName?: string
-provider?: string
-resultId: number
+                    resultId: number
 workspaceId: number
                     
                 };
@@ -413,8 +377,6 @@ datarecordIds?: Array<number> | null
  */
 jobId?: number | null
 limit?: number
-modelName?: string
-provider?: string
 /**
  * Filter results by ClassificationScheme IDs
  */
@@ -433,8 +395,6 @@ datarecordIds?: Array<number> | null
  */
 jobId?: number | null
 limit?: number
-modelName?: string
-provider?: string
 /**
  * Filter results by ClassificationScheme IDs
  */
@@ -453,8 +413,6 @@ datarecordIds?: Array<number> | null
  */
 jobId?: number | null
 limit?: number
-modelName?: string
-provider?: string
 /**
  * Filter results by ClassificationScheme IDs
  */
@@ -473,8 +431,6 @@ datarecordIds?: Array<number> | null
  */
 jobId?: number | null
 limit?: number
-modelName?: string
-provider?: string
 /**
  * Filter results by ClassificationScheme IDs
  */
@@ -486,8 +442,6 @@ workspaceId: number
 GetJobResults: {
                     jobId: number
 limit?: number
-modelName?: string
-provider?: string
 skip?: number
 workspaceId: number
                     
@@ -495,8 +449,6 @@ workspaceId: number
 GetJobResults1: {
                     jobId: number
 limit?: number
-modelName?: string
-provider?: string
 skip?: number
 workspaceId: number
                     
@@ -613,11 +565,7 @@ workspaceId: number
                     
                 };
 ListDatasources: {
-                    /**
- * Include count of data records for each source
- */
-includeCounts?: boolean
-limit?: number
+                    limit?: number
 skip?: number
 workspaceId: number
                     
@@ -628,21 +576,13 @@ workspaceId: number
                     
                 };
 ListDatasources1: {
-                    /**
- * Include count of data records for each source
- */
-includeCounts?: boolean
-limit?: number
+                    limit?: number
 skip?: number
 workspaceId: number
                     
                 };
 GetDatasource: {
                     datasourceId: number
-/**
- * Include count of data records
- */
-includeCounts?: boolean
 workspaceId: number
                     
                 };
@@ -654,6 +594,17 @@ workspaceId: number
 UpdateDatasource: {
                     datasourceId: number
 requestBody: DataSourceUpdate
+workspaceId: number
+                    
+                };
+GetDatasourceUrls: {
+                    datasourceId: number
+workspaceId: number
+                    
+                };
+UpdateDatasourceUrls: {
+                    datasourceId: number
+requestBody: Body_datasources_update_datasource_urls
 workspaceId: number
                     
                 };
@@ -670,7 +621,17 @@ skip?: number
 workspaceId: number
                     
                 };
+RefetchDatasource: {
+                    datasourceId: number
+workspaceId: number
+                    
+                };
 GetDatasourceContent: {
+                    datasourceId: number
+workspaceId: number
+                    
+                };
+DownloadDatasourcePdf: {
                     datasourceId: number
 workspaceId: number
                     
@@ -2517,6 +2478,33 @@ workspaceId,
 		});
 	}
 
+	/**
+	 * Transfer Datasources Endpoint
+	 * Transfer (copy or move) DataSources between workspaces.
+ * Requires ownership or appropriate permissions for both source and target workspaces.
+	 * @returns DataSourceTransferResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static transferDatasourcesEndpoint(data: WorkspacesData['TransferDatasourcesEndpoint']): CancelablePromise<DataSourceTransferResponse> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/transfer/datasources',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				400: `Invalid request (e.g., same workspace, no IDs)`,
+				401: `Not authenticated`,
+				403: `Not authorized to access workspaces`,
+				404: `One or more workspaces/datasources not found`,
+				422: `Validation Error`,
+				500: `Internal server error during transfer`,
+			},
+		});
+	}
+
 }
 
 export class ClassificationSchemesService {
@@ -2531,17 +2519,12 @@ export class ClassificationSchemesService {
 		const {
 workspaceId,
 requestBody,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			body: requestBody,
 			mediaType: 'application/json',
@@ -2561,17 +2544,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 requestBody,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			body: requestBody,
 			mediaType: 'application/json',
@@ -2592,8 +2570,6 @@ modelName = 'gemini-2.0-flash',
 workspaceId,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -2602,7 +2578,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				skip, limit, provider, model_name: modelName
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2621,8 +2597,6 @@ modelName = 'gemini-2.0-flash',
 workspaceId,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -2631,7 +2605,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				skip, limit, provider, model_name: modelName
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2648,17 +2622,12 @@ modelName = 'gemini-2.0-flash',
 	public static deleteAllClassificationSchemes(data: ClassificationSchemesData['DeleteAllClassificationSchemes']): CancelablePromise<unknown> {
 		const {
 workspaceId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2675,17 +2644,12 @@ modelName = 'gemini-2.0-flash',
 	public static deleteAllClassificationSchemes1(data: ClassificationSchemesData['DeleteAllClassificationSchemes1']): CancelablePromise<unknown> {
 		const {
 workspaceId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2703,17 +2667,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 requestBody,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			body: requestBody,
 			mediaType: 'application/json',
@@ -2733,17 +2692,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 requestBody,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			body: requestBody,
 			mediaType: 'application/json',
@@ -2764,8 +2718,6 @@ modelName = 'gemini-2.0-flash',
 workspaceId,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -2774,7 +2726,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				skip, limit, provider, model_name: modelName
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2793,8 +2745,6 @@ modelName = 'gemini-2.0-flash',
 workspaceId,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -2803,7 +2753,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				skip, limit, provider, model_name: modelName
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2820,17 +2770,12 @@ modelName = 'gemini-2.0-flash',
 	public static deleteAllClassificationSchemes2(data: ClassificationSchemesData['DeleteAllClassificationSchemes2']): CancelablePromise<unknown> {
 		const {
 workspaceId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2847,17 +2792,12 @@ modelName = 'gemini-2.0-flash',
 	public static deleteAllClassificationSchemes3(data: ClassificationSchemesData['DeleteAllClassificationSchemes3']): CancelablePromise<unknown> {
 		const {
 workspaceId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
 			path: {
 				workspace_id: workspaceId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2875,17 +2815,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 schemeId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
 			path: {
 				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2903,17 +2838,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 schemeId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
 			path: {
 				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2932,17 +2862,12 @@ modelName = 'gemini-2.0-flash',
 workspaceId,
 schemeId,
 requestBody,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'PATCH',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
 			path: {
 				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			body: requestBody,
 			mediaType: 'application/json',
@@ -2963,17 +2888,12 @@ modelName = 'gemini-2.0-flash',
 workspaceId,
 schemeId,
 requestBody,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'PATCH',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
 			path: {
 				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			body: requestBody,
 			mediaType: 'application/json',
@@ -2993,17 +2913,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 schemeId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
 			path: {
 				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3021,17 +2936,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 schemeId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
 			path: {
 				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3054,17 +2964,12 @@ export class ClassificationResultsService {
 		const {
 workspaceId,
 resultId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
 			path: {
 				workspace_id: workspaceId, result_id: resultId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3083,17 +2988,12 @@ modelName = 'gemini-2.0-flash',
 		const {
 workspaceId,
 resultId,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
 			path: {
 				workspace_id: workspaceId, result_id: resultId
-			},
-			query: {
-				provider, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3117,8 +3017,6 @@ datarecordIds,
 schemeIds,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3127,7 +3025,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit, provider, model_name: modelName
+				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3151,8 +3049,6 @@ datarecordIds,
 schemeIds,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3161,7 +3057,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit, provider, model_name: modelName
+				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3185,8 +3081,6 @@ datarecordIds,
 schemeIds,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3195,7 +3089,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit, provider, model_name: modelName
+				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3219,8 +3113,6 @@ datarecordIds,
 schemeIds,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3229,7 +3121,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId
 			},
 			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit, provider, model_name: modelName
+				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3251,8 +3143,6 @@ workspaceId,
 jobId,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3261,7 +3151,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId, job_id: jobId
 			},
 			query: {
-				skip, limit, provider, model_name: modelName
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3283,8 +3173,6 @@ workspaceId,
 jobId,
 skip = 0,
 limit = 100,
-provider = 'Google',
-modelName = 'gemini-2.0-flash',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3293,7 +3181,7 @@ modelName = 'gemini-2.0-flash',
 				workspace_id: workspaceId, job_id: jobId
 			},
 			query: {
-				skip, limit, provider, model_name: modelName
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3709,7 +3597,6 @@ formData,
 workspaceId,
 skip = 0,
 limit = 100,
-includeCounts = false,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3718,7 +3605,7 @@ includeCounts = false,
 				workspace_id: workspaceId
 			},
 			query: {
-				skip, limit, include_counts: includeCounts
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3762,7 +3649,6 @@ formData,
 workspaceId,
 skip = 0,
 limit = 100,
-includeCounts = false,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
@@ -3771,7 +3657,7 @@ includeCounts = false,
 				workspace_id: workspaceId
 			},
 			query: {
-				skip, limit, include_counts: includeCounts
+				skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3789,16 +3675,12 @@ includeCounts = false,
 		const {
 workspaceId,
 datasourceId,
-includeCounts = false,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}',
 			path: {
 				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			query: {
-				include_counts: includeCounts
 			},
 			errors: {
 				422: `Validation Error`,
@@ -3856,6 +3738,57 @@ requestBody,
 	}
 
 	/**
+	 * Get Datasource Urls
+	 * Get the list of URLs for a URL_LIST DataSource.
+	 * @returns string Successful Response
+	 * @throws ApiError
+	 */
+	public static getDatasourceUrls(data: DatasourcesData['GetDatasourceUrls']): CancelablePromise<Array<string>> {
+		const {
+workspaceId,
+datasourceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/urls',
+			path: {
+				workspace_id: workspaceId, datasource_id: datasourceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Datasource Urls
+	 * Update the list of URLs for a URL_LIST DataSource.
+ * Replaces the existing list entirely. If URLs are removed,
+ * their corresponding DataRecords will be deleted.
+	 * @returns DataSourceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateDatasourceUrls(data: DatasourcesData['UpdateDatasourceUrls']): CancelablePromise<DataSourceRead> {
+		const {
+workspaceId,
+datasourceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PUT',
+			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/urls',
+			path: {
+				workspace_id: workspaceId, datasource_id: datasourceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Read Datasource Rows
 	 * Get rows from a CSV DataSource.
 	 * @returns CsvRowsOut Successful Response
@@ -3884,6 +3817,29 @@ limit = 50,
 	}
 
 	/**
+	 * Refetch Datasource
+	 * Trigger a background re-ingestion task for a DataSource.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static refetchDatasource(data: DatasourcesData['RefetchDatasource']): CancelablePromise<Message> {
+		const {
+workspaceId,
+datasourceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/refetch',
+			path: {
+				workspace_id: workspaceId, datasource_id: datasourceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Get Datasource Content
 	 * Get the raw content of a PDF DataSource.
 	 * @returns any Successful Response
@@ -3897,6 +3853,29 @@ datasourceId,
 		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/content',
+			path: {
+				workspace_id: workspaceId, datasource_id: datasourceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Download Datasource Pdf
+	 * Download the PDF file for a DataSource.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static downloadDatasourcePdf(data: DatasourcesData['DownloadDatasourcePdf']): CancelablePromise<any> {
+		const {
+workspaceId,
+datasourceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/pdf_download',
 			path: {
 				workspace_id: workspaceId, datasource_id: datasourceId
 			},
@@ -4529,11 +4508,11 @@ datasetId,
 
 	/**
 	 * Export Dataset
-	 * Export a specific dataset as a self-contained package (JSON).
-	 * @returns unknown Successful Response
+	 * Export a specific dataset as a self-contained package (ZIP).
+	 * @returns any Successful Response
 	 * @throws ApiError
 	 */
-	public static exportDataset(data: DatasetsData['ExportDataset']): CancelablePromise<unknown> {
+	public static exportDataset(data: DatasetsData['ExportDataset']): CancelablePromise<any> {
 		const {
 workspaceId,
 datasetId,
@@ -5301,7 +5280,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-04-25',
+timeframeTo = '2025-04-28',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, ARRAY, Text, JSON, Integer, UniqueConstraint, String, Enum, DateTime, Index
 from pydantic import BaseModel, model_validator, computed_field
 import enum
+import uuid
 
 # ---------------------------------------------------------------------------
 # Enums used across multiple models
@@ -213,10 +214,13 @@ class DataSourceBase(SQLModel):
 # Database table model for DataSource
 class DataSource(DataSourceBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    imported_from_uuid: Optional[str] = Field(default=None, index=True)
     workspace_id: int = Field(foreign_key="workspace.id")
     user_id: int = Field(foreign_key="user.id") # User who created the source
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    data_record_count: Optional[int] = Field(default=0, nullable=True)
 
     # Relationships
     workspace: Optional["Workspace"] = Relationship(back_populates="datasources")
@@ -250,10 +254,26 @@ class DataSourceRead(DataSourceBase):
 
 # API model for DataSource update (mostly for status/metadata by backend tasks)
 class DataSourceUpdate(SQLModel):
+    # Fields updatable by user
+    name: Optional[str] = None
+    description: Optional[str] = None
+    origin_details: Optional[Dict[str, Any]] = None
+
+    # Fields typically updated by backend tasks
     status: Optional[DataSourceStatus] = None
     source_metadata: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # updated_at is handled automatically or in the service layer
+
+    @model_validator(mode='before')
+    def check_origin_details_urls(cls, values):
+        origin_details = values.get('origin_details')
+        if isinstance(origin_details, dict):
+            urls = origin_details.get('urls')
+            if urls is not None: # Only validate if 'urls' key exists
+                if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
+                    raise ValueError("'origin_details.urls' must be a list of strings if provided")
+        return values
 
 # API model for returning a list of DataSources
 class DataSourcesOut(SQLModel):
@@ -295,6 +315,8 @@ class DataRecordBase(SQLModel):
 # Database table model for DataRecord
 class DataRecord(DataRecordBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    imported_from_uuid: Optional[str] = Field(default=None, index=True)
     datasource_id: Optional[int] = Field(default=None, foreign_key="datasource.id", nullable=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     url_hash: Optional[str] = Field(default=None, index=True) # Added for efficient URL deduplication
@@ -375,6 +397,8 @@ class ClassificationSchemeBase(SQLModel):
 # Database table model for ClassificationScheme
 class ClassificationScheme(ClassificationSchemeBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    imported_from_uuid: Optional[str] = Field(default=None, index=True)
     workspace_id: int = Field(foreign_key="workspace.id")
     user_id: int = Field(foreign_key="user.id") # User who created the scheme
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -441,6 +465,8 @@ class ClassificationJobBase(SQLModel):
 # Database table model for ClassificationJob
 class ClassificationJob(ClassificationJobBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    imported_from_uuid: Optional[str] = Field(default=None, index=True)
     workspace_id: int = Field(foreign_key="workspace.id")
     user_id: int = Field(foreign_key="user.id") # User who initiated the job
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -477,9 +503,8 @@ class ClassificationJobCreate(SQLModel):
 class ClassificationJobUpdate(SQLModel):
     status: Optional[ClassificationJobStatus] = None
     error_message: Optional[str] = None
-    # Allow updating name/description? Maybe restrict this
-    # name: Optional[str] = None
-    # description: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # API model for returning ClassificationJob data
@@ -939,6 +964,8 @@ class DatasetBase(SQLModel):
 # Database table model for Dataset
 class Dataset(DatasetBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    imported_from_uuid: Optional[str] = Field(default=None, index=True)
     workspace_id: int = Field(foreign_key="workspace.id")
     user_id: int = Field(foreign_key="user.id") # User who created the dataset
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -989,5 +1016,19 @@ class DatasetRead(DatasetBase):
 class DatasetsOut(SQLModel):
     data: List[DatasetRead]
     count: int
+
+
+class DataSourceTransferRequest(BaseModel):
+    source_workspace_id: int = Field(..., description="ID of the workspace to transfer from")
+    target_workspace_id: int = Field(..., description="ID of the workspace to transfer to")
+    datasource_ids: List[int] = Field(..., description="List of DataSource IDs to transfer")
+    copy: bool = Field(default=True, description="If true, copy the datasources; if false, move them")
+
+class DataSourceTransferResponse(BaseModel):
+    success: bool
+    message: str
+    new_datasource_ids: Optional[List[int]] = Field(default=None, description="IDs of the newly created DataSources in the target workspace (if copied)")
+    errors: Optional[Dict[int, str]] = Field(default=None, description="Dictionary of DataSource IDs that failed and the reason")
+
 
 

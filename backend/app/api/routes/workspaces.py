@@ -2,6 +2,7 @@ import logging
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import status
 
 from app.api.services.workspace import WorkspaceService
 from app.api.deps import CurrentUser, SessionDep
@@ -10,8 +11,12 @@ from app.models import (
     WorkspaceRead,
     WorkspaceUpdate,
     WorkspacesOut,
-    Message
+    Message,
+    DataSourceTransferRequest,
+    DataSourceTransferResponse
 )
+from app.api.deps import IngestionServiceDep
+from app.api.services.ingestion import IngestionService
 
 logger = logging.getLogger(__name__)
 
@@ -161,3 +166,50 @@ def ensure_default_workspace(
     except Exception as e:
         logger.exception(f"Route: Unexpected error ensuring default workspace: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/transfer/datasources",
+    response_model=DataSourceTransferResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": Message, "description": "Invalid request (e.g., same workspace, no IDs)"},
+        401: {"model": Message, "description": "Not authenticated"},
+        403: {"model": Message, "description": "Not authorized to access workspaces"},
+        404: {"model": Message, "description": "One or more workspaces/datasources not found"},
+        500: {"model": Message, "description": "Internal server error during transfer"},
+    }
+)
+async def transfer_datasources_endpoint(
+    *,
+    request_data: DataSourceTransferRequest,
+    current_user: CurrentUser,
+    ingestion_service: IngestionServiceDep
+):
+    """
+    Transfer (copy or move) DataSources between workspaces.
+    Requires ownership or appropriate permissions for both source and target workspaces.
+    """
+    try:
+        response = await ingestion_service.transfer_datasources(
+            user_id=current_user.id,
+            request_data=request_data
+        )
+        if not response.success and response.errors:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=response.message
+            )
+        elif not response.success:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=response.message)
+
+        return response
+
+    except ValueError as ve:
+        logger.warning(f"Datasource transfer validation failed: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Unexpected error in /transfer/datasources endpoint: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred during the transfer.")

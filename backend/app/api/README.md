@@ -1,183 +1,218 @@
 # API Services Architecture
 
-This directory contains the application's business logic layer in the form of services. The services layer is a key part of our architectural redesign, addressing issues with previous approaches such as inconsistent patterns, poor separation of concerns, and tight coupling to specific implementations.
+This directory contains the application's business logic layer in the form of services. The services layer implements a clean architecture pattern, addressing separation of concerns, dependency injection, and modular design.
 
 ## Key Design Principles
 
-1.  **Service Layer Pattern**: Services encapsulate business logic, providing a clean, consistent API for the application's core functionality. This allows API routes (`app/api/routes/`) to focus on request/response handling rather than implementing business logic directly.
+1. **Service Layer Pattern**: Services encapsulate business logic, providing a clean, consistent API for the application's core functionality.
+2. **Provider Pattern**: External integrations (storage, classification, search, etc.) are accessed through provider interfaces.
+3. **Dependency Injection**: Services are configured with specific provider implementations via FastAPI's dependency injection.
+4. **Single Responsibility**: Each service focuses on a specific domain with clear boundaries.
+5. **Universal Data Transfer**: Resources can be packaged and transferred between instances while preserving relationships.
 
-2.  **Provider Pattern**: External integrations (storage, classification, search, etc.) are accessed through provider interfaces (`app/api/services/providers/`), allowing the application to switch between different implementations (e.g., from OPOL to another classification system) without changing the core business logic.
-
-3.  **Dependency Injection**: Services can be configured with specific provider implementations, enabling flexible composition and easier testing. FastAPI's dependency injection (`app/api/deps.py`) is used to provide dependencies like DB sessions and service instances.
-
-4.  **Single Responsibility**: Each service focuses on a specific domain (workspaces, classification, ingestion, etc.) with clear boundaries and minimal overlap.
-
-## Directory Structure (`app/api/`)
+## Project Structure
 
 ```
-api/
-├── deps.py                    # FastAPI dependencies (DB session, auth)
-├── main.py                    # API router assembly
-├── routes/                    # API endpoint definitions
-│   ├── v1/                    # Version 1 API routes
-│   │   ├── locations/
-│   │   └── ...
-│   ├── v2/                    # Version 2 API routes
-│   │   ├── geo.py
-│   │   └── ...
-│   ├── workspaces.py          # Shared/Unversioned routes
-│   ├── users.py
-│   ├── datasets.py            # Add new routes file
-│   └── ...
-├── services/                  # Business logic layer
-│   ├── providers/             # Provider interfaces and implementations
-│   │   ├── __init__.py        # Exports provider interfaces and factories
-│   │   ├── base.py            # Provider interfaces (abstract base classes)
-│   │   ├── classification.py  # Classification providers (e.g., Opol)
-│   │   ├── geospatial.py      # Geospatial providers (e.g., Opol)
-│   │   ├── scraping.py        # Web scraping providers (e.g., Opol)
-│   │   ├── search.py          # Search providers (e.g., Opol)
-│   │   └── storage.py         # Storage providers (e.g., Minio)
-│   ├── __init__.py            # Exports services & factories
-│   ├── classification_service.py
-│   ├── ingestion_service.py
-│   ├── workspace_service.py
-│   ├── recurring_task_service.py
-│   ├── shareable_service.py
-│   ├── dataset_service.py     # Add new service file
-│   └── ... (Potentially other services)
-└── README.md                  # This documentation
+backend/
+├── app/
+│   ├── api/
+│   │   ├── routes/                    # API endpoint definitions
+│   │   │   ├── classification_jobs.py
+│   │   │   ├── classification_results.py
+│   │   │   ├── classification_schemes.py
+│   │   │   ├── datarecords.py
+│   │   │   ├── datasets.py
+│   │   │   ├── datasources.py
+│   │   │   ├── filestorage.py
+│   │   │   ├── shareables.py
+│   │   │   ├── users.py
+│   │   │   └── workspaces.py
+│   │   ├── services/                  # Business logic layer
+│   │   │   ├── providers/            # Provider interfaces & implementations
+│   │   │   │   ├── base.py           # Provider interfaces (ABC)
+│   │   │   │   ├── classification.py # Classification providers
+│   │   │   │   ├── geospatial.py     # Geospatial providers
+│   │   │   │   ├── scraping.py       # Web scraping providers
+│   │   │   │   ├── search.py         # Search providers
+│   │   │   │   └── storage.py        # Storage providers
+│   │   │   ├── classification.py     # Classification operations
+│   │   │   ├── dataset.py           # Dataset management
+│   │   │   ├── ingestion.py         # Data ingestion
+│   │   │   ├── package.py           # Universal data transfer
+│   │   │   ├── recurring_tasks.py   # Task scheduling
+│   │   │   ├── shareable.py         # Shareable resources
+│   │   │   └── workspace.py         # Workspace management
+│   │   ├── tasks/                    # Background task definitions
+│   │   │   ├── classification.py
+│   │   │   ├── ingestion.py
+│   │   │   ├── recurring_classification.py
+│   │   │   ├── recurring_ingestion.py
+│   │   │   └── scheduling.py
+│   │   ├── v1/                      # Version 1 API routes
+│   │   │   ├── entities/
+│   │   │   ├── locations/
+│   │   │   ├── satellite/
+│   │   │   └── search/
+│   │   └── v2/                      # Version 2 API routes
+│   │       ├── articles.py
+│   │       ├── classification.py
+│   │       ├── entities.py
+│   │       ├── flows/
+│   │       ├── geo.py
+│   │       └── scores.py
+│   ├── core/                        # Core application components
+│   │   ├── config.py               # Configuration
+│   │   ├── db.py                   # Database setup
+│   │   ├── security.py             # Security utilities
+│   │   └── celery_app.py           # Celery configuration
+│   ├── models.py                    # SQLModel definitions
+│   └── tests/                      # Test suite
+│       ├── api/
+│       ├── crud/
+│       ├── search/
+│       └── workflow/
 ```
 
-*(Note: Celery tasks now reside in `app/tasks/`)*
+## Core Services
 
-## Services
+### Data Management
+- **`DatasetService`**: CRUD operations for datasets, export/import functionality
+- **`IngestionService`**: Data source and record management, file uploads
+- **`ClassificationService`**: Classification schemes, jobs, and results
+- **`WorkspaceService`**: Workspace management and access control
 
-*   **`WorkspaceService`**: Handles workspace CRUD and related operations.
-*   **`ClassificationService`**: Manages classification schemes, jobs, and results. Orchestrates classification via `ClassificationProvider`.
-*   **`IngestionService`**: Manages `DataSource` creation (including file uploads via `StorageProvider`), `DataRecord` creation (including scraping via `ScrapingProvider`). Triggers background ingestion tasks.
-*   **`RecurringTaskService`**: Manages `RecurringTask` entities and updates Celery Beat schedule.
-*   **`ShareableService`**: Manages `ShareableLink` entities and coordinates import/export operations by calling other services.
-*   **`DatasetService`**: Handles CRUD and associated logic for `Dataset` entities.
+### Universal Data Transfer (80% Complete)
+The universal data transfer system enables seamless sharing of resources between instances:
 
-## Provider Interfaces
+1. **Package Format (95% Complete)**
+   - Self-contained ZIP archives
+   - Standardized metadata
+   - UUID-based entity tracking
+   - File content preservation
+   - Version compatibility
 
-Providers abstract external dependencies. Key interfaces defined in `providers/base.py`:
+2. **Database Schema (90% Complete)**
+   ```sql
+   entity_uuid: UUID (unique, indexed)
+   imported_from_uuid: UUID (indexed, nullable)
+   ```
+   - Added to key tables (datasource, datarecord, scheme, job, dataset)
+   - Migration handles existing records
+   - Enables cross-instance entity tracking
 
-*   **`StorageProvider`**: File storage (Implemented by `MinioClientHandler`).
-*   **`ClassificationProvider`**: Text classification (Implemented by `OpolClassificationProvider`).
-*   **`ScrapingProvider`**: Web scraping (Implemented by `OpolScrapingProvider`).
-*   **`SearchProvider`**: Search functionality (Implemented by `OpolSearchProvider`).
-*   **`GeospatialProvider`**: Geospatial data access (Implemented by `OpolGeospatialProvider`).
+3. **Export Process (85% Complete)**
+   - Builds self-contained packages
+   - Preserves entity relationships
+   - Handles file attachments
+   - Includes metadata and provenance
 
-Factory functions (e.g., `get_storage_provider()`) in `providers/__init__.py` (or the specific provider file) return configured instances.
+4. **Import Process (80% Complete)**
+   - Entity reconciliation
+   - Relationship preservation
+   - Conflict resolution
+   - File storage management
 
-## Adding New Providers (Example: Search Provider)
+5. **Integration Status**
+   - API Endpoints: 60% Complete
+   - UI Components: 10% Complete
+   - Testing: 0% Complete
+   - Documentation: 30% Complete
 
-The provider pattern makes it easy to integrate alternative external services. To add a new Search Provider (e.g., for SearXNG):
+### Provider Interfaces
 
-1.  **Create Implementation:**
-    *   In `app/api/services/providers/search.py`, create a new class `SearXngSearchProvider(SearchProvider)`.
-    *   Implement the abstract methods `search()` and `search_by_entity()` defined in `SearchProvider` (`app/api/services/providers/base.py`), using the SearXNG client or API library.
+Key provider interfaces that abstract external dependencies:
 
-2.  **Update Factory:**
-    *   Modify the `get_search_provider()` factory function in `app/api/services/providers/search.py`.
-    *   Add logic (e.g., based on environment variables in `settings` or a configuration parameter) to decide whether to return an instance of `OpolSearchProvider` or `SearXngSearchProvider`.
-    ```python
-    # Example modification in providers/search.py
-    def get_search_provider() -> SearchProvider:
-        if settings.SEARCH_PROVIDER_TYPE == "searxng":
-            # Assuming SearXNG client setup here
-            return SearXngSearchProvider(...)
-        else: # Default to OPOL
-            return OpolSearchProvider()
-    ```
+- **`StorageProvider`**: File storage (e.g., MinIO)
+- **`ClassificationProvider`**: Text classification
+- **`SearchProvider`**: Search functionality
+- **`GeospatialProvider`**: Geospatial operations
+- **`ScrapingProvider`**: Web scraping
 
-3.  **Usage:** Services that need search functionality will continue to call `get_search_provider()`. The factory will now provide the configured implementation, requiring no changes to the service logic itself.
+## Implementation Status
 
-## Usage in API Routes
+### Completed Features
+- ✓ Package format definition
+- ✓ Database schema updates
+- ✓ Basic export/import logic
+- ✓ Entity UUID tracking
+- ✓ File handling
+- ✓ Service integration
 
-API routes (`app/api/routes/`) should:
+### In Progress
+- 🔄 API endpoint implementation
+- 🔄 Error handling improvements
+- 🔄 Transaction management
+- 🔄 Progress tracking
 
-1.  Focus on request validation, calling the appropriate service methods, and formatting responses.
-2.  Not contain business logic directly.
-3.  Get service instances via factory functions (e.g., `get_classification_service()`).
+### Pending
+- ❌ Comprehensive testing
+- ❌ UI components
+- ❌ Documentation
+- ❌ Performance optimization
+- ❌ Validation improvements
 
-**Example (Refactored Route - `datasources.py`):**
+## Next Steps (Priority Order)
+
+1. **Testing (Critical)**
+   - Unit tests for package handling
+   - Integration tests for export/import
+   - Performance benchmarks
+
+2. **UI Integration**
+   - Progress tracking components
+   - Export/import wizards
+   - Error handling & feedback
+
+3. **Robustness**
+   - Improved validation
+   - Better error recovery
+   - Transaction management
+   - Version compatibility
+
+4. **Documentation**
+   - API documentation
+   - Usage examples
+   - Deployment guide
+
+## Usage Examples
+
+### Export Dataset
 ```python
-@router.get("", response_model=DataSourcesOut)
-def read_datasources(
-    session: SessionDep,
-    current_user: CurrentUser,
-    workspace_id: int,
-    # ... other params
-):
-    service = get_ingestion_service()
-    try:
-        datasources, total_count = service.list_datasources(
-            session=session,
-            user_id=current_user.id,
-            workspace_id=workspace_id,
-            # ... other args
-        )
-        return DataSourcesOut(data=datasources, count=total_count)
-    # ... exception handling ...
+# In dataset_service.py
+async def export_dataset_package(self, dataset_id: int) -> bytes:
+    dataset = self.get_dataset(dataset_id)
+    builder = PackageBuilder(self.session, self.storage_provider)
+    package = await builder.build_dataset_package(dataset)
+    return package.to_zip()
 ```
 
-## Usage in Background Tasks
-
-Background tasks (`app/tasks/`) should:
-
-1.  Handle task-specific concerns (retries, timeouts, progress tracking).
-2.  Delegate actual business operations to services.
-3.  Use service methods for core functionality and database interactions.
-
-**Example (Refactored Task - `app/tasks/classification.py`):**
+### Import Dataset
 ```python
-@celery.task(bind=True, max_retries=3)
-def process_classification_job(self, job_id: int):
-    classification_service = get_classification_service()
-    with SQLModelSession(engine) as session:
-        try:
-            job = classification_service.get_job(session, job_id)
-            # ... check job status ...
-            classification_service.update_job_status(session, job_id, ClassificationJobStatus.RUNNING, commit_session=False)
-            # ... fetch records/schemes ...
-            for record in data_records:
-                for scheme in schemes:
-                    # ... check existing result ...
-                    result_value = classification_service.classify_text(...)
-                    # ... append result_value to batch_data ...
-                    if len(batch_data) >= batch_size:
-                        classification_service.create_results_batch(session, batch_data, commit_session=False)
-                        # ... reset batch_data ...
-            # ... create final batch ...
-            classification_service.update_job_status(session, job_id, final_status, ..., commit_session=False)
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            # ... handle error, update status via service (with commit) ...
-            # ... retry logic ...
-        finally:
-            # ... update recurring task status via util ...
+# In dataset_service.py
+async def import_dataset_package(self, file: UploadFile, workspace_id: int) -> Dataset:
+    package = await DataPackage.from_upload(file)
+    importer = PackageImporter(self.session, self.storage_provider, workspace_id)
+    return await importer.import_dataset_package(package)
 ```
 
 ## Testing
 
-Services should be easier to test because:
+Services can be tested independently with mock providers:
 
-1.  External dependencies (Providers) can be mocked by creating test implementations of the provider interfaces.
-2.  Business logic is centralized and separated from HTTP/task concerns.
-3.  Services can be instantiated directly with controlled dependencies during testing.
-
-Example test approach:
 ```python
-def test_classification_service():
-    # Create mock providers
-    mock_provider = MockClassificationProvider()
-    # Create service with mock provider
-    service = ClassificationService(classification_provider=mock_provider)
-    # Test service methods
-    result = service.classify_text("sample text", scheme_id=1, session=mock_session)
-    assert result == expected_result
-``` 
+def test_dataset_export():
+    mock_storage = MockStorageProvider()
+    service = DatasetService(storage_provider=mock_storage)
+    package = await service.export_dataset_package(dataset_id=1)
+    assert package.metadata.package_type == ResourceType.DATASET
+```
+
+## Contributing
+
+When adding new features:
+
+1. Follow existing patterns for services and providers
+2. Update tests and documentation
+3. Consider universal data transfer implications
+4. Maintain backward compatibility
+5. Add appropriate error handling 

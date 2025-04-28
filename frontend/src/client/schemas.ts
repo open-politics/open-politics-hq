@@ -43,7 +43,7 @@ export const $Body_datasets_import_dataset = {
 	properties: {
 		file: {
 	type: 'binary',
-	description: `Dataset Package JSON file (.json)`,
+	description: `Dataset Package file (.zip)`,
 	isRequired: true,
 	format: 'binary',
 },
@@ -98,6 +98,18 @@ export const $Body_datasources_create_datasource = {
 }, {
 	type: 'null',
 }],
+},
+	},
+} as const;
+
+export const $Body_datasources_update_datasource_urls = {
+	properties: {
+		urls_input: {
+	type: 'array',
+	contains: {
+	type: 'string',
+},
+	isRequired: true,
 },
 	},
 } as const;
@@ -387,6 +399,22 @@ export const $ClassificationJobUpdate = {
 }],
 },
 		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -788,6 +816,70 @@ export const $DataSourceStatus = {
 	enum: ['pending','processing','complete','failed',],
 } as const;
 
+export const $DataSourceTransferRequest = {
+	properties: {
+		source_workspace_id: {
+	type: 'number',
+	description: `ID of the workspace to transfer from`,
+	isRequired: true,
+},
+		target_workspace_id: {
+	type: 'number',
+	description: `ID of the workspace to transfer to`,
+	isRequired: true,
+},
+		datasource_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		copy: {
+	type: 'boolean',
+	description: `If true, copy the datasources; if false, move them`,
+	default: true,
+},
+	},
+} as const;
+
+export const $DataSourceTransferResponse = {
+	properties: {
+		success: {
+	type: 'boolean',
+	isRequired: true,
+},
+		message: {
+	type: 'string',
+	isRequired: true,
+},
+		new_datasource_ids: {
+	type: 'any-of',
+	description: `IDs of the newly created DataSources in the target workspace (if copied)`,
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		errors: {
+	type: 'any-of',
+	description: `Dictionary of DataSource IDs that failed and the reason`,
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	type: 'string',
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $DataSourceType = {
 	type: 'Enum',
 	enum: ['csv','pdf','bulk_pdf','url','url_list','text_block',],
@@ -795,6 +887,34 @@ export const $DataSourceType = {
 
 export const $DataSourceUpdate = {
 	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		origin_details: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
 		status: {
 	type: 'any-of',
 	contains: [{
@@ -822,10 +942,6 @@ export const $DataSourceUpdate = {
 }, {
 	type: 'null',
 }],
-},
-		updated_at: {
-	type: 'string',
-	format: 'date-time',
 },
 	},
 } as const;

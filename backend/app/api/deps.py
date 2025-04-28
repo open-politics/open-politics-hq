@@ -1,3 +1,4 @@
+"""Dependencies for FastAPI routes."""
 from collections.abc import Generator
 from typing import Annotated, Any, Optional
 
@@ -13,7 +14,6 @@ from app.core.db import engine
 from app.models import TokenPayload, User
 
 # --- Provider Imports ---
-# Import provider INTERFACES (Protocols)
 from app.api.services.providers.base import (
     StorageProvider,
     ScrapingProvider,
@@ -21,16 +21,13 @@ from app.api.services.providers.base import (
     GeospatialProvider,
     SearchProvider,
 )
-# Import concrete implementations for provider instance creation
 from app.api.services.providers.storage import MinioStorageProvider, get_storage_provider
 from app.api.services.providers.scraping import OpolScrapingProvider, get_scraping_provider
-# Import the FACTORY and the CLASS for ClassificationProvider
 from app.api.services.providers.classification import OpolClassificationProvider, get_classification_provider
 from app.api.services.providers.geospatial import OpolGeospatialProvider, get_geospatial_provider
 from app.api.services.providers.search import OpolSearchProvider, get_search_provider
 
 # --- Service Imports ---
-# Import service classes needed for dependency injection
 from app.api.services.ingestion import IngestionService
 from app.api.services.shareable import ShareableService
 from app.api.services.dataset import DatasetService
@@ -104,7 +101,6 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 # --- Provider Dependencies ---
-# Use singleton instances of providers instead of creating new ones per request
 
 # Create global provider instances
 storage_provider = get_storage_provider()
@@ -138,6 +134,16 @@ SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dep)]
 
 # --- Service Dependencies ---
 
+# First define the classification service dependency since others depend on it
+def get_classification_service(
+    session: SessionDep,
+    provider: ClassificationProviderDep
+) -> ClassificationService:
+    """Dependency provider for ClassificationService."""
+    return ClassificationService(session=session, classification_provider=provider)
+
+ClassificationServiceDep = Annotated[ClassificationService, Depends(get_classification_service)]
+
 def get_ingestion_service(
     session: SessionDep,
     storage: StorageProviderDep,
@@ -154,20 +160,21 @@ def get_shareable_service(session: SessionDep) -> ShareableService:
 
 ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
 
-def get_dataset_service(session: SessionDep) -> DatasetService:
+def get_dataset_service(
+    session: SessionDep,
+    classification_service: ClassificationServiceDep,
+    ingestion_service: IngestionServiceDep,
+    storage_provider: StorageProviderDep,
+) -> DatasetService:
     """Dependency provider for DatasetService."""
-    return DatasetService(session=session)
+    return DatasetService(
+        session=session,
+        classification_service=classification_service,
+        ingestion_service=ingestion_service,
+        storage_provider=storage_provider,
+        source_instance_id=settings.INSTANCE_ID
+    )
 
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
-
-# Dependency provider for ClassificationService
-def get_classification_service(
-    session: SessionDep,
-    provider: ClassificationProviderDep
-) -> ClassificationService:
-    """Dependency provider for ClassificationService."""
-    return ClassificationService(session=session, classification_provider=provider)
-
-ClassificationServiceDep = Annotated[ClassificationService, Depends(get_classification_service)]
 
 

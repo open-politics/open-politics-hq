@@ -24,6 +24,7 @@ import { Switch } from "@/components/ui/switch"
 import { TooltipProvider, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import CreateDataSourceDialog from './DocumentCreateDataSourceDialog';
 import DocumentDetailView from './DocumentDetailView';
+import DatasetManagerWrapper from '../datasets/DatasetManager';
 import Image from 'next/image';
 import {
   Tabs,
@@ -825,6 +826,7 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
                  </AlertDialogFooter>
                </AlertDialogContent>
              </div>
+       
            </AlertDialog>
          </TooltipProvider>
        </DocumentDetailWrapper>

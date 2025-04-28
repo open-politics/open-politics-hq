@@ -33,6 +33,8 @@ import {
   adaptSchemeFormDataToSchemeCreate,
   adaptSchemeReadToScheme,
 } from '@/lib/classification/adapters';
+import { AxiosError } from 'axios';
+import { shallow } from 'zustand/shallow';
 
 // Global cache for schemes to prevent redundant API calls
 const schemesCache = new Map<number, {
@@ -198,7 +200,11 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setIsLoadingResults(true);
     setError(null);
     try {
-      const apiResults = await ClassificationResultsService.listClassificationResults({ workspaceId: targetWorkspaceId, jobId, limit: 5000 });
+      const apiResults = await ClassificationResultsService.listClassificationResults({
+        workspaceId: targetWorkspaceId,
+        jobId,
+        limit: 5000
+      });
       const formatted = apiResults.map(r => ({
           id: r.id,
           datarecord_id: r.datarecord_id,
@@ -413,9 +419,10 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setError(null);
     try {
       const workspaceId = getWorkspaceId();
+      const apiData: ClassificationSchemeCreate = adaptSchemeFormDataToSchemeCreate(schemeData);
       const newScheme = await ClassificationSchemesService.createClassificationScheme({
         workspaceId,
-        requestBody: schemeData,
+        requestBody: apiData,
       });
       setSchemes((prev) => [...prev, newScheme]);
       clearSchemesCache(workspaceId);
@@ -441,10 +448,11 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setError(null);
     try {
       const workspaceId = getWorkspaceId();
+      const apiData: ClassificationSchemeUpdate = adaptSchemeFormDataToSchemeCreate(schemeData);
       const updatedScheme = await ClassificationSchemesService.updateClassificationScheme({
         workspaceId,
         schemeId,
-        requestBody: schemeData,
+        requestBody: apiData,
       });
       setSchemes((prev) => prev.map(s => s.id === schemeId ? updatedScheme : s));
       clearSchemesCache(workspaceId);
@@ -743,18 +751,18 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     stopPolling(); // Stop any polling from previous job
 
     try {
-      const jobData: ClassificationJobCreate = {
-        name: params.name || `Analysis @ ${new Date().toLocaleString()}`,
-        description: params.description || '',
+      const timestamp = new Date().toISOString();
+      const jobRequestBody: ClassificationJobCreate = {
+        name: params.name || `Classification Job ${timestamp}`,
+        description: params.description || `Created on ${timestamp}`,
         configuration: {
           datasource_ids: params.datasourceIds,
           scheme_ids: params.schemeIds,
-          ...(params.configuration || {}) // Include any extra config
         },
       };
 
       // Use the API service directly, as the store might not immediately trigger polling
-      const newJob = await ClassificationJobsService.createClassificationJob({ workspaceId, requestBody: jobData });
+      const newJob = await ClassificationJobsService.createClassificationJob({ workspaceId, requestBody: jobRequestBody });
 
       if (newJob) {
         // Add to store AFTER successful API call

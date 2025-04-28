@@ -65,6 +65,20 @@ The classification runner of HQ lets you classify, extract and work with structu
 
 ## Key Features
 
+### Core Functionality
+- Multi-tenant workspace system
+- Flexible data ingestion (CSV, PDF, URLs)
+- AI-powered text classification
+- Search and analysis tools
+- Geospatial data handling
+
+### Universal Data Transfer (New)
+- Export/import functionality for seamless data sharing
+- Self-contained dataset packages
+- Relationship preservation across transfers
+- Support for various data types (text, files, metadata)
+- Configurable content inclusion
+
 ### Classification & Analysis
 Run powerful classification tasks to extract structured data from unstructured text using LLMs.
 
@@ -102,45 +116,99 @@ If you're passionate about making politics more accessible and understandable fo
 
 ## Usage/Installation
 
-### Clone the repository
+### Prerequisites
+- Python 3.8+
+- Node.js 16+
+- PostgreSQL 13+
+- MinIO (for file storage)
+
+### Installation
+
+1. Clone the repository:
 ```bash
-git clone https://github.com/open-politics/open-politics.git
+git clone https://github.com/yourusername/open-politics-hq.git
+cd open-politics-hq
 ```
 
-### Change .env.example to .env
+2. Install backend dependencies:
 ```bash
-cd open-politics
-mv .env.example .env
+cd backend
+python -m venv venv
+source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+pip install -r requirements.txt
 ```
 
-### Run the docker compose file
+3. Install frontend dependencies:
 ```bash
-docker compose up
+cd frontend
+npm install
 ```
 
-### Go to the app
-#### Log in
-With the .env account set as superuser:
-```bash 
-http://localhost:3000/accounts/login
-```
-```bash 
-FIRST_SUPERUSER=example@example.com
-FIRST_SUPERUSER_PASSWORD=example
-```
-
-#### Home
-Click on "Desk" in the header or go to:
+4. Configure environment variables:
 ```bash
-http://localhost:3000/desks/home
+cp .env.example .env
+# Edit .env with your settings
 ```
 
-#### Globe
-If you run this in combination with a [local opol stack](https://github.com/open-politics/opol/blob/main/opol/stack/README.md) and your opol installation has had a few minutes to boot up, you can visit the globe interface at:
-```bash 
-http://localhost:3000/desks/home/globe
+5. Initialize the database:
+```bash
+cd backend
+alembic upgrade head
 ```
 
+### Running the Application
+
+1. Start the backend:
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+2. Start the frontend:
+```bash
+cd frontend
+npm run dev
+```
+
+## Architecture
+
+The application follows a clean architecture pattern with clear separation of concerns:
+
+- **Frontend**: React/Next.js with Zustand for state management
+- **Backend**: FastAPI with SQLModel for data modeling
+- **Storage**: MinIO for file storage
+- **Background Tasks**: Celery for async processing
+
+See `README-ARCHITECTURE.md` for detailed architecture documentation.
+
+## Key Components
+
+### Data Management
+- Workspaces for multi-tenant isolation
+- Flexible data source handling
+- Classification schemes and jobs
+- Dataset organization and sharing
+
+### Universal Data Transfer
+- Package-based export/import system
+- Cross-instance entity tracking
+- Relationship preservation
+- File content handling
+- Configurable transfer options
+
+### Classification System
+- Flexible scheme definition
+- Multi-field classification
+- Background job processing
+- Result aggregation
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to your branch
+5. Create a Pull Request
 
 ## Contact
 

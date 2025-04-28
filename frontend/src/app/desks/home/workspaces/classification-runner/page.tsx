@@ -11,6 +11,7 @@ import RecurringTasksSettings from '@/components/collection/workspaces/recurring
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import JobHistoryView from '@/components/collection/workspaces/jobs/JobHistoryView';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { ClassificationJobParams } from '@/lib/classification/types';
 
 export default function ClassificationRunnerPage() {
   const { activeWorkspace } = useWorkspaceStore();
@@ -81,18 +82,16 @@ export default function ClassificationRunnerPage() {
           toast({ title: "No Workspace", description: "Cannot create job without an active workspace.", variant: "destructive" });
           return;
       }
-      const workspaceId = activeWorkspace.id;
-      console.log("[RunnerPage] Triggering job creation via callback. Name:", name);
-
-      const payload: any = {
-          workspaceId,
+      
+      const jobParams: ClassificationJobParams = {
+          workspaceId: activeWorkspace.id,
+          name: name || `Analysis @ ${new Date().toLocaleString()}`,
+          description: description,
           datasourceIds: dataSourceIds,
-          schemeIds: schemeIds,
+          schemeIds: schemeIds
       };
-      if (name) payload.name = name;
-      if (description) payload.description = description;
 
-      const newJob = await createJob(payload);
+      const newJob = await createJob(jobParams);
 
       if (newJob) {
           console.log("[RunnerPage] Job created via callback, setting target ID:", newJob.id);

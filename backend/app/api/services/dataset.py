@@ -6,14 +6,18 @@ from fastapi import HTTPException, status
 import json
 import uuid
 from datetime import datetime, timezone
+import os
 
 # Import base service types
 from app.api.services.classification import ClassificationService
 from app.api.services.ingestion import IngestionService
 from app.api.services.service_utils import validate_workspace_access
+from app.api.services.package import PackageBuilder, PackageImporter, DataPackage
+from app.api.services.providers.base import StorageProvider
 
 from app.models import Dataset, DatasetCreate, DatasetUpdate, User, Workspace
-from app.models import DataRecord, ClassificationScheme, ClassificationJob, ClassificationResult, DataSource
+from app.models import DataRecord, ClassificationScheme, ClassificationJob, ClassificationResult, DataSource, ResourceType
+from app.models import DataSourceType
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +31,16 @@ class DatasetService:
         session: Session, # Use base Session type
         # Inject service base types
         classification_service: ClassificationService,
-        ingestion_service: IngestionService
+        ingestion_service: IngestionService,
+        storage_provider: StorageProvider,
+        source_instance_id: Optional[str] = None
     ):
         """Initialize with Session and dependent services via DI."""
         self.session = session
         self.classification_service = classification_service
         self.ingestion_service = ingestion_service
+        self.storage_provider = storage_provider
+        self.source_instance_id = source_instance_id
         logger.info("DatasetService initialized")
 
     def create_dataset(self, user_id: int, workspace_id: int, dataset_in: DatasetCreate) -> Dataset:
@@ -184,17 +192,25 @@ class DatasetService:
             self.session.rollback()
             raise ValueError(f"Failed to delete dataset: {str(e)}")
 
-    def export_dataset_package(
+    async def export_dataset_package(
         self,
         user_id: int,
         workspace_id: int,
         dataset_id: int,
         include_record_content: bool = False,
-        include_results: bool = False
-    ) -> Dict[str, Any]:
+        include_results: bool = False,
+        include_source_files: bool = True  # New parameter to control file inclusion
+    ) -> DataPackage:
         """
-        Export a dataset as a package.
-        READ-ONLY - Does not commit.
+        Export a dataset as a self-contained package including all related resources.
+        
+        Args:
+            user_id: ID of user requesting export
+            workspace_id: ID of workspace containing dataset
+            dataset_id: ID of dataset to export
+            include_record_content: Whether to include full text content of records
+            include_results: Whether to include classification results
+            include_source_files: Whether to include original source files (PDFs, CSVs)
         """
         validate_workspace_access(self.session, workspace_id, user_id)
 
@@ -202,18 +218,25 @@ class DatasetService:
         if not dataset or dataset.workspace_id != workspace_id:
             raise ValueError("Dataset not found or not accessible")
 
-        export_data = {
-            "name": dataset.name,
-            "description": dataset.description,
-            "custom_metadata": dataset.custom_metadata,
-            "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
-            "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None,
-            "datarecords": [],
-            "source_jobs": [],
-            "source_schemes": []
+        builder = PackageBuilder(
+            session=self.session,
+            storage_provider=self.storage_provider,
+            source_instance_id=self.source_instance_id
+        )
+
+        # Build base dataset metadata
+        content = {
+            "dataset": {
+                "entity_uuid": dataset.entity_uuid,
+                "name": dataset.name,
+                "description": dataset.description,
+                "custom_metadata": dataset.custom_metadata,
+                "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+                "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None,
+            }
         }
 
-        # Export DataRecords
+        # Export DataRecords with enhanced metadata
         if dataset.datarecord_ids:
             records = self.session.exec(
                 select(DataRecord).where(
@@ -221,46 +244,76 @@ class DatasetService:
                 )
             ).all()
 
+            content["records"] = []
+            datasource_map = {}  # Cache for datasource lookups
+
             for record in records:
                 record_data = {
+                    "entity_uuid": record.entity_uuid,
                     "source_metadata": record.source_metadata,
                     "event_timestamp": record.event_timestamp.isoformat() if record.event_timestamp else None,
                     "url_hash": record.url_hash,
                     "content_hash": record.content_hash
                 }
+
+                # Include text content if requested
                 if include_record_content:
                     record_data["text_content"] = record.text_content
 
-                if include_results:
-                    record_data["classification_results"] = [
-                        {
-                            "scheme_id": result.scheme_id,
+                # Include datasource reference
+                if record.datasource_id:
+                    if record.datasource_id not in datasource_map:
+                        datasource = self.session.get(DataSource, record.datasource_id)
+                        if datasource:
+                            datasource_map[record.datasource_id] = {
+                                "entity_uuid": datasource.entity_uuid,
+                                "name": datasource.name,
+                                "type": datasource.type.value
+                            }
+                    if record.datasource_id in datasource_map:
+                        record_data["datasource_ref"] = datasource_map[record.datasource_id]
+
+                # Include classification results if requested
+                if include_results and record.classification_results:
+                    record_data["classification_results"] = []
+                    for result in record.classification_results:
+                        result_data = {
+                            "scheme_uuid": result.scheme.entity_uuid,
+                            "job_uuid": result.job.entity_uuid,
                             "value": result.value,
-                            "timestamp": result.timestamp.isoformat() if result.timestamp else None
+                            "timestamp": result.timestamp.isoformat() if result.timestamp else None,
+                            "scheme_name": result.scheme.name,  # Include readable references
+                            "job_name": result.job.name
                         }
-                        for result in record.classification_results
-                    ]
+                        record_data["classification_results"].append(result_data)
 
-                export_data["datarecords"].append(record_data)
+                content["records"].append(record_data)
 
-        # Export source jobs
-        if dataset.source_job_ids:
-            jobs = self.session.exec(
-                select(ClassificationJob).where(
-                    ClassificationJob.id.in_(dataset.source_job_ids)
-                )
-            ).all()
+        # Export source files if requested
+        if include_source_files:
+            content["source_files"] = []
+            processed_sources = set()
 
-            export_data["source_jobs"] = [
-                {
-                    "name": job.name,
-                    "description": job.description,
-                    "configuration": job.configuration,
-                    "status": job.status,
-                    "created_at": job.created_at.isoformat() if job.created_at else None
-                }
-                for job in jobs
-            ]
+            # Collect unique datasources from records
+            for record in records:
+                if record.datasource_id and record.datasource_id not in processed_sources:
+                    datasource = self.session.get(DataSource, record.datasource_id)
+                    if datasource and datasource.type in [DataSourceType.PDF, DataSourceType.CSV]:
+                        storage_path = datasource.origin_details.get('storage_path')
+                        if storage_path:
+                            try:
+                                file_content = await self.storage_provider.get_file(storage_path)
+                                file_data = await file_content.read()
+                                filename = os.path.basename(storage_path)
+                                builder._add_file(filename, file_data)
+                                content["source_files"].append({
+                                    "filename": filename,
+                                    "datasource_uuid": datasource.entity_uuid,
+                                    "type": datasource.type.value
+                                })
+                            except Exception as e:
+                                logger.warning(f"Failed to include source file for datasource {datasource.id}: {e}")
+                    processed_sources.add(record.datasource_id)
 
         # Export source schemes
         if dataset.source_scheme_ids:
@@ -270,8 +323,9 @@ class DatasetService:
                 )
             ).all()
 
-            export_data["source_schemes"] = [
+            content["classification_schemes"] = [
                 {
+                    "entity_uuid": scheme.entity_uuid,
                     "name": scheme.name,
                     "description": scheme.description,
                     "model_instructions": scheme.model_instructions,
@@ -294,98 +348,243 @@ class DatasetService:
                 for scheme in schemes
             ]
 
-        return export_data
+        # Export source jobs with configurations
+        if dataset.source_job_ids:
+            jobs = self.session.exec(
+                select(ClassificationJob).where(
+                    ClassificationJob.id.in_(dataset.source_job_ids)
+                )
+            ).all()
 
-    def import_dataset_package(
+            content["classification_jobs"] = [
+                {
+                    "entity_uuid": job.entity_uuid,
+                    "name": job.name,
+                    "description": job.description,
+                    "configuration": job.configuration,
+                    "status": job.status.value,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    # Include relationships
+                    "target_schemes": [
+                        {"entity_uuid": scheme.entity_uuid, "name": scheme.name}
+                        for scheme in job.target_schemes
+                    ],
+                    "target_datasources": [
+                        {"entity_uuid": ds.entity_uuid, "name": ds.name}
+                        for ds in job.target_datasources
+                    ]
+                }
+                for job in jobs
+            ]
+
+        # Create package metadata
+        metadata = PackageMetadata(
+            package_type=ResourceType.DATASET,
+            source_entity_uuid=dataset.entity_uuid,
+            source_instance_id=self.source_instance_id,
+            description=f"Dataset: {dataset.name}",
+            created_by=str(user_id),
+            created_at=datetime.now(timezone.utc)
+        )
+
+        return DataPackage(metadata, content, builder.files)
+
+    async def import_dataset_package(
         self,
         target_user_id: int,
         target_workspace_id: int,
-        package_data: Dict[str, Any],
+        package: DataPackage,
         conflict_resolution_strategy: str = 'skip'
     ) -> Dataset:
         """
-        Import a dataset from a package.
-        MODIFIES DATA - Commits transaction.
+        Import a dataset package with all its nested resources.
+        
+        Args:
+            target_user_id: ID of user importing the dataset
+            target_workspace_id: ID of workspace to import into
+            package: DataPackage object containing the dataset and related resources
+            conflict_resolution_strategy: How to handle conflicts ('skip', 'update', 'replace')
         """
+        if package.metadata.package_type != ResourceType.DATASET:
+            raise ValueError("Invalid package type")
+
+        validate_workspace_access(self.session, target_workspace_id, target_user_id)
+
         try:
-            validate_workspace_access(self.session, target_workspace_id, target_user_id)
+            ds_data = package.content["dataset"]
+            source_uuid = ds_data["entity_uuid"]
 
-            # Create dataset
-            dataset = Dataset(
-                workspace_id=target_workspace_id,
-                user_id=target_user_id,
-                name=package_data.get("name", "Imported Dataset"),
-                description=package_data.get("description"),
-                custom_metadata=package_data.get("custom_metadata", {})
-            )
-            self.session.add(dataset)
-            self.session.flush()  # Get dataset ID
+            # Check for existing import
+            existing = self.session.exec(
+                select(Dataset).where(
+                    Dataset.imported_from_uuid == source_uuid,
+                    Dataset.workspace_id == target_workspace_id
+                )
+            ).first()
 
-            # Import schemes first
-            scheme_id_map = {}
-            for scheme_data in package_data.get("source_schemes", []):
-                try:
-                    new_scheme = self.classification_service.find_or_create_scheme_from_definition(
-                        workspace_id=target_workspace_id,
-                        user_id=target_user_id,
-                        scheme_definition=scheme_data,
-                        conflict_strategy=conflict_resolution_strategy
-                    )
-                    if new_scheme:
-                        scheme_id_map[scheme_data.get("id")] = new_scheme.id
-                except Exception as e:
-                    logger.warning(f"Failed to import scheme: {e}")
+            if existing and conflict_resolution_strategy == 'skip':
+                return existing
 
-            # Import jobs
-            job_id_map = {}
-            for job_data in package_data.get("source_jobs", []):
-                try:
-                    # Map scheme IDs in job configuration
-                    if "scheme_ids" in job_data.get("configuration", {}):
-                        job_data["configuration"]["scheme_ids"] = [
-                            scheme_id_map.get(old_id, old_id)
-                            for old_id in job_data["configuration"]["scheme_ids"]
-                        ]
+            # Start a nested transaction for atomic import
+            # All changes will be rolled back if any part fails
+            transaction = self.session.begin_nested()
 
-                    new_job = self.classification_service.find_or_create_job_from_config(
-                        workspace_id=target_workspace_id,
-                        user_id=target_user_id,
-                        job_config_export=job_data,
-                        import_context={"scheme": scheme_id_map},
-                        conflict_strategy=conflict_resolution_strategy
-                    )
-                    if new_job:
-                        job_id_map[job_data.get("id")] = new_job.id
-                except Exception as e:
-                    logger.warning(f"Failed to import job: {e}")
+            try:
+                # 1. Import Classification Schemes First
+                scheme_id_map = {}  # Map source UUIDs to local IDs
+                if "classification_schemes" in package.content:
+                    for scheme_data in package.content["classification_schemes"]:
+                        try:
+                            scheme = self.classification_service.find_or_create_scheme_from_definition(
+                                workspace_id=target_workspace_id,
+                                user_id=target_user_id,
+                                scheme_definition=scheme_data,
+                                conflict_strategy=conflict_resolution_strategy
+                            )
+                            if scheme:
+                                scheme_id_map[scheme_data["entity_uuid"]] = scheme.id
+                        except Exception as e:
+                            logger.warning(f"Failed to import scheme: {e}")
+                            if conflict_resolution_strategy != 'skip':
+                                raise
 
-            # Import records
-            record_id_map = {}
-            for record_data in package_data.get("datarecords", []):
-                try:
-                    new_record = self.ingestion_service.find_or_create_datarecord_from_data(
-                        workspace_id=target_workspace_id,
-                        user_id=target_user_id,
-                        record_data=record_data,
-                        conflict_strategy=conflict_resolution_strategy
-                    )
-                    if new_record:
-                        record_id_map[record_data.get("id")] = new_record.id
-                except Exception as e:
-                    logger.warning(f"Failed to import record: {e}")
+                # 2. Import Source Files and Create DataSources
+                datasource_id_map = {}  # Map source UUIDs to local IDs
+                if "source_files" in package.content:
+                    for file_info in package.content["source_files"]:
+                        try:
+                            filename = file_info["filename"]
+                            if filename not in package.files:
+                                logger.warning(f"Missing file content for {filename}")
+                                continue
 
-            # Update dataset with mapped IDs
-            dataset.source_scheme_ids = list(scheme_id_map.values())
-            dataset.source_job_ids = list(job_id_map.values())
-            dataset.datarecord_ids = list(record_id_map.values())
+                            # Store file in storage provider
+                            file_content = package.files[filename]
+                            storage_path = f"user_{target_user_id}/imported/{uuid.uuid4()}_{filename}"
+                            await self.storage_provider.upload_file(file_content, storage_path)
 
-            self.session.commit()
-            self.session.refresh(dataset)
-            return dataset
+                            # Create DataSource
+                            datasource = await self.ingestion_service.create_datasource(
+                                workspace_id=target_workspace_id,
+                                user_id=target_user_id,
+                                name=f"Imported: {filename}",
+                                type=DataSourceType(file_info["type"]),
+                                origin_details_str=json.dumps({"storage_path": storage_path}),
+                                files=None  # File already uploaded
+                            )
+                            if datasource:
+                                datasource_id_map[file_info["datasource_uuid"]] = datasource[0].id
+
+                        except Exception as e:
+                            logger.warning(f"Failed to import source file {filename}: {e}")
+                            if conflict_resolution_strategy != 'skip':
+                                raise
+
+                # 3. Import Records
+                record_id_map = {}  # Map source UUIDs to local IDs
+                if "records" in package.content:
+                    for record_data in package.content["records"]:
+                        try:
+                            # Find or create record
+                            new_record = self.ingestion_service.find_or_create_datarecord_from_data(
+                                workspace_id=target_workspace_id,
+                                user_id=target_user_id,
+                                record_data=record_data,
+                                conflict_strategy=conflict_resolution_strategy
+                            )
+                            if new_record:
+                                record_id_map[record_data["entity_uuid"]] = new_record.id
+
+                                # Import classification results if present
+                                if "classification_results" in record_data and include_results:
+                                    for result_data in record_data["classification_results"]:
+                                        if result_data["scheme_uuid"] in scheme_id_map:
+                                            try:
+                                                self.classification_service.create_result(
+                                                    datarecord_id=new_record.id,
+                                                    scheme_id=scheme_id_map[result_data["scheme_uuid"]],
+                                                    job_id=None,  # Will be updated after job import
+                                                    value=result_data["value"],
+                                                    timestamp=datetime.fromisoformat(result_data["timestamp"]) if result_data.get("timestamp") else None
+                                                )
+                                            except Exception as e:
+                                                logger.warning(f"Failed to import result for record {new_record.id}: {e}")
+
+                        except Exception as e:
+                            logger.warning(f"Failed to import record: {e}")
+                            if conflict_resolution_strategy != 'skip':
+                                raise
+
+                # 4. Import Classification Jobs
+                job_id_map = {}  # Map source UUIDs to local IDs
+                if "classification_jobs" in package.content:
+                    for job_data in package.content["classification_jobs"]:
+                        try:
+                            # Map scheme and datasource IDs in configuration
+                            job_config = job_data["configuration"].copy()
+                            if "scheme_ids" in job_config:
+                                job_config["scheme_ids"] = [
+                                    scheme_id_map.get(scheme_uuid)
+                                    for scheme_uuid in job_data["target_schemes"]
+                                    if scheme_uuid in scheme_id_map
+                                ]
+                            if "datasource_ids" in job_config:
+                                job_config["datasource_ids"] = [
+                                    datasource_id_map.get(ds_uuid)
+                                    for ds_uuid in job_data["target_datasources"]
+                                    if ds_uuid in datasource_id_map
+                                ]
+
+                            new_job = self.classification_service.find_or_create_job_from_config(
+                                workspace_id=target_workspace_id,
+                                user_id=target_user_id,
+                                job_config_export=job_data,
+                                import_context={
+                                    "scheme": scheme_id_map,
+                                    "datasource": datasource_id_map
+                                },
+                                conflict_strategy=conflict_resolution_strategy
+                            )
+                            if new_job:
+                                job_id_map[job_data["entity_uuid"]] = new_job.id
+
+                        except Exception as e:
+                            logger.warning(f"Failed to import job: {e}")
+                            if conflict_resolution_strategy != 'skip':
+                                raise
+
+                # 5. Create Dataset
+                dataset = Dataset(
+                    workspace_id=target_workspace_id,
+                    user_id=target_user_id,
+                    imported_from_uuid=source_uuid,
+                    name=ds_data["name"],
+                    description=ds_data.get("description"),
+                    custom_metadata=ds_data.get("custom_metadata", {}),
+                    created_at=datetime.fromisoformat(ds_data["created_at"]) if ds_data.get("created_at") else None,
+                    updated_at=datetime.now(timezone.utc)
+                )
+
+                # Set relationships using mapped IDs
+                dataset.source_scheme_ids = list(scheme_id_map.values())
+                dataset.source_job_ids = list(job_id_map.values())
+                dataset.datarecord_ids = list(record_id_map.values())
+
+                self.session.add(dataset)
+                transaction.commit()  # Commit the nested transaction
+
+                logger.info(f"Successfully imported dataset {dataset.name} with {len(record_id_map)} records")
+                return dataset
+
+            except Exception as e:
+                transaction.rollback()  # Rollback the nested transaction
+                logger.error(f"Failed to import dataset package: {e}", exc_info=True)
+                raise ValueError(f"Dataset import failed: {str(e)}")
 
         except Exception as e:
-            self.session.rollback()
-            raise ValueError(f"Failed to import dataset package: {str(e)}")
+            self.session.rollback()  # Rollback the main transaction
+            logger.error(f"Critical error during dataset import: {e}", exc_info=True)
+            raise ValueError(f"Critical error during dataset import: {str(e)}")
 
 
 # Removed dummy factory function

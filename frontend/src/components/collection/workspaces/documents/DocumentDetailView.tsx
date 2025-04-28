@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, ChangeEvent } from 'react';
 import { Separator } from "@/components/ui/separator";
 import {
   Avatar,
@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/avatar"
 import { format } from "date-fns"
 import { Button } from '@/components/ui/button';
-import { ClassificationSchemeRead, FieldType, EnhancedClassificationResultRead, CsvRowData, CsvRowsOut, DataSourceRead as ClientDataSourceRead } from '@/client/models'; // Renamed DataSourceRead to avoid conflict
+import { ClassificationSchemeRead, FieldType, EnhancedClassificationResultRead, CsvRowData, CsvRowsOut, DataSourceRead as ClientDataSourceRead, DataSourceRead } from '@/client/models'; // Renamed DataSourceRead to avoid conflict
 import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
@@ -19,12 +19,13 @@ import { ClassificationResultsService, ClassificationSchemesService, Classificat
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import ClassificationResultDisplay from '../classifications/ClassificationResultDisplay';
-import { PlusCircle, Lock, Unlock, ArrowRight, Loader2, Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw, AlertCircle, Info, Search, ArrowUp, ArrowDown, Download, Eye, X } from "lucide-react"; // Added Search, ArrowUp, ArrowDown, Download, Eye, X
+import { PlusCircle, Lock, Unlock, ArrowRight, Loader2, Check, ChevronDown, ChevronUp, ExternalLink, RefreshCw, AlertCircle, Info, Search, ArrowUp, ArrowDown, Download, Eye, X, Save, Trash2, Pencil, AlertTriangle } from "lucide-react"; // Added Search, ArrowUp, ArrowDown, Download, Eye, X, Save, Trash2, Pencil, AlertTriangle
 import { useToast } from '@/components/ui/use-toast';
 import { Toaster } from '@/components/ui/toaster';
 import { useClassificationJobsStore, useClassificationJobsActions, useIsClassificationJobsLoading, useClassificationJobsError } from "@/zustand_stores/storeClassificationJobs";
 import { DatarecordsService, DatasourcesService } from '@/client/services';
-import { DataRecordRead, DataSourceRead as ClientDataSourceReadAlias, DataSourceType, DataSourceStatus } from '@/client/models'; // Use Alias
+import { DataRecordRead, DataSourceRead as ClientDataSourceReadAlias, DataSourceType, DataSourceStatus, DataSourceUpdate } from '@/client/models'; // Use Alias, import DataSourceUpdate
+import { useDataSourceStore } from '@/zustand_stores/storeDataSources'; // Import DataSource store
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   Table,
@@ -56,7 +57,10 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import Cronstrue from 'cronstrue';
 import useAuth from '@/hooks/useAuth';
-
+import { Textarea } from "@/components/ui/textarea"
+import Link from 'next/link';
+import { useDatasetStore } from '@/zustand_stores/storeDatasets';
+import DatasetCreateDialog from '../datasets/DatasetCreateDialog';
 
 // Define Sort Direction type
 type SortDirection = 'asc' | 'desc' | null;
@@ -68,15 +72,15 @@ interface DataRecordDetailViewProps {
   onLoadIntoRunner?: (jobId: number, jobName: string) => void;
 }
 
-const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
+const DataRecordDetailView = ({
   onEdit,
   schemes,
   selectedDataSourceId,
   onLoadIntoRunner
 }) => {
-  // --- All State Hooks at the Top ---
-  const [dataSource, setDataSource] = useState<ClientDataSourceReadAlias | null>(null); // Use Alias
-  const [dataRecords, setDataRecords] = useState<DataRecordRead[]>([]); // Used for PDF/Text block content
+  // --- State Hooks ---
+  const [dataSource, setDataSource] = useState<ClientDataSourceReadAlias | null>(null);
+  const [dataRecords, setDataRecords] = useState<DataRecordRead[]>([]);
   const [isLoadingSource, setIsLoadingSource] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -107,7 +111,22 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
   const [urlListError, setUrlListError] = useState<string | null>(null);
   const [urlListCurrentPage, setUrlListCurrentPage] = useState(1);
   const [urlListTotalRecords, setUrlListTotalRecords] = useState(0);
-  const urlListRecordsPerPage = 5;
+  const urlListRecordsPerPage = 10;
+
+  // ---> ADDED: State for scraped content view mode
+  type ScrapedContentViewMode = 'flat' | 'grouped';
+  const [scrapedContentViewMode, setScrapedContentViewMode] = useState<ScrapedContentViewMode>('flat');
+  // <--- END ADDED
+
+  // ---> ADDED: State for highlighted record ID
+  const [highlightedRecordId, setHighlightedRecordId] = useState<number | null>(null);
+  // <--- END ADDED
+
+  // State for URL List editing
+  const [editableUrls, setEditableUrls] = useState<string[]>([]);
+  const [newUrlInput, setNewUrlInput] = useState<string>('');
+  const [isSavingUrls, setIsSavingUrls] = useState(false);
+  const [isRefetching, setIsRefetching] = useState(false);
 
   // State for classification results specific to the selected CSV row
   const [selectedRowResults, setSelectedRowResults] = useState<EnhancedClassificationResultRead[]>([]);
@@ -135,8 +154,27 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
       updateRecurringTask,
       deleteRecurringTask // Maybe needed later?
   } = useRecurringTasksStore();
+  const { updateDataSource, refetchDataSource } = useDataSourceStore();
 
-  // --- Callbacks (useCallback) --- (Define fetchAll here)
+  // Get necessary functions from store
+  const { 
+    addUrlToDataSource, 
+    updateDataSourceUrls, 
+    getDataSourceUrls 
+  } = useDataSourceStore();
+
+  const { createDataset } = useDatasetStore();
+
+  const [isDatasetCreateDialogOpen, setIsDatasetCreateDialogOpen] = useState(false);
+
+  // First, add state for time axis configuration
+  const [timeAxisConfig, setTimeAxisConfig] = useState<TimeAxisConfig>({
+    selectedField: null,
+    selectedScheme: null,
+    timeRange: null
+  });
+
+  // --- Callbacks (useCallback) --- (Define fetchAll, fetchUrls etc. here)
 
   const fetchClassificationResults = useCallback(
     async (workspaceId: number, datasourceId: number, jobIdFilter: number | null) => {
@@ -194,8 +232,8 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     }
   }, [csvRowsPerPage]);
 
-  const fetchUrlListData = useCallback(async (workspaceId: number, datasourceId: number, pageToFetch: number, currentDataSource: ClientDataSourceReadAlias | null) => {
-    if (!currentDataSource || currentDataSource.type !== 'url_list' || !workspaceId || !datasourceId) {
+  const fetchUrlListData = useCallback(async (workspaceId: number, datasourceId: number, pageToFetch: number, totalRecordsEstimate: number) => {
+    if (!workspaceId || !datasourceId) {
         setUrlListDataRecords([]);
         setUrlListTotalRecords(0);
         return;
@@ -206,18 +244,16 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     const skip = (pageToFetch - 1) * urlListRecordsPerPage;
 
     try {
+        // Use the passed estimate
+        setUrlListTotalRecords(totalRecordsEstimate);
+
         const recordsResponse = await DatarecordsService.listDatarecords({
            workspaceId: workspaceId,
            datasourceId: datasourceId,
            skip: skip,
            limit: urlListRecordsPerPage
         });
-
         setUrlListDataRecords(recordsResponse || []);
-        const count = currentDataSource.source_metadata && typeof currentDataSource.source_metadata.processed_count === 'number'
-            ? currentDataSource.source_metadata.processed_count
-            : 0;
-        setUrlListTotalRecords(count);
 
     } catch (err: any) {
          console.error("Error fetching URL List data records:", err);
@@ -228,110 +264,49 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     } finally {
          setIsLoadingUrlList(false);
     }
+    // Removed dataSource dependency
   }, [urlListRecordsPerPage]);
 
   const fetchAll = useCallback(async () => {
     if (!selectedDataSourceId || !activeWorkspace?.id) {
-      setDataSource(null);
-      setDataRecords([]);
-      setClassificationResults([]);
-      setCsvData(null);
-      setCurrentPage(1);
-      setSourceError(null);
-      setCsvError(null);
-      setSelectedRowData(null);
-      setCsvSearchTerm('');
-      setSortColumn(null);
-      setSortDirection(null);
-      setUrlListDataRecords([]);
-      setUrlListCurrentPage(1);
-      setUrlListTotalRecords(0);
-      setUrlListError(null);
-      setLocalIngestTask(null);
-      // Reset PDF viewer state on new source load
-      setIsPdfViewerOpen(false);
-      if (pdfBlobUrl) {
-          window.URL.revokeObjectURL(pdfBlobUrl);
-          setPdfBlobUrl(null);
-      }
-      return;
+        // Reset logic copied from user merge
+        setDataSource(null); setDataRecords([]); setClassificationResults([]); setCsvData(null); setCurrentPage(1); setSourceError(null); setCsvError(null);
+        setSelectedRowData(null); setCsvSearchTerm(''); setSortColumn(null); setSortDirection(null); setUrlListDataRecords([]); setUrlListCurrentPage(1);
+        setUrlListTotalRecords(0); setUrlListError(null); setLocalIngestTask(null); setIsPdfViewerOpen(false);
+        if (pdfBlobUrl) { window.URL.revokeObjectURL(pdfBlobUrl); setPdfBlobUrl(null); }
+        setEditableUrls([]); setNewUrlInput(''); setIsSavingUrls(false); setIsRefetching(false);
+        return;
     }
-
     console.log(`fetchAll triggered for DataSource ID: ${selectedDataSourceId}`);
-    setIsLoadingSource(true);
-    setSourceError(null);
-    setDataSource(null);
-    setDataRecords([]);
-    setClassificationResults([]);
-    setCsvData(null);
-    setCurrentPage(1);
-    setCsvError(null);
-    setSelectedRowData(null);
-    setCsvSearchTerm('');
-    setSortColumn(null);
-    setSortDirection(null);
-    setUrlListDataRecords([]);
-    setUrlListCurrentPage(1);
-    setUrlListTotalRecords(0);
-    setUrlListError(null);
-    setLocalIngestTask(null);
+    setIsLoadingSource(true); setSourceError(null); setCsvData(null); setCsvError(null); setCurrentPage(1); setCsvSearchTerm(''); setSortColumn(null); setSortDirection(null);
+    setUrlListDataRecords([]); setUrlListError(null); setLocalIngestTask(null);
+    setEditableUrls([]); setNewUrlInput(''); setIsSavingUrls(false); setIsRefetching(false);
 
     try {
-      const source = await DatasourcesService.getDatasource({
-        workspaceId: activeWorkspace.id,
-        datasourceId: selectedDataSourceId,
-        includeCounts: true,
-      });
-      console.log("Fetched DataSource:", source);
-      setDataSource(source);
+        const source = await DatasourcesService.getDatasource({
+            workspaceId: activeWorkspace.id,
+            datasourceId: selectedDataSourceId,
+        });
+        console.log("Fetched DataSource:", source);
+        setDataSource(source); // This triggers the useEffect below
 
-      if (source.type === 'pdf') {
-         try {
-             const recordsResponse = await DatarecordsService.listDatarecords({
-                 workspaceId: activeWorkspace.id,
-                 datasourceId: selectedDataSourceId,
-                 limit: 1
-             });
-             setDataRecords(recordsResponse || []);
-         } catch (recordFetchError) {
-             console.error(`Could not fetch data record for PDF source ${selectedDataSourceId}.`, recordFetchError);
-         }
-      } else if (source.type === 'text_block') {
-        try {
-            const recordsResponse = await DatarecordsService.listDatarecords({
-                workspaceId: activeWorkspace.id,
-                datasourceId: selectedDataSourceId,
-                limit: 1
-            });
-            setDataRecords(recordsResponse || []);
-        } catch (recordFetchError: any) {
-            console.error(`Could not fetch data record for ${source.type} source ${selectedDataSourceId}.`, recordFetchError);
-            setSourceError("Failed to load text content for this source.");
-            setDataRecords([]);
-        }
-      } else if (source.type === 'csv') {
-          await fetchCsvData(activeWorkspace.id, selectedDataSourceId, 1);
-      } else if (source.type === 'url_list') {
-          await fetchUrlListData(activeWorkspace.id, selectedDataSourceId, 1, source);
-      } else {
-          setDataRecords([]);
-      }
-
-      await fetchClassificationResults(activeWorkspace.id, source.id, null);
+        // Fetch results immediately, others triggered by useEffect
+        await fetchClassificationResults(activeWorkspace.id, source.id, null);
 
     } catch (err: any) {
-      console.error("Error in fetchAll:", err);
-      const errorDetail = err.body?.detail || err.message || "Unknown error";
-      setSourceError(`Failed to load source details: ${errorDetail}`);
-      setDataSource(null);
-      setDataRecords([]);
-      setClassificationResults([]);
-      setCsvData(null);
-      setUrlListDataRecords([]);
+        console.error("Error in fetchAll:", err);
+        const errorDetail = err.body?.detail || err.message || "Unknown error";
+        setSourceError(`Failed to load source details: ${errorDetail}`);
+        setDataSource(null); // Clear DS on error
+        setDataRecords([]);
+        setClassificationResults([]);
+        setCsvData(null);
+        setUrlListDataRecords([]);
+        setEditableUrls([]); // Clear URLs on error too
     } finally {
-      setIsLoadingSource(false);
+        setIsLoadingSource(false);
     }
-  }, [selectedDataSourceId, activeWorkspace?.id, fetchClassificationResults, fetchCsvData, fetchUrlListData, pdfBlobUrl]);
+  }, [selectedDataSourceId, activeWorkspace?.id, fetchClassificationResults, pdfBlobUrl]);
 
   const handleLoadIntoRunner = useCallback((result: EnhancedClassificationResultRead) => {
     const jobId = result.job_id;
@@ -411,9 +386,11 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
 
   const handleUrlListPageChange = useCallback((page: number) => {
     if (!dataSource || !activeWorkspace?.id || dataSource.type !== 'url_list') return;
-    fetchUrlListData(activeWorkspace.id, dataSource.id, page, dataSource);
+    // Pass the current total records state when changing page
+    fetchUrlListData(activeWorkspace.id, dataSource.id, page, urlListTotalRecords);
     setUrlListCurrentPage(page);
-  }, [fetchUrlListData, dataSource, activeWorkspace?.id]);
+    // Dependencies: fetchUrlListData, dataSource, activeWorkspace.id, urlListTotalRecords
+  }, [fetchUrlListData, dataSource, activeWorkspace?.id, urlListTotalRecords]);
 
   const handleSort = useCallback((column: string) => {
     if (sortColumn === column) {
@@ -457,6 +434,7 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                 success = !!updated;
                 if (success) taskName = updated!.name;
             } else {
+                // Use the *current* editableUrls when creating a new task
                 const createPayload: RecurringTaskCreate = {
                     name: taskName,
                     description: `Automatically scrapes URLs for DataSource ${dataSource.name} (ID: ${dataSource.id})`,
@@ -464,7 +442,7 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                     schedule: ingestionSchedule,
                     configuration: {
                         target_datasource_id: dataSource.id,
-                        source_urls: (dataSource.origin_details as any)?.urls || [],
+                        source_urls: editableUrls, // Use current state
                         deduplication_strategy: 'url_hash'
                     },
                     status: 'active'
@@ -503,7 +481,7 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
             setInitialScheduleState({ enabled: enableScheduledIngestion, schedule: ingestionSchedule });
         }
     }
-  }, [dataSource, activeWorkspace?.id, enableScheduledIngestion, initialScheduleState, ingestionSchedule, localIngestTask, updateRecurringTask, createRecurringTask, toast]);
+  }, [dataSource, activeWorkspace?.id, editableUrls, enableScheduledIngestion, initialScheduleState, ingestionSchedule, localIngestTask, updateRecurringTask, createRecurringTask, toast]);
 
   // Revert handleDownloadPdf to use authenticated fetch and trigger download
   // This time, get the token directly from localStorage
@@ -608,13 +586,29 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     // If viewer is closed, fetch PDF and open it
     if (dataSource?.type === 'pdf' && activeWorkspace?.id && dataSource.id) {
       setIsFetchingPdfForView(true); // Start loading indicator
-      const viewUrl = `/api/v1/workspaces/${activeWorkspace.id}/datasources/${dataSource.id}/content`; // Use /content endpoint for inline view
+
+      // Check metadata first
+      const storagePath = dataSource.source_metadata?.storage_path;
+      if (!storagePath) {
+        toast({ 
+          title: "Error", 
+          description: "PDF file location not found. The file might not be properly uploaded.", 
+          variant: "destructive" 
+        });
+        setIsFetchingPdfForView(false);
+        return;
+      }
+
+      const viewUrl = `/api/v1/workspaces/${activeWorkspace.id}/datasources/${dataSource.id}/content`;
 
       const token = typeof window !== 'undefined' ? localStorage.getItem("access_token") : null;
 
       if (!token) {
-        console.error("Cannot view PDF: Authentication token not found.");
-        toast({ title: "Authentication Error", description: "Could not find authentication token.", variant: "destructive" });
+        toast({ 
+          title: "Authentication Error", 
+          description: "Could not find authentication token.", 
+          variant: "destructive" 
+        });
         setIsFetchingPdfForView(false);
         return;
       }
@@ -627,28 +621,42 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
 
         if (!response.ok) {
           let errorDetail = `HTTP error! Status: ${response.status}`;
-          try { const errorData = await response.json(); errorDetail = errorData.detail || errorDetail; } catch (e) { /* Ignore */ }
+          try { 
+            const errorData = await response.json(); 
+            errorDetail = errorData.detail || errorDetail; 
+          } catch (e) { /* Ignore */ }
           throw new Error(errorDetail);
         }
 
         const blob = await response.blob();
+        if (blob.size === 0) {
+          throw new Error("Received empty PDF file");
+        }
+
         const objectUrl = window.URL.createObjectURL(blob);
         setPdfBlobUrl(objectUrl);
-        setIsPdfViewerOpen(true); // Open the viewer
+        setIsPdfViewerOpen(true);
 
       } catch (error: any) {
         console.error("Failed to fetch PDF for viewing:", error);
-        toast({ title: "View Failed", description: error.message || "Could not load PDF for viewing.", variant: "destructive" });
+        toast({ 
+          title: "View Failed", 
+          description: error.message || "Could not load PDF for viewing.", 
+          variant: "destructive" 
+        });
         setIsPdfViewerOpen(false);
-        setPdfBlobUrl(null); // Clear any potentially stale URL
+        setPdfBlobUrl(null);
       } finally {
-        setIsFetchingPdfForView(false); // Stop loading indicator
+        setIsFetchingPdfForView(false);
       }
     } else {
-      console.error("Cannot view PDF: Invalid state or source type.");
-      toast({ title: "View Error", description: "Not a valid PDF source.", variant: "destructive" });
+      toast({ 
+        title: "View Error", 
+        description: "Not a valid PDF source.", 
+        variant: "destructive" 
+      });
     }
-  }, [dataSource, activeWorkspace?.id, toast, isPdfViewerOpen, pdfBlobUrl]); // Dependencies
+  }, [dataSource, activeWorkspace?.id, toast, isPdfViewerOpen, pdfBlobUrl]);
 
   // --- Memoized Values (useMemo) --- (Define after callbacks)
 
@@ -713,7 +721,31 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
 
   const totalPages = useMemo(() => csvData ? Math.ceil(csvData.total_rows / csvRowsPerPage) : 0, [csvData, csvRowsPerPage]);
 
-  const urlListTotalPages = useMemo(() => Math.ceil(urlListTotalRecords / urlListRecordsPerPage), [urlListTotalRecords, urlListRecordsPerPage]);
+  const urlListTotalPages = useMemo(() => urlListTotalRecords > 0 ? Math.ceil(urlListTotalRecords / urlListRecordsPerPage) : 0, [urlListTotalRecords, urlListRecordsPerPage]);
+
+  // ---> ADDED: Memoized sorting and grouping for URL list records ---
+  const { sortedFlatList, groupedRecords } = useMemo(() => {
+      // Sort flat list by time (newest first)
+      const sortedRecords = [...urlListDataRecords].sort((a, b) => {
+          const timeA = a.event_timestamp ? new Date(a.event_timestamp).getTime() : 0;
+          const timeB = b.event_timestamp ? new Date(b.event_timestamp).getTime() : 0;
+          return timeB - timeA; // Descending order
+      });
+
+      // Group records by URL and sort within groups by time
+      const groups = sortedRecords.reduce<Record<string, DataRecordRead[]>>((acc, record) => {
+          const url = (record.source_metadata as any)?.original_url || 'Unknown URL';
+          if (!acc[url]) {
+              acc[url] = [];
+          }
+          acc[url].push(record);
+          // Records are already sorted by time due to using sortedRecords
+          return acc;
+      }, {});
+
+      return { sortedFlatList: sortedRecords, groupedRecords: groups };
+  }, [urlListDataRecords]); // Recalculate when records change
+  // <--- END ADDED ---
 
   // --- Effects Section (Keep effects after hooks and callbacks) ---
 
@@ -728,191 +760,176 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
       fetchAll();
   }, [selectedDataSourceId, fetchAll]);
 
+  // Effect: Fetch records, URLs, or PDF metadata when the dataSource state changes
+  useEffect(() => {
+    if (!dataSource || !activeWorkspace?.id) return;
+
+    console.log(`DataSource state updated. Type: ${dataSource.type}. Triggering type-specific actions.`);
+
+    // Clear states for other types initially
+    setEditableUrls([]);
+    setPdfBlobUrl(null);
+    setDataRecords([]); // Clear general records
+    setSelectedRowData(null); // Clear CSV selection
+    setCsvData(null); // Clear raw CSV data
+    setSelectedRowResults([]); // Clear results for selected row
+
+    // Trigger actions based on type
+    if (dataSource.type === 'csv') {
+      fetchCsvData(activeWorkspace.id, dataSource.id, 1);
+    } else if (dataSource.type === 'url_list') {
+      // Initialize editableUrls from the fetched dataSource
+      const initialUrls = (dataSource.origin_details as any)?.urls || [];
+      setEditableUrls(initialUrls);
+      // Fetch associated data records (scraped content)
+      fetchUrlListData(activeWorkspace.id, dataSource.id, 1, dataSource.data_record_count ?? 0);
+    } else if (dataSource.type === 'pdf') {
+      // Fetch the single data record associated with the PDF
+      DatarecordsService.listDatarecords({
+          workspaceId: activeWorkspace.id,
+          datasourceId: dataSource.id,
+          limit: 1
+      }).then(recordsResponse => {
+          setDataRecords(recordsResponse || []);
+          console.log("Fetched single record for PDF source:", recordsResponse);
+      }).catch(err => {
+          console.error("Failed to fetch record for PDF source:", err);
+          setDataRecords([]);
+      });
+    } else if (dataSource.type === 'text_block') {
+      // Fetch the single data record for the text block
+      DatarecordsService.listDatarecords({
+          workspaceId: activeWorkspace.id,
+          datasourceId: dataSource.id,
+          limit: 1
+      }).then(recordsResponse => {
+          setDataRecords(recordsResponse || []);
+      }).catch(err => {
+          console.error("Failed to fetch record for text_block source:", err);
+          setDataRecords([]);
+      });
+    } else {
+      console.warn(`Unsupported or unknown dataSource type: ${dataSource.type}. Resetting.`);
+    }
+
+  }, [dataSource, activeWorkspace?.id, fetchCsvData, fetchUrlListData]); // Removed fetchUrls dependency
+
   useEffect(() => {
     if (dataSource?.type === 'csv' && selectedRowData) {
-      const filtered = classificationResults.filter(
-        result => result && result.datarecord_id === selectedRowData.row_number
-      );
-      setSelectedRowResults(filtered);
-    } else {
-      setSelectedRowResults([]);
+      toast({ title: "Duplicate URL", description: "This URL is already in the list.", variant: "default"});
     }
-  }, [selectedRowData, classificationResults, dataSource?.type]);
+  }, [newUrlInput, editableUrls, toast]);
 
-  useEffect(() => {
-    if (dataSource?.type === 'url_list' && dataSource.id) {
-        const task = getIngestTaskForDataSource(dataSource.id);
-        setLocalIngestTask(task);
-        const isActive = task?.status === 'active';
-        const currentSchedule = task?.schedule || '0 0 * * *';
-        setEnableScheduledIngestion(isActive);
-        setIngestionSchedule(currentSchedule);
-        setInitialScheduleState({ enabled: isActive, schedule: currentSchedule });
-        console.log("Found ingest task for source", dataSource.id, task);
-    } else {
-        setLocalIngestTask(null);
-        setEnableScheduledIngestion(false);
-        setIngestionSchedule('0 0 * * *');
-        setInitialScheduleState({ enabled: false, schedule: '' });
-    }
-  }, [dataSource, recurringTasks, getIngestTaskForDataSource]);
+  const handleAddUrl = useCallback(() => {
+    const urlToAdd = newUrlInput.trim();
+    if (!urlToAdd) return; // Ignore empty input
 
-  useEffect(() => {
-    if (dataSource?.type !== 'url_list' || !enableScheduledIngestion) {
-        setCronExplanation('');
-        return;
-    }
+    // Basic URL validation (can be enhanced)
     try {
-      const explanation = Cronstrue.toString(ingestionSchedule);
-      setCronExplanation(explanation);
-    } catch (e) {
-      setCronExplanation('Invalid cron format.');
+      new URL(urlToAdd); // Throws error if invalid
+    } catch (_) {
+      toast({ title: "Invalid URL", description: "Please enter a valid URL starting with http:// or https://", variant: "destructive"});
+      return;
     }
-  }, [ingestionSchedule, dataSource?.type, enableScheduledIngestion]);
 
-  useEffect(() => {
-    // Cleanup function to revoke blob URL when component unmounts or selectedDataSourceId changes
-    return () => {
-      if (pdfBlobUrl) {
-        console.log("Revoking PDF Blob URL on unmount/change:", pdfBlobUrl);
-        window.URL.revokeObjectURL(pdfBlobUrl);
+    if (editableUrls.includes(urlToAdd)) {
+      toast({ title: "Duplicate URL", description: "This URL is already in the list.", variant: "default"});
+    } else {
+      setEditableUrls(prev => [...prev, urlToAdd]);
+      setNewUrlInput(''); // Clear input after adding
+    }
+  }, [newUrlInput, editableUrls, toast]);
+
+  const handleRemoveUrl = useCallback((urlToRemove: string) => {
+      setEditableUrls(prev => prev.filter(url => url !== urlToRemove));
+  }, []);
+
+  const handleSaveUrls = useCallback(async () => {
+      if (!dataSource || !activeWorkspace?.id) return;
+      // Check if URLs actually changed
+      const originalUrls = (dataSource.origin_details as any)?.urls || [];
+      if (JSON.stringify([...editableUrls].sort()) === JSON.stringify([...originalUrls].sort())) {
+          toast({ title: "No Changes", description: "URL list has not been modified.", variant: "default" });
+          return;
       }
-    };
-  }, [pdfBlobUrl]); // Depend only on pdfBlobUrl for cleanup
 
-  // --- Rendering Logic Starts Here ---
+      setIsSavingUrls(true);
+      const updatePayload: DataSourceUpdate = {
+          // Include existing origin_details and only update urls within it
+          origin_details: { ...dataSource.origin_details, urls: editableUrls }
+      };
+      // Use the store action
+      const updatedSource = await updateDataSource(dataSource.id, updatePayload);
+      setIsSavingUrls(false);
+      if (updatedSource) {
+          // Update local dataSource state to reflect changes immediately
+          setDataSource(updatedSource);
+          toast({ title: "Success", description: "URL list saved." });
+      } else {
+          // Error handled in store action
+          // Revert editableUrls to original state if save failed
+          setEditableUrls((dataSource.origin_details as any)?.urls || []);
+      }
+    // Dependencies: dataSource, activeWorkspace, editableUrls, updateDataSource, toast
+  }, [dataSource, activeWorkspace?.id, editableUrls, updateDataSource, toast]);
 
-  if (isLoadingSource && !dataSource) {
-    return (
-      <div className="p-8 text-center text-muted-foreground flex items-center justify-center gap-2">
-        <Loader2 className="h-5 w-5 animate-spin" /> Loading Source Details...
-      </div>
-    );
-  }
+  const handleRefetch = useCallback(async () => {
+      if (!dataSource || !activeWorkspace?.id) return;
+      setIsRefetching(true);
+      // Use the store action
+      const success = await refetchDataSource(dataSource.id);
+      setIsRefetching(false);
+      if (success) {
+         // Optionally trigger fetchAll again after a delay or rely on polling
+         // setTimeout(fetchAll, 2000);
+      }
+      // Dependencies: dataSource, activeWorkspace, refetchDataSource
+  }, [dataSource, activeWorkspace?.id, refetchDataSource]);
 
-  if (sourceError) {
-    return (
-      <div className="p-8 text-center text-red-600">
-        {sourceError}
-      </div>
-    );
-  }
+  // Add function to create dataset from current data
+  const handleCreateDataset = () => {
+    if (!dataSource) return;
 
-  if (!selectedDataSourceId) {
-      return (
-         <div className="p-8 text-center text-muted-foreground">
-           Select a data source from the list to view its details.
-         </div>
-      );
-  }
+    // Get all record IDs
+    const recordIds = dataRecords.map(r => r.id);
+    
+    // Get all job IDs from results
+    const jobIds = Array.from(new Set(classificationResults.map(r => r.job_id)));
+    
+    // Get all scheme IDs from results
+    const schemeIds = Array.from(new Set(classificationResults.map(r => r.scheme_id)));
 
-  if (!dataSource && !isLoadingSource) {
-      return (
-         <div className="p-8 text-center text-muted-foreground">
-           Could not load details for the selected data source.
-         </div>
-      );
-  }
-
-  const displayTitle = dataSource?.name || `Source ${dataSource?.id}`;
-  const displayType = dataSource?.type;
-  const displayStatus = dataSource?.status;
-  const displaySourceOrigin = dataSource?.origin_details ? JSON.stringify(dataSource.origin_details, null, 2) : 'N/A';
-  const displaySourceMeta = dataSource?.source_metadata ? JSON.stringify(dataSource.source_metadata, null, 2) : 'N/A';
-  const displayInsertionDate = dataSource?.created_at;
-
-  let displayTextContent: string | null = null;
-  if (dataSource?.type === 'text_block') {
-    if (dataRecords.length > 0 && dataRecords[0].text_content) {
-        displayTextContent = dataRecords[0].text_content;
-    } else if (!sourceError && !isLoadingSource) {
-        displayTextContent = "(No text content extracted or available for this source)";
-    }
-  }
-
-  const renderJobSelector = () => {
-    if (jobsWithResultsForDataSource.length === 0 && !isLoadingResults && !isLoadingSource) {
-      return (
-        <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">Available Jobs</h4>
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            No classification jobs found for this data source.
-          </p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">Filter by Job</h4>
-          {(isLoadingResults || isLoadingSource) && <Loader2 className="h-4 w-4 animate-spin" />}
-        </div>
-        <div className="mt-2">
-          <Select
-            value={selectedJobId || "all"}
-            onValueChange={handleJobSelect}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a job to filter results" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All jobs for this data source ({classificationResults.length} results)</SelectItem>
-              {jobsWithResultsForDataSource.map((job) => (
-                <SelectItem key={job.id} value={job.id.toString()}>
-                  {job.name || `Job ${job.id}`} ({format(new Date(job.created_at), "PP")}) - {jobResultCounts[job.id] || 0} results
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-    );
+    setIsDatasetCreateDialogOpen(true);
   };
 
-  const renderClassificationSection = () => (
-    <div className="p-4 w-full bg-card rounded-lg shadow-sm border">
-      <h3 className="text-lg font-semibold mb-3">Classification Results</h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        {renderJobSelector()}
-      </div>
-
-      {isLoadingResults ? (
-            <div className="text-center py-8 text-muted-foreground flex items-center justify-center gap-2">
-               <Loader2 className="h-4 w-4 animate-spin" /> Loading results...
-             </div>
-         ) : resultsError ? (
-             <Alert variant="destructive">
-                 <AlertCircle className="h-4 w-4" />
-                 <AlertTitle>Error Loading Results</AlertTitle>
-                 <AlertDescription>{resultsError}</AlertDescription>
-             </Alert>
-         ) : (
-            <Tabs defaultValue="chart" className="mt-2">
-                <TabsList className="mb-2">
-                    <TabsTrigger value="chart">Time Series Chart</TabsTrigger>
-                </TabsList>
-                <TabsContent value="chart" className="min-h-[400px]">
-                    {filteredResults.length > 0 ? (
-                        <>
-                            <div className="text-center p-4 text-muted-foreground italic">
-                               Chart temporarily disabled for debugging.
-                            </div>
-                        </>
-                    ) : (
-                        <div className="text-center py-8 text-muted-foreground">
-                            No classification results available {selectedJobId !== null ? 'for the selected job' : 'for this data source'}.
-                        </div>
-                    )}
-                </TabsContent>
-            </Tabs>
-         )
-      }
+  // Add dataset creation button to the header actions
+  const renderHeaderActions = () => (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleCreateDataset}
+        disabled={!dataSource || dataRecords.length === 0}
+      >
+        <PlusCircle className="h-4 w-4 mr-2" />
+        Create Dataset
+      </Button>
+      {/* ... other header actions ... */}
     </div>
   );
 
+  // Add helper functions for display
+  const displayTitle = (dataSource: DataSourceRead | null) => {
+    if (!dataSource) return 'No source selected';
+    return dataSource.name;
+  };
+
+  const displayType = (dataSource: DataSourceRead | null) => {
+    if (!dataSource) return '';
+    return dataSource.type;
+  };
+
+  // Add selected row detail rendering
   const renderSelectedRowDetail = () => {
     if (!selectedRowData || dataSource?.type !== 'csv') {
       return null;
@@ -923,7 +940,7 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     return (
       <div className="mt-4 p-4 rounded-lg bg-muted/20 shadow-sm">
         <h4 className="text-md font-semibold mb-3 flex items-center">
-          Details for Row {selectedRowData.row_number}
+          Details for Row {selectedRowData?.row_number}
           <Badge variant="outline" className="ml-2 text-xs">Selected Row</Badge>
         </h4>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -934,9 +951,83 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
                 <div key={`${column}-${colIndex}`} className="grid grid-cols-3 gap-2 text-sm border-b py-1 last:border-b-0">
                   <span className="font-medium col-span-1 break-words">{column}</span>
                   <span className="col-span-2 break-words text-muted-foreground">
-                    {typeof selectedRowData.row_data?.[column] === 'object'
-                      ? JSON.stringify(selectedRowData.row_data[column])
-                      : String(selectedRowData.row_data?.[column] ?? '(empty)')}
+                    {typeof selectedRowData?.row_data?.[column] === 'object'
+                      ? JSON.stringify(selectedRowData?.row_data?.[column])
+                      : String(selectedRowData?.row_data?.[column] ?? '(empty)')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-md p-3 bg-background/50 shadow-sm">
+            <h5 className="text-sm font-medium mb-2 pb-1 border-b">Classifications for this Row</h5>
+            <div className="max-h-[350px] overflow-y-auto pr-1">
+              {selectedRowResults.length > 0 ? (
+                selectedRowResults.map((result) => {
+                  const scheme = schemes.find(s => s.id === result.scheme_id);
+                  if (!scheme) return null;
+                  const job = result.job_id ? availableJobsFromStore[result.job_id] : null;
+                  const jobName = job?.name || (result.job_id ? `Job ${result.job_id}` : 'N/A');
+                  return (
+                    <div
+                      key={result.id}
+                      className="p-2 bg-card rounded border text-xs cursor-pointer hover:bg-muted/50"
+                       onClick={() => {
+                         setSelectedResult(result);
+                         setIsResultDialogOpen(true);
+                       }}
+                    >
+                       <div className="flex items-center gap-1 mb-1">
+                         <span className="font-semibold">{scheme.name}</span>
+                         <Badge variant="outline" className="text-xs font-normal">{jobName}</Badge>
+                       </div>
+                      <ClassificationResultDisplay
+                        result={result}
+                        scheme={scheme}
+                        compact={true}
+                      />
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  No classification results found for this row {selectedJobId !== null ? `in ${jobNameForDialog}` : '(across all jobs)'}.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Add job name for dialog
+  const jobNameForDialog = useMemo(() => {
+    if (!dataSource) return '';
+    return `${dataSource.name} - ${new Date().toLocaleString()}`;
+  }, [dataSource]);
+
+  // --- Rendering Logic Starts Here ---
+
+  if (isLoadingSource && !dataSource) {
+    return (
+      <div className="mt-4 p-4 rounded-lg bg-muted/20 shadow-sm">
+        <h4 className="text-md font-semibold mb-3 flex items-center">
+          Details for Row {selectedRowData?.row_number}
+          <Badge variant="outline" className="ml-2 text-xs">Selected Row</Badge>
+        </h4>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2 rounded-md p-3 bg-background/50 shadow-sm">
+            <h5 className="text-sm font-medium mb-2 pb-1 border-b">Row Data</h5>
+            <div className="max-h-[350px] overflow-y-auto pr-1">
+              {csvData?.columns.map((column, colIndex) => (
+                <div key={`${column}-${colIndex}`} className="grid grid-cols-3 gap-2 text-sm border-b py-1 last:border-b-0">
+                  <span className="font-medium col-span-1 break-words">{column}</span>
+                  <span className="col-span-2 break-words text-muted-foreground">
+                    {typeof selectedRowData?.row_data?.[column] === 'object'
+                      ? JSON.stringify(selectedRowData?.row_data?.[column])
+                      : String(selectedRowData?.row_data?.[column] ?? '(empty)')}
                   </span>
                 </div>
               ))}
@@ -1083,6 +1174,155 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
       );
     }
     return null; // Return null if not a PDF source
+  };
+
+  const renderClassificationSection = () => {
+    const renderTimeSeriesChart = () => {
+      if (!filteredResults.length) {
+        return (
+          <div className="text-center py-8 text-muted-foreground">
+            No classification results available {selectedJobId !== null ? 'for the selected job' : 'for this data source'}.
+          </div>
+        );
+      }
+
+      // Group results by scheme
+      const resultsByScheme = filteredResults.reduce((acc, result) => {
+        const scheme = schemes.find(s => s.id === result.scheme_id);
+        if (!scheme) return acc;
+        
+        if (!acc[scheme.id]) {
+          acc[scheme.id] = {
+            scheme,
+            results: []
+          };
+        }
+        acc[scheme.id].results.push(result);
+        return acc;
+      }, {} as Record<number, { scheme: ClassificationSchemeRead, results: EnhancedClassificationResultRead[] }>);
+
+      return (
+        <div className="space-y-4">
+          {Object.values(resultsByScheme).map(({ scheme, results }) => (
+            <Card key={scheme.id} className="p-4">
+              <CardHeader className="p-0 pb-4">
+                <CardTitle className="text-base flex items-center justify-between">
+                  {scheme.name}
+                  <Badge variant="outline" className="ml-2">
+                    {results.length} results
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <div className="space-y-2">
+                {results.map(result => (
+                  <div
+                    key={result.id}
+                    className="p-2 bg-muted/20 rounded border text-sm cursor-pointer hover:bg-muted/30"
+                    onClick={() => {
+                      setSelectedResult(result);
+                      setIsResultDialogOpen(true);
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-2">
+                        {result.job_id && (
+                          <Badge variant="outline" className="text-xs">
+                            {availableJobsFromStore[result.job_id]?.name || `Job ${result.job_id}`}
+                          </Badge>
+                        )}
+                        {result.timestamp && (
+                          <span className="text-xs text-muted-foreground">
+                            {format(new Date(result.timestamp), "PP")}
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (result.job_id && onLoadIntoRunner) {
+                            handleLoadIntoRunner(result);
+                          }
+                        }}
+                        disabled={!result.job_id || !onLoadIntoRunner}
+                      >
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                        Load in Runner
+                      </Button>
+                    </div>
+                    <ClassificationResultDisplay
+                      result={result}
+                      scheme={scheme}
+                      compact={true}
+                    />
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ))}
+        </div>
+      );
+    };
+
+    return (
+      <div className="p-4 w-full bg-card rounded-lg shadow-sm border">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {renderJobSelector()}
+        </div>
+
+        {isLoadingResults ? (
+          <div className="text-center py-8 text-muted-foreground flex items-center justify-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading results...
+          </div>
+        ) : resultsError ? (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error Loading Results</AlertTitle>
+            <AlertDescription>{resultsError}</AlertDescription>
+          </Alert>
+        ) : (
+          <Tabs defaultValue="list" className="mt-2">
+            <TabsList className="mb-2">
+              <TabsTrigger value="list">List View</TabsTrigger>
+              <TabsTrigger value="chart">Time Series</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="list" className="min-h-[400px]">
+              {renderTimeSeriesChart()}
+            </TabsContent>
+            
+            <TabsContent value="chart" className="min-h-[400px]">
+              {filteredResults.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="p-4 border rounded-lg">
+                    <ClassificationTimeAxisControls
+                      config={timeAxisConfig}
+                      onChange={setTimeAxisConfig}
+                      schemes={schemes}
+                    />
+                  </div>
+                  <div className="p-4 border rounded-lg">
+                    <ResultsChart
+                      results={filteredResults.map(adaptEnhancedResultReadToFormattedResult)}
+                      schemes={schemes}
+                      onDataPointClick={handleChartPointClick}
+                      timeAxisConfig={timeAxisConfig}
+                      filters={[]}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  No classification results available {selectedJobId !== null ? 'for the selected job' : 'for this data source'}.
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        )}
+      </div>
+    );
   };
 
   const renderContent = () => {
@@ -1243,109 +1483,176 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
           </div>
         );
       case 'url_list':
+        const originalUrls = (dataSource.origin_details as any)?.urls || [];
+        const hasUrlListChanged = JSON.stringify([...editableUrls].sort()) !== JSON.stringify([...originalUrls].sort());
+
         return (
-          <div className="space-y-3">
-            {isLoadingUrlList ? (
-              <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...
-              </div>
-            ) : urlListError ? (
-              <div className="text-center py-4 text-red-600">
-                {urlListError}
-              </div>
-            ) : urlListDataRecords.length > 0 ? (
-              <>
-                <div className="space-y-4 overflow-y-auto pr-1 max-h-[60vh]">
-                  {urlListDataRecords.map((record) => {
-                    const recordResults = getResultsForRecord(record.id);
-                    return (
-                      <div key={record.id} className="p-3 rounded-md bg-card space-y-2 shadow-sm hover:shadow-md transition-shadow">
-                        <div className="text-xs font-medium text-muted-foreground flex items-center justify-between">
-                          <span>Record ID: {record.id}</span>
-                          {record.source_metadata && typeof (record.source_metadata as any).url === 'string' &&
-                            <a href={(record.source_metadata as any).url} target="_blank" rel="noopener noreferrer" className="ml-1 text-primary hover:underline inline-flex items-center">
-                              <span className="truncate max-w-[350px]">{(record.source_metadata as any).url}</span>
-                              <ExternalLink className="h-3 w-3 ml-1 shrink-0" />
-                            </a>
-                          }
-                        </div>
-                        <p className="text-sm whitespace-pre-wrap max-h-[200px] overflow-y-auto bg-secondary/30 p-2 rounded border">
-                          {record.text_content || <span className="italic text-muted-foreground/70">No content extracted.</span>}
-                        </p>
-                        {recordResults.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-dashed">
-                            <h5 className="text-xs font-semibold mb-1">Classifications for this record:</h5>
-                            <div className="space-y-1">
-                              {recordResults.map(result => {
-                                const scheme = schemes.find(s => s.id === result.scheme_id);
-                                if (!scheme) return null;
-                                const job = result.job_id ? availableJobsFromStore[result.job_id] : null;
-                                const jobName = job?.name || (result.job_id ? `Job ${result.job_id}` : 'N/A');
-                                return (
-                                  <div
-                                    key={result.id}
-                                    className="p-1.5 bg-background rounded border text-xs cursor-pointer hover:bg-muted/50"
-                                    onClick={() => {
-                                      setSelectedResult(result);
-                                      setIsResultDialogOpen(true);
-                                    }}
-                                  >
-                                      <div className="flex items-center gap-1 mb-1">
-                                        <span className="font-semibold">{scheme.name}</span>
-                                        <Badge variant="outline" className="text-xs font-normal">{jobName}</Badge>
-                                      </div>
-                                    <ClassificationResultDisplay
-                                      result={result}
-                                      scheme={scheme}
-                                      compact={true}
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* --- Left Column: URL Editor --- */}
+              <div className="space-y-3">
+                  <h4 className="text-md font-semibold flex items-center justify-between">
+                      Source URLs ({editableUrls.length})
+                      <Button onClick={handleRefetch} variant="outline" size="sm" disabled={isRefetching || isSavingUrls}>
+                          {isRefetching ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                          Re-fetch All
+                      </Button>
+                  </h4>
+                  <ScrollArea className="h-[250px] w-full border rounded-md p-3">
+                      <div className="space-y-2 ">
+                          {editableUrls.map((url, index) => (
+                              <div key={index} className="flex items-center justify-between gap-2 text-sm bg-background p-1.5 rounded">
+                                  <a href={url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-blue-600 flex-1" title={url}>
+                                      {url}
+                                  </a>
+                                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0" onClick={() => handleRemoveUrl(url)} disabled={isSavingUrls}>
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                              </div>
+                          ))}
+                          {editableUrls.length === 0 && (
+                              <p className="text-sm text-muted-foreground italic text-center py-2">No URLs added yet.</p>
+                          )}
                       </div>
-                    );
-                  })}
-                </div>
-                {urlListTotalPages > 0 && (
-                  <div className="flex justify-center items-center pt-2 flex-none">
-                     <Pagination>
-                       <PaginationContent>
-                         <PaginationItem>
-                           <PaginationPrevious
-                             href="#"
-                             onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage - 1); }}
-                             className={cn(
-                               urlListCurrentPage === 1 ? "pointer-events-none opacity-50" : "",
-                               "h-8 px-2" // Smaller pagination buttons
-                             )}
-                           />
-                         </PaginationItem>
-                         <PaginationItem>
-                           <span className="px-3 text-sm">Page {urlListCurrentPage} of {urlListTotalPages} ({urlListTotalRecords} records)</span>
-                         </PaginationItem>
-                         <PaginationItem>
-                           <PaginationNext
-                             href="#"
-                             onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage + 1); }}
-                             className={cn(
-                               urlListCurrentPage === urlListTotalPages ? "pointer-events-none opacity-50" : "",
-                               "h-8 px-2" // Smaller pagination buttons
-                             )}
-                           />
-                         </PaginationItem>
-                       </PaginationContent>
-                     </Pagination>
+                  </ScrollArea>
+                  <div className="flex items-center gap-2">
+                      <Input
+                          type="url"
+                          placeholder="Add new URL (e.g., https://...)"
+                          value={newUrlInput}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) => setNewUrlInput(e.target.value)}
+                          className="h-9 text-sm"
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
+                          disabled={isSavingUrls}
+                      />
+                      <Button onClick={handleAddUrl} size="sm" disabled={isSavingUrls || !newUrlInput.trim()}>
+                          <PlusCircle className="h-4 w-4 mr-1" /> Add
+                      </Button>
                   </div>
-                )}
-              </>
-            ) : (
-              <div className="text-center py-4 text-muted-foreground italic">
-                No scraped content records found for this URL list source.
+                  <Button onClick={handleSaveUrls} size="sm" disabled={isSavingUrls || !hasUrlListChanged}>
+                      {isSavingUrls ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                      Save URL List Changes
+                  </Button>
               </div>
-            )}
+
+              {/* --- Right Column: Scraped Records --- */}
+              <div className="space-y-3">
+                  <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
+                  {/* ---> ADDED: View Mode Toggle Buttons --- */}
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Button
+                      variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
+                      size="sm"
+                      onClick={() => setScrapedContentViewMode('flat')}
+                    >
+                      Flat List (Time)
+                    </Button>
+                    <Button
+                      variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
+                      size="sm"
+                      onClick={() => setScrapedContentViewMode('grouped')}
+                    >
+                      Grouped by URL
+                    </Button>
+                  </div>
+                  {/* <--- END ADDED --- */}
+
+                  {isLoadingUrlList ? (
+                       <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...</div>
+                  ) : urlListError ? (
+                       <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Error Loading Records</AlertTitle><AlertDescription>{urlListError}</AlertDescription></Alert>
+                  ) : urlListDataRecords.length > 0 ? (
+                      <>
+                          <ScrollArea className="h-[400px] w-full border rounded-md p-3">
+                              <div className="space-y-3">
+                                  {scrapedContentViewMode === 'flat' ? (
+                                      // --- Flat List View (Sorted by Time) ---
+                                      sortedFlatList.map((record) => {
+                                          const originalUrl = (record.source_metadata as any)?.original_url;
+                                          return (
+                                              <div
+                                                key={record.id}
+                                                className={cn(
+                                                  "p-2 rounded bg-background space-y-1 border cursor-pointer transition-colors",
+                                                  highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
+                                                )}
+                                                onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
+                                              >
+                                                  <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+                                                      <span>Record ID: {record.id}</span>
+                                                      {originalUrl &&
+                                                          <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-primary hover:underline inline-flex items-center text-xs" title={originalUrl}>
+                                                              <span className="truncate max-w-[200px]">{originalUrl}</span>
+                                                              <ExternalLink className="h-3 w-3 ml-1 shrink-0" />
+                                                          </a>
+                                                      }
+                                                      <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                                                         {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
+                                                      </span>
+                                                  </div>
+                                                  <p className={cn(
+                                                    "text-sm whitespace-pre-wrap bg-secondary/30 p-1.5 rounded border",
+                                                    highlightedRecordId === record.id ? "max-h-none" : "max-h-[100px] overflow-y-auto"
+                                                  )}>
+                                                      {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
+                                                  </p>
+                                              </div>
+                                          );
+                                      })
+                                  ) : (
+                                      Object.entries(groupedRecords).map(([url, recordsInGroup]) => (
+                                          <div key={url} className="mb-4 border rounded-md">
+                                              <div className="bg-muted/50 px-3 py-1.5 border-b">
+                                                  <a href={url !== 'Unknown URL' ? url : undefined} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary hover:underline flex items-center" title={url}>
+                                                      {url}
+                                                      {url !== 'Unknown URL' && <ExternalLink className="h-3.5 w-3.5 ml-1.5 shrink-0" />}
+                                                  </a>
+                                              </div>
+                                              <div className="p-2 space-y-2">
+                                                  {recordsInGroup.map((record) => (
+                                                      <div
+                                                        key={record.id}
+                                                        className={cn(
+                                                          "p-1.5 rounded bg-background space-y-0.5 border cursor-pointer transition-colors",
+                                                          highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
+                                                        )}
+                                                        onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
+                                                      >
+                                                          <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+                                                              <span>Record ID: {record.id}</span>
+                                                              <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                                                                 {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
+                                                              </span>
+                                                          </div>
+                                                          <p className={cn(
+                                                            "text-sm whitespace-pre-wrap bg-secondary/30 p-1 rounded border",
+                                                            highlightedRecordId === record.id ? "max-h-none" : "max-h-[80px] overflow-y-auto"
+                                                          )}>
+                                                              {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
+                                                          </p>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                          </div>
+                                      ))
+                                  )}
+                              </div>
+                          </ScrollArea>
+                          {urlListTotalPages > 0 && (
+                              <div className="flex justify-center items-center pt-1 flex-none">
+                                  <Pagination>
+                                      <PaginationContent>
+                                          <PaginationItem><PaginationPrevious href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage - 1); }} className={cn(urlListCurrentPage === 1 ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
+                                          <PaginationItem><span className="px-3 text-sm">Page {urlListCurrentPage} of {urlListTotalPages}</span></PaginationItem>
+                                          <PaginationItem><PaginationNext href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage + 1); }} className={cn(urlListCurrentPage === urlListTotalPages ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
+                                      </PaginationContent>
+                                  </Pagination>
+                              </div>
+                          )}
+                      </>
+                  ) : (
+                      <div className="text-center py-4 text-muted-foreground italic">No scraped content records found for this URL list source.</div>
+                  )}
+              </div>
           </div>
         );
       case 'pdf':
@@ -1373,177 +1680,229 @@ const DataRecordDetailView: React.FC<DataRecordDetailViewProps> = ({
     }
   };
 
+  const renderJobSelector = () => {
+    if (jobsWithResultsForDataSource.length === 0 && !isLoadingResults && !isLoadingSource) {
+      return (
+        <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">Available Jobs</h4>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            No classification jobs found for this data source.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mb-4 p-3 bg-muted/20 rounded-lg border">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-medium">Filter by Job</h4>
+          {(isLoadingResults || isLoadingSource) && <Loader2 className="h-4 w-4 animate-spin" />}
+        </div>
+        <div className="mt-2">
+          <Select
+            value={selectedJobId || "all"}
+            onValueChange={handleJobSelect}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a job to filter results" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                All jobs for this data source ({classificationResults.length} results)
+              </SelectItem>
+              {jobsWithResultsForDataSource.map((job) => (
+                <SelectItem key={job.id} value={job.id.toString()}>
+                  {job.name || `Job ${job.id}`} ({format(new Date(job.created_at), "PP")}) - {jobResultCounts[job.id] || 0} results
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <>
-      <div className="flex flex-col h-full">
-        <div className="flex-none bg-background z-10 border-b">
-          <div className="flex items-center justify-between px-4 pl-3 py-0">
-            <h1 className="text-xl font-bold">Data Detail View</h1>
+    <div className="flex flex-col h-full">
+      {/* Add header with actions */}
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold">{displayTitle(dataSource)}</h2>
+        {renderHeaderActions()}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {dataSource && (
+            <div className="flex items-start gap-4 text-sm">
+              <Avatar>
+                <AvatarImage alt={displayTitle(dataSource) ?? ''} />
+                <AvatarFallback>
+                  {displayTitle(dataSource)
+                    ?.substring(0, 2)
+                    ?.toUpperCase() || 'DS'}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid gap-1 flex-1">
+                <div className="font-semibold flex items-center gap-2 flex-wrap">
+                  {displayTitle(dataSource)}
+                  <Badge variant="outline">{displayType(dataSource)}</Badge>
+                  <Badge variant={
+                    dataSource.status === 'complete' ? 'default'
+                    : dataSource.status === 'failed' ? 'destructive'
+                    : dataSource.status === 'processing' ? 'secondary'
+                    : dataSource.status === 'pending' ? 'secondary'
+                    : 'outline'
+                  }
+                    className="capitalize flex items-center gap-1"
+                  >
+                    {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {dataSource.status === 'complete' ? 'Completed' : dataSource.status === 'failed' ? 'Failed' : dataSource.status === 'processing' ? 'Processing' : dataSource.status === 'pending' ? 'Pending' : 'Not Started'}
+                  </Badge>
+                </div>
+                <div className="text-xs">
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger className="cursor-default text-left">
+                        <span className="font-medium">Origin Details:</span> <span className="italic">Hover to see</span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <pre className="text-xs whitespace-pre-wrap break-all">{dataSource.origin_details ? JSON.stringify(dataSource.origin_details) : 'No origin details available'}</pre>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <div className="text-xs">
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger className="cursor-default text-left">
+                        <span className="font-medium">Source Metadata:</span> <span className="italic">Hover to see</span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <pre className="text-xs whitespace-pre-wrap break-all">{dataSource.source_metadata ? JSON.stringify(dataSource.source_metadata) : 'No source metadata available'}</pre>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </div>
+              {dataSource.created_at && (
+                <div className="ml-auto text-xs text-muted-foreground whitespace-nowrap shrink-0">
+                  Created: {format(new Date(dataSource.created_at), "PPp")}
+                </div>
+              )}
+            </div>
+        )}
+
+        {dataSource && renderScheduledIngestionCard()}
+
+        {dataSource && (
+          <Tabs defaultValue="content" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 mb-2">
+              <TabsTrigger value="content">Source Content / Summary</TabsTrigger>
+              <TabsTrigger value="results">Overall Classification Results</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="content" className="mt-2 rounded-md p-1">
+               <div className="space-y-4">
+                {renderContent()}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="results" className="mt-2 border rounded-md p-1">
+               <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-md font-semibold">Overall Classification Results ({classificationResults.length} total)</h4>
+                   <Button
+                     variant="outline"
+                     size="sm"
+                     onClick={handleRefreshClassificationResults}
+                     disabled={isLoadingResults || isLoadingSource}
+                     className="text-xs h-7 px-2"
+                   >
+                     <RefreshCw className={`h-3 w-3 mr-1 ${isLoadingResults ? 'animate-spin' : ''}`} />
+                     Refresh
+                   </Button>
+                </div>
+              {renderClassificationSection()}
+            </TabsContent>
+          </Tabs>
+        )}
+
+      </div>
+
+      <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedResult?.scheme_id && schemes.find(s => s.id === selectedResult.scheme_id)?.name}
+              {selectedResult?.job_id && (
+                <Badge variant="outline" className="text-sm font-normal">
+                  {availableJobsFromStore[selectedResult.job_id]?.name || `Job ${selectedResult.job_id}`}
+                </Badge>
+              )}
+            </DialogTitle>
+            {selectedResult?.timestamp && (
+              <p className="text-xs text-muted-foreground -mt-2">
+                Created: {format(new Date(selectedResult.timestamp), "PPpp")}
+              </p>
+            )}
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto pr-2">
+            {selectedResult && (
+              <ClassificationResultDisplay
+                result={selectedResult}
+                scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
+                renderContext="dialog"
+              />
+            )}
+          </div>
+          <DialogFooter className="mt-4 pt-4 border-t flex justify-between sm:justify-between">
+             {selectedResult?.job_id && onLoadIntoRunner && (
+               <Button
+                 variant="default"
+                 size="sm"
+                 onClick={() => {
+                   if (selectedResult) {
+                     handleLoadIntoRunner(selectedResult);
+                   }
+                   setIsResultDialogOpen(false);
+                 }}
+                 className="bg-primary text-primary-foreground hover:bg-primary/90"
+               >
+                 <ExternalLink className="h-4 w-4 mr-2" />
+                 Load Job in Runner
+               </Button>
+             )}
+             {(!selectedResult?.job_id || !onLoadIntoRunner) && <div />}
             <Button
               variant="outline"
               size="sm"
-              onClick={() => dataSource && onEdit(dataSource)}
-              disabled={!dataSource || isLoadingSource}
+              onClick={() => setIsResultDialogOpen(false)}
             >
-              Edit Details
+              Close
             </Button>
-          </div>
-        </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {dataSource && (
-              <div className="flex items-start gap-4 text-sm">
-                <Avatar>
-                  <AvatarImage alt={displayTitle} />
-                  <AvatarFallback>
-                    {displayTitle
-                      ?.substring(0, 2)
-                      ?.toUpperCase() || 'DS'}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="grid gap-1 flex-1">
-                  <div className="font-semibold flex items-center gap-2 flex-wrap">
-                    {displayTitle}
-                    <Badge variant="outline">{displayType}</Badge>
-                    <Badge variant={
-                      dataSource.status === 'complete' ? 'default'
-                      : dataSource.status === 'failed' ? 'destructive'
-                      : dataSource.status === 'processing' ? 'secondary'
-                      : dataSource.status === 'pending' ? 'secondary'
-                      : 'outline'
-                    }
-                      className="capitalize flex items-center gap-1"
-                    >
-                      {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
-                      {displayStatus}
-                    </Badge>
-                  </div>
-                  <div className="text-xs">
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger className="cursor-default text-left">
-                          <span className="font-medium">Origin Details:</span> <span className="italic">Hover to see</span>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-md">
-                          <pre className="text-xs whitespace-pre-wrap break-all">{displaySourceOrigin}</pre>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                  <div className="text-xs">
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger className="cursor-default text-left">
-                          <span className="font-medium">Source Metadata:</span> <span className="italic">Hover to see</span>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-md">
-                          <pre className="text-xs whitespace-pre-wrap break-all">{displaySourceMeta}</pre>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                </div>
-                {displayInsertionDate && (
-                  <div className="ml-auto text-xs text-muted-foreground whitespace-nowrap shrink-0">
-                    Created: {format(new Date(displayInsertionDate), "PPp")}
-                  </div>
-                )}
-              </div>
-          )}
+      {/* Add DatasetCreateDialog */}
+      <DatasetCreateDialog
+        open={isDatasetCreateDialogOpen}
+        onOpenChange={setIsDatasetCreateDialogOpen}
+        onSuccess={() => {
+          toast({
+            title: "Dataset created successfully",
+            description: "You can now view the dataset in the datasets page",
+          });
+          setIsDatasetCreateDialogOpen(false);
+        }}
+        initialDatarecordIds={dataRecords.map(r => r.id)}
+        initialSchemeIds={Array.from(new Set(classificationResults.map(r => r.scheme_id)))}
+        initialJobIds={Array.from(new Set(classificationResults.map(r => r.job_id)))}
+      />
 
-          {dataSource && renderScheduledIngestionCard()}
-
-          {dataSource && (
-            <Tabs defaultValue="content" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-2">
-                <TabsTrigger value="content">Source Content / Summary</TabsTrigger>
-                <TabsTrigger value="results">Overall Classification Results</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="content" className="mt-2 rounded-md p-1">
-                 <div className="space-y-4">
-                  {renderContent()}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="results" className="mt-2 border rounded-md p-1">
-                 <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-md font-semibold">Overall Classification Results ({classificationResults.length} total)</h4>
-                     <Button
-                       variant="outline"
-                       size="sm"
-                       onClick={handleRefreshClassificationResults}
-                       disabled={isLoadingResults || isLoadingSource}
-                       className="text-xs h-7 px-2"
-                     >
-                       <RefreshCw className={`h-3 w-3 mr-1 ${isLoadingResults ? 'animate-spin' : ''}`} />
-                       Refresh
-                     </Button>
-                  </div>
-                {renderClassificationSection()}
-              </TabsContent>
-            </Tabs>
-          )}
-
-        </div>
-
-        <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                {selectedResult?.scheme_id && schemes.find(s => s.id === selectedResult.scheme_id)?.name}
-                {selectedResult?.job_id && (
-                  <Badge variant="outline" className="text-sm font-normal">
-                    {availableJobsFromStore[selectedResult.job_id]?.name || `Job ${selectedResult.job_id}`}
-                  </Badge>
-                )}
-              </DialogTitle>
-              {selectedResult?.timestamp && (
-                <p className="text-xs text-muted-foreground -mt-2">
-                  Created: {format(new Date(selectedResult.timestamp), "PPpp")}
-                </p>
-              )}
-            </DialogHeader>
-            <div className="max-h-[60vh] overflow-y-auto pr-2">
-              {selectedResult && (
-                <ClassificationResultDisplay
-                  result={selectedResult}
-                  scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
-                  renderContext="dialog"
-                />
-              )}
-            </div>
-            <DialogFooter className="mt-4 pt-4 border-t flex justify-between sm:justify-between">
-               {selectedResult?.job_id && onLoadIntoRunner && (
-                 <Button
-                   variant="default"
-                   size="sm"
-                   onClick={() => {
-                     if (selectedResult) {
-                       handleLoadIntoRunner(selectedResult);
-                     }
-                     setIsResultDialogOpen(false);
-                   }}
-                   className="bg-primary text-primary-foreground hover:bg-primary/90"
-                 >
-                   <ExternalLink className="h-4 w-4 mr-2" />
-                   Load Job in Runner
-                 </Button>
-               )}
-               {(!selectedResult?.job_id || !onLoadIntoRunner) && <div />}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsResultDialogOpen(false)}
-              >
-                Close
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+      {/* Add Toaster */}
       <Toaster />
-    </>
+    </div>
   );
 }
 
