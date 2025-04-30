@@ -18,7 +18,8 @@ import {
   Column,
   CellContext,
   HeaderContext,
-  PaginationState
+  PaginationState,
+  TableMeta
 } from '@tanstack/react-table';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,7 +32,7 @@ import { checkFilterMatch, getTargetKeysForScheme } from '@/lib/classification/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2 } from 'lucide-react';
 import { getTargetFieldDefinition } from './ClassificationResultFilters';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
@@ -46,11 +47,16 @@ import {
     DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { DataTable } from "@/components/collection/workspaces/tables/data-table";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
   interface TableMeta<TData extends unknown> {
     onRowClick?: (row: any) => void;
+    onRowAction?: (action: string, rowData: TData) => void;
+    onRowDelete?: (rowData: TData) => void;
   }
 }
 
@@ -85,6 +91,43 @@ interface ClassificationResultsTableProps {
   onResultAction?: (action: string, result: ResultWithSourceInfo) => void;
 }
 
+// --- UTILITY FUNCTIONS (Keep existing helpers like getHeaderClassName) --- //
+
+// --- NEW SUB-TABLE COMPONENT --- //
+interface SubResultsTableProps {
+  results: ResultWithSourceInfo[];
+  columns: ColumnDef<ResultWithSourceInfo>[];
+  onResultAction?: (action: string, result: ResultWithSourceInfo) => void;
+  onResultDelete?: (resultId: number) => void;
+  isLoading?: boolean; // Pass loading state if needed
+}
+
+const SubResultsTable: React.FC<SubResultsTableProps> = ({
+  results,
+  columns,
+  onResultAction,
+  onResultDelete,
+  isLoading = false,
+}) => {
+  // No useReactTable hook needed here as DataTable handles it
+
+  return (
+    <div className="p-4 bg-muted/10 border-l-4 border-blue-600">
+      <DataTable<ResultWithSourceInfo, unknown>
+        data={results} // Pass data directly
+        columns={columns} // Pass columns directly
+        enableRowSelection={false} // Disable row selection for the sub-table
+        // Pass callbacks if DataTable component supports them via props
+        // This assumes DataTable has props like onRowAction, onRowDelete
+        // Check data-table.tsx for actual prop names
+        // onRowAction={onResultAction} 
+        // onRowDelete={onResultDelete ? (rowData) => onResultDelete(rowData.id) : undefined}
+      />
+    </div>
+  );
+};
+
+// --- MAIN COMPONENT --- //
 export function ClassificationResultsTable({
   results,
   schemes,
@@ -100,7 +143,6 @@ export function ClassificationResultsTable({
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState({});
   const [rowSelection, setRowSelection] = useState({});
-  const [expanded, setExpanded] = useState<ExpandedState>({});
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 10, // Default page size
@@ -108,395 +150,408 @@ export function ClassificationResultsTable({
   const { activeWorkspace } = useWorkspaceStore();
   const { loadSchemes } = useClassificationSystem();
 
+  // State for selected fields per scheme (Keep this)
+  const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
+    const initialState: Record<number, string[]> = {};
+    schemes.forEach(scheme => {
+      initialState[scheme.id] = scheme.fields.map(f => f.name);
+    });
+    return initialState;
+  });
+
+  // Effect to update state if schemes prop changes (Keep this)
+  useEffect(() => {
+    setSelectedFieldsPerScheme(prev => {
+      const newState: Record<number, string[]> = {};
+      schemes.forEach(scheme => {
+        newState[scheme.id] = prev[scheme.id] ?? scheme.fields.map(f => f.name);
+      });
+      return newState;
+    });
+  }, [schemes]);
+
   useEffect(() => {
     if (activeWorkspace && schemes.length === 0) {
       loadSchemes();
     }
   }, [activeWorkspace, schemes.length, loadSchemes]);
 
-  const groupedData = useMemo(() => {
-    // --- FIX: Add check for dataRecords ---
-    if (!dataRecords) {
-      console.warn("ClassificationResultsTable: dataRecords prop is missing or undefined.");
-      return []; // Return empty array if dataRecords are missing
-    }
-    // --- END FIX ---
+  // Define EnrichedDataRecord type (Keep this)
+  type EnrichedDataRecord = DataRecordRead & {
+    dataSourceName: string | null;
+    resultsMap: Record<number, ResultWithSourceInfo>; // Map scheme_id to result
+  };
 
-    // 1. Filter results based on global filters first
-    const resultsByDataRecord = results.reduce((acc, result) => {
-        const key = result.datarecord_id;
-        if (!acc[key]) acc[key] = [];
-        acc[key].push(result);
+  // *** USE FLAT Data Preparation Logic ***
+  const tableData = useMemo((): EnrichedDataRecord[] => {
+    if (!dataRecords || !results) {
+      console.warn("ClassificationResultsTable: dataRecords or results prop is missing.");
+      return [];
+    }
+
+    // 1. Create lookup maps
+    const sourceInfoMap = new Map<number, { name: string }>();
+    dataSources.forEach(ds => {
+      if (typeof ds.id === 'number' && typeof ds.name === 'string') {
+        sourceInfoMap.set(ds.id, { name: ds.name });
+      }
+    });
+
+    const resultsByRecordId = results.reduce((acc, result) => {
+        const recordId = result.datarecord_id;
+        if (!acc[recordId]) acc[recordId] = [];
+        acc[recordId].push(result);
         return acc;
     }, {} as Record<number, ResultWithSourceInfo[]>);
 
-    const filteredDataRecordIds = Object.keys(resultsByDataRecord).filter(datarecordId => {
-        const recordResults = resultsByDataRecord[Number(datarecordId)];
-        // Pass schemes directly to checkFilterMatch
-        return filters.every(filter => checkFilterMatch(filter, recordResults, schemes)); 
-    }).map(Number);
-
-    const filteredResults = results.filter(result => filteredDataRecordIds.includes(result.datarecord_id));
-
-    // 2. Create lookup maps
-    const recordToSourceMap = new Map<number, number>();
-    (dataRecords || []).forEach(rec => { 
-      // Ensure rec.id and rec.datasource_id are numbers before setting
-      if (typeof rec.id === 'number' && typeof rec.datasource_id === 'number') {
-        recordToSourceMap.set(rec.id, rec.datasource_id);
-      } else {
-        console.warn('Skipping data record due to missing id or datasource_id:', rec);
-      }
+    // 2. Filter DataRecords based on global filters
+    const filteredDataRecords = dataRecords.filter(record => {
+        const recordResults = resultsByRecordId[record.id] || [];
+        if (recordResults.length === 0 && filters.length > 0) return false;
+        return filters.every(filter => checkFilterMatch(filter, recordResults, schemes));
     });
 
-    const sourceInfoMap = new Map<number, { name: string }>();
-    dataSources.forEach(ds => {
-      // Ensure ds.id is a number and ds.name is a string before setting
-      if (typeof ds.id === 'number' && typeof ds.name === 'string') {
-        sourceInfoMap.set(ds.id, { name: ds.name });
-      } else {
-        console.warn('Skipping data source due to missing id or name:', ds);
-      }
+    // 3. Enrich filtered DataRecords
+    const enrichedRecords: EnrichedDataRecord[] = filteredDataRecords.map(record => {
+        const sourceInfo = typeof record.datasource_id === 'number'
+            ? sourceInfoMap.get(record.datasource_id)
+            : null;
+        const recordResults = resultsByRecordId[record.id] || [];
+        const resultsMap: Record<number, ResultWithSourceInfo> = {};
+        recordResults.forEach(res => {
+            resultsMap[res.scheme_id] = res;
+        });
+
+        return {
+            ...record,
+            dataSourceName: sourceInfo ? sourceInfo.name : 'Unknown Source',
+            resultsMap: resultsMap,
+        };
     });
 
-    // 3. Group the filtered results by DataSource
-    const groups: Record<number, DataSourceGroup> = {};
-    filteredResults.forEach(result => {
-      const datasourceId = recordToSourceMap.get(result.datarecord_id);
-      if (datasourceId !== undefined) {
-        const sourceInfo = sourceInfoMap.get(datasourceId);
-        if (sourceInfo) {
-          if (!groups[datasourceId]) {
-            groups[datasourceId] = {
-              dataSourceId: datasourceId,
-              dataSourceName: sourceInfo.name,
-              results: [],
-            };
-          }
-          // Enrich result with datasource info if not already present
-          const enrichedResult = {
-            ...result,
-            datasource_id: datasourceId,
-            datasource_name: sourceInfo.name
-          };
-          groups[datasourceId].results.push(enrichedResult);
-        }
-      }
-    });
+    console.log("Final FLAT tableData array:", enrichedRecords);
+    return enrichedRecords;
 
-    return Object.values(groups);
   }, [results, filters, schemes, dataRecords, dataSources]);
+  // *** END FLAT Data Preparation Logic ***
 
-  // Effect to expand first 5 rows when data changes
-  useEffect(() => {
-    if (groupedData.length > 0) {
-      const initialExpandedState: ExpandedState = {};
-      groupedData.slice(0, 5).forEach((_, index) => {
-        initialExpandedState[index] = true; // Expand rows by their index in the initial data
-      });
-      setExpanded(initialExpandedState);
-    }
-  }, [groupedData]); // Re-run when grouped data is recalculated
 
-  const columns: ColumnDef<DataSourceGroup>[] = [
-    {
-      id: 'expander',
-      header: () => null, // No header for expander
-      cell: ({ row }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={row.getToggleExpandedHandler()}
-          disabled={!row.getCanExpand()}
-          className="w-6 h-6 p-0"
-        >
-          {row.getIsExpanded() ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </Button>
-      ),
-    },
-    {
-      accessorKey: 'dataSourceName',
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        >
-          Source Name
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      ),
-      cell: ({ row }) => <div className="font-medium">{row.getValue('dataSourceName')}</div>,
-    },
-    {
-      id: 'resultCount',
-      header: 'Results Count',
-      cell: ({ row }) => row.original.results.length,
-    },
-    // Add more columns for aggregated data if needed
-  ];
-
-  // --- Sub-component columns (for expanded rows) ---
-  const subColumns: ColumnDef<ResultWithSourceInfo>[] = [
-    // Indent cell for visual hierarchy
-    {
-      id: 'recordLink',
-      header: 'Record ID',
-      cell: ({ row }) => (
-        <div className="pl-4"> {/* Indentation */}
-          <DocumentLink documentId={row.original.datarecord_id}>
-            <div className="hover:underline cursor-pointer">{row.original.datarecord_id}</div>
-          </DocumentLink>
-        </div>
-      ),
-    },
-    {
-      accessorKey: 'scheme_id',
-      header: 'Scheme',
-      cell: ({ row }) => {
-        const scheme = schemes.find(s => s.id === row.original.scheme_id);
-        return scheme?.name || `Scheme ${row.original.scheme_id}`;
+  // *** FLAT COLUMNS Definition ***
+  const columns = useMemo((): ColumnDef<EnrichedDataRecord>[] => {
+    // Static columns first
+    const staticColumns: ColumnDef<EnrichedDataRecord>[] = [
+      {
+        accessorKey: 'id',
+        header: 'Record ID',
+        size: 80,
+        cell: ({ row }) => (
+          <div className="pl-1 w-[60px] truncate">
+            <DocumentLink documentId={row.original.id}>
+              <div className="hover:underline cursor-pointer">{row.original.id}</div>
+            </DocumentLink>
+          </div>
+        ),
       },
-    },
-    {
-      accessorKey: 'value',
-      header: 'Value',
+      {
+         accessorKey: 'dataSourceName',
+         header: ({ column }) => (
+           <Button
+             variant="ghost"
+             onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+           >
+             Source Name
+             <ArrowUpDown className="ml-2 h-4 w-4" />
+           </Button>
+         ),
+         cell: ({ row }) => <div className="font-medium">{row.getValue('dataSourceName')}</div>,
+         size: 150,
+       },
+    ];
+
+    // Dynamically generate columns for each scheme
+    const dynamicSchemeColumns: ColumnDef<EnrichedDataRecord>[] = schemes.map(scheme => ({
+      id: `scheme_${scheme.id}`,
+      header: ({ column }) => {
+        // Header logic remains the same - controls fields for this scheme
+        const handleFieldToggle = (fieldKey: string) => {
+          setSelectedFieldsPerScheme(prev => {
+            const currentSelected = prev[scheme.id] || [];
+            const isSelected = currentSelected.includes(fieldKey);
+            const newSelected = isSelected
+              ? currentSelected.filter(key => key !== fieldKey)
+              : [...currentSelected, fieldKey];
+            if (newSelected.length === 0 && scheme.fields.length > 0) {
+              // Ensure at least one field is always selected
+              return { ...prev, [scheme.id]: [scheme.fields[0].name] };
+            }
+            return { ...prev, [scheme.id]: newSelected };
+          });
+        };
+        const currentSelectedFields = selectedFieldsPerScheme[scheme.id] || [];
+
+        return (
+          <div className="flex flex-col space-y-1">
+            <div className="flex items-center justify-between">
+               <span className="font-medium">{scheme.name}</span>
+               <Popover>
+                 <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1 opacity-60 hover:opacity-100">
+                      <Settings2 className="h-3.5 w-3.5" />
+                      <span className="sr-only">Configure Fields</span>
+                    </Button>
+                 </PopoverTrigger>
+                 <PopoverContent className="w-56 p-0" align="start">
+                    <div className="p-2 font-medium text-xs border-b">Show Fields:</div>
+                    <ScrollArea className="max-h-60 p-1">
+                      {scheme.fields.map(field => (
+                        <div key={field.name} className="flex items-center space-x-2 px-2 py-1.5 text-xs">
+                           <Checkbox
+                              id={`field-header-toggle-${scheme.id}-${field.name}`}
+                              checked={currentSelectedFields.includes(field.name)}
+                              onCheckedChange={() => handleFieldToggle(field.name)}
+                              disabled={currentSelectedFields.length === 1 && currentSelectedFields.includes(field.name)}
+                           />
+                           <Label
+                              htmlFor={`field-header-toggle-${scheme.id}-${field.name}`}
+                              className={cn(
+                                  "font-normal cursor-pointer",
+                                  (currentSelectedFields.length === 1 && currentSelectedFields.includes(field.name)) && "opacity-50 cursor-not-allowed"
+                              )}
+                           >
+                              {field.name}
+                           </Label>
+                        </div>
+                      ))}
+                    </ScrollArea>
+                 </PopoverContent>
+               </Popover>
+            </div>
+            <div className=" my-1 flex flex-col items-start p-1">
+               {currentSelectedFields.map(fieldName => (
+                  <span key={fieldName} className="truncate max-w-[100px]" title={fieldName}> - {fieldName}</span>
+               ))}
+            </div>
+          </div>
+        );
+      },
       cell: ({ row }) => {
-        const result = row.original;
-        const scheme = schemes.find(s => s.id === result.scheme_id);
-        return scheme ? (
+        // Get the result for this specific record (row) and this specific scheme (column)
+        const resultForThisCell = row.original.resultsMap[scheme.id]; // Use the resultsMap
+
+        if (!resultForThisCell) {
+            return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">N/A</div>;
+        }
+
+        const fieldKeysToShow = selectedFieldsPerScheme[scheme.id] || []; // Get keys for THIS scheme
+
+        return (
           <ClassificationResultDisplay
-            result={result as unknown as ClassificationResultRead} // Cast if necessary
-            scheme={scheme}
-            compact={true}
+            result={resultForThisCell as unknown as ClassificationResultRead}
+            scheme={scheme} // Pass the scheme for this column
+            compact={false}
+            selectedFieldKeys={fieldKeysToShow}
+            maxFieldsToShow={undefined}
+            renderContext="table"
           />
-        ) : <div className="text-muted-foreground">Scheme N/A</div>;
+        );
       },
-    },
-    {
-      accessorKey: 'timestamp',
-      header: 'Timestamp',
-      cell: ({ row }) => {
-        const timestamp = row.original.timestamp;
-        return <div className="text-xs">{timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}</div>;
-      },
-    },
-    {
-      id: 'actions',
-      cell: ({ row }) => {
-         const result = row.original;
-         return (
-           <DropdownMenu>
-             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-8 w-8 p-0">
-                <span className="sr-only">Open menu</span>
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              {onResultSelect && (
-                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultSelect(result); }}>
-                  <Eye className="mr-2 h-4 w-4" /> View Details
-                </DropdownMenuItem>
-              )}
-              {onResultAction && (
-                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultAction('load_in_runner', result); }}> 
-                   <ExternalLink className="mr-2 h-4 w-4" /> Load Job in Runner
-                </DropdownMenuItem>
-              )}
-              {(onResultSelect || onResultAction) && <DropdownMenuSeparator />} 
-              {onResultDelete && (
-                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(result.id); }} className="text-red-600 hover:text-red-700">
-                  <Trash2 className="mr-2 h-4 w-4" /> Delete Result
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-           </DropdownMenu>
-         );
-      },
-    },
-  ];
+    }));
 
-  // --- Sub Component Renderer ---
-  const renderSubComponent = ({ row }: { row: Row<DataSourceGroup> }) => {
-    // Minimal mock row context needed for cell rendering
-    const getRowContext = (originalData: ResultWithSourceInfo) => ({
-      original: originalData,
-      // Add other minimal row properties if truly required by a specific cell renderer
-    });
+    // Static columns at the end
+    const staticEndColumns: ColumnDef<EnrichedDataRecord>[] = [
+        {
+           accessorKey: 'resultsMap', // Base accessor, specific logic in cell
+           header: 'Timestamp',
+           size: 120,
+           cell: ({ row }) => {
+             // Find the timestamp from the *first available* result for this record
+             const firstResult = Object.values(row.original.resultsMap)[0];
+             const timestamp = firstResult?.timestamp;
+             return <div className="text-xs w-[100px] truncate">{timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}</div>;
+           },
+        },
+        {
+          id: 'actions',
+          size: 50,
+          cell: ({ row }) => {
+             const firstResult = Object.values(row.original.resultsMap)[0]; // Get first result for context
+             if (!firstResult) return null; // No actions if no results for this record
+             // Pass the EnrichedDataRecord if needed, or just the first result?
+             // Let's assume actions operate on the first result contextually.
+             const resultContext = firstResult; 
 
-    return (
-      <div className="px-4 py-2 bg-muted/50">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {subColumns.map((column) => (
-                <TableHead key={column.id} className="text-xs">
-                  {typeof column.header === 'function' 
-                    ? flexRender(column.header, { column: column as Column<ResultWithSourceInfo, unknown> } as HeaderContext<ResultWithSourceInfo, unknown>) // Pass column, cast context
-                    : column.header}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {row.original.results.map((result, index) => (
-              <TableRow key={result.id || `subrow-${index}`} className="hover:bg-muted/80">
-                {subColumns.map((column) => {
-                  const cellKey = `${result.id || index}-${column.id}`; 
-                  const accessorKey = (column as any).accessorKey;
-                  const value = accessorKey ? (result[accessorKey as keyof ResultWithSourceInfo] ?? null) : null;
+             return (
+               <DropdownMenu>
+                 <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-8 w-8 p-0">
+                    <span className="sr-only">Open menu</span>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                  {onResultSelect && (
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultSelect(resultContext); }}>
+                      <Eye className="mr-2 h-4 w-4" /> View Details
+                    </DropdownMenuItem>
+                  )}
+                  {onResultAction && (
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultAction('load_in_runner', resultContext); }}>
+                       <ExternalLink className="mr-2 h-4 w-4" /> Load Job in Runner
+                    </DropdownMenuItem>
+                  )}
+                  {(onResultSelect || onResultAction) && <DropdownMenuSeparator />} 
+                  {onResultDelete && (
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(resultContext.id); }} className="text-red-600 hover:text-red-700">
+                      <Trash2 className="mr-2 h-4 w-4" /> Delete Result
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+               </DropdownMenu>
+             );
+          },
+        },
+    ];
 
-                  // FIX: Provide a simplified context focusing on what cell renderers likely use
-                  const cellContext = {
-                    row: getRowContext(result), // Use minimal row context
-                    getValue: () => value,      // Provide the cell value
-                    column: column,            // Provide the column definition
-                    table: table,              // Provide the main table instance
-                  } as unknown as CellContext<ResultWithSourceInfo, unknown>; // Cast to satisfy flexRender
+    // Combine all columns
+    return [
+        ...staticColumns,
+        ...dynamicSchemeColumns,
+        ...staticEndColumns
+    ];
+  // Dependencies for column generation
+  }, [schemes, selectedFieldsPerScheme, onResultSelect, onResultAction, onResultDelete]); // Removed 'results' as cell now uses row.original.resultsMap
+  // *** END FLAT COLUMNS Definition ***
 
-                  return (
-                    <TableCell key={cellKey} className="text-xs py-1">
-                      {flexRender(column.cell!, cellContext)}
-                    </TableCell>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    );
-  };
 
-  const table = useReactTable({
-    data: groupedData,
-    columns,
+  // --- Main Table Instance --- (Use EnrichedDataRecord, no expander)
+  const table = useReactTable<EnrichedDataRecord>({ 
+    data: tableData, // Use flat enriched data
+    columns, // Use dynamically generated flat columns
     state: {
       sorting,
-      pagination,
-      columnFilters,
       columnVisibility,
       rowSelection,
-      expanded,
+      pagination, 
     },
-    onSortingChange: setSorting,
-    onExpandedChange: setExpanded,
-    onPaginationChange: setPagination,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getRowCanExpand: () => true,
+    getRowId: (record) => record.id.toString(), // Use record ID
+    onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
+    onRowSelectionChange: setRowSelection,
+    onPaginationChange: setPagination,
   });
 
   return (
     <div className="w-full">
       <div className="rounded-md">
-        <ScrollArea>
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id} className="whitespace-nowrap">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
-                          )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <Fragment key={row.id}>
+        <div className="overflow-x-auto"> 
+          <ScrollArea className="max-h-full"> 
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-card shadow-sm whitespace-nowrap">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead key={header.id} className="whitespace-nowrap" style={{ width: header.getSize() !== 150 ? `${header.getSize()}px` : undefined }}>
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(
+                              header.column.columnDef.header,
+                              header.getContext()
+                            )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows?.length ? (
+                  table.getRowModel().rows.map((row) => (
+                    // *** RENDER SIMPLE ROW - NO EXPANSION ***
                     <TableRow
+                      key={row.id}
                       data-state={row.getIsSelected() && "selected"}
-                      onClick={() => row.toggleExpanded()}
-                      className="cursor-pointer hover:bg-muted/50"
+                      className="cursor-pointer hover:bg-muted/30"
+                      onClick={() => {
+                        const firstResult = Object.values(row.original.resultsMap)[0];
+                        if (firstResult && onResultSelect) {
+                          onResultSelect(firstResult);
+                        }
+                      }}
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext()
-                          )}
+                        <TableCell key={cell.id} style={{ width: cell.column.getSize() !== 150 ? `${cell.column.getSize()}px` : undefined }} className="h-full align-top">
+                          <div className="h-full flex flex-col">
+                            {flexRender(
+                              cell.column.columnDef.cell,
+                              cell.getContext()
+                            )}
+                          </div>
                         </TableCell>
                       ))}
                     </TableRow>
-                    {row.getIsExpanded() && (
-                      <TableRow>
-                        <TableCell colSpan={row.getVisibleCells().length}>
-                          {renderSubComponent({ row })}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={columns.length}
-                    className="h-24 text-center"
-                  >
-                    {isLoading ? "Loading results..." : "No results found."}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </ScrollArea>
+                    // *** END SIMPLE ROW ***
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={columns.length}
+                      className="h-24 text-center"
+                    >
+                      {isLoading ? "Loading results..." : "No results found."}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        </div>
       </div>
+      {/* Pagination Footer (Keep using Record count) */}
       <div className="flex items-center justify-end space-x-2 py-4">
         <div className="flex-1 text-sm text-muted-foreground">
-          {table.getFilteredRowModel().rows.length} Source Group(s).
+          {table.getFilteredRowModel().rows.length} Record(s).
           Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}.
         </div>
         <div className="flex items-center space-x-2">
-          <Button
-            variant="outline"
-            className="hidden h-8 w-8 p-0 lg:flex"
-            onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
-          >
-            <span className="sr-only">Go to first page</span>
-            <ChevronsLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-          >
-             Previous
+           <Button
+             variant="outline"
+             className="hidden h-8 w-8 p-0 lg:flex"
+             onClick={() => table.setPageIndex(0)}
+             disabled={!table.getCanPreviousPage()}
+           >
+             <span className="sr-only">Go to first page</span>
+             <ChevronsLeft className="h-4 w-4" />
            </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-          >
-            Next
-          </Button>
-          <Button
-            variant="outline"
-            className="hidden h-8 w-8 p-0 lg:flex"
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
-          >
-            <span className="sr-only">Go to last page</span>
-            <ChevronsRight className="h-4 w-4" />
-          </Button>
-        </div>
+           <Button
+             variant="outline"
+             size="sm"
+             onClick={() => table.previousPage()}
+             disabled={!table.getCanPreviousPage()}
+           >
+              Previous
+            </Button>
+           <Button
+             variant="outline"
+             size="sm"
+             onClick={() => table.nextPage()}
+             disabled={!table.getCanNextPage()}
+           >
+             Next
+           </Button>
+           <Button
+             variant="outline"
+             className="hidden h-8 w-8 p-0 lg:flex"
+             onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+             disabled={!table.getCanNextPage()}
+           >
+             <span className="sr-only">Go to last page</span>
+             <ChevronsRight className="h-4 w-4" />
+           </Button>
+         </div>
       </div>
     </div>
   );

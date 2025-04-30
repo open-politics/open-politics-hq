@@ -1,19 +1,19 @@
 import logging
 import time
-import csv # Added
-import io # Added
-import fitz # Added
-import chardet # Added
+import csv
+import io
+import fitz
+import chardet
 import dateutil.parser
 from datetime import datetime, timezone
 import asyncio
-from typing import List, Dict, Any, Tuple, Optional # Added Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional
 import traceback
 import hashlib
 
 from app.core.celery_app import celery
 from sqlmodel import Session, select, func
-from sqlalchemy.exc import SQLAlchemyError # Added for specific exception handling
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.db import engine
 from app.models import (
@@ -22,18 +22,12 @@ from app.models import (
     DataSourceType,
     DataRecord,
     DataRecordCreate,
-    # Remove ClassificationResult if not used directly here
 )
-import hashlib
-import logging
 
-# Removed IngestionService import
-# from app.api.services.ingestion import IngestionService
 # Import provider instances directly
-from app.api.deps import get_storage_provider, get_scraping_provider
-# Import StorageProvider base type for type hinting
+from app.api.services.providers.storage import get_storage_provider
+from app.api.services.providers.scraping import get_scraping_provider
 from app.api.services.providers.base import StorageProvider, ScrapingProvider
-
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -60,68 +54,73 @@ async def _task_process_pdf_content(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Parses PDF content and returns record data and metadata updates. (Task version)"""
     source_metadata_update = {}
-    # Removed: records_data = [] - it will be created inside process_pdf_sync
-
     # Use the override if provided, otherwise use the actual DS details
     effective_origin_details = origin_details_override or actual_datasource_origin_details or {}
     original_filename_for_record = effective_origin_details.get('filename', 'unknown.pdf')
+    should_extract_title = effective_origin_details.get('extract_title', True)  # Default to True
 
     def process_pdf_sync():
         nonlocal source_metadata_update
         local_all_pdf_text = ""
         local_total_processed_pages = 0
         local_page_count = 0
-        # --- Define local_records_data here ---
+        local_pdf_title = None # Variable for PDF title
         local_records_data: List[Dict[str, Any]] = []
-        # --- End Define ---
+
         try:
             with fitz.open(stream=file_content_bytes, filetype="pdf") as doc:
                 local_page_count = doc.page_count
+                # Try to extract title from metadata if requested
+                if should_extract_title and doc.metadata:
+                    local_pdf_title = doc.metadata.get('title')
+                    if local_pdf_title:
+                        local_pdf_title = local_pdf_title.strip()
+                        logging.info(f"Extracted PDF title: '{local_pdf_title}' for DS {datasource_id}")
+                    else:
+                        logging.info(f"PDF metadata found but no 'title' key for DS {datasource_id}")
+                
+                # If no title from metadata, use filename without extension
+                if not local_pdf_title and original_filename_for_record:
+                    local_pdf_title = original_filename_for_record.rsplit('.', 1)[0]
+
                 for page_num in range(local_page_count):
                     try:
                         page = doc.load_page(page_num)
                         text = page.get_text("text").replace('\\x00', '').strip()
                         if text:
-                            local_all_pdf_text += text + "\\n\\n" # Changed separator
+                            local_all_pdf_text += text + "\\n\\n"
                             local_total_processed_pages += 1
                     except Exception as page_err:
                         logging.error(f"Error processing PDF page {page_num + 1} for DS {datasource_id}: {page_err}")
 
-            source_metadata_update['page_count'] = local_page_count
-            source_metadata_update['processed_page_count'] = local_total_processed_pages
+                source_metadata_update['page_count'] = local_page_count
+                source_metadata_update['processed_page_count'] = local_total_processed_pages
+                if local_pdf_title:
+                    source_metadata_update['extracted_title'] = local_pdf_title
 
-            # --- Move record creation logic inside ---
-            if local_all_pdf_text:
-                # Use local_records_data
-                local_records_data = [{
-                    "datasource_id": datasource_id, # Link record to the PARENT datasource ID
-                    "text_content": local_all_pdf_text.strip(),
-                    "source_metadata": {
-                        'processed_page_count': local_total_processed_pages,
-                        # Store the specific file's name here
-                        'original_filename': original_filename_for_record
-                    },
-                    "event_timestamp": None
-                }]
-            else:
-                logging.warning(f"No text extracted from PDF (DS: {datasource_id}).")
-            # --- End Move ---
+                if local_all_pdf_text:
+                    local_records_data = [{
+                        "datasource_id": datasource_id,
+                        "title": local_pdf_title,  # Use extracted or generated title
+                        "text_content": local_all_pdf_text.strip(),
+                        "source_metadata": {
+                            'processed_page_count': local_total_processed_pages,
+                            'original_filename': original_filename_for_record
+                        },
+                        "event_timestamp": None
+                    }]
+                else:
+                    logging.warning(f"No text extracted from PDF (DS: {datasource_id}).")
 
-            # Return the local variables correctly
-            return local_all_pdf_text, local_records_data # Return populated local_records_data
+                return local_all_pdf_text, local_records_data
 
-        except (fitz.PyMuPDFError) as specific_err:
-            # Ensure local_records_data is returned even on error if needed, or handle differently
-            raise ValueError(f"Failed to open/parse PDF for DS {datasource_id}: {specific_err}") from specific_err
         except Exception as pdf_err:
-            # Ensure local_records_data is returned even on error if needed, or handle differently
             raise ValueError(f"Failed processing PDF for DS {datasource_id}: {pdf_err}") from pdf_err
 
-    # Capture both returned values correctly
     all_pdf_text, records_data = await asyncio.to_thread(process_pdf_sync)
-
     logging.info(f"Processed PDF: {source_metadata_update.get('processed_page_count', 0)}/{source_metadata_update.get('page_count', 0)} pages (DS: {datasource_id}). Records created: {len(records_data)}")
-    return records_data, source_metadata_update # Return the captured records_data
+    return records_data, source_metadata_update
+
 # --- End: PDF Processing Logic ---
 
 # --- Start: CSV Processing Logic Moved from IngestionService ---
@@ -146,8 +145,10 @@ async def _task_process_csv_content(
 
         encoding = origin_details.get('encoding', 'utf-8') # Default to utf-8
         text_column = origin_details.get('text_column') # Primary text column (optional)
+        # ADDED: Optional title column specification
+        title_column = origin_details.get('title_column') # Optional: User specifies which column is the title
 
-        logger.debug(f"DS {datasource_id}: CSV options - skip_rows={skip_rows}, delimiter='{delimiter}', encoding='{encoding}', text_column='{text_column}'")
+        logger.debug(f"DS {datasource_id}: CSV options - skip_rows={skip_rows}, delimiter='{delimiter}', encoding='{encoding}', text_column='{text_column}', title_column='{title_column}'")
 
         csv_content_stream = await storage_provider.get_file(storage_path)
         # Decode the stream with the determined encoding
@@ -160,6 +161,7 @@ async def _task_process_csv_content(
         header = []
         processed_row_count = 0
         empty_header_names = False
+        title_column_index = -1 # ADDED: Track index of title column
 
         # Process rows
         for i, row in enumerate(csv_reader):
@@ -179,6 +181,12 @@ async def _task_process_csv_content(
                 source_metadata_update['delimiter_used'] = delimiter
                 source_metadata_update['encoding_used'] = encoding
                 source_metadata_update['rows_skipped'] = skip_rows
+                # ADDED: Find title column index
+                if title_column and title_column in header:
+                    title_column_index = header.index(title_column)
+                elif not title_column and header: # Use first column if no title_column specified and header exists
+                    title_column_index = 0
+                # END ADDED
                 continue # Skip header row from data processing
 
             # Skip initial rows if specified
@@ -194,6 +202,15 @@ async def _task_process_csv_content(
             # Create row data dictionary
             row_data = {header[j]: (row[j].strip() if row[j] is not None else None) for j in range(len(header)) if j < len(row)}
 
+            # --- Determine Title ---
+            record_title = None
+            if title_column_index != -1 and title_column_index < len(row):
+                 record_title = row[title_column_index].strip() # Get title from specified/first column
+            # Use Row number as fallback title if first column is empty or index invalid
+            if not record_title:
+                 record_title = f"Row {current_row_number}"
+            # --- End Determine Title ---
+
             # Determine text_content
             text_content_value = ""
             if text_column and text_column in row_data:
@@ -205,6 +222,7 @@ async def _task_process_csv_content(
             # Add record data to list for bulk creation
             record_data = {
                 "datasource_id": datasource_id,
+                "title": record_title, # ADDED: Set determined title
                 "text_content": text_content_value,
                 "source_metadata": {
                     "row_number": current_row_number,
@@ -401,37 +419,21 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
                 logging.info(f"Processing CSV DataSource: {datasource.id}")
                 object_name = actual_origin_details.get('storage_path') # Use storage_path
                 if not object_name: raise ValueError(f"Missing 'storage_path' for CSV DS {datasource.id}")
-                # Remove fetching file_content_bytes here, helper will handle it
-                # file_object = None
-                # try:
-                    # Use asyncio.run to call async storage method from sync task
-                    # async def get_file_content():
-                    #      nonlocal file_object
-                    #      file_object = await storage_provider.get_file(object_name)
-                    #      return file_object.read() # Read the content within async context
-                # 
-                #    file_content_bytes = asyncio.run(get_file_content())
                 # Call the async processing helper correctly with storage_provider
                 records_data_to_create, source_metadata_update = asyncio.run(
                      _task_process_csv_content(
                          datasource_id=datasource_id,
-                         storage_path=object_name, 
+                         storage_path=object_name,
                          origin_details=actual_origin_details,
                          storage_provider=storage_provider
                      )
                 )
-                # finally:
-                #      if file_object:
-                #          try: asyncio.run(file_object.close()) # Close async if needed
-                #          except Exception: pass
 
             elif datasource.type == DataSourceType.PDF:
                 logging.info(f"Processing PDF DataSource: {datasource.id}")
-                # Use the OVERRIDE if provided (for bulk), else use actual details (for single)
                 effective_origin_details = task_origin_details_override or actual_origin_details
                 object_name = effective_origin_details.get('storage_path')
                 if not object_name:
-                    # If object_name is missing, especially in bulk override, fail clearly
                     missing_detail = "task_origin_details_override" if task_origin_details_override else "datasource.origin_details"
                     raise ValueError(f"Missing 'storage_path' in {missing_detail} for PDF DS {datasource.id}")
                 file_object = None
@@ -458,13 +460,14 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
             elif datasource.type == DataSourceType.URL_LIST:
                 logging.info(f"Processing URL_LIST DataSource: {datasource.id}")
                 # Use the correctly fetched origin_details from above
-                urls = actual_origin_details.get('urls') 
+                urls = actual_origin_details.get('urls')
                 if not urls or not isinstance(urls, list): raise ValueError(f"Missing/invalid 'urls' list for DS {datasource.id}")
                 processed_count = 0
                 failed_urls = []
                 # Process URLs one by one (keep existing logic)
                 for i, url in enumerate(urls):
                     error_msg = None
+                    record_title = None # ADDED: Variable for URL title
                     try:
                         # Use asyncio.run for the scraping call
                         scraped_data = asyncio.run(scraping_provider.scrape_url(url))
@@ -489,12 +492,17 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
                                  original_data = scraped_data.get("original_data")
                                  if isinstance(original_data, dict):
                                       text_content = original_data.get("text_content")
-                        
+                            # ADDED: Extract title from scraped data
+                             record_title = scraped_data.get("title")
+                             if record_title: record_title = record_title.strip()
+                             if not record_title: record_title = url # Fallback to URL if title missing
+                            # END ADDED
+
                         # Now check if we actually got some text_content
-                        if text_content: 
-                            text_content = text_content.replace('\\\\x00', '').strip() # Clean the final content
+                        if text_content:
+                            text_content = text_content.replace('\\x00', '').strip() # Clean the final content
                             logger.info(f"DS {datasource.id} URL {url}: Text content after cleaning (first 100 chars): {text_content[:100]}") # Log cleaned text
-                            
+
                             if text_content: # Check if non-empty after stripping
                                 event_ts = None
                                 pub_date_str = None
@@ -521,6 +529,7 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
                                 record_meta = {'original_url': url, 'scraped_title': scraped_data.get("title"), 'index': i}
                                 records_data_to_create.append({
                                     "datasource_id": datasource_id,
+                                    "title": record_title, # ADDED: Use scraped/fallback title
                                     "text_content": text_content,
                                     "source_metadata": record_meta,
                                     "event_timestamp": event_ts,
@@ -545,17 +554,18 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
 
             elif datasource.type == DataSourceType.TEXT_BLOCK:
                 logging.info(f"Processing TEXT_BLOCK DataSource: {datasource.id}")
-                # Assuming text content is stored in source_metadata by the creation route
                 text_content = actual_origin_details.get('text_content')
+                record_title = actual_origin_details.get('title')  # Get title from origin details
                 if text_content and isinstance(text_content, str):
                     text_content = text_content.strip()
                     if text_content:
-                        # Create a single record
+                        # Create a single record with the specified title
                         records_data_to_create = [{
                             "datasource_id": datasource_id,
+                            "title": record_title or "Text Block",  # Use provided title or default
                             "text_content": text_content,
                             "source_metadata": {},
-                            "event_timestamp": None # Or potentially parse from metadata if available
+                            "event_timestamp": None
                         }]
                         source_metadata_update['character_count'] = len(text_content)
                         logging.info(f"Prepared 1 record from TEXT_BLOCK DS {datasource.id}")
@@ -563,7 +573,7 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
                         logging.warning(f"TEXT_BLOCK DS {datasource.id} has empty text content after stripping.")
                         source_metadata_update['character_count'] = 0
                 else:
-                    logging.warning(f"Could not find valid 'text_content' in source_metadata for TEXT_BLOCK DS {datasource.id}")
+                    logging.warning(f"Could not find valid 'text_content' in origin_details for TEXT_BLOCK DS {datasource.id}")
                     source_metadata_update['character_count'] = 0
 
             else:

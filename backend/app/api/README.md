@@ -78,7 +78,11 @@ backend/
 ### Data Management
 - **`DatasetService`**: CRUD operations for datasets, export/import functionality
 - **`IngestionService`**: Data source and record management, file uploads
-- **`ClassificationService`**: Classification schemes, jobs, and results
+- **`ClassificationService`**: Classification schemes, jobs, and results. 
+    - **Classification Flow**: Handles the process triggered by background tasks (`tasks/classification.py`). 
+        - The `classify_text` method fetches the `ClassificationScheme` (with fields).
+        - It generates the dynamic Pydantic `ModelClass` using `generate_pydantic_model` (from `v2/classification.py`).
+        - It calls the configured `ClassificationProvider` (`providers/classification.py`), passing the `text`, the generated `ModelClass`, `instructions`, and `api_key`.
 - **`WorkspaceService`**: Workspace management and access control
 
 ### Universal Data Transfer (80% Complete)
@@ -92,13 +96,8 @@ The universal data transfer system enables seamless sharing of resources between
    - Version compatibility
 
 2. **Database Schema (90% Complete)**
-   ```sql
-   entity_uuid: UUID (unique, indexed)
-   imported_from_uuid: UUID (indexed, nullable)
-   ```
-   - Added to key tables (datasource, datarecord, scheme, job, dataset)
-   - Migration handles existing records
-   - Enables cross-instance entity tracking
+   <!-- models.py -->
+   <!-- - Enables cross-instance entity tracking -->
 
 3. **Export Process (85% Complete)**
    - Builds self-contained packages
@@ -123,7 +122,10 @@ The universal data transfer system enables seamless sharing of resources between
 Key provider interfaces that abstract external dependencies:
 
 - **`StorageProvider`**: File storage (e.g., MinIO)
-- **`ClassificationProvider`**: Text classification
+- **`ClassificationProvider`**: Text classification. 
+    - The provider implementation (e.g., `OpolClassificationProvider`) receives the pre-generated Pydantic `ModelClass` from the service.
+    - It is responsible for initializing the underlying classification client (e.g., OPOL `fastclass`) with the correct provider, model, and API key.
+    - It executes the classification by calling the underlying client with the `ModelClass`, `instructions`, and `text`.
 - **`SearchProvider`**: Search functionality
 - **`GeospatialProvider`**: Geospatial operations
 - **`ScrapingProvider`**: Web scraping

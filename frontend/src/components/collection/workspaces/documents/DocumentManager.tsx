@@ -790,7 +790,10 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
                    >
                      <div className="h-full border-l">
                        <DocumentDetailView
-                         onEdit={() => console.warn('Edit DataSource triggered but not implemented')} // TODO: Implement Edit
+                         onEdit={(dataSource: ClientDataSourceRead) => {
+                           console.warn('Edit DataSource triggered:', dataSource);
+                           // TODO: Implement edit functionality
+                         }}
                          schemes={schemes}
                          selectedDataSourceId={selectedDataSourceId}
                          onLoadIntoRunner={onLoadIntoRunner}

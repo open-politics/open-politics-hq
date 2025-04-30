@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import urllib.parse
 
-from app.models import DataRecordRead, DataSource, DataSourceType, DataRecord
+from app.models import DataRecordRead, DataSource, DataSourceType, DataRecord, DataRecordUpdate
 from app.api.deps import CurrentUser, SessionDep, IngestionServiceDep, StorageProviderDep
 from app.api.services.service_utils import validate_workspace_access
 
@@ -18,6 +18,7 @@ class AppendRecordInput(BaseModel):
     """Input model for appending a record to a datasource."""
     content: str = Field(..., description="The text content or URL to append")
     content_type: Literal['text', 'url'] = Field(..., description="Type of content being appended")
+    title: Optional[str] = Field(None, description="Optional title for the record (used for 'text' type)")
     event_timestamp: Optional[str] = Field(None, description="Optional ISO 8601 timestamp for the event")
 
 router = APIRouter(
@@ -222,6 +223,7 @@ async def append_record(
             user_id=current_user.id,
             content=record_in.content,
             content_type=record_in.content_type,
+            title=record_in.title,
             event_timestamp_str=record_in.event_timestamp
         )
         return DataRecordRead.model_validate(data_record)
@@ -233,4 +235,34 @@ async def append_record(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
+        )
+
+@router.patch("/{datarecord_id}", response_model=DataRecordRead)
+def update_datarecord(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    datarecord_id: int,
+    record_in: DataRecordUpdate,
+    service: IngestionServiceDep
+) -> DataRecordRead:
+    """Update a specific DataRecord (e.g., title, event_timestamp)."""
+    try:
+        updated_record = service.update_datarecord(
+            datarecord_id=datarecord_id,
+            workspace_id=workspace_id,
+            user_id=current_user.id,
+            update_data=record_in
+        )
+        return DataRecordRead.model_validate(updated_record)
+    except HTTPException as he:
+        raise he
+    except ValueError as e:
+        # Handle potential errors from service like not found, invalid data
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Error updating datarecord {datarecord_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error updating datarecord"
         ) 

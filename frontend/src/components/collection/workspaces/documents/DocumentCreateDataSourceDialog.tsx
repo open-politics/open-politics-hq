@@ -266,15 +266,7 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
     setIsSubmittingRecurring(true); // Set submitting state
     const formData = new FormData();
     formData.append('name', name);
-
-    // --- REVERTED: Send the component's current 'type' state directly ---
-    // let finalTypeToSend: string = type;
-    // if (type === 'pdf' && selectedFiles.length > 1) {
-    //   finalTypeToSend = 'bulk_pdf'; 
-    // }
-    // formData.append('type', finalTypeToSend);
-    formData.append('type', type); // Always send the selected type ('pdf', 'csv', etc.)
-    // --- END REVERSION ---
+    formData.append('type', type);
 
     // Create originDetails separately, it might remain empty
     const originDetails: Record<string, any> = {};
@@ -299,12 +291,18 @@ export default function CreateDataSourceDialog({ open, onClose, initialMode }: C
             selectedFiles.forEach((pdfFile) => {
                formData.append('files', pdfFile, pdfFile.name);
             });
+            // Add PDF title extraction flag to origin_details
+            originDetails.extract_title = true; // Tell backend to try extracting PDF titles
         }
     } else if (type === 'url_list') {
         sourceUrlList = urls.split('\n').map(u => u.trim()).filter(Boolean);
         originDetails.urls = sourceUrlList;
     } else if (type === 'text_block') {
         originDetails.text_content = textContent;
+        // Add title to origin_details for text blocks
+        if (name) {
+            originDetails.title = name; // Use the datasource name as the record title
+        }
     }
 
     formData.append('origin_details', JSON.stringify(originDetails));

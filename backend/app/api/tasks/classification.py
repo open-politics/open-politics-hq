@@ -24,7 +24,7 @@ from app.api.services.classification import ClassificationService
 # from app.api.services.providers.classification import OpolClassificationProvider # Keep if using directly
 from app.api.deps import get_classification_provider
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.debug, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 @celery.task(bind=True, max_retries=3)
@@ -34,7 +34,7 @@ def process_classification_job(self, job_id: int):
     Fetches DataRecords and Schemes, runs classification, stores Results.
     Manages the database transaction for the job processing.
     """
-    logging.info(f"Starting classification task for Job ID: {job_id}")
+    logging.debug(f"Starting classification task for Job ID: {job_id}")
     start_time = time.time()
     error_count = 0
     success_count = 0
@@ -49,7 +49,6 @@ def process_classification_job(self, job_id: int):
 
         try:
             # 1. Fetch the Job and check status using the service
-            # Service's get_job doesn't check status, so we check after fetching
             job = service.get_job(job_id)
             if not job:
                 logging.error(f"ClassificationJob {job_id} not found. Aborting task.")
@@ -58,13 +57,12 @@ def process_classification_job(self, job_id: int):
                 logging.warning(f"ClassificationJob {job_id} is not PENDING (status: {job.status}). Skipping task.")
                 return
 
-            # 2. Update status to RUNNING using the service (DO NOT COMMIT)
-            # service.update_job_status(job_id, ClassificationJobStatus.RUNNING)
-            # PASS Job OBJECT instead of ID
+            # 2. Update status to RUNNING using the service (DO NOT COMMIT WITHIN SERVICE)
             job = service.update_job_status(job, ClassificationJobStatus.RUNNING)
             # --- FIX: Commit the status update immediately ---
+            session.add(job) # Ensure job is attached if not already
             session.commit()
-            logging.info(f"Committed RUNNING status for Job {job_id}")
+            logging.debug(f"Committed RUNNING status for Job {job_id}")
             # --- FIX: Refresh job object AFTER commit to get updated status ---
             session.refresh(job)
             # --- END FIX ---
@@ -91,7 +89,7 @@ def process_classification_job(self, job_id: int):
                  service.update_job_status(job, final_status)
                  # Need to handle recurring task update in finally block even in this case
                  return
-            logging.info(f"Found {len(data_records)} DataRecords to classify for Job {job_id}.")
+            logging.debug(f"Found {len(data_records)} DataRecords to classify for Job {job_id}.")
 
             # 5. Fetch Target ClassificationSchemes (Keep direct query for now)
             scheme_stmt = select(ClassificationScheme).where(ClassificationScheme.id.in_(scheme_ids)).options(selectinload(ClassificationScheme.fields))
@@ -100,33 +98,39 @@ def process_classification_job(self, job_id: int):
                  error_msg = f"Could not find all specified ClassificationSchemes: {scheme_ids}"
                  service.update_job_status(job, ClassificationJobStatus.FAILED, error_message=error_msg)
                  raise ValueError(error_msg)
-            logging.info(f"Loaded {len(schemes)} ClassificationSchemes for Job {job_id}.")
+            logging.debug(f"Loaded {len(schemes)} ClassificationSchemes for Job {job_id}.")
             
-            # 6. Iterate and Classify
+            # 6. Prepare field map for faster lookup within loop
+            # Fetch title and text_content together
+            data_records_with_fields = session.exec(select(DataRecord.id, DataRecord.title, DataRecord.text_content).where(DataRecord.id.in_(r.id for r in data_records))).all()
+            record_content_map = {rec.id: {"title": rec.title, "text_content": rec.text_content} for rec in data_records_with_fields}
+
+            # 7. Iterate and Classify
             results_batch_data = [] # Store dicts
             batch_size = 100
             total_classifications = len(data_records) * len(schemes)
             processed_classifications = 0
             
-            for record in data_records:
+            for record_id, record_data in record_content_map.items():
                 for scheme in schemes:
                     processed_classifications += 1
-                    logging.debug(f"Classifying Record {record.id} with Scheme {scheme.id} ({processed_classifications}/{total_classifications}) for Job {job_id}")
+                    logging.debug(f"Classifying Record {record_id} with Scheme {scheme.id} ({processed_classifications}/{total_classifications}) for Job {job_id}")
                     try:
                         # Optional: Check for existing result via direct query or a potential service method
                         existing_result_check = session.exec(select(ClassificationResult.id).where(
                             ClassificationResult.job_id == job_id,
-                            ClassificationResult.datarecord_id == record.id,
+                            ClassificationResult.datarecord_id == record_id,
                             ClassificationResult.scheme_id == scheme.id
                         )).first()
                         if existing_result_check:
-                            logging.debug(f"Skipping existing result for Record {record.id}, Scheme {scheme.id}")
+                            logging.debug(f"Skipping existing result for Record {record_id}, Scheme {scheme.id}")
                             success_count += 1
                             continue
                         
                         # --- Call Core Classification Logic via Service --- 
                         classification_value = service.classify_text(
-                            text=record.text_content, 
+                            text=record_data["text_content"], # Pass text content
+                            title=record_data["title"],     # Pass title
                             scheme_id=scheme.id,
                             api_key=api_key
                         )
@@ -135,7 +139,7 @@ def process_classification_job(self, job_id: int):
                         # Add result data dict to batch
                         results_batch_data.append({
                             "job_id": job_id,
-                            "datarecord_id": record.id,
+                            "datarecord_id": record_id,
                             "scheme_id": scheme.id,
                             "value": classification_value
                         })
@@ -148,18 +152,18 @@ def process_classification_job(self, job_id: int):
                             results_batch_data = [] # Reset batch
                     
                     except Exception as classify_error:
-                        logging.error(f"Classification failed for Record {record.id}, Scheme {scheme.id}, Job {job_id}: {classify_error}")
+                        logging.error(f"Classification failed for Record {record_id}, Scheme {scheme.id}, Job {job_id}: {classify_error}")
                         error_count += 1
                         final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
                         # Optionally store error details in result?
                         # results_batch_data.append({... "value": {"error": str(classify_error)} ...})
 
-            # 7. Create final batch of results using service (DO NOT COMMIT)
+            # 8. Create final batch of results using service (DO NOT COMMIT)
             if results_batch_data:
                 # Pass job_id to the service method
                 service.create_results_batch(job_id=job_id, results_data=results_batch_data)
             
-            # 8. Update final job status using service (DO NOT COMMIT)
+            # 9. Update final job status using service (DO NOT COMMIT)
             final_job_message = f"Classification finished. Success: {success_count}, Errors: {error_count}"
             if error_count > 0:
                  final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
@@ -169,9 +173,9 @@ def process_classification_job(self, job_id: int):
             # PASS Job OBJECT instead of ID
             job = service.update_job_status(job, final_status, error_message=final_job_message if error_count > 0 else None)
             
-            # 9. Commit the entire transaction for this job run
+            # 10. Commit the entire transaction for this job run
             session.commit()
-            logging.info(f"Committed final state for Job {job_id}. Status: {final_status}. Message: {final_job_message}")
+            logging.debug(f"Committed final state for Job {job_id}. Status: {final_status}. Message: {final_job_message}")
             # Refresh job state if needed after commit for finally block?
             session.refresh(job) 
 
@@ -189,10 +193,10 @@ def process_classification_job(self, job_id: int):
                     job_to_fail = error_session.get(ClassificationJob, job_id)
                     if job_to_fail:
                         error_service.update_job_status(job_to_fail, ClassificationJobStatus.FAILED, error_message=final_job_message)
-                        logging.info(f"Job {job_id} status updated to FAILED.")
+                        logging.debug(f"Job {job_id} status updated to FAILED.")
                     else:
                         logging.error(f"Could not find job {job_id} to mark as FAILED.")
-                logging.info(f"Job {job_id} status updated to FAILED.")
+                logging.debug(f"Job {job_id} status updated to FAILED.")
             except Exception as final_status_err:
                 logging.error(f"CRITICAL: Failed to update Job {job_id} status to FAILED after error: {final_status_err}")
 
@@ -215,7 +219,7 @@ def process_classification_job(self, job_id: int):
             if job and is_final_attempt: 
                 recurring_task_id = job.configuration.get('recurring_task_id')
                 if recurring_task_id and isinstance(recurring_task_id, int):
-                    logging.info(f"Updating originating RecurringTask {recurring_task_id} based on final Job {job_id} status: {job.status}")
+                    logging.debug(f"Updating originating RecurringTask {recurring_task_id} based on final Job {job_id} status: {job.status}")
                     # Use job status AFTER potential commit/refresh or final FAILED update
                     final_job_status = job.status if job else final_status # Get latest known status
                     recurring_task_status = "success" if final_job_status == ClassificationJobStatus.COMPLETED else "error"
@@ -224,14 +228,14 @@ def process_classification_job(self, job_id: int):
                     try:
                         # Use utility function which handles its own session
                         update_task_status(recurring_task_id, recurring_task_status, recurring_task_message)
-                        logging.info(f"Successfully updated status for RecurringTask {recurring_task_id}.")
+                        logging.debug(f"Successfully updated status for RecurringTask {recurring_task_id}.")
                     except Exception as update_err:
                         logging.error(f"Failed to update status for RecurringTask {recurring_task_id}: {update_err}", exc_info=True)
                 else:
                     logging.debug(f"Job {job_id} not linked to a recurring task. Skipping update.")
             
             end_time = time.time()
-            logging.info(f"Classification task finished for Job {job_id} in {end_time - start_time:.2f} seconds.")
+            logging.debug(f"Classification task finished for Job {job_id} in {end_time - start_time:.2f} seconds.")
 
 # Example of how to potentially call the task
 # Needs integration via API route

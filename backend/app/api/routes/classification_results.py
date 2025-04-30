@@ -73,6 +73,7 @@ def list_classification_results(
         )
         return results
     except ValueError as ve:
+        logging.exception(f"Route: Error listing results for workspace {workspace_id}: {ve}")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ve))
     except HTTPException as he:
         raise he

@@ -9,6 +9,7 @@ import {
     DataSourceUpdate,
     Message,
     DataRecordRead as ClientDataRecordRead,
+    DataRecordUpdate as ClientDataRecordUpdate,
 } from '@/client/models';
 import { DatarecordsService } from '@/client/services';
 import { DataSource, DataSourceType, DataSourceStatus, DataRecord } from '@/lib/classification/types';
@@ -40,6 +41,7 @@ interface DataSourceState {
   isLoadingRecords: boolean;
   fetchDataRecordsForSource: (dataSourceId: number) => Promise<void>;
   clearSelectedDataSourceRecords: () => void;
+  updateDataRecord: (recordId: number, updateData: ClientDataRecordUpdate) => Promise<DataRecord | null>;
 }
 
 export const useDataSourceStore = create<DataSourceState>((set, get) => ({
@@ -491,6 +493,55 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
 
   clearSelectedDataSourceRecords: () => {
     set({ selectedDataSourceRecords: [], isLoadingRecords: false });
+  },
+
+  // --- ADDED: updateDataRecord --- 
+  updateDataRecord: async (recordId: number, updateData: ClientDataRecordUpdate): Promise<DataRecord | null> => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    const { selectedDataSourceRecords } = get();
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace selected to update record");
+      return null;
+    }
+
+    // No isLoading state change for this specific update, maybe add one later if needed
+    set({ error: null }); 
+    try {
+      // Call the new DatarecordsService method
+      const updatedClientRecord: ClientDataRecordRead = await DatarecordsService.updateDatarecord({
+        workspaceId: activeWorkspace.id,
+        datarecordId: recordId,
+        requestBody: updateData
+      });
+
+      const updatedAdaptedRecord = adaptDataRecordReadToDataRecord(updatedClientRecord);
+
+      // Update the record within the selectedDataSourceRecords array
+      set(state => {
+        const index = state.selectedDataSourceRecords.findIndex(r => r.id === recordId);
+        if (index !== -1) {
+          const newRecords = [...state.selectedDataSourceRecords];
+          newRecords[index] = updatedAdaptedRecord;
+          return { selectedDataSourceRecords: newRecords };
+        }
+        return {}; // Return empty object if record not found in current selection
+      });
+
+      toast.success("Data Record updated successfully!");
+      return updatedAdaptedRecord;
+
+    } catch (err: any) {
+      console.error(`Error updating data record ${recordId}:`, err);
+      let errorMsg = "Failed to update data record";
+      if (err.body?.detail) {
+        errorMsg = `Update Record Failed: ${typeof err.body.detail === 'string' ? err.body.detail : JSON.stringify(err.body.detail)}`;
+      } else if (err.message) {
+        errorMsg = `Update Record Failed: ${err.message}`;
+      }
+      set({ error: errorMsg }); // Set error in store
+      toast.error(errorMsg);
+      return null;
+    }
   },
   // --- END ADDED ---
 })); 

@@ -625,7 +625,6 @@ export default function ClassificationRunner({
             </DialogHeader>
             <ScrollArea className="py-4 max-h-[70vh]">
               {selectedDataRecordId !== null && (() => {
-                   const record = runDataSources.find(ds => ds.id === selectedDataRecordId);
                    const dataRecord = currentRunDataRecords.find(dr => dr.id === selectedDataRecordId);
                    const resultsForRecord = currentRunResults.filter(r => r.datarecord_id === selectedDataRecordId);
                    const schemesForRecord = resultsForRecord
@@ -634,18 +633,29 @@ export default function ClassificationRunner({
 
                    if (!dataRecord) return <p>Data Record details not found.</p>;
 
+                   // Find the data source that contains this record
+                   const record = runDataSources.find(ds => ds.id === dataRecord.datasource_id);
+
                    return (
                      <div className="space-y-4">
-                       {record && <h4 className="text-sm text-muted-foreground">Source: {record.name}</h4>}
-                       <h3 className="font-semibold text-lg">Record ID: {dataRecord.id}</h3>
+                       {/* Data Record Title and Source */}
+                       <div>
+                         <h3 className="font-semibold text-lg inline">{dataRecord.title || 'Untitled Data Record'}</h3>
+                         {record?.name && (
+                           <span className="text-sm text-muted-foreground ml-2">(Source: {record.name})</span>
+                         )}
+                       </div>
+                       {/* Data Record ID */}
+                       <p className="text-sm text-muted-foreground">Record ID: {dataRecord.id}</p>
 
+                       {/* Classification Results */}
                        {resultsForRecord.length > 0 ? (
                            <ClassificationResultDisplay
                                result={resultsForRecord}
                                scheme={schemesForRecord}
-                               useTabs={schemesForRecord.length > 1}
-                               renderContext="dialog"
-                               compact={false}
+                               useTabs={schemesForRecord.length > 1} // Use tabs if multiple schemes apply to this record
+                               renderContext="dialog" // Specify context for styling
+                               compact={false} // Show full details in dialog
                            />
                        ) : (
                           <p className="text-muted-foreground italic">No results found for this specific record in the current job.</p>

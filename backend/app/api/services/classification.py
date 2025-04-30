@@ -44,6 +44,7 @@ from app.models import (
 # Removed direct provider import, use dependency injection
 # from app.api.services.providers import ClassificationProvider, get_classification_provider
 from app.api.services.service_utils import validate_workspace_access
+from app.api.v2.classification import generate_pydantic_model
 # Removed Celery app import, tasks will handle their own logic
 # from app.core.celery_app import celery # Import celery app instance
 
@@ -289,33 +290,50 @@ def _core_classify_text(
     session: Session,
     provider: ClassificationProvider, # Pass provider instance
     text: str,
+    title: Optional[str],
     scheme_id: int,
     api_key: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Core logic to classify text using a scheme."""
-    if not text:
-        logger.warning(f"Core: Empty text provided for classification with scheme {scheme_id}")
-        return {}
-
-    # Get the classification scheme with fields
-    scheme = session.get(ClassificationScheme, scheme_id, options=[selectinload(ClassificationScheme.fields)])
+    """Core logic to classify text using a specific scheme and provider."""
+    # Fetch scheme with fields (using selectinload for efficiency)
+    stmt = select(ClassificationScheme).options(selectinload(ClassificationScheme.fields)).where(ClassificationScheme.id == scheme_id)
+    scheme = session.exec(stmt).first()
     if not scheme:
-        raise ValueError(f"Classification scheme {scheme_id} not found")
+        raise SchemeNotFoundError(f"Classification Scheme {scheme_id} not found")
+
+    # Prepare input for the provider
+    # The exact format depends on the provider's expectation
+    # Here, we assume it needs text, scheme details (name, desc, fields), and optional API key
+    # ADDED: Include title in the input data sent to the provider
+    provider_input = {
+        "text": text,
+        "title": title, # Pass the title
+        "scheme_name": scheme.name,
+        "scheme_description": scheme.description,
+        "fields": [
+            {
+                "name": field.name,
+                "description": field.description,
+                "type": field.type.value, # Send the string value of the enum
+                "scale_min": field.scale_min,
+                "scale_max": field.scale_max,
+                "labels": field.labels,
+                "dict_keys": field.dict_keys # Pass dict keys definitions
+            }
+            for field in scheme.fields
+        ],
+        "api_key": api_key # Pass API key if provided
+    }
 
     try:
-        # Prepare model specification - pass the scheme object directly
-        model_spec = scheme
-        # Call the provider (use the instance passed)
-        result = provider.classify(
-            text=text,
-            model_spec=model_spec,
-            instructions=scheme.model_instructions # Pass instructions separately
-        )
-        return result
-
-    except Exception as e:
-        logger.error(f"Core: Classification failed for scheme {scheme_id}: {str(e)}", exc_info=True)
-        raise ValueError(f"Classification failed: {str(e)}")
+        # Call the provider
+        result_value = provider.classify(provider_input)
+        # TODO: Add validation against scheme.validation_rules if present
+        return result_value
+    except Exception as provider_error:
+        logger.error(f"Classification provider failed for Scheme {scheme_id}: {provider_error}", exc_info=True)
+        # Re-raise as a specific error type?
+        raise ClassificationError(f"Classification provider error: {provider_error}") from provider_error
 
 
 def _core_create_results_batch(
@@ -505,25 +523,28 @@ class ClassificationService:
     def classify_text(
         self,
         text: str,
+        title: Optional[str],
         scheme_id: int,
         api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Classify text using a scheme.
-        READ-ONLY - Does not commit.
+        Classifies a single piece of text against a given scheme using the configured provider.
+
+        Args:
+            text: The text content to classify.
+            title: The optional title associated with the text.
+            scheme_id: The ID of the ClassificationScheme to use.
+            api_key: Optional API key if required by the provider.
+
+        Returns:
+            A dictionary representing the classification result.
+
+        Raises:
+            SchemeNotFoundError: If the scheme ID is invalid.
+            ClassificationError: If the classification provider fails.
         """
-        scheme = self.session.get(ClassificationScheme, scheme_id)
-        if not scheme:
-            raise ValueError(f"Classification scheme {scheme_id} not found")
-
-        try:
-            model_spec = scheme.model_dump()
-            if api_key:
-                model_spec["api_key"] = api_key
-
-            return self.provider.classify(text, model_spec, scheme.model_instructions)
-        except Exception as e:
-            raise ValueError(f"Classification failed: {str(e)}")
+        # Log entry moved to decorator
+        return _core_classify_text(self.session, self.provider, text, title, scheme_id, api_key)
 
     def create_result(
         self,
@@ -1026,15 +1047,24 @@ class ClassificationService:
         enhanced_results = []
         for result in results:
             # Get scheme for display value calculation
-            scheme = self.session.get(ClassificationScheme, result.scheme_id)
+            scheme = self.session.get(ClassificationScheme, result.scheme_id, options=[selectinload(ClassificationScheme.fields)]) # Eager load fields
             if not scheme:
+                logger.warning(f"Scheme {result.scheme_id} not found for result {result.id}, skipping enhancement.")
                 continue
 
-            enhanced = EnhancedClassificationResultRead(
-                **result.model_dump(),
-                scheme_fields=scheme.fields
-            )
-            enhanced_results.append(enhanced)
+            # Convert ClassificationField objects to dictionaries
+            scheme_fields_dicts = [field.model_dump() for field in scheme.fields]
+
+            try:
+                enhanced = EnhancedClassificationResultRead(
+                    **result.model_dump(),
+                    scheme_fields=scheme_fields_dicts # Pass the list of dictionaries
+                )
+                enhanced_results.append(enhanced)
+            except Exception as e:
+                logger.error(f"Failed to create EnhancedClassificationResultRead for result {result.id} (scheme {result.scheme_id}): {e}", exc_info=True)
+                # Decide: skip this result or re-raise? Skipping for now.
+                continue
 
         return enhanced_results
 

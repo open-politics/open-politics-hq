@@ -2,6 +2,7 @@
 Concrete implementations of classification providers.
 """
 import logging
+import os # Import os for environment variables
 from typing import Any, Dict, List, Optional, Type
 
 from pydantic import BaseModel, Field, create_model
@@ -10,6 +11,7 @@ from pydantic.fields import FieldInfo
 from app.core.opol_config import get_fastclass
 from app.models import ClassificationScheme, FieldType
 from app.api.services.providers.base import ClassificationProvider
+# from app.api.v2.classification import classify_text as core_classify_text # No longer needed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,182 +36,67 @@ class OpolClassificationProvider(ClassificationProvider):
         # so we can use per-request API keys
         logger.info(f"OPOL classification provider initialized for {provider}/{model_name}")
     
-    def _generate_pydantic_model(self, model_spec: Dict[str, Any]) -> Type[BaseModel]:
+    def classify(self, 
+                 text: str, 
+                 model_class: Type[BaseModel], # Expect the generated Pydantic model class
+                 instructions: Optional[str] = None,
+                 api_key: Optional[str] = None) -> Dict[str, Any]:
         """
-        Dynamically generate a Pydantic model based on the model specification.
-        
+        Classify text using the provided Pydantic model and OPOL.
+
         Args:
-            model_spec: Dictionary containing model field definitions
-            
+            text: The text to classify.
+            model_class: The dynamically generated Pydantic model class representing the scheme.
+            instructions: Optional instructions for the classification model (usually from the scheme).
+            api_key: Optional API key for the provider.
+
         Returns:
-            A Pydantic model class
-        """
-        field_definitions = {}
-        
-        # Handle direct schema definitions
-        if "fields" in model_spec:
-            fields = model_spec["fields"]
-            for field in fields:
-                field_name = field.get("name")
-                if not field_name:
-                    continue
-                    
-                field_description = field.get("description", f"Value for {field_name}")
-                field_type = field.get("type", "str")
-                
-                if field_type == "int" or field_type == FieldType.INT:
-                    scale_min = field.get("scale_min")
-                    scale_max = field.get("scale_max")
-                    field_definitions[field_name] = (
-                        float,  # Use float for flexibility with LLM
-                        Field(description=f"{field_description} (Scale: {scale_min}-{scale_max})")
-                    )
-                elif field_type == "list_str" or field_type == FieldType.LIST_STR:
-                    labels = field.get("labels", [])
-                    if field.get("is_set_of_labels") and labels:
-                        field_definitions[field_name] = (
-                            List[str],
-                            Field(
-                                description=f"{field_description}. Select one or more from: {', '.join(labels)}",
-                            )
-                        )
-                    else:
-                        field_definitions[field_name] = (
-                            List[str],
-                            Field(description=field_description)
-                        )
-                elif field_type == "str" or field_type == FieldType.STR:
-                    field_definitions[field_name] = (
-                        str,
-                        Field(description=field_description)
-                    )
-                elif field_type == "list_dict" or field_type == FieldType.LIST_DICT:
-                    dict_keys = field.get("dict_keys", [])
-                    if dict_keys:
-                        # Create a nested model for the dictionary structure
-                        dict_fields = {}
-                        for key_def in dict_keys:
-                            key_name = key_def.get("name")
-                            key_type_str = key_def.get("type", "str")
-                            if key_name:
-                                if key_type_str == "str":
-                                    dict_fields[key_name] = (Optional[str], ...)
-                                elif key_type_str == "int":
-                                    dict_fields[key_name] = (Optional[int], ...)
-                                elif key_type_str == "float":
-                                    dict_fields[key_name] = (Optional[float], ...)
-                                elif key_type_str == "bool":
-                                    dict_fields[key_name] = (Optional[bool], ...)
-                                    
-                        InnerDictModel = create_model(
-                            f"DictItem_{field_name}", 
-                            **dict_fields
-                        )
-                        field_definitions[field_name] = (
-                            List[InnerDictModel],
-                            Field(description=field_description)
-                        )
-                    else:
-                        field_definitions[field_name] = (
-                            List[Dict[str, Any]],
-                            Field(description=field_description)
-                        )
-        
-        # If no fields defined, use a simple text output field
-        if not field_definitions:
-            field_definitions["classification_output"] = (
-                str,
-                Field(description="Classification result")
-            )
-        
-        # Create the dynamic model
-        model_name = model_spec.get("name", "DynamicClassification")
-        model_doc = model_spec.get("instructions", model_spec.get("description", "Classification Model"))
-        
-        DynamicModel = create_model(
-            f"Dynamic_{model_name.replace(' ', '')}",
-            __doc__=model_doc,
-            **field_definitions
-        )
-        
-        return DynamicModel
-    
-    def _prepare_model_from_scheme(self, scheme: ClassificationScheme) -> Type[BaseModel]:
-        """
-        Prepare a Pydantic model from a ClassificationScheme.
-        
-        Args:
-            scheme: The ClassificationScheme to convert
-            
-        Returns:
-            A Pydantic model class
-        """
-        model_spec = {
-            "name": scheme.name,
-            "description": scheme.description,
-            "instructions": scheme.model_instructions,
-            "fields": []
-        }
-        
-        if hasattr(scheme, 'fields') and scheme.fields:
-            for field in scheme.fields:
-                field_dict = {
-                    "name": field.name,
-                    "description": field.description,
-                    "type": field.type,
-                    "scale_min": field.scale_min,
-                    "scale_max": field.scale_max,
-                    "is_set_of_labels": field.is_set_of_labels,
-                    "labels": field.labels,
-                    "dict_keys": field.dict_keys
-                }
-                model_spec["fields"].append(field_dict)
-        
-        return self._generate_pydantic_model(model_spec)
-    
-    def classify(self, text: str, model_spec: Dict[str, Any], 
-                instructions: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Classify text according to the given model specification.
-        
-        Args:
-            text: The text to classify
-            model_spec: Dictionary specifying the model format or a ClassificationScheme
-            instructions: Optional additional instructions to guide the classification
-            
-        Returns:
-            Classification results as a dictionary
+            Classification results as a dictionary.
         """
         if not text:
-            logger.warning("Received empty text for classification. Returning empty result.")
+            logger.warning("Provider received empty text. Returning empty result.")
             return {}
-        
+
+        # Ensure instructions is at least an empty string
+        instructions = instructions or ""
+
         try:
-            # Get API key from model_spec if provided
-            api_key = model_spec.get("api_key")
-            
-            # Initialize the classification client
-            fastclass = get_fastclass(
-                provider=self.provider,
-                model_name=self.model_name,
-                api_key=api_key
-            )
-            
-            # Prepare the model
-            if isinstance(model_spec, ClassificationScheme):
-                # If passed a ClassificationScheme directly
-                ModelClass = self._prepare_model_from_scheme(model_spec)
-                instructions = model_spec.model_instructions or instructions
+            # Get OPOL fastclass instance
+            # Determine provider/model settings based on environment or defaults
+            if os.environ.get("LOCAL_LLM") == "True":
+                 provider_name = "ollama"
+                 model_name = os.environ.get("LOCAL_LLM_MODEL", "llama3.2:latest")
+                 current_api_key = "" # Ollama doesn't typically use API keys
             else:
-                # If passed a model specification dictionary
-                ModelClass = self._generate_pydantic_model(model_spec)
+                # Use defaults from provider initialization or potentially other config
+                provider_name = self.provider 
+                model_name = self.model_name 
+                current_api_key = api_key # Use provided key or potentially a default/global one
+                
+            logger.debug(f"Initializing fastclass with provider: {provider_name}, model: {model_name}")
+            fastclass = get_fastclass(
+                provider=provider_name,
+                model_name=model_name,
+                api_key=current_api_key
+            )
+
+            # Classify using OPOL with the provided ModelClass
+            logger.debug(f"Calling fastclass.classify with model: {model_class.__name__}, instructions: '{instructions[:50]}...'")
+            result = fastclass.classify(model_class, instructions, text)
             
-            # Perform the classification
-            result = fastclass.classify(ModelClass, instructions or "", text)
-            return result.model_dump()
-            
+            # Log the raw result type and value before dumping
+            logger.debug(f"Raw result from fastclass.classify (type: {type(result)}): {result}")
+
+            # Return the validated & structured data as a dictionary
+            if isinstance(result, BaseModel):
+                return result.model_dump()
+            else:
+                # This case shouldn't typically happen if fastclass works correctly
+                logger.warning(f"Fastclass returned non-Pydantic result: {type(result)}. Returning as is.")
+                return result 
+
         except Exception as e:
-            logger.error(f"Classification failed: {str(e)}", exc_info=True)
+            logger.error(f"OPOL classification failed in provider for model {model_class.__name__}: {str(e)}", exc_info=True)
             raise RuntimeError(f"Classification failed: {str(e)}")
 
 

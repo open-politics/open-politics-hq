@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_import_resource,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_import_resource,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,DataRecordUpdate,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
 
 export type AppData = {
         
@@ -641,6 +641,12 @@ workspaceId: number
 export type DatarecordsData = {
         GetDatarecord: {
                     datarecordId: number
+workspaceId: number
+                    
+                };
+UpdateDatarecord: {
+                    datarecordId: number
+requestBody: DataRecordUpdate
 workspaceId: number
                     
                 };
@@ -3918,6 +3924,32 @@ datarecordId,
 	}
 
 	/**
+	 * Update Datarecord
+	 * Update a specific DataRecord (e.g., title, event_timestamp).
+	 * @returns DataRecordRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateDatarecord(data: DatarecordsData['UpdateDatarecord']): CancelablePromise<DataRecordRead> {
+		const {
+workspaceId,
+datarecordId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}',
+			path: {
+				workspace_id: workspaceId, datarecord_id: datarecordId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * List Datarecords
 	 * List DataRecords for a specific DataSource.
 	 * @returns DataRecordRead Successful Response
@@ -5308,7 +5340,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-04-28',
+timeframeTo = '2025-04-29',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

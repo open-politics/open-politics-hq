@@ -27,11 +27,35 @@ from app.api.services.providers.classification import OpolClassificationProvider
 from app.api.services.providers.geospatial import OpolGeospatialProvider, get_geospatial_provider
 from app.api.services.providers.search import OpolSearchProvider, get_search_provider
 
-# --- Service Imports ---
-from app.api.services.ingestion import IngestionService
-from app.api.services.shareable import ShareableService
-from app.api.services.dataset import DatasetService
-from app.api.services.classification import ClassificationService
+# Create global provider instances
+storage_provider = get_storage_provider()
+scraping_provider = get_scraping_provider()
+classification_provider = get_classification_provider()
+geospatial_provider = get_geospatial_provider()
+search_provider = get_search_provider()
+
+# Simple dependency functions that return the global instances
+def get_storage_provider_dep() -> StorageProvider:
+    return storage_provider
+
+def get_scraping_provider_dep() -> ScrapingProvider:
+    return scraping_provider
+
+def get_classification_provider_dep() -> ClassificationProvider:
+    return classification_provider
+
+def get_geospatial_provider_dep() -> GeospatialProvider:
+    return geospatial_provider
+
+def get_search_provider_dep() -> SearchProvider:
+    return search_provider
+
+# Define annotated types for easy injection
+StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dep)]
+ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dep)]
+ClassificationProviderDep = Annotated[ClassificationProvider, Depends(get_classification_provider_dep)]
+GeospatialProviderDep = Annotated[GeospatialProvider, Depends(get_geospatial_provider_dep)]
+SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dep)]
 
 # --- Core Dependencies ---
 
@@ -100,37 +124,11 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
         )
     return current_user
 
-# --- Provider Dependencies ---
-
-# Create global provider instances
-storage_provider = get_storage_provider()
-scraping_provider = get_scraping_provider()
-classification_provider = get_classification_provider()
-geospatial_provider = get_geospatial_provider()
-search_provider = get_search_provider()
-
-# Simple dependency functions that return the global instances
-def get_storage_provider_dep() -> StorageProvider:
-    return storage_provider
-
-def get_scraping_provider_dep() -> ScrapingProvider:
-    return scraping_provider
-
-def get_classification_provider_dep() -> ClassificationProvider:
-    return classification_provider
-
-def get_geospatial_provider_dep() -> GeospatialProvider:
-    return geospatial_provider
-
-def get_search_provider_dep() -> SearchProvider:
-    return search_provider
-
-# Define annotated types for easy injection
-StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dep)]
-ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dep)]
-ClassificationProviderDep = Annotated[ClassificationProvider, Depends(get_classification_provider_dep)]
-GeospatialProviderDep = Annotated[GeospatialProvider, Depends(get_geospatial_provider_dep)]
-SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dep)]
+# --- Service Imports ---
+from app.api.services.ingestion import IngestionService
+from app.api.services.shareable import ShareableService
+from app.api.services.dataset import DatasetService
+from app.api.services.classification import ClassificationService
 
 # --- Service Dependencies ---
 

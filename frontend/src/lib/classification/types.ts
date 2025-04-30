@@ -26,10 +26,11 @@ export interface DataSource {
 export interface DataRecord {
   id: number;
   datasource_id?: number | null;
+  title?: string | null;
   text_content: string;
-  source_metadata: Record<string, any>;
-  event_timestamp?: Date | null;
-  created_at: Date;
+  source_metadata?: Record<string, any>;
+  event_timestamp?: string | null;
+  created_at: string;
   content_hash?: string | null;
   url_hash?: string | null;
   datasource?: DataSource; // Optional link for context

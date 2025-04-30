@@ -139,13 +139,15 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, results,
   const labelSourceId = 'label-source';
   const labelLayerId = 'label-layer';
 
-  const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoiamltdmluY2VudHdhZ25lciIsImEiOiJjbHhlbGJ5ZWcwYmJ4MmtxemxpeTNvYWpzIn0.wB1B9zQPb3z670auYgMEWA';
+  const MAPBOX_TOKEN = 'pk.eyJ1IjoiamltdmluY2VudHdhZ25lciIsImEiOiJjbHhlbGJ5ZWcwYmJ4MmtxemxpeTNvYWpzIn0.wB1B9zQPb3z670auYgMEWA';
+  // || process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
   // --- Initialize Map ---
   useEffect(() => {
     if (mapRef.current || !mapContainerRef.current) return;
 
     console.log("Initializing map...");
+    console.log("Mapbox Token Used:", MAPBOX_TOKEN);
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,

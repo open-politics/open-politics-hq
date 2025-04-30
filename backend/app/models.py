@@ -5,6 +5,9 @@ from sqlalchemy import Column, ARRAY, Text, JSON, Integer, UniqueConstraint, Str
 from pydantic import BaseModel, model_validator, computed_field
 import enum
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Enums used across multiple models
@@ -142,15 +145,12 @@ class Workspace(WorkspaceBase, table=True):
 
     # Relationships
     owner: Optional[User] = Relationship(back_populates="workspaces")
-    classification_schemes: List["ClassificationScheme"] = Relationship(back_populates="workspace")
-    # Remove old relationships
-    # documents: List["Document"] = Relationship(back_populates="workspace")
-
-    # Add new relationships
-    datasources: List["DataSource"] = Relationship(back_populates="workspace")
-    classification_jobs: List["ClassificationJob"] = Relationship(back_populates="workspace")
-    # saved_result_sets might need rethinking in context of Jobs/DataRecords
-    # saved_result_sets: List["SavedResultSet"] = Relationship(back_populates="workspace")
+    classification_schemes: List["ClassificationScheme"] = Relationship(back_populates="workspace", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    datasources: List["DataSource"] = Relationship(back_populates="workspace", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    classification_jobs: List["ClassificationJob"] = Relationship(back_populates="workspace", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    # Add relationships for other dependent tables
+    recurring_tasks: List["RecurringTask"] = Relationship(back_populates="workspace", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
+    datasets: List["Dataset"] = Relationship(back_populates="workspace", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
 
 # API model for Workspace creation
 class WorkspaceCreate(WorkspaceBase):
@@ -303,6 +303,7 @@ class CsvRowsOut(SQLModel):
 
 # Shared properties for DataRecord
 class DataRecordBase(SQLModel):
+    title: Optional[str] = Field(default=None) # ADDED: Optional title for the record
     text_content: str = Field(sa_column=Column(Text)) # The actual text to be classified
     # source_metadata: Stores context about where this record came from within the DataSource.
     # CSV: {'row_number': 5, 'source_columns': {'text': 'column_name'}}
@@ -321,6 +322,7 @@ class DataRecord(DataRecordBase, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     url_hash: Optional[str] = Field(default=None, index=True) # Added for efficient URL deduplication
     content_hash: Optional[str] = Field(default=None, index=True) # Added for content deduplication
+    # title field inherited from DataRecordBase
 
     # Relationships
     datasource: Optional["DataSource"] = Relationship(back_populates="data_records")
@@ -330,7 +332,8 @@ class DataRecord(DataRecordBase, table=True):
 class DataRecordCreate(DataRecordBase):
     datasource_id: Optional[int] = None # Allow creating records without an initial datasource link
     content_hash: Optional[str] = None # Allow passing hash during creation
-    # event_timestamp is inherited from DataRecordBase
+    title: Optional[str] = None # ADDED: Explicitly allow setting title on creation
+    event_timestamp: Optional[datetime] = None # Allow overriding default
 
 # API model for returning DataRecord data
 class DataRecordRead(DataRecordBase):
@@ -338,12 +341,20 @@ class DataRecordRead(DataRecordBase):
     datasource_id: Optional[int] = None # Made optional here too
     created_at: datetime
     content_hash: Optional[str] = None # Include hash in read model
+    title: Optional[str] = None # ADDED: Include title in read model
     # event_timestamp is inherited from DataRecordBase
 
 # API model for returning a list of DataRecords
 class DataRecordsOut(SQLModel):
     data: List[DataRecordRead]
     count: int
+
+# --- ADDED: DataRecordUpdate Model ---
+class DataRecordUpdate(SQLModel):
+    """Schema for updating specific fields of a DataRecord."""
+    title: Optional[str] = None # Allow updating the title
+    event_timestamp: Optional[datetime] = None # Allow updating the event timestamp
+# --- END ADDED ---
 
 # ---------------------------------------------------------------------------
 # Classification Scheme & Field Management Models
@@ -608,47 +619,62 @@ class EnhancedClassificationResultRead(ClassificationResultBase):
     @classmethod
     def process_and_set_display_value(cls, data: Any):
         if not isinstance(data, dict):
-            # If already validated or not a dict, return as is.
             return data
 
         value = data.get('value')
-        # scheme_fields should ideally be injected here by the calling API endpoint
-        # based on the result's scheme_id if needed for complex display logic.
-        # For simplicity now, let's assume scheme_fields might be present in `data`.
-        scheme_fields = data.get('scheme_fields', [])
+        scheme_id = data.get('scheme_id') # Need scheme_id to potentially look up fields
+        # Attempt to get scheme_fields if they were injected (might not be)
+        scheme_fields_injected = data.get('scheme_fields', [])
         display_value = None
 
-        # --- Start: Simplified Value Processing Logic (copied from old model) ---
         if value is None:
             display_value = None
         elif isinstance(value, str):
+            # This case might be less common now if the backend always wraps
             display_value = "N/A" if value.lower() == "n/a" else value
         elif isinstance(value, (int, float)):
+             # Similar logic for binary/numeric - requires scheme fields
              is_likely_binary = False
-             if scheme_fields and len(scheme_fields) == 1:
-                 field = scheme_fields[0]
+             if scheme_fields_injected and len(scheme_fields_injected) == 1:
+                 field = scheme_fields_injected[0]
                  s_min = field.get('scale_min')
                  s_max = field.get('scale_max')
                  if s_min == 0 and s_max == 1:
                      is_likely_binary = True
-
              if is_likely_binary:
                  display_value = 'True' if value > 0.5 else 'False'
              else:
                  display_value = value
         elif isinstance(value, dict):
-             extracted = {}
-             if scheme_fields:
-                 field_names = [f.name for f in scheme_fields if hasattr(f, 'name') and f.name]
-                 for name in field_names:
-                     if name in value:
-                         extracted[name] = value[name]
-             display_value = extracted if extracted else value
+            # If the value is a dictionary (expected from _core_classify_text)
+            # Try to extract the value corresponding to the field name.
+            # For simplicity, assume single field if scheme_fields aren't injected.
+            # A more robust solution might fetch the scheme if needed.
+            field_keys = list(value.keys())
+            if len(field_keys) == 1:
+                # If the dict has only one key, assume that's the field name and its value is the one we want.
+                actual_value = value[field_keys[0]]
+                # Now format the actual_value based on its type (similar to above)
+                if actual_value is None:
+                    display_value = None
+                elif isinstance(actual_value, str):
+                     display_value = "N/A" if actual_value.lower() == "n/a" else actual_value
+                elif isinstance(actual_value, (int, float)):
+                    # Could refine with binary check if scheme_fields were available
+                    display_value = actual_value
+                elif isinstance(actual_value, list):
+                     display_value = actual_value # Display lists as-is for now
+                else:
+                     display_value = str(actual_value)
+            else:
+                # Multiple keys found, or structure is unexpected. Render the dict as string? Or pick first?
+                # For now, fallback to showing the dict representation
+                logger.warning(f"EnhancedClassificationResultRead: Value is dict with multiple keys ({field_keys}) or unexpected structure for scheme {scheme_id}. Falling back to raw dict for display_value.")
+                display_value = value
         elif isinstance(value, list):
              display_value = value
         else:
              display_value = str(value)
-        # --- End: Simplified Value Processing Logic ---
 
         data['display_value'] = display_value
         return data
@@ -716,8 +742,8 @@ class RecurringTask(RecurringTaskBase, table=True):
     consecutive_failure_count: int = Field(default=0) # Added for auto-pausing
 
     # Relationships
-    workspace: Optional["Workspace"] = Relationship() # Define back_populates if needed later
-    user: Optional["User"] = Relationship() # Define back_populates if needed later
+    workspace: Optional["Workspace"] = Relationship(back_populates="recurring_tasks")
+    user: Optional["User"] = Relationship()
     last_job: Optional["ClassificationJob"] = Relationship()
 
 # API model for RecurringTask creation
@@ -976,7 +1002,7 @@ class Dataset(DatasetBase, table=True):
     source_scheme_ids: Optional[List[int]] = Field(default=None, sa_column=Column(ARRAY(Integer)))
 
     # Relationships (Optional, add back_populates if needed on Workspace/User)
-    workspace: Optional["Workspace"] = Relationship()
+    workspace: Optional["Workspace"] = Relationship(back_populates="datasets")
     user: Optional["User"] = Relationship()
 
 # API model for Dataset creation

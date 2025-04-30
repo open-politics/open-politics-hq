@@ -13,12 +13,12 @@ import { Clock, Database, FileJson } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
-export type TimeAxisSourceType = 'default' | 'schema';
+export type TimeAxisSourceType = 'default' | 'schema' | 'event';
 
 export interface TimeAxisConfig {
   type: TimeAxisSourceType;
-  schemeId?: number; // Only if type is 'schema'
-  fieldKey?: string; // Only if type is 'schema'
+  schemeId?: number; // Only used if type is 'schema'
+  fieldKey?: string; // Only used if type is 'schema'
 }
 
 interface ClassificationTimeAxisControlsProps {
@@ -120,8 +120,15 @@ export const ClassificationTimeAxisControls: React.FC<ClassificationTimeAxisCont
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="default" id="time-default" />
             <Label htmlFor="time-default" className="font-normal flex items-center">
+                <Clock className="h-3.5 w-3.5 mr-1.5 text-muted-foreground"/>
+                Classification Time
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="event" id="time-event" />
+            <Label htmlFor="time-event" className="font-normal flex items-center">
                 <Database className="h-3.5 w-3.5 mr-1.5 text-muted-foreground"/>
-                Default (Record Timestamp)
+                Original Event Time (from Data Record)
             </Label>
           </div>
           <div className="flex items-center space-x-2">

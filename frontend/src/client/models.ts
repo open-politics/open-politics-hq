@@ -11,6 +11,10 @@ export type AppendRecordInput = {
 	 */
 	content_type: 'text' | 'url';
 	/**
+	 * Optional title for the record (used for 'text' type)
+	 */
+	title?: string | null;
+	/**
 	 * Optional ISO 8601 timestamp for the event
 	 */
 	event_timestamp?: string | null;
@@ -226,6 +230,7 @@ export type CsvRowsOut = {
 
 
 export type DataRecordRead = {
+	title?: string | null;
 	text_content: string;
 	source_metadata?: Record<string, unknown>;
 	event_timestamp?: string | null;
@@ -233,6 +238,16 @@ export type DataRecordRead = {
 	datasource_id?: number | null;
 	created_at: string;
 	content_hash?: string | null;
+};
+
+
+
+/**
+ * Schema for updating specific fields of a DataRecord.
+ */
+export type DataRecordUpdate = {
+	title?: string | null;
+	event_timestamp?: string | null;
 };
 
 

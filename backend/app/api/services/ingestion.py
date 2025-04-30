@@ -39,6 +39,7 @@ from app.models import (
 )
 from app.api.services.providers.base import StorageProvider, ScrapingProvider
 from app.api.services.service_utils import validate_workspace_access
+from app.api.tasks.ingestion import process_datasource
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -341,6 +342,13 @@ class IngestionService:
                 # Add storage information to metadata
                 origin_details['filename'] = file.filename
                 origin_details['storage_path'] = object_name
+                origin_details['content_type'] = file.content_type
+                # Store skip_rows and delimiter if provided for CSV
+                if type == DataSourceType.CSV:
+                    if skip_rows is not None:
+                        origin_details['skip_rows'] = skip_rows
+                    if delimiter is not None:
+                        origin_details['delimiter'] = delimiter
                 
                 # Create the DataSource object
                 datasource = DataSource(
@@ -379,6 +387,7 @@ class IngestionService:
                 
                 origin_details['filename'] = file.filename
                 origin_details['storage_path'] = object_name
+                origin_details['content_type'] = file.content_type
                 
                 datasource = DataSource(
                     name=name,
@@ -413,6 +422,7 @@ class IngestionService:
                     file_origin_details = origin_details.copy()
                     file_origin_details['filename'] = file.filename
                     file_origin_details['storage_path'] = object_name
+                    file_origin_details['content_type'] = file.content_type
                     
                     datasource = DataSource(
                         name=file_specific_name,
@@ -444,6 +454,39 @@ class IngestionService:
                 self.session.add(datasource)
                 self.session.flush() # Get ID but don't commit
                 created_sources.append(datasource)
+            
+            elif type == DataSourceType.TEXT_BLOCK:
+                if origin_details and 'text_content' in origin_details:
+                    origin_details['title'] = origin_details.get('title', "Untitled Text Block")
+                    datasource = DataSource(
+                        name=name,
+                        type=type,
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                        status=DataSourceStatus.PENDING,
+                        origin_details=origin_details
+                    )
+                    self.session.add(datasource)
+                    self.session.flush()
+                    created_sources.append(datasource)
+                else:
+                    raise ValueError("Missing 'text_content' in origin_details for TEXT_BLOCK")
+            
+            elif type == DataSourceType.URL_LIST:
+                if origin_details and 'urls' in origin_details:
+                    datasource = DataSource(
+                        name=name,
+                        type=type,
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                        status=DataSourceStatus.PENDING,
+                        origin_details=origin_details
+                    )
+                    self.session.add(datasource)
+                    self.session.flush()
+                    created_sources.append(datasource)
+                else:
+                    raise ValueError("Missing 'urls' in origin_details for URL_LIST")
             
             else:
                 # Other datasource types
@@ -575,7 +618,7 @@ class IngestionService:
 
         # Check workspace match
         if datasource.workspace_id != workspace_id:
-            raise ValueError(f"DataSource {datasource_id} does not belong to workspace {workspace_id}")
+            raise ValueError(f"DataSource {datasource_id} workspace mismatch during deletion: {datasource.workspace_id} != {workspace_id}")
 
         # Check type
         if datasource.type != DataSourceType.URL_LIST:
@@ -616,7 +659,7 @@ class IngestionService:
                     datasource.data_record_count = max(0, datasource.data_record_count - deleted_count)
                 else:
                     # If count was None, try to recount (though this is less ideal)
-                    count_stmt = select(func.count(DataRecord.id)).where(DataRecord.datasource_id == datasource_id)
+                    count_stmt = select(func.count()).select_from(DataRecord).where(DataRecord.datasource_id == datasource_id)
                     current_count = self.session.scalar(count_stmt) or 0
                     datasource.data_record_count = max(0, current_count - deleted_count) # Adjust based on remaining
                 logger.info(f"Marked {deleted_count} DataRecords for deletion and updated count for DS {datasource_id} to {datasource.data_record_count}")
@@ -644,166 +687,189 @@ class IngestionService:
         datasource_id: int,
         url: str
     ) -> Optional[DataRecord]:
-        """
-        Create a data record from a URL by scraping its content.
-        
-        Args:
-            datasource_id: ID of the parent data source
-            url: URL to scrape
-            
-        Returns:
-            Created DataRecord instance, or None if creation failed
-            
-        Raises:
-            ValueError: If the data source is not found
-        """
-        # NOTE: This method doesn't explicitly validate workspace access
-        # It assumes the caller (e.g., task) has validated the datasource_id context
-        
-        # Query DataRecord and join DataSource to verify ownership
-        statement = select(DataRecord).join(DataSource).where(
-            DataRecord.datasource_id == datasource_id
-        )
+        """Scrape a single URL and create a DataRecord linked to the datasource."""
+        logger.info(f"Creating record from URL {url} for DS {datasource_id}")
 
-        data_record = self.session.exec(statement).first()
+        # --- Call sync part --- 
+        def _create_sync():
+            # Validate workspace access
+            datasource = self.get_datasource(datasource_id, workspace_id=None, user_id=None) # Get DS without workspace check initially
+            if not datasource: raise DataSourceNotFoundException(f"DataSource {datasource_id} not found")
+            validate_workspace_access(self.session, datasource.workspace_id, user_id)
+            if datasource.type != DataSourceType.URL_LIST: raise ValueError("Can only add URLs to a URL_LIST DataSource")
 
-        if data_record:
-            logger.info(f"Skipping duplicate URL: {url} (already exists in database)")
-            return data_record
-        
-        try:
-            # Scrape the URL
-            scraped_data = await self.scraper.scrape_url(url)
-            
-            if not scraped_data or not scraped_data.get("text_content"):
-                logger.warning(f"No text content found after scraping {url}")
+            # Check for duplicate URL within this DataSource
+            url_hash = hashlib.sha256(url.encode()).hexdigest()
+            existing_rec_stmt = select(DataRecord.id).where(DataRecord.datasource_id == datasource_id, DataRecord.url_hash == url_hash)
+            if self.session.exec(existing_rec_stmt).first():
+                logger.info(f"URL {url} already exists in DS {datasource_id}, skipping creation.")
                 return None
+
+            # Scrape URL (use await here as scrape_url is async)
+            # Note: Cannot directly await inside sync func. Need refactor or keep scraping outside.
+            # Let's assume scraping happens *before* _create_sync for now.
+
+            # --- Placeholder for where scraping result would be used ---
+            # scraped_data = ... # This needs to be passed into _create_sync or handled differently
+            # text_content = scraped_data.get("text_content")
+            # record_title = scraped_data.get("title")
+            # publication_date = scraped_data.get("publication_date")
+            # --- End Placeholder ---
             
-            # Clean the text content
-            text_content = scraped_data["text_content"].replace('\x00', '').strip()
-            if not text_content:
-                logger.warning(f"Empty text content after cleaning for {url}")
-                return None
-            
-            # Parse event timestamp if available
-            event_ts = None
-            publication_date_str = scraped_data.get("publication_date")
-            if publication_date_str:
-                try:
-                    parsed_dt = dateutil.parser.parse(publication_date_str)
-                    if parsed_dt.tzinfo is None:
-                        event_ts = parsed_dt.replace(tzinfo=timezone.utc)
-                    else:
-                        event_ts = parsed_dt
-                except (ValueError, OverflowError, TypeError) as parse_err:
-                    logger.warning(f"Could not parse publication_date '{publication_date_str}' for URL {url}: {parse_err}")
-            
-            # Prepare metadata
-            record_meta = {
-                'original_url': url,
-                'scraped_title': scraped_data.get("title"),
-                'scrape_time': datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Create the record
-            record_data = DataRecordCreate(
-                datasource_id=datasource_id,
-                text_content=text_content,
-                source_metadata=record_meta,
-                event_timestamp=event_ts,
-                url_hash=hashlib.sha256(url.encode()).hexdigest()
-            )
-            
-            record = DataRecord.model_validate(record_data)
-            self.session.add(record)
-            self.session.flush() # Added flush
-            self.session.refresh(record)
-            
-            logger.info(f"Created data record {record.id} from URL: {url}")
-            
-            # --- Increment DataSource Count --- 
-            datasource = self.session.get(DataSource, datasource_id)
-            if datasource:
-                if datasource.data_record_count is None:
-                    datasource.data_record_count = 1
-                else:
-                    datasource.data_record_count += 1
-                self.session.add(datasource)
-                self.session.flush() # Flush the count update
-                logger.info(f"Incremented count for DataSource {datasource_id} to {datasource.data_record_count}")
-            else:
-                logger.warning(f"Could not find DataSource {datasource_id} to increment count after URL record creation.")
-            # --- End Increment --- 
-            
-            return record
-            
-        except Exception as e:
-            logger.error(f"Failed to create record from URL {url}: {str(e)}", exc_info=True)
+            # This function needs refactoring to handle async scraping properly.
+            # For now, returning None and logging the issue.
+            logger.error("Refactoring needed: Cannot call async scraping within sync DB transaction context of create_record_from_url.")
             return None
-    
+            
+            # --- Start original logic that needs scraped_data ---
+            # if not text_content:
+            #     logger.warning(f"No text content scraped from {url}. Skipping record creation.")
+            #     return None
+            # 
+            # text_content = text_content.replace('\\x00', '').strip()
+            # if not text_content:
+            #     logger.warning(f"Text content is empty after cleaning for {url}. Skipping.")
+            #     return None
+            # 
+            # event_ts = None
+            # if publication_date:
+            #     try:
+            #         parsed_dt = dateutil.parser.parse(publication_date)
+            #         event_ts = parsed_dt.replace(tzinfo=timezone.utc) if parsed_dt.tzinfo is None else parsed_dt
+            #     except Exception as parse_err:
+            #         logging.warning(f"Could not parse publication_date '{publication_date}' for URL {url}: {parse_err}")
+            # 
+            # # Create DataRecord
+            # record = DataRecord(
+            #     datasource_id=datasource_id,
+            #     title=record_title, # Use scraped title
+            #     text_content=text_content,
+            #     source_metadata={'original_url': url, 'scraped_title': record_title}, # Store original URL and title
+            #     event_timestamp=event_ts,
+            #     url_hash=url_hash,
+            #     created_at=datetime.now(timezone.utc)
+            # )
+            # self.session.add(record)
+            # self.session.commit()
+            # self.session.refresh(record)
+            # logger.info(f"Created DataRecord {record.id} from URL {url}")
+            # return record
+            # --- End original logic ---
+
+        # --- Refactored approach: Scrape first, then call sync DB part --- 
+        try:
+            # 1. Perform scraping (async)
+            logger.debug(f"Scraping URL: {url}")
+            scraped_data = await self.scraper.scrape_url(url)
+            logger.debug(f"Scraping completed for URL: {url}. Title found: {bool(scraped_data.get('title'))}")
+
+            # 2. Define the synchronous DB operation function
+            def _create_record_sync(scraped_info: dict): 
+                datasource = self.get_datasource(datasource_id, workspace_id=None, user_id=None)
+                if not datasource: raise DataSourceNotFoundException(f"DataSource {datasource_id} not found")
+                validate_workspace_access(self.session, datasource.workspace_id, user_id)
+                if datasource.type != DataSourceType.URL_LIST: raise ValueError("Can only add URLs to a URL_LIST DataSource")
+
+                url_hash = hashlib.sha256(url.encode()).hexdigest()
+                existing_rec_stmt = select(DataRecord.id).where(DataRecord.datasource_id == datasource_id, DataRecord.url_hash == url_hash)
+                if self.session.exec(existing_rec_stmt).first():
+                    logger.info(f"URL {url} already exists in DS {datasource_id}, skipping creation.")
+                    return None
+
+                text_content = scraped_info.get("text_content")
+                record_title = scraped_info.get("title") # Use scraped title
+                publication_date = scraped_info.get("publication_date")
+
+                if not text_content:
+                    logger.warning(f"No text content scraped from {url}. Skipping record creation.")
+                    return None
+                
+                text_content = text_content.replace('\\x00', '').strip()
+                if not text_content:
+                    logger.warning(f"Text content is empty after cleaning for {url}. Skipping.")
+                    return None
+                
+                # Use URL as title fallback
+                if not record_title: record_title = url 
+                
+                event_ts = None
+                if publication_date:
+                    try:
+                        parsed_dt = dateutil.parser.parse(publication_date)
+                        event_ts = parsed_dt.replace(tzinfo=timezone.utc) if parsed_dt.tzinfo is None else parsed_dt
+                    except Exception as parse_err:
+                        logging.warning(f"Could not parse publication_date '{publication_date}' for URL {url}: {parse_err}")
+                
+                # Create DataRecord
+                record = DataRecord(
+                    datasource_id=datasource_id,
+                    title=record_title, # Use scraped/fallback title
+                    text_content=text_content,
+                    source_metadata={'original_url': url, 'scraped_title': scraped_info.get("title")}, # Store original URL and originally scraped title
+                    event_timestamp=event_ts,
+                    url_hash=url_hash,
+                    created_at=datetime.now(timezone.utc)
+                )
+                self.session.add(record)
+                self.session.commit()
+                self.session.refresh(record)
+                logger.info(f"Created DataRecord {record.id} from URL {url}")
+                return record
+
+            # 3. Run the sync DB function in a thread
+            return await asyncio.to_thread(_create_record_sync, scraped_data)
+        
+        except (DataSourceNotFoundException, ValueError) as e:
+            logger.warning(f"Error creating record from URL {url}: {e}")
+            raise e # Re-raise validation/not found errors
+        except Exception as e:
+            logger.exception(f"Unexpected error creating record from URL {url}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create record from URL")
+
     def create_record_from_text(
         self,
         datasource_id: int,
         text_content: str,
+        title: Optional[str] = None, # ADDED: Optional title parameter
         metadata: Optional[Dict[str, Any]] = None,
         event_timestamp: Optional[datetime] = None
     ) -> DataRecord:
-        """
-        Create a data record from text content.
+        """Create a DataRecord from raw text content."""
+        logger.info(f"Creating record from text for DS {datasource_id}. Title: '{title}'")
         
-        Args:
-            datasource_id: ID of the parent data source
-            text_content: The text content
-            metadata: Optional source metadata
-            event_timestamp: Optional event timestamp
-            
-        Returns:
-            Created DataRecord instance
-            
-        Raises:
-            ValueError: If the data source is not found or text is empty
-        """
-        # NOTE: This method doesn't explicitly validate workspace access
-        datasource = self.session.get(DataSource, datasource_id)
-        if not datasource:
-            raise ValueError(f"Data source {datasource_id} not found")
+        # Ensure the parent DataSource exists and belongs to the user/workspace implicitly via access control on route
+        datasource = self.get_datasource(datasource_id)
+        if not datasource: raise DataSourceNotFoundException(f"DataSource {datasource_id} not found")
+        # Optional: Add check if datasource type allows direct text records?
         
-        if not text_content.strip():
-            raise ValueError("Text content cannot be empty")
-        
-        # Create the record
-        record_data = DataRecordCreate(
-            datasource_id=datasource_id,
-            text_content=text_content,
-            source_metadata=metadata or {},
-            event_timestamp=event_timestamp
-        )
-        
-        record = DataRecord.model_validate(record_data)
-        self.session.add(record)
-        self.session.flush() # Added flush
-        self.session.refresh(record)
-        
-        logger.info(f"Created data record {record.id} from text content")
-        
-        # --- Increment DataSource Count --- 
-        # Re-fetch datasource in case session state changed, though unlikely here
-        datasource = self.session.get(DataSource, datasource_id)
-        if datasource: # Should always be found based on check above
-            if datasource.data_record_count is None:
-                datasource.data_record_count = 1
-            else:
-                datasource.data_record_count += 1
-            self.session.add(datasource)
-            self.session.flush() # Flush the count update
-            logger.info(f"Incremented count for DataSource {datasource_id} to {datasource.data_record_count}")
-        else:
-            # This case should ideally not happen due to the check at the start
-            logger.error(f"Could not find DataSource {datasource_id} to increment count after text record creation.")
-        # --- End Increment ---
+        cleaned_text = text_content.replace('\\x00', '').strip()
+        if not cleaned_text:
+            raise ValueError("Text content cannot be empty after cleaning.")
 
+        # Generate content hash
+        content_hash = hashlib.sha256(cleaned_text.encode()).hexdigest()
+        
+        # Optional: Check for duplicate content hash within the datasource
+        existing_rec_stmt = select(DataRecord.id).where(DataRecord.datasource_id == datasource_id, DataRecord.content_hash == content_hash)
+        if self.session.exec(existing_rec_stmt).first():
+            logger.warning(f"Duplicate text content hash found for DS {datasource_id}. Consider skipping or handling.")
+            # Decide: raise error or just return existing? For now, let's allow duplicates if user explicitly adds.
+        
+        record = DataRecord(
+            datasource_id=datasource_id,
+            title=title, # ADDED: Use provided title
+            text_content=cleaned_text,
+            source_metadata=metadata if metadata else {},
+            event_timestamp=event_timestamp,
+            content_hash=content_hash,
+            created_at=datetime.now(timezone.utc)
+        )
+        self.session.add(record)
+        self.session.commit()
+        self.session.refresh(record)
+        logger.info(f"Created DataRecord {record.id} from text for DS {datasource_id}")
         return record
-    
+
     async def create_records_batch(
         self,
         records_data: List[Dict[str, Any]]
@@ -1210,160 +1276,63 @@ class IngestionService:
         user_id: int,
         content: str,
         content_type: Literal['text', 'url'],
+        title: Optional[str] = None, # ADDED: Optional title
         event_timestamp_str: Optional[str] = None
     ) -> DataRecord:
-        """
-        Append a single new record (text or URL) to an existing DataSource.
-        Handles scraping, timestamp parsing, and record creation.
-        """
-        logger.info(f"Service: Appending record to DataSource {datasource_id} in workspace {workspace_id}")
+        """Append a record (from URL or text) to an existing DataSource."""
+        logger.info(f"Appending {content_type} record to DS {datasource_id} in workspace {workspace_id}. Title: '{title}'")
 
-        # Uses existing get_datasource for fetch and basic validation (which now uses the utility)
-        datasource = self.get_datasource(datasource_id, workspace_id, user_id)
+        # --- Basic Validation --- 
+        datasource = self.get_datasource(datasource_id, workspace_id=workspace_id, user_id=user_id)
         if not datasource:
-            raise ValueError(f"DataSource {datasource_id} not found or not accessible by user {user_id} in workspace {workspace_id}")
+            raise ValueError(f"DataSource {datasource_id} not found or not accessible in workspace {workspace_id}")
 
-        # Check if DataSource type is supported for appending
-        # Allow TEXT_BLOCK and URL_LIST for now
-        if datasource.type not in [DataSourceType.TEXT_BLOCK, DataSourceType.URL_LIST]:
-            raise ValueError(f"Appending records is only supported for {DataSourceType.TEXT_BLOCK.value} and {DataSourceType.URL_LIST.value} types. Found {datasource.type.value}.")
+        # --- Parse Timestamp --- 
+        event_timestamp = None
+        if event_timestamp_str:
+            try:
+                parsed_dt = dateutil.parser.parse(event_timestamp_str)
+                event_timestamp = parsed_dt.replace(tzinfo=timezone.utc) if parsed_dt.tzinfo is None else parsed_dt
+            except Exception as parse_err:
+                raise ValueError(f"Invalid event_timestamp format: {parse_err}")
 
-        final_text_content: str | None = None
-        scraped_publication_date: Optional[str] = None
-        source_metadata_extra: Dict[str, Any] = {
-            'append_method': 'service_api',
-            'original_input': content,
-            'append_time': datetime.now(timezone.utc).isoformat()
-        }
-
-        # Process content based on type
+        # --- Process based on type --- 
         if content_type == 'url':
             if datasource.type != DataSourceType.URL_LIST:
-                 # Maybe relax this later, but keep strict for now
-                 raise ValueError(f"Cannot append URL content to a {datasource.type.value} DataSource.")
-
-            # Check for duplicates BEFORE scraping
-            url_hash = hashlib.sha256(content.encode()).hexdigest()
-            existing_record = self.session.exec(
-                select(DataRecord.id).where(
-                    DataRecord.datasource_id == datasource_id,
-                    DataRecord.url_hash == url_hash
-                )
-            ).first()
-            if existing_record:
-                raise ValueError(f"Duplicate URL detected for this DataSource.")
-
+                raise ValueError("Can only append URLs to a URL_LIST DataSource")
+            # Call the refactored create_record_from_url
+            # Note: create_record_from_url handles scraping, timestamp parsing, duplicate checks, and DB operations.
+            # It now implicitly uses the title from scraping, so the 'title' parameter here is ignored for URLs.
             try:
-                 logger.info(f"Service: Scraping URL for appending: {content}")
-                 # Use the internal scraping provider directly
-                 scraped_data = await self.scraper.scrape_url(content)
-
-                 if not scraped_data:
-                     raise ValueError("Scraping function returned no data.")
-
-                 final_text_content = scraped_data.get('text_content')
-                 scraped_publication_date = scraped_data.get('publication_date') # From scraping provider
-                 source_metadata_extra['scraped_title'] = scraped_data.get('title')
-                 # Add other relevant scraped fields if needed
-
-                 if not final_text_content:
-                     logger.warning(f"Service: Scraping URL {content} yielded no text content.")
-                     raise ValueError("Scraping yielded no text content.")
-
-                 final_text_content = final_text_content.replace('\x00', '').strip()
-                 if not final_text_content:
-                     logger.warning(f"Service: Empty text content after cleaning for URL {content}")
-                     raise ValueError("Scraping yielded empty text content after cleaning.")
-
+                record = await self.create_record_from_url(datasource_id, content)
+                if record is None:
+                    # This means the URL was likely a duplicate
+                    raise ValueError(f"URL already exists or could not be processed: {content}")
+                return record
+            except ValueError as ve:
+                raise ve # Propagate specific errors like duplicate URL
             except Exception as e:
-                 logger.error(f"Service: Failed to scrape URL {content}: {e}", exc_info=True)
-                 # Re-raise as ValueError to be caught by the route
-                 raise ValueError(f"Failed to scrape URL: {e}") from e
+                logger.exception(f"Error appending URL record: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process and append URL: {e}")
 
         elif content_type == 'text':
-             # We allow adding text to URL_LIST as well (e.g., notes)
-             final_text_content = content.strip()
-             if not final_text_content:
-                 raise ValueError("Text content cannot be empty.")
+            # Call create_record_from_text, passing the title
+            try:
+                return self.create_record_from_text(
+                    datasource_id=datasource_id,
+                    text_content=content,
+                    title=title, # Pass the provided title
+                    metadata=None, # Metadata could be added if needed
+                    event_timestamp=event_timestamp
+                )
+            except ValueError as ve:
+                 raise ve # Propagate errors like empty content
+            except Exception as e:
+                logger.exception(f"Error appending text record: {e}")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to append text record: {e}")
 
-        if not final_text_content:
-             # Should not happen based on above checks, but safeguard
-             raise ValueError("No content available to create record.")
-
-        # Determine Event Timestamp
-        final_event_timestamp: Optional[datetime] = None
-        if event_timestamp_str:
-             try:
-                 parsed_dt = dateutil.parser.isoparse(event_timestamp_str)
-                 if parsed_dt.tzinfo is None or parsed_dt.tzinfo.utcoffset(parsed_dt) is None:
-                     final_event_timestamp = parsed_dt.replace(tzinfo=timezone.utc)
-                 else:
-                     final_event_timestamp = parsed_dt
-                 logger.info(f"Service: Using provided event timestamp: {final_event_timestamp}")
-             except ValueError:
-                 raise ValueError("Invalid format for event_timestamp. Use ISO 8601.")
-        elif scraped_publication_date:
-             try:
-                 parsed_dt = dateutil.parser.parse(scraped_publication_date)
-                 if parsed_dt.tzinfo is None or parsed_dt.tzinfo.utcoffset(parsed_dt) is None:
-                     final_event_timestamp = parsed_dt.replace(tzinfo=timezone.utc)
-                 else:
-                     final_event_timestamp = parsed_dt
-                 logger.info(f"Service: Using scraped event timestamp: {final_event_timestamp}")
-             except (ValueError, OverflowError, TypeError):
-                 logger.warning(f"Service: Could not parse scraped publication date '{scraped_publication_date}'.")
-                 final_event_timestamp = None
-
-        # Create DataRecord
-        record_to_create_dict: Dict[str, Any] = {
-             "datasource_id": datasource_id,
-             "text_content": final_text_content,
-             "source_metadata": source_metadata_extra,
-             "event_timestamp": final_event_timestamp
-        }
-        # Add url_hash if it was a URL append
-        if content_type == 'url':
-            record_to_create_dict["url_hash"] = url_hash # Already computed url_hash
-
-        db_record = DataRecord.model_validate(record_to_create_dict)
-        self.session.add(db_record)
-        self.session.flush() # Added flush
-        self.session.refresh(db_record)
-
-        logger.info(f"Service: Successfully appended DataRecord {db_record.id} to DataSource {datasource_id}")
-
-        # --- Increment DataSource Count & Update Origin Details --- 
-        datasource = self.session.get(DataSource, datasource_id)
-        if datasource: 
-            if datasource.data_record_count is None:
-                datasource.data_record_count = 1
-            else:
-                datasource.data_record_count += 1
-
-            # --- ADDED: Update origin_details --- 
-            origin_details = datasource.origin_details if isinstance(datasource.origin_details, dict) else {}
-            current_urls = origin_details.get('urls', [])
-            # Only add if it's a URL type and not already present
-            if content_type == 'url' and content not in current_urls:
-                current_urls.append(content)
-                origin_details['urls'] = current_urls
-                # Reassign to trigger SQLAlchemy change detection
-                datasource.origin_details = origin_details
-                logger.info(f"Service: Appended URL to origin_details for DataSource {datasource_id}")
-            # --- END ADDED --- 
-
-            self.session.add(datasource)
-            self.session.flush() # Flush the count and origin_details update
-            logger.info(f"Service: Incremented count for DataSource {datasource_id} to {datasource.data_record_count} and updated origin_details.")
         else:
-            # This case should ideally not happen due to the check at the start
-            logger.error(f"Service: Could not find DataSource {datasource_id} to increment count/update origin_details after append record.")
-        # --- End Increment --- 
-
-        return db_record
-
-
-    # --- Export/Import Methods ---
+            raise ValueError("Invalid content_type specified")
 
     def export_datasource(
         self,

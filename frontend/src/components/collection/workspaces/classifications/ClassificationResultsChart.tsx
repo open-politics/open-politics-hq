@@ -400,22 +400,35 @@ const getTimestamp = (
         return null; // Return null if value is missing or empty
 
     } else if (timeAxisConfig.type === 'default') {
-        // Find the corresponding DataRecord
+        // Default uses classification timestamp
+        if (result.timestamp) {
+            try {
+                return new Date(result.timestamp);
+            } catch (e) {
+                 console.warn(`Could not parse default timestamp \'${result.timestamp}\' for result ${result.id}:`, e);
+                 return null;
+            }
+        }
+        return null; // No timestamp on result
+
+    } else if (timeAxisConfig.type === 'event') {
+        // Event timestamp uses the DataRecord's event_timestamp or created_at
         const record = dataRecordsMap?.get(result.datarecord_id);
         if (record) {
             // Prioritize event_timestamp, then created_at
             const timestampStr = record.event_timestamp || record.created_at;
             if (timestampStr) {
                 try {
-                    return new Date(timestampStr); // Standard ISO strings should parse
+                    const parsedDate = new Date(timestampStr);
+                    if (isNaN(parsedDate.getTime())) throw new Error('Invalid Date');
+                    return parsedDate;
                 } catch (e) {
-                    console.warn(`Could not parse default timestamp '${timestampStr}' for record ${record.id}:`, e);
+                    console.warn(`Could not parse event timestamp \'${timestampStr}\' for record ${record.id}:`, e);
                     return null;
                 }
             }
         }
-        // Fallback to classification result timestamp if record or its timestamps are missing?
-        // Or just return null? Let's return null for consistency.
+        // Fallback if record or its timestamps are missing
         return null;
     }
 
@@ -427,15 +440,12 @@ const getTimestamp = (
 const processLineChartData = (
   results: FormattedClassificationResult[],
   schemes: ClassificationSchemeRead[],
-  dataRecords: DataRecordRead[] | undefined, // Accept dataRecords
+  dataRecordsMap: Map<number, DataRecordRead> | undefined, // Accept pre-computed Map
   timeAxisConfig: TimeAxisConfig | null, // Accept timeAxisConfig
   groupingInterval: 'day' | 'week' | 'month' // Example grouping
 ): ChartData => {
     console.log("[Chart] Processing line chart data with config:", timeAxisConfig);
     const groupedData: Record<string, ChartDataPoint> = {};
-
-    // Create a Map for faster DataRecord lookup
-    const dataRecordsMap = useMemo(() => dataRecords ? new Map(dataRecords.map(dr => [dr.id, dr])) : undefined, [dataRecords]);
 
     results.forEach(result => {
         const timestamp = getTimestamp(result, dataRecordsMap, timeAxisConfig);
@@ -597,10 +607,10 @@ const processGroupedChartData = (
 
              // Handle List[str] - count each item? For now, just stringify the list or take first item? Let's stringify.
              if (fieldDefinition.type === 'List[str]' && Array.isArray(fieldValue)) {
-                 // Option 1: Count each label separately (more complex grouping)
-                 // fieldValue.forEach(label => valuesToProcess.push(label));
+                 // Option 1: Count each label separately
+                 fieldValue.forEach(label => valuesToProcess.push(label));
                  // Option 2: Group by the combination of labels (simpler)
-                  valuesToProcess.push(safeStringify(fieldValue));
+                 // valuesToProcess.push(safeStringify(fieldValue));
              } else {
                  valuesToProcess.push(fieldValue);
              }
@@ -676,6 +686,9 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
     [schemes, selectedSchemaIds]
   );
 
+  // Memoize the DataRecord map here
+  const dataRecordsMap = useMemo(() => dataRecords ? new Map(dataRecords.map(dr => [dr.id, dr])) : undefined, [dataRecords]);
+
   // Data processing for the chart
   const { chartData, groupedData, maxGroupCount } = useMemo(() => {
     if (!results || results.length === 0) {
@@ -715,7 +728,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
       return { chartData: [], groupedData: groupedResult, maxGroupCount: 'auto' };
     } else {
       // Pass dataRecords to processLineChartData
-      const lineData = processLineChartData(filteredResults, schemes, dataRecords, timeAxisConfig, 'day');
+      const lineData = processLineChartData(filteredResults, schemes, dataRecordsMap, timeAxisConfig, 'day');
       return { chartData: lineData, groupedData: [], maxGroupCount: 'auto' }; // 'auto' for line chart Y-axis
     }
   }, [results, schemes, isGrouped, dataRecords, filters, groupingSchemeId, groupingFieldKey, timeAxisConfig]);
@@ -723,21 +736,38 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
   // Determine which data source to use based on the switch
   const displayData = isGrouped ? groupedData : chartData;
 
-  const handleClick = useCallback((chartEvent: any) => {
-    console.log("[ChartClick] handleClick triggered. Event:", chartEvent);
-    const point = chartEvent?.activePayload?.[0]?.payload as ChartDataPoint | GroupedDataPoint | undefined;
-    console.log("[ChartClick] Extracted point:", point);
+  // Handle click events on data points
+  const handleClick = (event: any) => {
+    console.log('[ChartClick] handleClick triggered. Event:', event);
+    // --- MODIFIED: More robust payload extraction ---
+    let point = undefined;
+    if (event && Array.isArray(event.activePayload) && event.activePayload.length > 0) {
+      // Try standard payload location
+      point = event.activePayload[0].payload;
+      console.log('[ChartClick] Extracted point from activePayload[0].payload:', point);
 
-    if (!point) {
-        console.log("[ChartClick] No point data found in payload.");
-        return;
+      // Fallback: Sometimes the payload might be nested differently
+      if (!point && event.activePayload[0].props?.payload) {
+        point = event.activePayload[0].props.payload;
+        console.log('[ChartClick] Extracted point from activePayload[0].props.payload:', point);
+      }
     }
+    // --- END MODIFICATION ---
 
-    console.log("[ChartClick] Setting selectedPoint and opening dialog.");
-    setSelectedPoint(point);
-    setIsDialogOpen(true);
-
-  }, []);
+    if (point) {
+      setSelectedPoint(point);
+      if (onDataPointClick) {
+        onDataPointClick(point);
+      }
+    } else {
+      console.warn('[ChartClick] No point data found in payload.', event?.activePayload);
+      setSelectedPoint(null); // Clear selection if no point found
+      // Optionally call onDataPointClick with null if needed
+      // if (onDataPointClick) {
+      //   onDataPointClick(null);
+      // }
+    }
+  };
 
   const renderDot = useCallback((props: CustomizedDotProps & { index?: number }) => {
     const { cx, cy, r, index } = props;

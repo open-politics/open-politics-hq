@@ -26,7 +26,7 @@ export default function WorkspacesPage({ onEdit }: WorkspacesPageProps) {
   // Call the columns function to generate definitions, passing handlers
   const tableColumns = columns({
     onEdit: handleEdit, // Pass the function received via props
-    onDelete: (workspace) => deleteWorkspace(workspace.uid), // Pass the delete store action
+    onDelete: (workspace) => deleteWorkspace(workspace.id), // Changed from workspace.uid to workspace.id
   });
 
   return (
@@ -42,7 +42,7 @@ export default function WorkspacesPage({ onEdit }: WorkspacesPageProps) {
         <EditWorkSpaceOverlay
           open={isEditDialogOpen}
           onClose={() => setIsEditDialogOpen(false)}
-          workspaceId={selectedWorkspace.uid}
+          workspaceId={selectedWorkspace.id} // Changed from selectedWorkspace.uid to selectedWorkspace.id
           defaultName={selectedWorkspace.name}
           defaultDescription={selectedWorkspace.description}
           defaultSources={selectedWorkspace.sources}

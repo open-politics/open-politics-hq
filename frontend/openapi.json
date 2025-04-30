@@ -4782,6 +4782,72 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "datarecords",
+          "datarecords"
+        ],
+        "summary": "Update Datarecord",
+        "description": "Update a specific DataRecord (e.g., title, event_timestamp).",
+        "operationId": "update_datarecord",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "datarecord_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Datarecord Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataRecordUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataRecordRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}": {
@@ -7825,7 +7891,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-04-28",
+              "default": "2025-04-29",
               "title": "Timeframe To"
             }
           }
@@ -7870,6 +7936,18 @@
             ],
             "title": "Content Type",
             "description": "Type of content being appended"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Optional title for the record (used for 'text' type)"
           },
           "event_timestamp": {
             "anyOf": [
@@ -8742,6 +8820,17 @@
       },
       "DataRecordRead": {
         "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "text_content": {
             "type": "string",
             "title": "Text Content"
@@ -8802,6 +8891,36 @@
           "created_at"
         ],
         "title": "DataRecordRead"
+      },
+      "DataRecordUpdate": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "event_timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Timestamp"
+          }
+        },
+        "type": "object",
+        "title": "DataRecordUpdate",
+        "description": "Schema for updating specific fields of a DataRecord."
       },
       "DataSourceRead": {
         "properties": {

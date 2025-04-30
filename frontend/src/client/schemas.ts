@@ -11,6 +11,15 @@ export const $AppendRecordInput = {
 	enum: ['text','url',],
 	isRequired: true,
 },
+		title: {
+	type: 'any-of',
+	description: `Optional title for the record (used for 'text' type)`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 		event_timestamp: {
 	type: 'any-of',
 	description: `Optional ISO 8601 timestamp for the event`,
@@ -682,6 +691,14 @@ export const $CsvRowsOut = {
 
 export const $DataRecordRead = {
 	properties: {
+		title: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 		text_content: {
 	type: 'string',
 	isRequired: true,
@@ -723,6 +740,29 @@ export const $DataRecordRead = {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $DataRecordUpdate = {
+	description: `Schema for updating specific fields of a DataRecord.`,
+	properties: {
+		title: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
 }, {
 	type: 'null',
 }],

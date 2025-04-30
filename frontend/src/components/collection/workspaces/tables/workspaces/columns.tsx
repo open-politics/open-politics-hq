@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Pencil, Trash } from 'lucide-react';
 
 export type Workspace = {
-  uid: number;
+  id: number;
   name: string;
   description?: string;
   sources?: string[];

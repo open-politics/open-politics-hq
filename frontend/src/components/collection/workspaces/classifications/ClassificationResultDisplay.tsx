@@ -23,6 +23,10 @@ interface ClassificationResultDisplayProps {
   useTabs?: boolean;
   /** Optional context for rendering adjustments */
   renderContext?: 'dialog' | 'table' | 'default';
+  /** Optional: Array of field keys to specifically display. If null or undefined, displays according to other rules (compact/targetFieldKey). */
+  selectedFieldKeys?: string[] | null;
+  /** Optional: Maximum number of fields to show when not compact and specific fields aren't selected. */
+  maxFieldsToShow?: number;
 }
 
 interface SingleClassificationResultProps {
@@ -31,6 +35,8 @@ interface SingleClassificationResultProps {
   compact?: boolean;
   targetFieldKey?: string | null;
   renderContext?: 'dialog' | 'table' | 'default';
+  selectedFieldKeys?: string[] | null;
+  maxFieldsToShow?: number;
 }
 
 interface ConsolidatedSchemesViewProps {
@@ -40,6 +46,8 @@ interface ConsolidatedSchemesViewProps {
   targetFieldKey?: string | null;
   useTabs?: boolean;
   renderContext?: 'dialog' | 'table' | 'default';
+  selectedFieldKeys?: string[] | null;
+  maxFieldsToShow?: number;
 }
 
 // Add missing EnhancedClassificationResultRead type if not globally defined
@@ -54,17 +62,16 @@ export interface EnhancedClassificationResultRead extends ClassificationResultRe
 /**
  * Component for displaying a single classification result based on its scheme.
  */
-const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({ result, scheme, compact = false, targetFieldKey = null, renderContext = 'default' }) => {
+const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
+    result,
+    scheme,
+    compact = false,
+    targetFieldKey = null,
+    renderContext = 'default',
+    selectedFieldKeys = null,
+    maxFieldsToShow = 3
+}) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  // Check if the *specific* target field (if any) or *any* field (if no target) is potentially long
-  const isPotentiallyLong = useMemo(() => {
-      if (targetFieldKey) {
-          const targetField = scheme.fields.find(f => f.name === targetFieldKey);
-          return targetField?.type === 'List[Dict[str, any]]';
-      } else {
-          return scheme.fields.some(f => f.type === 'List[Dict[str, any]]');
-      }
-  }, [scheme.fields, targetFieldKey]);
 
   /**
    * Adapts an API field definition (like ClassificationFieldCreate) to the internal SchemeField type.
@@ -75,7 +82,7 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
       name: apiField.name,
       type: apiField.type as FieldType, // Cast to the imported FieldType
       description: apiField.description,
-      config: { 
+      config: {
           scale_min: apiField.scale_min ?? undefined,
           scale_max: apiField.scale_max ?? undefined,
           is_set_of_labels: apiField.is_set_of_labels ?? undefined,
@@ -83,6 +90,33 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
           dict_keys: apiField.dict_keys ? apiField.dict_keys.map((dk: any) => ({ name: dk.name, type: dk.type })) : undefined
       }
   });
+
+  // --- MODIFIED: Determine fields to actually display ---
+  const fieldsToDisplay = useMemo(() => {
+    let fields = scheme.fields.map(adaptFieldToSchemeField); // Adapt all fields initially
+
+    if (selectedFieldKeys && selectedFieldKeys.length > 0) {
+      // Filter by explicitly selected keys
+      fields = fields.filter(f => selectedFieldKeys.includes(f.name));
+    } else if (targetFieldKey) {
+      // Filter by single target key (overrides compact)
+      fields = fields.filter(f => f.name === targetFieldKey);
+    } else if (compact) {
+      // Compact mode: show only the first field
+      fields = fields.slice(0, 1);
+    } else if (maxFieldsToShow !== undefined) {
+      // Non-compact, no specific fields selected: limit by maxFieldsToShow
+      fields = fields.slice(0, maxFieldsToShow);
+    }
+    // If no specific rules applied, 'fields' remains all adapted fields
+
+    return fields;
+  }, [scheme.fields, selectedFieldKeys, targetFieldKey, compact, maxFieldsToShow]);
+
+  // Check if *any* of the fields *to be displayed* are potentially long
+  const isPotentiallyLong = useMemo(() => {
+    return fieldsToDisplay.some(f => f.type === 'List[Dict[str, any]]');
+  }, [fieldsToDisplay]);
 
   /**
    * Formats the value of a single classification field for display.
@@ -92,13 +126,34 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
    * @returns A React node representing the formatted value.
    */
   const formatFieldValue = (rawValueObject: any, field: SchemeField): React.ReactNode => {
-      const valueForField = (typeof rawValueObject === 'object' && rawValueObject !== null && !Array.isArray(rawValueObject))
-          ? rawValueObject[field.name]
-          : rawValueObject; 
+      // --- REMOVED Check for 'classification_output' wrapper ---
+      let valueForField: any;
+
+      // NEW Logic: Assume rawValueObject is the structured dictionary OR a primitive
+      if (typeof rawValueObject === 'object' && rawValueObject !== null && !Array.isArray(rawValueObject)) {
+          // If it's an object, try to get the value using the field name
+          valueForField = rawValueObject[field.name];
+          if (valueForField === undefined && field.type !== 'List[Dict[str, any]]') {
+             console.warn(`formatFieldValue: Value for field '${field.name}' was undefined in object. Raw:`, rawValueObject);
+             // Keep valueForField as undefined, will be handled below
+          }
+      } else {
+          // If rawValueObject is not an object (e.g., string, number, array), it's the value itself
+          // This handles cases where the scheme has only one field and the LLM might return the value directly
+          valueForField = rawValueObject;
+      }
+
+      // --- Logging ---
+      console.log(`formatFieldValue: Field='${field.name}', Type='${field.type}', RawValue=`, rawValueObject, `ExtractedValue=`, valueForField);
+      // --- END LOGGING ---
 
       // Handle null, undefined, or explicit "N/A"
-      if (valueForField === null || valueForField === undefined) return <span className="text-gray-400 italic">N/A</span>;
+      if (valueForField === null || valueForField === undefined) {
+           console.log(`formatFieldValue: Rendering N/A because valueForField is null or undefined.`);
+           return <span className="text-gray-400 italic">N/A</span>;
+      }
       if (typeof valueForField === 'string' && valueForField.toLowerCase() === 'n/a') {
+          console.log(`formatFieldValue: Rendering N/A because valueForField is the string 'N/A'.`);
           return <span className="text-gray-400 italic">N/A</span>;
       }
 
@@ -129,7 +184,15 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                       </div>
                   );
               }
-              // Error display if the value is not an array as expected
+              // --- MODIFIED: Handle non-array case for List[str] ---
+              else if (typeof valueForField === 'string') {
+                  // If we expected a list but got a string, render the string as a single badge
+                  console.warn(`formatFieldValue: Expected List[str] for field '${field.name}', but received a string. Rendering as single item.`);
+                  return <Badge variant="secondary">{String(valueForField)}</Badge>;
+              }
+              // --- END MODIFICATION ---
+              // Error display if the value is not an array or string
+              console.error(`formatFieldValue: Expected List[str] for field '${field.name}', but received type ${typeof valueForField}. Value:`, valueForField);
               return <span className="text-red-500 italic">Expected List[str], got: {typeof valueForField}</span>;
 
           case 'str':
@@ -227,9 +290,10 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
 
   // --- MODIFIED: Conditional styling based on context ---
   const containerClasses = cn(
-    'space-y-2',
-    // Remove border/padding only in dialog context when not compact
-    renderContext !== 'dialog' && !compact && 'border-2 border-results p-2 rounded-md'
+    'space-y-2 h-full flex flex-col',
+    (renderContext === 'table') 
+      ? 'border-2 border-results p-2 rounded-md' // Always border in table
+      : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md')
   );
 
   return (
@@ -244,16 +308,14 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
           )} */}
 
           <div
-            // --- MODIFIED: Adjust max-height based on context ---
             className={cn(
-              'transition-all duration-300 ease-in-out overflow-hidden',
-              !isExpanded && isPotentiallyLong && (compact ? 'max-h-16' : renderContext === 'dialog' ? 'max-h-40' : 'max-h-24'), // Different collapsed heights
-              isExpanded && isPotentiallyLong && 'max-h-80 overflow-y-auto' // Consistent expanded height
+              'transition-all duration-300 ease-in-out',
+              renderContext !== 'table' && !isExpanded && isPotentiallyLong && (compact ? 'max-h-16 overflow-hidden' : renderContext === 'dialog' ? 'max-h-40 overflow-hidden' : 'max-h-24 overflow-hidden'),
+              renderContext !== 'table' && isExpanded && isPotentiallyLong && 'max-h-80 overflow-y-auto'
             )}
           >
             <div className={'space-y-3'}>
-              {scheme.fields.map((apiField, idx) => {
-                  const schemeField = adaptFieldToSchemeField(apiField);
+              {fieldsToDisplay.map((schemeField, idx) => {
                   // --- MODIFIED: Field Filtering/Selection Logic ---
                   // If a specific targetFieldKey is provided, only render that field
                   if (targetFieldKey) {
@@ -272,13 +334,18 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                       <div key={idx} className={'space-y-1'}>
                           {/* Only show field name if not compact OR if scheme has multiple fields */}
                           {/* --- MODIFIED: Show field name only if not in table context AND (either not compact OR target field is set) --- */}
-                          {renderContext !== 'table' && (!compact || targetFieldKey) && (
+                          {/* --- REVISED: Always show field name if not compact, OR if specifically targeted, unless in table context --- */}
+                          {(renderContext !== 'table' && (!compact || targetFieldKey || (selectedFieldKeys && selectedFieldKeys.length > 0))) && (
                              <div className="text-sm font-medium text-blue-400 italic inline-block mr-2">{schemeField.name}</div>
                           )}
                           <div className="inline-block">{formatFieldValue(result.value, schemeField)}</div>
                       </div>
                   );
               })}
+              {/* Show ellipsis if fields were truncated by maxFieldsToShow */}
+              {!compact && !targetFieldKey && !selectedFieldKeys && scheme.fields.length > fieldsToDisplay.length && (
+                <div className="text-xs text-muted-foreground italic pl-2">... (+{scheme.fields.length - fieldsToDisplay.length} more fields)</div>
+              )}
             </div>
           </div>
           {isPotentiallyLong && !compact && (
@@ -302,7 +369,16 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
 /**
  * Component to display multiple classification results, potentially in tabs or a consolidated list.
  */
-const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ results, schemes, compact = false, targetFieldKey = null, useTabs = false, renderContext = 'default' }) => {
+const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({
+    results,
+    schemes,
+    compact = false,
+    targetFieldKey = null,
+    useTabs = false,
+    renderContext = 'default',
+    selectedFieldKeys = null,
+    maxFieldsToShow
+}) => {
   // --- MODIFIED: Force useTabs to false if context is dialog ---
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
 
@@ -322,7 +398,15 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ resul
           return (
             <TabsContent key={s.id} value={s.id?.toString() || "0"}>
               {schemeResult ? (
-                <SingleClassificationResult result={schemeResult} scheme={s} compact={compact} targetFieldKey={targetFieldKey} renderContext={renderContext} />
+                <SingleClassificationResult
+                  result={schemeResult}
+                  scheme={s}
+                  compact={compact}
+                  targetFieldKey={targetFieldKey}
+                  renderContext={renderContext}
+                  selectedFieldKeys={selectedFieldKeys}
+                  maxFieldsToShow={maxFieldsToShow}
+                />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this scheme</div>
               )}
@@ -342,13 +426,15 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ resul
         if (!schemeResult) return null; // Skip if no result for this scheme
         
         return (
-          <SingleClassificationResult 
+          <SingleClassificationResult
             key={scheme.id}
-            result={schemeResult} 
-            scheme={scheme} 
-            compact={compact} 
+            result={schemeResult}
+            scheme={scheme}
+            compact={compact}
             targetFieldKey={targetFieldKey}
             renderContext={renderContext}
+            selectedFieldKeys={selectedFieldKeys}
+            maxFieldsToShow={maxFieldsToShow}
           />
         );
       })}
@@ -361,7 +447,16 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({ resul
  * Main component to display one or more classification results.
  * It handles routing to SingleClassificationResult or ConsolidatedSchemesView.
  */
-const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = ({ result, scheme, compact = false, targetFieldKey = null, useTabs = false, renderContext = 'default' }) => {
+const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = ({
+    result,
+    scheme,
+    compact = false,
+    targetFieldKey = null,
+    useTabs = false,
+    renderContext = 'default',
+    selectedFieldKeys = null,
+    maxFieldsToShow
+}) => {
     
   /**
    * Finds the matching ClassificationSchemeRead object for a given result's scheme_id.
@@ -396,20 +491,30 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
       const { result: singleResult, scheme: singleScheme } = validResultsWithSchemes[0];
       // singleScheme is guaranteed non-null here due to the filter
       return (
-        <SingleClassificationResult result={singleResult} scheme={singleScheme} compact={compact} targetFieldKey={targetFieldKey} renderContext={renderContext} />
+        <SingleClassificationResult
+          result={singleResult}
+          scheme={singleScheme}
+          compact={compact}
+          targetFieldKey={targetFieldKey}
+          renderContext={renderContext}
+          selectedFieldKeys={selectedFieldKeys}
+          maxFieldsToShow={maxFieldsToShow}
+        />
       );
     }
     
     // If multiple valid results, use ConsolidatedSchemesView
     // Pass the already filtered schemes (guaranteed non-null)
     return (
-      <ConsolidatedSchemesView 
-        results={validResultsWithSchemes.map(item => item.result)} 
-        schemes={validResultsWithSchemes.map(item => item.scheme)} 
-        compact={compact} 
+      <ConsolidatedSchemesView
+        results={validResultsWithSchemes.map(item => item.result)}
+        schemes={validResultsWithSchemes.map(item => item.scheme)}
+        compact={compact}
         targetFieldKey={targetFieldKey}
-        useTabs={useTabs} 
+        useTabs={useTabs}
         renderContext={renderContext}
+        selectedFieldKeys={selectedFieldKeys}
+        maxFieldsToShow={maxFieldsToShow}
       />
     );
   }
@@ -426,6 +531,8 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
           compact={compact}
           targetFieldKey={targetFieldKey}
           renderContext={renderContext}
+          selectedFieldKeys={selectedFieldKeys}
+          maxFieldsToShow={maxFieldsToShow}
         />
       );
     }

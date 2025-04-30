@@ -13,7 +13,7 @@ from app.models import (
     FieldType,
     ClassificationField
 )
-from app.api.deps import SessionDep, CurrentUser # Keep if needed for other potential v2 routes
+
 from app.core.db import engine  # Import the engine for potential session use in helpers
 from sqlmodel import Session  # Import Session from sqlmodel
 from sqlalchemy import select
@@ -64,11 +64,24 @@ def generate_pydantic_model(scheme: ClassificationScheme) -> Type[BaseModel]:
     """Generates a Pydantic model dynamically based on ClassificationScheme fields."""
     field_definitions = {}
     
+    # --- ADDED LOGGING INSIDE generate_pydantic_model ---
+    fields_attr = getattr(scheme, 'fields', '[FIELDS_ATTRIBUTE_MISSING]')
+    fields_len = len(fields_attr) if isinstance(fields_attr, list) else -1
+    logger.error(f"[generate_pydantic_model] Checking scheme {scheme.id}. Has 'fields' attr? {hasattr(scheme, 'fields')}. Fields value type: {type(fields_attr)}. Fields len: {fields_len}")
+    # --- END LOGGING ---
+    
     # Ensure scheme has fields attribute and it's not None or empty
     # Use selectinload when fetching the scheme to ensure fields are loaded
     has_fields = hasattr(scheme, 'fields') and scheme.fields is not None and len(scheme.fields) > 0
     
+    # --- ADDED LOGGING INSIDE generate_pydantic_model ---
+    logger.error(f"[generate_pydantic_model] Scheme {scheme.id}: 'has_fields' evaluated to: {has_fields}")
+    # --- END LOGGING ---
+    
     if not has_fields:
+        # --- ADDED LOGGING INSIDE generate_pydantic_model ---
+        logger.error(f"[generate_pydantic_model] Scheme {scheme.id}: No fields found or loaded. Creating default 'classification_output' model.")
+        # --- END LOGGING ---
         # Create a simple model with a single text field if no fields are defined
         field_definitions["classification_output"] = (
             str,
@@ -155,118 +168,12 @@ def generate_pydantic_model(scheme: ClassificationScheme) -> Type[BaseModel]:
     
     return DynamicModel
 
-# --- Core Classification Logic (No longer an API endpoint) ---
+# --- Removed Core Classification Logic ---
+# def run_classification(...) -> Dict[str, Any]: ...
 
-def run_classification(text: str, scheme: ClassificationScheme, api_key: str | None = None) -> Dict[str, Any]:
-    """
-    Runs classification on the provided text using the given scheme.
-    This is the core logic called by the background task.
-    Assumes scheme object includes loaded fields.
-    """
-    if not text:
-        logger.warning(f"Received empty text for classification with scheme {scheme.id}. Returning empty result.")
-        # Return a structure matching what generate_pydantic_model would expect,
-        # but with empty/null values.
-        ModelClass = generate_pydantic_model(scheme)
-        try:
-            # Create an empty instance if possible (might fail for complex models)
-            empty_instance = ModelClass.model_validate({})
-            return empty_instance.model_dump()
-        except Exception:
-             # Fallback to just an empty dict if model validation fails
-            return {}
-            
-    logger.debug(f"Running classification for scheme {scheme.id} ('{scheme.name}')")
-    # Generate dynamic Pydantic model from the scheme
-    try:
-        ModelClass = generate_pydantic_model(scheme)
-    except Exception as model_gen_err:
-        logger.error(f"Failed to generate Pydantic model for scheme {scheme.id}: {model_gen_err}")
-        raise ValueError(f"Model generation error for scheme {scheme.id}") from model_gen_err
+# --- Removed Helper Function ---
+# def classify_text(...) -> Dict: ...
 
-    # Get OPOL fastclass instance
-    # TODO: Get provider/model from scheme or job configuration if needed
-    try:
-        if os.environ.get("LOCAL_LLM") == "True":
-             provider = "ollama"
-             model_name = os.environ.get("LOCAL_LLM_MODEL", "llama3.2:latest")
-             current_api_key = "" # Ollama doesn't typically use API keys
-        else:
-            # Use defaults or fetch from config/job
-            provider = "Google" # Example default
-            model_name = "gemini-2.0-flash" # Example default
-            current_api_key = api_key # Use provided key or default
-            
-        fastclass = get_fastclass(
-            provider=provider,
-            model_name=model_name,
-            api_key=current_api_key
-        )
-    except Exception as fastclass_err:
-        logger.error(f"Failed to get fastclass instance: {fastclass_err}")
-        raise ConnectionError("Failed to initialize classification service") from fastclass_err
-
-    # Classify using OPOL
-    try:
-        logger.debug(f"Calling fastclass.classify for scheme {scheme.id}...")
-        # Pass model instructions from scheme if they exist
-        instructions = scheme.model_instructions or ""
-        result = fastclass.classify(ModelClass, instructions, text)
-        logger.debug(f"Classification successful for scheme {scheme.id}")
-        # Return the validated & structured data as a dictionary
-        return result.model_dump()
-    except Exception as classification_err:
-        # Log the specific error from the classification library
-        logger.error(f"OPOL classification failed for scheme {scheme.id}: {classification_err}")
-        # Re-raise a more generic error to be caught by the task
-        raise RuntimeError(f"Classification failed: {classification_err}") from classification_err
-
-
-# --- Helper Function (Used by Tasks) ---
-
-def classify_text(text: str, scheme_id: int, api_key: str | None = None) -> Dict:
-    """
-    Fetches the scheme and runs classification.
-    Called by background tasks.
-    """
-    try:
-        with Session(engine) as session:
-            # Get the classification scheme using session.get()
-            scheme = session.get(ClassificationScheme, scheme_id)
-
-            if not scheme:
-                raise ValueError(f"Classification scheme with id {scheme_id} not found")
-
-            # Ensure fields are loaded. session.get might lazy-load,
-            # so explicitly refresh the relationship if needed.
-            # Check if fields are already loaded (might be by session.get depending on context)
-            if 'fields' not in scheme.__dict__:
-                # If not loaded, refresh the relationship
-                session.refresh(scheme, attribute_names=['fields'])
-            # Alternatively, access scheme.fields once to trigger lazy loading (less explicit):
-            # _ = scheme.fields 
-
-            # Verify fields are loaded before passing to run_classification
-            if not scheme.fields:
-                # If still not loaded after refresh/access, log a warning.
-                # run_classification has a fallback, but good to know.
-                logger.warning(f"Scheme {scheme_id} fields appear empty after fetching.")
-
-            # Now call the core logic function with the fetched scheme object
-            return run_classification(text, scheme, api_key)
-
-    except Exception as e:
-        # Log the error and provide a more helpful message
-        # --- MODIFIED LOGGING (Simpler) ---
-        tb_str = traceback.format_exc()
-        # logger.error(f"Error in classify_text helper for scheme {scheme_id}. Exception Type: {type(e).__name__}, Message: {str(e)}\nTraceback:\n{tb_str}")
-        logger.error(f"CLASSIFY_TEXT ERROR (Scheme {scheme_id}):\n{tb_str}") # Log only traceback
-        # --- END MODIFIED LOGGING ---
-        # Re-raise the exception so the calling task can handle it (e.g., mark as error)
-        raise
-
-# --- Removed Old API Endpoints --- 
-
+# --- Removed Old API Endpoints ---
 # Removed: @router.post("/{scheme_id}/classify/{document_id}") ...
-
 # Removed: @router.post("/classify") ...

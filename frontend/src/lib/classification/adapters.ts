@@ -182,20 +182,16 @@ export function adaptDataSourceReadToDataSource(dataSourceRead: ClientDataSource
 
 // Convert API DataRecordRead to frontend DataRecord
 export const adaptDataRecordReadToDataRecord = (clientRecord: ClientDataRecordRead): DataRecord => {
-  // Basic mapping, adjust based on your internal DataRecord definition
-  return {
-    id: clientRecord.id,
-    datasource_id: clientRecord.datasource_id,
-    text_content: clientRecord.text_content,
-    source_metadata: clientRecord.source_metadata || {},
-    event_timestamp: clientRecord.event_timestamp ? new Date(clientRecord.event_timestamp) : null, // Convert string to Date
-    created_at: new Date(clientRecord.created_at), // Convert string to Date
-    // Add other fields as needed based on your DataRecord type
-    // e.g., content_hash, url_hash if they exist in ClientDataRecordRead
-    content_hash: clientRecord.content_hash,
-    // url_hash: clientRecord.url_hash, // Commented out as it might not exist on client model
-    // Ensure all required fields of your internal DataRecord type are mapped
-  };
+    return {
+        id: clientRecord.id,
+        datasource_id: clientRecord.datasource_id,
+        title: clientRecord.title,
+        text_content: clientRecord.text_content,
+        source_metadata: clientRecord.source_metadata,
+        event_timestamp: clientRecord.event_timestamp,
+        created_at: clientRecord.created_at,
+        content_hash: clientRecord.content_hash,
+    };
 };
 
 // Convert API ClassificationJobRead to frontend ClassificationJob

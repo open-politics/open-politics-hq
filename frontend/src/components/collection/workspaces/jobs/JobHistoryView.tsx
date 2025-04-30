@@ -91,7 +91,7 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
   };
 
   const filteredJobs = useMemo(() => {
-    let jobs = [...allJobs].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()); // Sort by most recent first
+    const jobs = [...allJobs].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()); // Sort by most recent first
     if (statusFilter === 'all') {
       return jobs;
     }

@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/avatar"
 import { format } from "date-fns"
 import { Button } from '@/components/ui/button';
-import { ClassificationSchemeRead, FieldType, EnhancedClassificationResultRead, CsvRowData, CsvRowsOut, DataSourceRead as ClientDataSourceRead, DataSourceRead } from '@/client/models'; // Renamed DataSourceRead to avoid conflict
+import { ClassificationSchemeRead, FieldType, EnhancedClassificationResultRead, CsvRowData, CsvRowsOut, DataSourceRead as ClientDataSourceRead, DataSourceRead, DataRecordUpdate as ClientDataRecordUpdate } from '@/client/models'; // Renamed DataSourceRead to avoid conflict, Added ClientDataRecordUpdate
 import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
@@ -61,7 +61,7 @@ import DatasetCreateDialog from '../datasets/DatasetCreateDialog';
 import { adaptDataSourceReadToDataSource } from '@/lib/classification/adapters'; // Ensure correct adapters are imported
 import { useDataSourceStore } from '@/zustand_stores/storeDataSources'; // Import store
 import { toast } from 'sonner';
-import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X } from 'lucide-react'; // Added FileText, List
+import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle } from 'lucide-react'; // Added FileText, List, CheckCircle
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AlertCircle, ArrowUp, ArrowDown, Files, Type } from 'lucide-react';
@@ -71,19 +71,27 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 // Define Sort Direction type
 type SortDirection = 'asc' | 'desc' | null;
 
-interface DataRecordDetailViewProps {
-  onEdit: (item: ClientDataSourceReadAlias) => void; // Use Alias
+// ---> ADDED: State for inline editing <---
+interface EditState {
+  recordId: number;
+  field: 'title' | 'event_timestamp';
+  value: string;
+}
+// ---> END ADDED <---
+
+interface DocumentDetailViewProps {
+  onEdit: (item: ClientDataSourceReadAlias) => void;
   schemes: ClassificationSchemeRead[];
   selectedDataSourceId: number | null;
   onLoadIntoRunner?: (jobId: number, jobName: string) => void;
 }
 
-const DataRecordDetailView = ({
+const DocumentDetailView = ({
   onEdit,
   schemes,
   selectedDataSourceId,
   onLoadIntoRunner
-}) => {
+}: DocumentDetailViewProps) => {
   // --- State Hooks ---
   const [dataSource, setDataSource] = useState<ClientDataSourceReadAlias | null>(null);
   const [dataRecords, setDataRecords] = useState<DataRecordRead[]>([]);
@@ -161,6 +169,11 @@ const DataRecordDetailView = ({
   // ---> MOVED: State for PDF viewer tracking
   const [currentlyViewedRecordId, setCurrentlyViewedRecordId] = useState<number | null>(null);
   // <--- END MOVED
+
+  // ---> ADDED: State for inline editing <---
+  const [editingRecord, setEditingRecord] = useState<EditState | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  // ---> END ADDED <---
 
   // --- Custom Hook Calls --- (Should come after state)
   const { classificationJobs: availableJobsFromStore } = useClassificationJobsStore();
@@ -616,12 +629,14 @@ const DataRecordDetailView = ({
         }
       } else if (!isRecordDownload && dataSource) {
           // Fallback for DataSource download if header missing
-          // --- LINTER FIX (Attempt 2): Ensure default string ---
+          // --- LINTER FIX: Explicitly cast after type check ---
           const originDetails = dataSource.origin_details;
-          if (typeof originDetails === 'object' && originDetails !== null && typeof (originDetails as any).filename === 'string' && (originDetails as any).filename) {
-             filename = (originDetails as any).filename;
+          // Check if originDetails is an object and has the filename property
+          if (typeof originDetails === 'object' && originDetails !== null && typeof (originDetails as { filename?: string }).filename === 'string' && (originDetails as { filename: string }).filename) {
+             filename = (originDetails as { filename: string }).filename;
           } else if (dataSource.name) {
-             filename = dataSource.name;
+             // --- LINTER FIX: Add nullish check for name ---
+             filename = dataSource.name ?? `datasource_${dataSource.id}.pdf`;
           } else {
              filename = `datasource_${dataSource.id}.pdf`; // Guaranteed string fallback
           }
@@ -729,7 +744,8 @@ const DataRecordDetailView = ({
     // Revoke any existing URL before fetching a new one
     if (pdfBlobUrl) {
       window.URL.revokeObjectURL(pdfBlobUrl);
-      setPdfBlobUrl(null);
+      setPdfBlobUrl(null); // Clear immediately
+      setCurrentlyViewedRecordId(null); // Clear viewed ID
     }
     setCurrentlyViewedRecordId(null); // Clear potentially stale ID before fetching
 
@@ -1149,43 +1165,151 @@ const DataRecordDetailView = ({
     return `${dataSource.name} - ${new Date().toLocaleString()}`;
   }, [dataSource]);
 
-  // --- Rendering Logic Starts Here ---
-
-  // ---> MOVED: Effects related to PDF viewer logic (moved here because it depends on hooks defined above)
-  useEffect(() => {
-    const updateViewerContent = async () => {
-      // Only run if viewer is open, a record is selected, AND it's a different record than currently viewed
-      if (isPdfViewerOpen && selectedIndividualRecord && selectedIndividualRecord.id !== currentlyViewedRecordId) {
-        console.log(`Live updating PDF viewer for record ID: ${selectedIndividualRecord.id}`);
-        setIsFetchingPdfForView(true); // Indicate loading
-
-        // Revoke old blob URL if it exists
-        if (pdfBlobUrl) {
-          window.URL.revokeObjectURL(pdfBlobUrl);
-          setPdfBlobUrl(null); // Clear immediately
-          setCurrentlyViewedRecordId(null); // Clear viewed ID
-        }
-
-        const newBlobUrl = await fetchAndSetPdfBlob(selectedIndividualRecord);
-        setIsFetchingPdfForView(false); // Loading finished
-
-        if (newBlobUrl) {
-          setPdfBlobUrl(newBlobUrl);
-          setCurrentlyViewedRecordId(selectedIndividualRecord.id); // Update viewed ID
-        } else {
-          // Fetch failed
-          // Close the viewer as we couldn't load the new content
-          setIsPdfViewerOpen(false);
-          setCurrentlyViewedRecordId(null);
-          toast({ title: "PDF Load Failed", description: "Could not switch PDF view.", variant: "destructive" });
-        }
+  // ---> MOVED & REFINED: Helper functions for rendering, including editable fields --- START
+  const getFormattedTimestamp = (isoString: string | null | undefined): string => {
+      if (!isoString) return '';
+      try {
+          const date = new Date(isoString);
+          if (isNaN(date.getTime())) return '';
+          const year = date.getFullYear();
+          const month = (date.getMonth() + 1).toString().padStart(2, '0');
+          const day = date.getDate().toString().padStart(2, '0');
+          const hours = date.getHours().toString().padStart(2, '0');
+          const minutes = date.getMinutes().toString().padStart(2, '0');
+          return `${year}-${month}-${day}T${hours}:${minutes}`;
+      } catch (e) {
+          console.error("Error formatting timestamp:", e);
+          return '';
       }
-    };
+  };
 
-    updateViewerContent();
-    // Dependencies: Ensures effect runs when selection changes while viewer is open, or when viewer opens/closes
-  }, [selectedIndividualRecord, isPdfViewerOpen, currentlyViewedRecordId, pdfBlobUrl, fetchAndSetPdfBlob, toast, setCurrentlyViewedRecordId, setIsPdfViewerOpen, setPdfBlobUrl]); // Add state setters to dependencies
-  // <--- END MOVED
+  const renderEditableField = (record: DataRecordRead | null, field: 'title' | 'event_timestamp') => {
+    if (!record) return null;
+
+    const isEditingThisField = editingRecord?.recordId === record.id && editingRecord?.field === field;
+    const displayValue = field === 'title' ? record.title : record.event_timestamp;
+    const inputType = field === 'event_timestamp' ? 'datetime-local' : 'text';
+    const label = field === 'title' ? 'Title' : 'Event Timestamp';
+
+    const currentDisplayValue = field === 'event_timestamp' ? getFormattedTimestamp(displayValue) : (displayValue || 'N/A');
+
+    return (
+      <div className="flex items-center gap-2 text-sm mb-1">
+        <strong className="w-28 shrink-0">{label}:</strong>
+        {isEditingThisField ? (
+          <div className="flex items-center gap-1 flex-grow min-w-0">
+            <Input
+              type={inputType}
+              value={editingRecord.value}
+              onChange={(e) => setEditingRecord({ ...editingRecord, value: e.target.value })}
+              className="h-7 text-xs px-1 py-0.5 flex-grow"
+              autoFocus
+            />
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-green-600 hover:bg-green-100" onClick={handleSaveEdit} disabled={isSavingEdit}>
+              {isSavingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-red-600 hover:bg-red-100" onClick={handleCancelEdit} disabled={isSavingEdit}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 flex-grow min-w-0">
+            <span className="truncate flex-grow" title={typeof currentDisplayValue === 'string' ? currentDisplayValue : undefined}>
+              {currentDisplayValue}
+            </span>
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={() => startEditing(record.id, field, field === 'event_timestamp' ? getFormattedTimestamp(displayValue) : displayValue)}>
+              <Edit2 className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderTextDisplay = (text: string | null) => (
+      <ScrollArea className="h-[200px] w-full rounded-md border p-3 text-sm bg-background">
+          {text || <span className="text-muted-foreground italic">No text content available.</span>}
+      </ScrollArea>
+  );
+  // ---> MOVED & REFINED: Helper functions for rendering --- END
+
+  // ---> ADDED: Functions for handling inline edits --- START
+  const handleSaveEdit = async () => {
+    if (!editingRecord || !activeWorkspace?.id) return;
+    setIsSavingEdit(true);
+
+    let updatePayload: ClientDataRecordUpdate = {};
+    if (editingRecord.field === 'title') {
+      updatePayload.title = editingRecord.value;
+    } else if (editingRecord.field === 'event_timestamp') {
+      // Validate timestamp format (basic ISO 8601 check)
+      try {
+        const parsedDate = new Date(editingRecord.value);
+        if (isNaN(parsedDate.getTime())) {
+          throw new Error("Invalid date format");
+        }
+        // Format to ISO string with timezone offset (required by backend? Check model)
+        // Assuming backend expects ISO string like 'YYYY-MM-DDTHH:mm:ss.sssZ' or offset
+        updatePayload.event_timestamp = parsedDate.toISOString();
+      } catch (e) {
+        toast({ title: "Error", description: "Invalid timestamp format. Use YYYY-MM-DDTHH:mm format." });
+        setIsSavingEdit(false);
+        return;
+      }
+    }
+
+    // Use the service directly
+    let updatedRecord: DataRecordRead | null = null;
+    try {
+        updatedRecord = await DatarecordsService.updateDatarecord({
+            workspaceId: activeWorkspace.id,
+            datarecordId: editingRecord.recordId,
+            requestBody: updatePayload
+        });
+    } catch (error) {
+        console.error("Failed to update data record:", error);
+        let errorMsg = "Failed to update record.";
+        if (error instanceof Error) errorMsg = error.message;
+        // Check if error has a body and detail (common pattern in API clients)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const body = (error as any)?.body;
+        if (typeof body === 'object' && body !== null && typeof body.detail === 'string') {
+            errorMsg = body.detail;
+        } else if (typeof body === 'string') {
+            errorMsg = body; // Handle plain string errors
+        }
+        toast({ title: "Update Error", description: errorMsg, variant: "destructive" });
+    }
+
+    setIsSavingEdit(false);
+    if (updatedRecord) {
+      setEditingRecord(null); // Exit edit mode on success
+      toast({ title: "Success", description: "Record updated." });
+      // Update the relevant local state (associatedRecords or dataRecords)
+      if (dataSource?.type === 'pdf' || dataSource?.type === 'text_block') {
+         setAssociatedRecords(prev => prev.map(rec => rec.id === updatedRecord!.id ? updatedRecord! : rec));
+         // Update selected record if it was the one edited
+         if (selectedIndividualRecord?.id === updatedRecord!.id) {
+             setSelectedIndividualRecord(updatedRecord!);
+         }
+         // --- Fix: Also update dataRecords if it holds the text block record --- 
+         if (dataSource?.type === 'text_block') {
+             setDataRecords(prev => prev.map(rec => rec.id === updatedRecord!.id ? updatedRecord! : rec));
+         }
+      }
+      // ADD LATER: Update URL list records if needed
+    } 
+    // Error handling is done within updateDataRecord store action
+  };
+
+  const handleCancelEdit = () => {
+    setEditingRecord(null);
+  };
+
+  const startEditing = (recordId: number, field: 'title' | 'event_timestamp', currentValue: string | null | undefined) => {
+    setEditingRecord({ recordId, field, value: currentValue || '' });
+  };
+  // ---> ADDED: Functions for handling inline edits --- END
 
   // ---> RE-INSERTED RENDER FUNCTIONS - START <---
   const renderScheduledIngestionCard = () => {
@@ -1263,30 +1387,6 @@ const DataRecordDetailView = ({
         </Card>
      );
   }
-
-  const renderPdfButtons = () => {
-    if (dataSource?.type === 'pdf') {
-      return (
-        <div className="flex items-center gap-2 mb-4">
-          <Button onClick={handleViewPdf} variant="outline" size="sm" disabled={isFetchingPdfForView}>
-            {isFetchingPdfForView ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : isPdfViewerOpen ? (
-              <X className="mr-2 h-4 w-4" /> // Show X icon when open
-            ) : (
-              <Eye className="mr-2 h-4 w-4" /> // Show Eye icon when closed
-            )}
-            {isPdfViewerOpen ? 'Close Viewer' : 'View Inline'}
-          </Button>
-          <Button onClick={handleDownloadPdf} variant="outline" size="sm">
-            <Download className="mr-2 h-4 w-4" />
-            Download PDF
-          </Button>
-        </div>
-      );
-    }
-    return null; // Return null if not a PDF source
-  };
 
   const renderClassificationSection = () => {
     const renderTimeSeriesChart = () => {
@@ -1480,55 +1580,44 @@ const DataRecordDetailView = ({
         )}
       </div>
     );
-  };
+  }
 
+  // ---> ADDED: Reintroduce renderContent logic based on older version ---
   const renderContent = () => {
-    if (isLoadingSource || !dataSource) {
-        return <div className="p-4 text-center">Loading data source details...</div>;
+    if (!dataSource) {
+        return <div className="p-4 text-center text-muted-foreground">Data source details not loaded.</div>;
     }
 
     const isBulkPdf = dataSource.type === 'pdf' && dataSource.source_metadata && typeof dataSource.source_metadata.file_count === 'number' && dataSource.source_metadata.file_count > 1;
 
-    const renderTextDisplay = (text: string | null) => (
-        <ScrollArea className="h-[200px] w-full rounded-md border p-3 text-sm bg-background">
-            {text || <span className="text-muted-foreground italic">No text content available.</span>}
-        </ScrollArea>
-    );
-
     switch (dataSource.type) {
         case 'pdf':
-            // Handle both single and bulk PDF here
             const pageCount = dataSource.source_metadata?.page_count as number | undefined;
             const processedPages = dataSource.source_metadata?.processed_page_count as number | undefined;
             const fileCount = dataSource.source_metadata?.file_count as number | undefined;
-            // --- Fix: Ensure displayFilename is string or default ---
             const filenameFromDetails = dataSource.origin_details?.filename as string | undefined;
             const displayFilename = isBulkPdf ? dataSource.name : (filenameFromDetails || dataSource.name || `DataSource ${dataSource.id}`);
-            // --- End Fix ---
 
-            // --- Add Check for status before rendering badge ---
             const statusBadge = dataSource.status ? (
                 <Badge variant={
                     dataSource.status === 'complete' ? 'default'
                     : dataSource.status === 'failed' ? 'destructive'
                     : dataSource.status === 'processing' ? 'secondary'
                     : dataSource.status === 'pending' ? 'secondary'
-                    : 'outline' // Fallback variant
+                    : 'outline'
                 }
                     className="capitalize flex items-center gap-1"
                 >
                     {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
-                    {/* Display user-friendly status */}
                     {dataSource.status === 'complete' ? 'Completed'
                      : dataSource.status === 'failed' ? 'Failed'
                      : dataSource.status === 'processing' ? 'Processing'
                      : dataSource.status === 'pending' ? 'Pending'
-                     : dataSource.status} {/* Raw status as fallback */}
+                     : dataSource.status}
                 </Badge>
             ) : (
-                <Badge variant="outline">Unknown</Badge> // Fallback badge if status is missing
+                <Badge variant="outline">Unknown</Badge>
             );
-            // --- End Check ---
 
             return (
                 <div className="p-4 border rounded-lg bg-muted/30 h-full flex flex-col">
@@ -1537,14 +1626,22 @@ const DataRecordDetailView = ({
                        {isBulkPdf ? 'Bulk PDF Details' : 'PDF Details'}
                     </h3>
                     <div className="space-y-2 mb-4 text-sm flex-grow">
+                        {renderEditableField(
+                            isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null),
+                            'title'
+                        )}
                         <p><strong>Source Name:</strong> {displayFilename}</p>
                         {isBulkPdf && fileCount !== undefined && <p><strong>Files Included:</strong> {fileCount}</p>}
                         {!isBulkPdf && pageCount !== undefined && <p><strong>Total Pages:</strong> {pageCount}</p>}
                         {!isBulkPdf && processedPages !== undefined && <p><strong>Processed Pages:</strong> {processedPages}</p>}
-                        <div className="flex items-center gap-1"><strong>Overall Status:</strong> {statusBadge}</div> {/* Changed p to div */}
+                        <div className="flex items-center gap-1"><strong>Overall Status:</strong> {statusBadge}</div>
                         {dataSource.status === 'failed' && dataSource.error_message && (
                             <p className="text-destructive text-xs"><strong>Error:</strong> {dataSource.error_message}</p>
                         )}
+                         {renderEditableField(
+                             isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null),
+                             'event_timestamp'
+                         )}
 
                         {isBulkPdf && (
                             <div className="mt-3 pt-3 border-t">
@@ -1552,7 +1649,6 @@ const DataRecordDetailView = ({
                                 {isLoadingRecords ? (
                                     <p className="text-xs italic text-muted-foreground">Loading file list...</p>
                                 ) : associatedRecords.length > 0 ? (
-                                    // --- ADDED ScrollArea --- 
                                     <ScrollArea className="max-h-32 pr-2">
                                         <ul className="space-y-1 text-xs">
                                             {associatedRecords.map(record => {
@@ -1561,20 +1657,20 @@ const DataRecordDetailView = ({
                                                 return (
                                                     <li key={record.id}
                                                         className={cn(
-                                                            "truncate p-1 rounded border cursor-pointer hover:bg-muted/80",
+                                                            "truncate p-1 rounded border cursor-pointer hover:bg-muted/80 flex items-center gap-1",
                                                             isSelected ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "bg-background"
                                                         )}
                                                         title={originalFilename || `Record ${record.id}`}
-                                                        onClick={() => setSelectedIndividualRecord(record)} // Set selected record
+                                                        onClick={() => setSelectedIndividualRecord(record)}
                                                     >
-                                                        <FileText className="h-3 w-3 inline-block mr-1.5 align-middle" />
-                                                        {originalFilename || `Record ${record.id}`}
+                                                        <FileText className="h-3 w-3 inline-block mr-1.5 align-middle shrink-0" />
+                                                        <span className="truncate flex-grow">{originalFilename || `Record ${record.id}`}</span>
+                                                        {/* Add Edit button next to each file? Maybe later */}
                                                     </li>
                                                 );
                                             })}
                                         </ul>
                                     </ScrollArea>
-                                    // --- END ADDED ScrollArea ---
                                 ) : (
                                     <p className="text-xs italic text-muted-foreground">No individual file records found (or still processing).</p>
                                 )}
@@ -1582,7 +1678,7 @@ const DataRecordDetailView = ({
                         )}
                     </div>
 
-                    {/* --- Text Content Display (Moved & Modified) --- */}
+                    {/* Text Content Display */}
                     {(() => {
                        const recordForTextDisplay = isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null);
                        if (recordForTextDisplay) {
@@ -1596,7 +1692,6 @@ const DataRecordDetailView = ({
                                </div>
                            );
                        }
-                       // Optionally show a message if no record/text found for single PDF
                        else if (!isBulkPdf && !isLoadingRecords) {
                            return (
                                <div className="mt-3 pt-3 border-t">
@@ -1606,9 +1701,8 @@ const DataRecordDetailView = ({
                        }
                        return null;
                     })()}
-                    {/* --- END Text Content Display --- */}
 
-                    {/* --- MODIFICATION: Conditional PDF Buttons --- */}
+                    {/* PDF Action Buttons */}
                     <div className="flex items-center gap-2 mb-4 border-t pt-4 mt-auto">
                       <Button onClick={handleViewPdf} variant="outline" size="sm" disabled={isFetchingPdfForView || (isBulkPdf && !selectedIndividualRecord)} title={isBulkPdf && !selectedIndividualRecord ? "Select an individual file above to view" : ""}>
                         {isFetchingPdfForView ? (
@@ -1625,14 +1719,13 @@ const DataRecordDetailView = ({
                         {isBulkPdf ? 'Download Selected PDF' : 'Download PDF'}
                       </Button>
                     </div>
-                    {/* --- END MODIFICATION --- */}
                 </div>
             );
 
         case 'url_list':
             const originalUrls = (dataSource.origin_details as any)?.urls || [];
             const hasUrlListChanged = JSON.stringify([...editableUrls].sort()) !== JSON.stringify([...originalUrls].sort());
-    
+
             return (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* --- Left Column: URL Editor --- */}
@@ -1679,17 +1772,18 @@ const DataRecordDetailView = ({
                           {isSavingUrls ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
                           Save URL List Changes
                       </Button>
+                      {renderScheduledIngestionCard()} {/* Move Schedule card here */}
                   </div>
-    
+
                   {/* --- Right Column: Scraped Records --- */}
                   <div className="space-y-3">
                       <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
-                      {/* ---> ADDED: View Mode Toggle Buttons --- */}
                       <div className="flex items-center space-x-2 mb-2">
                         <Button
                           variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
                           size="sm"
                           onClick={() => setScrapedContentViewMode('flat')}
+                          className="h-7 px-2 text-xs"
                         >
                           Flat List (Time)
                         </Button>
@@ -1697,22 +1791,21 @@ const DataRecordDetailView = ({
                           variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
                           size="sm"
                           onClick={() => setScrapedContentViewMode('grouped')}
+                          className="h-7 px-2 text-xs"
                         >
                           Grouped by URL
                         </Button>
                       </div>
-                      {/* <--- END ADDED --- */}
-    
+
                       {isLoadingUrlList ? (
                            <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...</div>
                       ) : urlListError ? (
                            <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Error Loading Records</AlertTitle><AlertDescription>{urlListError}</AlertDescription></Alert>
-                      ) : urlListDataRecords.length > 0 ? (
+                      ) : (urlListDataRecords.length > 0 || sortedFlatList.length > 0) ? ( // Check sortedFlatList too
                           <>
                               <ScrollArea className="h-[400px] w-full border rounded-md p-3">
                                   <div className="space-y-3">
                                       {scrapedContentViewMode === 'flat' ? (
-                                          // --- Flat List View (Sorted by Time) ---
                                           sortedFlatList.map((record) => {
                                               const originalUrl = (record.source_metadata as any)?.original_url;
                                               return (
@@ -1736,12 +1829,17 @@ const DataRecordDetailView = ({
                                                              {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
                                                           </span>
                                                       </div>
-                                                      <p className={cn(
-                                                        "text-sm whitespace-pre-wrap bg-secondary/30 p-1.5 rounded border",
-                                                        highlightedRecordId === record.id ? "max-h-none" : "max-h-[100px] overflow-y-auto"
-                                                      )}>
-                                                          {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
-                                                      </p>
+                                                       {/* --- Inline Edit Fields for URL List Record --- */}
+                                                       {renderEditableField(record, 'title')}
+                                                       {renderEditableField(record, 'event_timestamp')}
+                                                       {/* --- --- */}
+                                                       <Collapsible open={highlightedRecordId === record.id}>
+                                                            <CollapsibleContent>
+                                                               <div className="mt-1">
+                                                                {renderTextDisplay(record.text_content)}
+                                                               </div>
+                                                            </CollapsibleContent>
+                                                        </Collapsible>
                                                   </div>
                                               );
                                           })
@@ -1770,12 +1868,17 @@ const DataRecordDetailView = ({
                                                                      {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
                                                                   </span>
                                                               </div>
-                                                              <p className={cn(
-                                                                "text-sm whitespace-pre-wrap bg-secondary/30 p-1 rounded border",
-                                                                highlightedRecordId === record.id ? "max-h-none" : "max-h-[80px] overflow-y-auto"
-                                                              )}>
-                                                                  {record.text_content ? record.text_content : <span className="italic text-muted-foreground/70">No content extracted.</span>}
-                                                              </p>
+                                                              {/* --- Inline Edit Fields for URL List Record (Grouped) --- */}
+                                                              {renderEditableField(record, 'title')}
+                                                              {renderEditableField(record, 'event_timestamp')}
+                                                              {/* --- --- */}
+                                                              <Collapsible open={highlightedRecordId === record.id}>
+                                                                <CollapsibleContent>
+                                                                    <div className="mt-1">
+                                                                     {renderTextDisplay(record.text_content)}
+                                                                    </div>
+                                                                </CollapsibleContent>
+                                                              </Collapsible>
                                                           </div>
                                                       ))}
                                                   </div>
@@ -1802,8 +1905,9 @@ const DataRecordDetailView = ({
                   </div>
                 </div>
             );
+
         case 'csv':
-            return (
+             return (
               <div className="space-y-3 h-full flex flex-col">
                 {isLoadingCsv ? (
                    <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
@@ -1828,8 +1932,8 @@ const DataRecordDetailView = ({
                        />
                      </div>
 
-                     <div className="border rounded-md overflow-auto relative w-full max-h-[30vh] max-w-[50vw] flex-grow">
-                       <Table className="text-xs max-w-screen-3xl">
+                     <div className="border rounded-md overflow-auto relative w-full max-h-[50vh] flex-grow"> {/* Increased max-h */}
+                       <Table className="text-xs min-w-max"> {/* Use min-w-max for wide tables */}
                          <TableHeader className="sticky top-0 bg-muted z-10">
                            <TableRow>
                              <TableHead className="w-[80px] px-2 py-2 font-semibold sticky left-0 bg-muted z-10 border-r shadow-sm">Row</TableHead>
@@ -1854,7 +1958,16 @@ const DataRecordDetailView = ({
                                <TableRow
                                  key={row.row_number}
                                  onClick={() => {
-                                   setSelectedRowData(prev => prev?.row_number === row.row_number ? null : row);
+                                   const newSelectedRow = prev => prev?.row_number === row.row_number ? null : row;
+                                   setSelectedRowData(newSelectedRow);
+                                   // Fetch results for the newly selected row - Parse ID from row_data.id
+                                   const recordIdStr = row.row_data?.id as string | null | undefined;
+                                   const recordId = recordIdStr ? parseInt(recordIdStr, 10) : NaN; // Parse string ID to number
+                                   if (newSelectedRow(selectedRowData) && !isNaN(recordId)) { // Check if parsing was successful
+                                     setSelectedRowResults(getResultsForRecord(recordId));
+                                   } else {
+                                     setSelectedRowResults([]);
+                                   }
                                  }}
                                  className={cn(
                                    "cursor-pointer hover:bg-muted/50",
@@ -1894,7 +2007,7 @@ const DataRecordDetailView = ({
                                    onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }}
                                    className={cn(
                                      currentPage === 1 ? "pointer-events-none opacity-50" : "",
-                                     "h-8 px-2" // Smaller pagination buttons
+                                     "h-8 px-2"
                                    )}
                                  />
                                </PaginationItem>
@@ -1907,7 +2020,7 @@ const DataRecordDetailView = ({
                                    onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }}
                                    className={cn(
                                      currentPage === totalPages ? "pointer-events-none opacity-50" : "",
-                                     "h-8 px-2" // Smaller pagination buttons
+                                     "h-8 px-2"
                                    )}
                                  />
                                </PaginationItem>
@@ -1915,7 +2028,7 @@ const DataRecordDetailView = ({
                            </Pagination>
                         </div>
                      )}
-                     {renderSelectedRowDetail()}
+                     {renderSelectedRowDetail()} {/* Show selected row details below table */}
                    </>
                  ) : (
                    <div className="text-center py-4 text-muted-foreground italic">
@@ -1924,19 +2037,23 @@ const DataRecordDetailView = ({
                     )}
                  </div>
              );
+
         case 'text_block':
             const charCount = dataSource.source_metadata?.character_count as number | undefined;
+            // Use associatedRecords which is now populated for text blocks as well
+            const textRecord = associatedRecords.length > 0 ? associatedRecords[0] : null;
             return (
                 <div className="p-4 border rounded-lg bg-muted/30 h-full flex flex-col">
                     <h3 className="text-lg font-semibold mb-3 flex items-center">
                         <Type className="h-5 w-5 mr-2 text-primary" /> Text Block Content
                     </h3>
                     <div className="space-y-2 mb-4 text-sm flex-grow">
-                        <p><strong>Source Name:</strong> {dataSource.name || `DataSource ${dataSource.id}`}</p>
+                        {renderEditableField(textRecord, 'title')}
+                        {/*<p><strong>Source Name:</strong> {dataSource.name || `DataSource ${dataSource.id}`}</p>*/}
                         {charCount !== undefined && <p><strong>Character Count:</strong> {charCount}</p>}
-                        {/* Displaying the text content using the helper */}
+                         {renderEditableField(textRecord, 'event_timestamp')}
                         <Label className="text-xs font-semibold text-muted-foreground">Content:</Label>
-                        {renderTextDisplay(dataSource.origin_details?.text_content as string || null)}
+                         {renderTextDisplay(textRecord?.text_content || dataSource.origin_details?.text_content as string || null)}
                     </div>
                     {/* Add actions if needed, e.g., edit? */}
                 </div>
@@ -1945,220 +2062,197 @@ const DataRecordDetailView = ({
             return <div className="p-4 text-center text-muted-foreground">Unsupported data source type or details not loaded.</div>;
     }
   };
-  // ---> RE-INSERTED RENDER FUNCTIONS - END <---
+  // ---> END ADDED <---
 
-
-  if (isLoadingSource && !dataSource) {
-    return (
-      <div className="flex items-center justify-center h-full p-6">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-        Loading data source details...
-      </div>
-    );
-  }
-
-  // --- Rendering Logic Starts Here ---
-  // ---> REMOVED hooks from here: jobNameForDialog useMemo, currentlyViewedRecordId useState, useEffect
-
-
+  // Add this at the end of the DocumentDetailView function, before export default
   return (
-    <div className="flex flex-col h-full">
-      {/* Add header with actions */}
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold ml-4 mt-1">{displayTitle(dataSource)}</h2>
-        {renderHeaderActions()}
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {dataSource && (
-            <div className="flex items-start gap-4 text-sm">
-              <Avatar>
-                <AvatarImage alt={displayTitle(dataSource) ?? ''} />
-                <AvatarFallback>
-                  {displayTitle(dataSource)
-                    ?.substring(0, 2)
-                    ?.toUpperCase() || 'DS'}
-                </AvatarFallback>
-              </Avatar>
-              <div className="grid gap-1 flex-1">
-                <div className="font-semibold flex items-center gap-2 flex-wrap">
-                  {displayTitle(dataSource)}
-                  <Badge variant="outline">{displayType(dataSource)}</Badge>
-                  <Badge variant={
-                    dataSource.status === 'complete' ? 'default'
-                    : dataSource.status === 'failed' ? 'destructive'
-                    : dataSource.status === 'processing' ? 'secondary'
-                    : dataSource.status === 'pending' ? 'secondary'
-                    : 'outline'
-                  }
-                    className="capitalize flex items-center gap-1"
-                  >
-                    {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
-                    {/* Display user-friendly status */}
-                    {dataSource.status === 'complete' ? 'Completed'
-                     : dataSource.status === 'failed' ? 'Failed'
-                     : dataSource.status === 'processing' ? 'Processing'
-                     : dataSource.status === 'pending' ? 'Pending'
-                     : dataSource.status} {/* Raw status as fallback */}
-                </Badge>
-                </div>
-                <div className="text-xs">
-                  <TooltipProvider delayDuration={100}>
-                    <Tooltip>
-                      <TooltipTrigger className="cursor-default text-left">
-                        <span className="font-medium">Origin Details:</span> <span className="italic">Hover to see</span>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-md">
-                        <pre className="text-xs whitespace-pre-wrap break-all">{dataSource.origin_details ? JSON.stringify(dataSource.origin_details) : 'No origin details available'}</pre>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-                <div className="text-xs">
-                  <TooltipProvider delayDuration={100}>
-                    <Tooltip>
-                      <TooltipTrigger className="cursor-default text-left">
-                        <span className="font-medium">Source Metadata:</span> <span className="italic">Hover to see</span>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-md">
-                        <pre className="text-xs whitespace-pre-wrap break-all">{dataSource.source_metadata ? JSON.stringify(dataSource.source_metadata) : 'No source metadata available'}</pre>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
+    <div className="document-detail-view w-full h-full flex flex-col">
+      {isLoadingSource && !dataSource ? ( // Show loading only if no datasource is yet loaded
+        <div className="flex items-center justify-center h-full">
+          <Loader2 className="h-6 w-6 animate-spin mr-2" />
+          <span>Loading data source...</span>
+        </div>
+      ) : sourceError ? (
+        <Alert variant="destructive" className="m-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error Loading Source</AlertTitle>
+          <AlertDescription>{sourceError}</AlertDescription>
+        </Alert>
+      ) : !dataSource ? (
+        <div className="flex items-center justify-center h-full">
+          <span className="text-muted-foreground">No data source selected.</span>
+        </div>
+      ) : (
+        <>
+          {/* Top Section: Header/Metadata (Simplified from old version) */}
+          <div className="flex-none p-4 border-b">
+             <div className="flex justify-between items-start mb-1">
+                 <h2 className="text-lg font-semibold">{dataSource.name || `DataSource ${dataSource.id}`}</h2>
+                 {/* Dataset Creation Button (Consider placement) */}
+                  {renderHeaderActions && renderHeaderActions()}
               </div>
-              {dataSource.created_at && (
-                <div className="ml-auto text-xs text-muted-foreground whitespace-nowrap shrink-0">
-                  Created: {format(new Date(dataSource.created_at), "PPp")}
-                </div>
-              )}
-            </div>
-        )}
-
-        {dataSource && renderScheduledIngestionCard()}
-
-        {dataSource && (
-          <Tabs defaultValue="content" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-2">
-              <TabsTrigger value="content">Source Content / Summary</TabsTrigger>
-              <TabsTrigger value="results">Overall Classification Results</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="content" className="mt-2 rounded-md p-1">
-               {/* --- NEW POSITION for PDF Viewer --- */}
-               {/* --- END NEW POSITION --- */}
-               <div className="space-y-4">
-                {renderContent()}
+              <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                <Badge variant="outline" className="capitalize">{dataSource.type}</Badge>
+                <span>ID: {dataSource.id}</span>
+                <span>Records: {dataSource.data_record_count ?? '-'}</span>
+                 {dataSource.created_at && (
+                    <span>Created: {format(new Date(dataSource.created_at), "PP")}</span>
+                 )}
+                 {dataSource.updated_at && (
+                    <span>Updated: {formatDistanceToNow(new Date(dataSource.updated_at), { addSuffix: true })}</span>
+                 )}
+                 {/* Display status concisely */}
+                 {dataSource.status && (
+                      <Badge variant={
+                          dataSource.status === 'complete' ? 'default'
+                          : dataSource.status === 'failed' ? 'destructive'
+                          : 'secondary' }
+                          className="capitalize flex items-center gap-1"
+                          title={dataSource.status === 'failed' ? dataSource.error_message || 'Failed' : dataSource.status}
+                      >
+                           {dataSource.status === 'processing' || dataSource.status === 'pending' ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                           {dataSource.status === 'complete' ? <CheckCircle className="h-3 w-3" /> : null}
+                           {dataSource.status === 'failed' ? <AlertCircle className="h-3 w-3" /> : null}
+                           {dataSource.status}
+                      </Badge>
+                  )}
               </div>
-               {dataSource?.type === 'pdf' && isPdfViewerOpen && pdfBlobUrl && (
-                  <div className="mb-4 border rounded-lg overflow-hidden shadow-md flex-shrink-0" style={{ height: '60vh', maxHeight: '500px' }}>
-                     <iframe
-                        src={pdfBlobUrl}
-                        title={selectedIndividualRecord ? (selectedIndividualRecord.source_metadata as any)?.original_filename || `Record ${selectedIndividualRecord.id}` : dataSource?.name || 'PDF Viewer'}
-                        width="100%"
-                        height="100%"
-                        style={{ border: 'none' }}
-                     />
-                  </div>
-               )}
-            </TabsContent>
-
-            <TabsContent value="results" className="mt-2 border rounded-md p-1">
-               <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-md font-semibold">Overall Classification Results ({classificationResults.length} total)</h4>
-                   <Button
-                     variant="outline"
-                     size="sm"
-                     onClick={handleRefreshClassificationResults}
-                     disabled={isLoadingResults || isLoadingSource}
-                     className="text-xs h-7 px-2"
-                   >
-                     <RefreshCw className={`h-3 w-3 mr-1 ${isLoadingResults ? 'animate-spin' : ''}`} />
-                     Refresh
-                   </Button>
-                </div>
-              {renderClassificationSection()}
-            </TabsContent>
-          </Tabs>
-        )}
-
-      </div>
-
-      <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {selectedResult?.scheme_id && schemes.find(s => s.id === selectedResult.scheme_id)?.name}
-              {selectedResult?.job_id && (
-                <Badge variant="outline" className="text-sm font-normal">
-                  {availableJobsFromStore[selectedResult.job_id]?.name || `Job ${selectedResult.job_id}`}
-                </Badge>
-              )}
-            </DialogTitle>
-            {selectedResult?.timestamp && (
-              <p className="text-xs text-muted-foreground -mt-2">
-                Created: {format(new Date(selectedResult.timestamp), "PPpp")}
-              </p>
-            )}
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto pr-2">
-            {selectedResult && (
-              <ClassificationResultDisplay
-                result={selectedResult}
-                scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
-                renderContext="dialog"
-              />
-            )}
           </div>
-          <DialogFooter className="mt-4 pt-4 border-t flex justify-between sm:justify-between">
-             {selectedResult?.job_id && onLoadIntoRunner && (
-               <Button
-                 variant="default"
-                 size="sm"
-                 onClick={() => {
-                   if (selectedResult) {
-                     handleLoadIntoRunner(selectedResult);
-                   }
-                   setIsResultDialogOpen(false);
-                 }}
-                 className="bg-primary text-primary-foreground hover:bg-primary/90"
-               >
-                 <ExternalLink className="h-4 w-4 mr-2" />
-                 Load Job in Runner
-               </Button>
-             )}
-             {(!selectedResult?.job_id || !onLoadIntoRunner) && <div />}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsResultDialogOpen(false)}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      {/* Add DatasetCreateDialog */}
-      <DatasetCreateDialog
-        open={isDatasetCreateDialogOpen}
-        onOpenChange={setIsDatasetCreateDialogOpen}
-        onSuccess={() => {
-          toast({
-            title: "Dataset created successfully",
-            description: "You can now view the dataset in the datasets page",
-          });
-          setIsDatasetCreateDialogOpen(false);
-        }}
-        initialDatarecordIds={dataRecords.map(r => r.id)}
-        initialSchemeIds={Array.from(new Set(classificationResults.map(r => r.scheme_id)))}
-        initialJobIds={Array.from(new Set(classificationResults.map(r => r.job_id)))}
-      />
+          {/* Main Content Area with Tabs */}
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <Tabs defaultValue="content" className="w-full h-full flex flex-col">
+              <TabsList className="grid w-full grid-cols-2 flex-none sticky top-0 bg-background z-10 px-4 pt-2 mb-1">
+                <TabsTrigger value="content">Source Content</TabsTrigger>
+                <TabsTrigger value="results">Classification Results</TabsTrigger>
+              </TabsList>
 
-      {/* Add Toaster */}
-      <Toaster />
+              <TabsContent value="content" className="flex-1 min-h-0 overflow-y-auto p-4">
+                 {/* --- NEW POSITION for PDF Viewer --- */}
+                  {dataSource?.type === 'pdf' && isPdfViewerOpen && pdfBlobUrl && (
+                      <div className="mb-4 border rounded-lg overflow-hidden shadow-md flex-shrink-0" style={{ height: '60vh', maxHeight: '500px' }}>
+                          <iframe
+                              src={pdfBlobUrl}
+                              title={selectedIndividualRecord ? (selectedIndividualRecord.source_metadata as any)?.original_filename || `Record ${selectedIndividualRecord.id}` : dataSource?.name || 'PDF Viewer'}
+                              width="100%"
+                              height="100%"
+                              style={{ border: 'none' }}
+                          />
+                      </div>
+                  )}
+                 {/* --- END NEW POSITION --- */}
+                 {renderContent()} {/* Render the actual data source content */}
+              </TabsContent>
+
+              <TabsContent value="results" className="flex-1 min-h-0 overflow-y-auto p-4">
+                  <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-md font-semibold">Overall Classification Results ({classificationResults.length} total)</h4>
+                      <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={handleRefreshClassificationResults}
+                         disabled={isLoadingResults || isLoadingSource}
+                         className="text-xs h-7 px-2"
+                       >
+                         <RefreshCw className={`h-3 w-3 mr-1 ${isLoadingResults ? 'animate-spin' : ''}`} />
+                         Refresh
+                       </Button>
+                   </div>
+                 {renderClassificationSection()} {/* Render the classification results section */}
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          {/* Dialogs and Toaster outside the main flex container */}
+           <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
+              {/* ... DialogContent ... */}
+             <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    {selectedResult?.scheme_id && schemes.find(s => s.id === selectedResult.scheme_id)?.name}
+                    {selectedResult?.job_id && (
+                      <Badge variant="outline" className="text-sm font-normal">
+                        {availableJobsFromStore[selectedResult.job_id]?.name || `Job ${selectedResult.job_id}`}
+                      </Badge>
+                    )}
+                  </DialogTitle>
+                  {selectedResult?.timestamp && (
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      Created: {format(new Date(selectedResult.timestamp), "PPpp")}
+                    </p>
+                  )}
+                </DialogHeader>
+                <div className="max-h-[60vh] overflow-y-auto pr-2">
+                  {selectedResult && schemes.find(s => s.id === selectedResult.scheme_id) && ( // Added check for scheme
+                    <ClassificationResultDisplay
+                      result={selectedResult}
+                      scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
+                      renderContext="dialog"
+                    />
+                  )}
+                </div>
+                <DialogFooter className="mt-4 pt-4 border-t flex justify-between sm:justify-between">
+                   {selectedResult?.job_id && onLoadIntoRunner && (
+                     <Button
+                       variant="default"
+                       size="sm"
+                       onClick={() => {
+                         if (selectedResult) {
+                           handleLoadIntoRunner(selectedResult);
+                         }
+                         setIsResultDialogOpen(false);
+                       }}
+                       className="bg-primary text-primary-foreground hover:bg-primary/90"
+                     >
+                       <ExternalLink className="h-4 w-4 mr-2" />
+                       Load Job in Runner
+                     </Button>
+                   )}
+                   {(!selectedResult?.job_id || !onLoadIntoRunner) && <div />}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsResultDialogOpen(false)}
+                  >
+                    Close
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+           </Dialog>
+
+           <DatasetCreateDialog
+             open={isDatasetCreateDialogOpen}
+             onOpenChange={setIsDatasetCreateDialogOpen}
+             onSuccess={() => {
+                toast({
+                  title: "Dataset created successfully",
+                });
+                setIsDatasetCreateDialogOpen(false);
+             }}
+             // Ensure these are updated correctly based on what's visible/selected
+             initialDatarecordIds={
+                 dataSource?.type === 'csv'
+                     // Parse IDs from row_data.id, ensuring they are numbers
+                     ? filteredAndSortedCsvData.map(r => {
+                         const idStr = r.row_data?.id as string | null | undefined;
+                         const idNum = idStr ? parseInt(idStr, 10) : NaN;
+                         return !isNaN(idNum) ? idNum : null;
+                       }).filter(id => id !== null) as number[]
+                     : (dataSource?.type === 'url_list'
+                         ? (scrapedContentViewMode === 'flat' ? sortedFlatList : urlListDataRecords)
+                         : associatedRecords // For PDF, Text
+                     ).map(r => r.id)
+             }
+             initialSchemeIds={Array.from(new Set(classificationResults.map(r => r.scheme_id)))}
+             initialJobIds={Array.from(new Set(classificationResults.map(r => r.job_id).filter(id => id != null) as number[]))}
+             // initialJobName={jobNameForDialog} // REMOVED: Prop does not exist on DatasetCreateDialogProps
+            />
+            {/* Toaster is likely handled globally, but keep if needed locally */}
+            {/* <Toaster /> */}
+        </>
+      )}
     </div>
   );
 }
 
-export default DataRecordDetailView;
+export default DocumentDetailView;
