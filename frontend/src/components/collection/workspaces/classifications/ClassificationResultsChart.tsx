@@ -744,7 +744,11 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
   const [showStatistics, setShowStatistics] = useState(true);
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  
+  // --- Add state for chart area hover ---
+  const [isChartHovered, setIsChartHovered] = useState(false);
+  const [isTooltipHovered, setIsTooltipHovered] = useState(false);
+  const chartContainerRef = useRef<HTMLDivElement>(null); // Ref for the chart container
+
   // Add state for selected schema fields to plot
   const [selectedSchemaIds, setSelectedSchemaIds] = useState<number[]>(() => 
     // By default, select all schemas
@@ -969,7 +973,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
   // --- END NEW ---
 
   // --- NEW: State to track if the mouse is over the custom tooltip ---
-  const [isTooltipHovered, setIsTooltipHovered] = useState(false);
+  // const [isTooltipHovered, setIsTooltipHovered] = useState(false); // Moved up
 
   return (
     <div>
@@ -1183,7 +1187,12 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
           {isGrouped && results.length > 0 && <p className="text-xs text-muted-foreground">(Or select a different scheme/field for grouping)</p>}
         </div>
       ) : (
-        <div style={{ width: '100%', height: 400 }}>
+        <div
+          ref={chartContainerRef}
+          style={{ width: '100%', height: 400 }}
+          onMouseEnter={() => setIsChartHovered(true)}
+          onMouseLeave={() => setIsChartHovered(false)}
+        >
           <ResponsiveContainer>
             {isGrouped ? (
               // Bar chart for grouped data
@@ -1200,11 +1209,12 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
                   label={{ value: "Count", angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                 />
                 <Tooltip
-                   active={!isTooltipHovered} // Recharts tooltip inactive when custom one is hovered
-                   cursor={{ fill: 'transparent' }} // Make default cursor invisible
-                   wrapperStyle={{ zIndex: 100, pointerEvents: 'none' }} // Prevent Recharts wrapper from interfering
+                   active={isChartHovered || isTooltipHovered}
+                   cursor={{ fill: 'transparent' }}
+                   wrapperStyle={{ zIndex: 100, pointerEvents: 'none' }}
                    content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} dataSources={dataSources} results={results} showStatistics={showStatistics} dataRecordsMap={dataRecordsMap} setIsTooltipHovered={setIsTooltipHovered} />}
-                   isAnimationActive={false} // Prevent animation delays
+                   isAnimationActive={false}
+                   allowEscapeViewBox={{ x: true, y: false }}
                 />
                 <Legend payload={[]} />
                 <Bar dataKey="count" isAnimationActive={false}>
@@ -1228,11 +1238,12 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
                   width={60}
                 />
                 <Tooltip
-                  active={!isTooltipHovered} // Recharts tooltip inactive when custom one is hovered
-                  cursor={{ fill: 'transparent' }} // Make default cursor invisible
-                  wrapperStyle={{ zIndex: 100, pointerEvents: 'none' }} // Prevent Recharts wrapper from interfering
+                  active={isChartHovered || isTooltipHovered}
+                  cursor={{ fill: 'transparent' }}
+                  wrapperStyle={{ zIndex: 100, pointerEvents: 'none' }}
                   content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} dataSources={dataSources} results={results} showStatistics={showStatistics} dataRecordsMap={dataRecordsMap} setIsTooltipHovered={setIsTooltipHovered} />}
-                  isAnimationActive={false} // Prevent animation delays
+                  isAnimationActive={false}
+                  allowEscapeViewBox={{ x: true, y: false }}
                 />
                 <Legend />
                 
@@ -1377,21 +1388,30 @@ interface CustomTooltipProps extends TooltipProps<number, string> {
   results: FormattedClassificationResult[];
   showStatistics?: boolean;
   dataRecordsMap?: Map<number, DataRecordRead>;
-  // --- NEW: Prop to receive the state setter ---
-  setIsTooltipHovered: TooltipHoverSetter;
+  // Prop to set the parent's state tracking hover *over this tooltip*
+  setIsTooltipHovered: (isHovered: boolean) => void;
 }
 
 const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, isGrouped, schemes, dataSources, results, showStatistics, dataRecordsMap, setIsTooltipHovered }) => {
-  // --- MODIFIED: Use Recharts 'active' prop to decide rendering, but control hover state independently ---
-  if (!active || !payload || !payload.length) {
-    // If Recharts thinks it's inactive, ensure our hover state is also false
-    // Use effect to avoid direct state update during render
-    React.useEffect(() => {
+  // --- Moved useEffect to top level to fix hook rule violation ---
+  React.useEffect(() => {
+    // Return a cleanup function
+    return () => {
+      // This runs when the component unmounts or before the effect runs again.
+      // If the tooltip becomes inactive (due to `active` prop becoming false),
+      // this cleanup ensures the hover state in the parent is reset.
       setIsTooltipHovered(false);
-    }, [active, setIsTooltipHovered]);
+      // console.log("[CustomTooltip Cleanup] Ensuring hover state is false via useEffect cleanup.");
+    };
+  }, [setIsTooltipHovered]); // Dependency ensures effect cleanup uses the right setter
+  // --- End moved useEffect ---
+
+  // The 'active' prop now reflects (isChartHovered || isTooltipHovered) from parent
+  // If it's false, it means mouse is neither on chart nor on tooltip -> hide.
+  if (!active || !payload || !payload.length) {
+    // No need for the effect here anymore, just return null
     return null;
   }
-  // --- END MODIFICATION ---
 
   const dataPoint = payload[0]?.payload as ChartDataPoint | GroupedDataPoint | undefined;
   if (!dataPoint) return null;
@@ -1405,15 +1425,22 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
     return point && typeof point === 'object' && 'dateString' in point;
   };
   
+  // Handlers just update the parent state
+  const handleMouseEnter = () => {
+    setIsTooltipHovered(true);
+  };
+  const handleMouseLeave = () => {
+    setIsTooltipHovered(false);
+  };
+
   return (
-    <div 
-      className={cn(
-        "max-h-72 overflow-y-auto bg-card/95 p-3 border border-border rounded-lg shadow-lg max-w-md",
-        "overscroll-behavior-contain pointer-events-auto z-50" // Added overscroll, pointer-events, and z-index
-      )}
+    <div
+      className={cn("max-h-72 overflow-y-auto bg-card/95 p-3 border border-border rounded-lg shadow-lg max-w-md overscroll-behavior-contain pointer-events-auto")}
+      style={{ zIndex: 101 }} // Ensure tooltip is visually on top
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       // Stop scroll events from bubbling up *within* the tooltip
       onWheel={(e) => e.stopPropagation()}
-      // --- END MODIFICATION ---
     >
       <div className="mb-3 pb-2 border-b border-border">
         <p className="text-sm font-semibold text-foreground">
@@ -1513,13 +1540,16 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
           <div className="pb-1">
             <p className="text-sm font-medium mb-2">Documents:</p>
             <div className="space-y-1 pr-1">
-              {dataRecordsToShow.slice(0, 5).map((rec) => (
-                <div key={rec.id} className="flex items-center px-2 py-1 bg-muted/20 rounded-sm">
-                  <span className="text-xs truncate">
-                    <DocumentLink documentId={rec.id}>{rec.title ? rec.title : `ID: ${rec.id}`}</DocumentLink>
-                  </span>
-                </div>
-              ))}
+              {dataRecordsToShow.slice(0, 5).map((rec) => {
+                const recordTitle = rec.title ? rec.title : `ID: ${rec.id}`; // Get title or use ID
+                return (
+                  <div key={rec.id} className="flex items-center px-2 py-1 bg-muted/20 rounded-sm">
+                    <span className="text-xs truncate" title={recordTitle}> {/* Add title attribute for full display on hover */}
+                      <DocumentLink documentId={rec.id}>{recordTitle}</DocumentLink> {/* Display title */}
+                    </span>
+                  </div>
+                );
+              })}
               {dataRecordsToShow.length > 5 && (
                 <div className="text-xs text-muted-foreground italic text-center mt-1">
                   ...and {dataRecordsToShow.length - 5} more record{dataRecordsToShow.length - 5 !== 1 ? 's' : ''}
@@ -1621,15 +1651,24 @@ const DocumentResults: React.FC<{
              </div>
            );
          }
+         
+        const record = dataRecords?.find(dr => dr.id === recId);
+        const source = dataSources?.find(ds => ds.id === record?.datasource_id);
 
         return (
-          <div key={recId} className="pb-2">
-            <div className="mb-3">
-              <span className="font-medium">Record ID: </span>
-              {dataRecords?.find(dr => dr.id === recId)?.title}
-              <DocumentLink documentId={recId}>
-                {recId}
-              </DocumentLink>
+          <div key={recId} className="pb-2 border-b last:border-b-0 mb-4">
+            <div className="mb-3 p-2 bg-muted/30 rounded">
+               <h4 className="font-medium text-base mb-1">
+                  <DocumentLink documentId={recId}>{record?.title || `Record ID: ${recId}`}</DocumentLink>
+               </h4>
+               <p className="text-xs text-muted-foreground">
+                 {source ? `Source: ${source.name}` : 'Unknown Source'} {record && `(ID: ${record.id})`}
+               </p>
+                {record?.text_content && typeof record.text_content === 'string' && (
+                   <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                     Text content:{record.text_content.split('\n').filter(line => line.trim() !== '').slice(0, 2).join(' ')}
+                   </p>
+                )}
             </div>
             {/* Pass the SchemeRead objects; ClassificationResultDisplay should handle adaptation internally */}
             <ClassificationResultDisplay
