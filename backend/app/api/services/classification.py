@@ -301,33 +301,27 @@ def _core_classify_text(
     if not scheme:
         raise SchemeNotFoundError(f"Classification Scheme {scheme_id} not found")
 
-    # Prepare input for the provider
-    # The exact format depends on the provider's expectation
-    # Here, we assume it needs text, scheme details (name, desc, fields), and optional API key
-    # ADDED: Include title in the input data sent to the provider
-    provider_input = {
-        "text": text,
-        "title": title, # Pass the title
-        "scheme_name": scheme.name,
-        "scheme_description": scheme.description,
-        "fields": [
-            {
-                "name": field.name,
-                "description": field.description,
-                "type": field.type.value, # Send the string value of the enum
-                "scale_min": field.scale_min,
-                "scale_max": field.scale_max,
-                "labels": field.labels,
-                "dict_keys": field.dict_keys # Pass dict keys definitions
-            }
-            for field in scheme.fields
-        ],
-        "api_key": api_key # Pass API key if provided
-    }
+    # Safely construct input string, handling None title
+    input_parts = [text]
+    if title:
+        input_parts.append(title)
+    input_str = " ".join(input_parts) # Join with space only if title exists
+
+    # Generate Pydantic model for the scheme
+    dynamic_model = generate_pydantic_model(scheme)
+    if not dynamic_model:
+        raise SchemeNotFoundError(f"Could not generate model for scheme {scheme_id}")
+
+    instructions = scheme.description # Use scheme description as instructions
 
     try:
-        # Call the provider
-        result_value = provider.classify(provider_input)
+        # Call the provider with arguments in the correct order
+        result_value = provider.classify(
+            text=input_str, # Use the safely constructed string
+            model_class=dynamic_model,
+            instructions=instructions,
+            api_key=api_key
+        )
         # TODO: Add validation against scheme.validation_rules if present
         return result_value
     except Exception as provider_error:
@@ -774,25 +768,60 @@ class ClassificationService:
         Update a classification scheme.
         MODIFIES DATA - Commits transaction.
         """
+        logger.debug(f"Attempting to update scheme {scheme_id} in workspace {workspace_id} by user {user_id}")
         try:
             validate_workspace_access(self.session, workspace_id, user_id)
 
             scheme = self.session.get(ClassificationScheme, scheme_id)
             if not scheme or scheme.workspace_id != workspace_id:
+                logger.warning(f"Scheme {scheme_id} not found or access denied for workspace {workspace_id}")
                 return None
 
-            # Update fields
-            update_dict = update_data.model_dump(exclude_unset=True)
+            # Update base attributes
+            update_dict = update_data.model_dump(exclude_unset=True, exclude={'fields'}) # Exclude fields for now
+            updated = False
             for key, value in update_dict.items():
-                setattr(scheme, key, value)
+                if hasattr(scheme, key):
+                    setattr(scheme, key, value)
+                    updated = True
+            
+            # Handle field updates if fields are provided
+            if update_data.fields is not None:
+                logger.info(f"Updating fields for scheme {scheme_id}. New field count: {len(update_data.fields)}")
+                # Delete existing fields
+                existing_fields = self.session.exec(select(ClassificationField).where(ClassificationField.scheme_id == scheme_id)).all()
+                if existing_fields:
+                    logger.debug(f"Deleting {len(existing_fields)} existing fields for scheme {scheme_id}")
+                    for field in existing_fields:
+                        self.session.delete(field)
+                
+                # Create new fields
+                new_fields_data = update_data.fields # This is List[ClassificationFieldCreate]
+                for field_data in new_fields_data:
+                    # Validate new field data (implement _validate_scheme_field if needed or rely on Pydantic)
+                    # self._validate_scheme_field(field_data) # Assuming validation happens here or via Pydantic
+                    new_field = ClassificationField(
+                        scheme_id=scheme.id,
+                        **field_data.model_dump()
+                    )
+                    self.session.add(new_field)
+                updated = True # Mark as updated if fields were processed
 
+            if not updated:
+                 logger.info(f"No update needed for scheme {scheme_id}")
+                 return ClassificationSchemeRead.model_validate(scheme) # Return current state if no changes
+
+            scheme.updated_at = datetime.now(timezone.utc)
             self.session.add(scheme)
             self.session.commit()
             self.session.refresh(scheme)
+            logger.info(f"Successfully updated scheme {scheme_id}")
             return ClassificationSchemeRead.model_validate(scheme)
 
         except Exception as e:
             self.session.rollback()
+            logger.exception(f"Failed to update classification scheme {scheme_id}: {e}")
+            # Consider raising a specific error type
             raise ValueError(f"Failed to update classification scheme: {str(e)}")
 
     def delete_scheme(

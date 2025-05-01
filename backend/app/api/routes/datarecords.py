@@ -246,23 +246,25 @@ def update_datarecord(
     record_in: DataRecordUpdate,
     service: IngestionServiceDep
 ) -> DataRecordRead:
-    """Update a specific DataRecord (e.g., title, event_timestamp)."""
+    """
+    Update specific fields of a DataRecord (e.g., title, event_timestamp).
+    """
     try:
+        # Ensure the user owns the workspace implicitly via the service call
         updated_record = service.update_datarecord(
             datarecord_id=datarecord_id,
             workspace_id=workspace_id,
             user_id=current_user.id,
-            update_data=record_in
+            record_in=record_in
         )
-        return DataRecordRead.model_validate(updated_record)
-    except HTTPException as he:
-        raise he
-    except ValueError as e:
-        # Handle potential errors from service like not found, invalid data
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return updated_record
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions (like 403, 404) directly
+        raise http_exc
     except Exception as e:
+        # Log the unexpected error and raise a generic 500
         logger.exception(f"Error updating datarecord {datarecord_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error updating datarecord"
+            detail=f"Error updating datarecord {datarecord_id}: {e}"
         ) 

@@ -62,6 +62,7 @@ import { adaptEnhancedResultReadToFormattedResult, adaptDataSourceReadToDataSour
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useRecurringTasksStore } from '@/zustand_stores/storeRecurringTasks';
 import Link from 'next/link';
+import { ClassificationTimeAxisControls, TimeAxisConfig } from './ClassificationTimeAxisControls';
 
 interface ClassificationRunnerProps {
   allSchemes: ClassificationSchemeRead[];
@@ -93,6 +94,7 @@ export default function ClassificationRunner({
   const [isLoadingGeocoding, setIsLoadingGeocoding] = useState(false);
   const [geocodingError, setGeocodingError] = useState<string | null>(null);
   const [currentMapLabelConfig, setCurrentMapLabelConfig] = useState<{ schemeId: number; fieldKey: string } | undefined>(undefined);
+  const [currentTimeAxisConfig, setCurrentTimeAxisConfig] = useState<TimeAxisConfig | null>(null);
   const [initialMapControlsConfig, setInitialMapControlsConfig] = useState<{
     geocodeSchemeId: number | null;
     geocodeFieldKey: string | null;
@@ -419,7 +421,21 @@ export default function ClassificationRunner({
          </TabsList>
          <TabsContent value="chart">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             <ClassificationResultsChart results={formattedRunResults} schemes={runSchemes} dataSources={runDataSources} filters={activeFilters} timeAxisConfig={null} />
+             <div className="p-2 mb-2 border-b">
+                <ClassificationTimeAxisControls
+                  schemes={runSchemes}
+                  initialConfig={currentTimeAxisConfig}
+                  onTimeAxisConfigChange={setCurrentTimeAxisConfig}
+                />
+             </div>
+             <ClassificationResultsChart
+               results={formattedRunResults}
+               schemes={runSchemes}
+               dataSources={runDataSources}
+               filters={activeFilters}
+               dataRecords={currentRunDataRecords}
+               timeAxisConfig={currentTimeAxisConfig}
+             />
            </div>
          </TabsContent>
          <TabsContent value="table">
@@ -594,7 +610,7 @@ export default function ClassificationRunner({
               )}
 
               {activeJob && !isClassifying && (
-                <div className="p-3 rounded-md bg-muted/10">
+                <div className="p-3 rounded-md bg-muted/10 space-y-3">
                   <ResultFilters
                     filters={activeFilters}
                     schemes={runSchemes}
@@ -626,40 +642,60 @@ export default function ClassificationRunner({
             <ScrollArea className="py-4 max-h-[70vh]">
               {selectedDataRecordId !== null && (() => {
                    const dataRecord = currentRunDataRecords.find(dr => dr.id === selectedDataRecordId);
-                   const resultsForRecord = currentRunResults.filter(r => r.datarecord_id === selectedDataRecordId);
-                   const schemesForRecord = resultsForRecord
-                       .map(r => runSchemes?.find(s => s.id === r.scheme_id))
-                       .filter((s): s is ClassificationSchemeRead => !!s);
+                   // Get all results for this record ID from the current run
+                   const allResultsForRecord = currentRunResults.filter(r => r.datarecord_id === selectedDataRecordId);
+
+                   // Filter these results based *only* on schemes available in the runSchemes list
+                   const validResultsForRecord = allResultsForRecord.filter(r =>
+                       runSchemes.some(s => s.id === r.scheme_id)
+                   );
+
+                   // Get the schemes corresponding ONLY to the valid results
+                   const schemesForValidResults = runSchemes.filter(s =>
+                       validResultsForRecord.some(r => r.scheme_id === s.id)
+                   );
 
                    if (!dataRecord) return <p>Data Record details not found.</p>;
 
+                    // Check if there are any valid results left to display
+                    if (validResultsForRecord.length === 0) {
+                        // Optionally, show a different message if some results existed but didn't match run schemes
+                        return <p className="text-muted-foreground italic">No results found for this record matching the schemes used in this job run.</p>;
+                    }
+
                    // Find the data source that contains this record
-                   const record = runDataSources.find(ds => ds.id === dataRecord.datasource_id);
+                   const recordSource = runDataSources.find(ds => ds.id === dataRecord.datasource_id); // Renamed to avoid conflict
 
                    return (
                      <div className="space-y-4">
-                       {/* Data Record Title and Source */}
-                       <div>
-                         <h3 className="font-semibold text-lg inline">{dataRecord.title || 'Untitled Data Record'}</h3>
-                         {record?.name && (
-                           <span className="text-sm text-muted-foreground ml-2">(Source: {record.name})</span>
-                         )}
+                       {/* --- NEW: Enhanced Data Record Header --- */}
+                       <div className="p-3 rounded-md bg-muted/40 border border-border space-y-1 mb-4">
+                          <h3 className="font-semibold text-lg">{dataRecord.title || 'Untitled Data Record'}</h3>
+                          <p className="text-sm text-muted-foreground">
+                             Record ID: {dataRecord.id}
+                             {dataRecord.title && (
+                               <span className="ml-2"> | Title: {dataRecord.title}</span>
+                             )}
+                             {recordSource?.name && (
+                               <span className="ml-2"> | Source: {recordSource.name}</span>
+                             )}
+                          </p>
+                          {/* Optional: Add timestamp if available and desired */}
+                          {dataRecord.event_timestamp && <p className="text-xs text-muted-foreground">Event Date: {format(new Date(dataRecord.event_timestamp), 'PPP p')}</p>}
+                          {/* {!dataRecord.event_timestamp && dataRecord.created_at && <p className="text-xs text-muted-foreground">Created: {format(new Date(dataRecord.created_at), 'PPP p')}</p>} */}
                        </div>
-                       {/* Data Record ID */}
-                       <p className="text-sm text-muted-foreground">Record ID: {dataRecord.id}</p>
+                       {/* --- END: Enhanced Data Record Header --- */}
 
-                       {/* Classification Results */}
-                       {resultsForRecord.length > 0 ? (
-                           <ClassificationResultDisplay
-                               result={resultsForRecord}
-                               scheme={schemesForRecord}
-                               useTabs={schemesForRecord.length > 1} // Use tabs if multiple schemes apply to this record
-                               renderContext="dialog" // Specify context for styling
-                               compact={false} // Show full details in dialog
-                           />
-                       ) : (
-                          <p className="text-muted-foreground italic">No results found for this specific record in the current job.</p>
-                       )}
+                       {/* Classification Results - Pass the filtered results and their corresponding schemes */}
+                       {/* Add a title for the results section */}
+                       <h4 className="text-md font-medium text-muted-foreground border-b pb-1 mb-3">Classification Results:</h4>
+                       <ClassificationResultDisplay
+                           result={validResultsForRecord} // Use filtered results
+                           scheme={schemesForValidResults} // Use corresponding schemes
+                           useTabs={schemesForValidResults.length > 1}
+                           renderContext="dialog" // Keep dialog context
+                           compact={false}
+                       />
                      </div>
                    );
                })()}

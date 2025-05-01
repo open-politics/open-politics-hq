@@ -8,6 +8,7 @@ import secrets
 import string
 import tempfile
 import uuid
+import zipfile # Added for zip file creation
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
@@ -530,12 +531,12 @@ class ShareableService:
                  detail=f"User does not have permission to share this {resource_type.value.replace('_',' ')}."
              )
 
-    def _create_temp_file(self, prefix: str = "export_") -> Tuple[str, str]:
+    def _create_temp_file(self, prefix: str = "export_", suffix: str = ".json") -> Tuple[str, str]:
         """Create a temporary file and return its path and filename."""
         temp_dir = os.getenv("TEMP_DIR", tempfile.gettempdir())
         os.makedirs(temp_dir, exist_ok=True)
         
-        filename = f"{prefix}{uuid.uuid4()}.json"
+        filename = f"{prefix}{uuid.uuid4()}{suffix}"
         filepath = os.path.join(temp_dir, filename)
         
         return filepath, filename
@@ -549,6 +550,58 @@ class ShareableService:
         except Exception as e:
             logger.warning(f"Error cleaning up temporary file {filepath}: {e}")
 
+    def _get_export_data_for_resource(
+        self,
+        user_id: int,
+        resource_type: ResourceType,
+        resource_id: int
+    ) -> Tuple[Dict[str, Any], str]:
+        """
+        Generates the export data dictionary and a suggested filename for a single resource.
+        Assumes ownership has already been validated.
+        """
+        export_data = {}
+        filename = f"{resource_type.value}_{resource_id}.json" # Default filename
+
+        if resource_type == ResourceType.DATA_SOURCE:
+            export_data = self.ingestion_service.export_datasource(
+                datasource_id=resource_id,
+                user_id=user_id,
+                include_records=True
+            )
+            # Filename is already good
+        elif resource_type == ResourceType.SCHEMA:
+            export_data = self.classification_service.export_scheme(
+                scheme_id=resource_id,
+                user_id=user_id
+            )
+            # Filename is already good
+        elif resource_type == ResourceType.CLASSIFICATION_JOB:
+            export_data = self.classification_service.export_job(
+                job_id=resource_id,
+                user_id=user_id,
+                include_results=True
+            )
+            # Filename is already good
+        elif resource_type == ResourceType.WORKSPACE:
+            export_data = self.workspace_service.export_workspace(
+                workspace_id=resource_id,
+                user_id=user_id
+            )
+            # Filename is already good
+        elif resource_type == ResourceType.DATASET:
+            # Assuming export_dataset exists and returns data
+            # Note: Dataset export might involve packaging, handle differently if needed
+            # export_data = self.dataset_service.export_dataset(...)
+            raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Dataset export not yet implemented")
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported resource type for export: {resource_type}")
+
+        if not export_data:
+            raise ValueError(f"Could not generate export data for {resource_type.value} {resource_id}")
+
+        return export_data, filename
+
     async def export_resource(
         self,
         user_id: int,
@@ -556,7 +609,7 @@ class ShareableService:
         resource_id: int
     ) -> Tuple[str, str]:
         """
-        Export a resource to a JSON file.
+        Export a single resource to a JSON file.
         Returns the file path and suggested filename.
         """
         # Validate resource ownership
@@ -566,49 +619,14 @@ class ShareableService:
             user_id=user_id
         )
         
-        # Create temp file
-        temp_path, filename = self._create_temp_file(f"export_{resource_type.value}_{resource_id}_")
+        temp_path, _ = self._create_temp_file(f"export_{resource_type.value}_{resource_id}_")
         
         try:
-            # Export data based on resource type
-            export_data = {}
-            
-            if resource_type == ResourceType.DATA_SOURCE:
-                export_data = self.ingestion_service.export_datasource(
-                    datasource_id=resource_id,
+            export_data, filename = self._get_export_data_for_resource(
                     user_id=user_id,
-                    include_records=True
-                )
-                filename = f"datasource_{resource_id}.json"
-            
-            elif resource_type == ResourceType.SCHEMA:
-                export_data = self.classification_service.export_scheme(
-                    scheme_id=resource_id,
-                    user_id=user_id
-                )
-                filename = f"scheme_{resource_id}.json"
-            
-            elif resource_type == ResourceType.CLASSIFICATION_JOB:
-                export_data = self.classification_service.export_job(
-                    job_id=resource_id,
-                    user_id=user_id,
-                    include_results=True
-                )
-                filename = f"job_{resource_id}.json"
-            
-            elif resource_type == ResourceType.WORKSPACE:
-                export_data = self.workspace_service.export_workspace(
-                    workspace_id=resource_id,
-                    user_id=user_id
-                )
-                filename = f"workspace_{resource_id}.json"
-            
-            elif resource_type == ResourceType.DATASET:
-                # Not yet implemented
-                raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Dataset export not yet implemented")
-            
-            else:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported resource type for export: {resource_type}")
+                resource_type=resource_type,
+                resource_id=resource_id
+            )
             
             # Write export data to temp file
             with open(temp_path, 'w') as f:
@@ -617,14 +635,85 @@ class ShareableService:
             return temp_path, filename
         
         except HTTPException as he:
-            # Clean up temp file if error occurs
             self._cleanup_temp_file(temp_path)
             raise he
         except Exception as e:
-            # Clean up temp file if error occurs
             self._cleanup_temp_file(temp_path)
             logger.error(f"Error exporting {resource_type.value} {resource_id}: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export {resource_type.value}: {str(e)}")
+
+    async def export_resources_batch(
+        self,
+        user_id: int,
+        resource_type: ResourceType,
+        resource_ids: List[int]
+    ) -> Tuple[str, str]:
+        """
+        Export multiple resources of the same type to a ZIP archive.
+        Returns the file path to the zip file and a suggested filename.
+        """
+        if not resource_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No resource IDs provided for batch export.")
+
+        # Validate ownership for all resources first
+        logger.info(f"Validating ownership for {len(resource_ids)} resources of type {resource_type.value} for user {user_id}.")
+        for res_id in resource_ids:
+            try:
+                self._validate_resource_ownership(
+                    resource_type=resource_type,
+                    resource_id=res_id,
+                    user_id=user_id
+                )
+            except HTTPException as he:
+                logger.warning(f"Ownership validation failed for {resource_type.value}:{res_id} - {he.detail}")
+                # Raise a single error indicating which ones failed, or just a general failure
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"User does not have permission to export one or more selected resources (e.g., {resource_type.value} ID {res_id})."
+                )
+
+        # Create a temporary zip file
+        zip_path, zip_filename_base = self._create_temp_file(f"export_batch_{resource_type.value}_", suffix=".zip")
+        suggested_zip_filename = f"export_batch_{resource_type.value}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.zip"
+
+        logger.info(f"Starting batch export for {len(resource_ids)} resources to {zip_path}")
+        failed_exports = {}
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for res_id in resource_ids:
+                    try:
+                        logger.debug(f"Exporting {resource_type.value}:{res_id} for batch...")
+                        export_data, single_filename = self._get_export_data_for_resource(
+                            user_id=user_id,
+                            resource_type=resource_type,
+                            resource_id=res_id
+                        )
+                        # Write the JSON data directly to the zip file
+                        zf.writestr(single_filename, json.dumps(export_data, indent=2))
+                        logger.debug(f"Added {single_filename} to zip archive.")
+                    except Exception as item_error:
+                        logger.error(f"Failed to export item {resource_type.value}:{res_id} within batch: {item_error}", exc_info=True)
+                        failed_exports[res_id] = str(item_error)
+                        # Continue exporting others, decide later if partial success is okay
+
+            # Optionally, handle partial success (e.g., raise error if any failed)
+            if failed_exports:
+                 # Simple approach: fail the whole batch if any item failed
+                 raise HTTPException(
+                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                     detail=f"Failed to export some resources: {failed_exports}"
+                 )
+
+            logger.info(f"Batch export successful. Zip file created at {zip_path}")
+            return zip_path, suggested_zip_filename
+
+        except HTTPException as he:
+            self._cleanup_temp_file(zip_path)
+            raise he
+        except Exception as e:
+            self._cleanup_temp_file(zip_path)
+            logger.error(f"Error during batch export zip creation for {resource_type.value}: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create batch export archive: {str(e)}")
 
     async def import_resource(
         self,

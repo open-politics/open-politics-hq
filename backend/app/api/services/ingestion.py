@@ -16,7 +16,7 @@ import csv
 import asyncio # Add asyncio import
 import chardet # Added for CSV processing helper
 import dateutil.parser # Added for CSV processing helper
-from werkzeug.utils import secure_filename # <-- ADDED IMPORT
+from werkzeug.utils import secure_filename 
 
 from sqlmodel import Session, select, func
 from fastapi import UploadFile, HTTPException, status # Added status
@@ -36,6 +36,7 @@ from app.models import (
     ClassificationResult, # Added for export/import
     DataSourceTransferRequest, # Add new model
     DataSourceTransferResponse, # Add new model
+    DataRecordUpdate,
 )
 from app.api.services.providers.base import StorageProvider, ScrapingProvider
 from app.api.services.service_utils import validate_workspace_access
@@ -685,78 +686,16 @@ class IngestionService:
     async def create_record_from_url(
         self,
         datasource_id: int,
-        url: str
+        url: str,
+        user_id: int # ADDED user_id parameter
     ) -> Optional[DataRecord]:
         """Scrape a single URL and create a DataRecord linked to the datasource."""
         logger.info(f"Creating record from URL {url} for DS {datasource_id}")
 
-        # --- Call sync part --- 
-        def _create_sync():
-            # Validate workspace access
-            datasource = self.get_datasource(datasource_id, workspace_id=None, user_id=None) # Get DS without workspace check initially
-            if not datasource: raise DataSourceNotFoundException(f"DataSource {datasource_id} not found")
-            validate_workspace_access(self.session, datasource.workspace_id, user_id)
-            if datasource.type != DataSourceType.URL_LIST: raise ValueError("Can only add URLs to a URL_LIST DataSource")
+        # --- Call sync part ---
+        # --- REMOVED original _create_sync which was incorrect ---
 
-            # Check for duplicate URL within this DataSource
-            url_hash = hashlib.sha256(url.encode()).hexdigest()
-            existing_rec_stmt = select(DataRecord.id).where(DataRecord.datasource_id == datasource_id, DataRecord.url_hash == url_hash)
-            if self.session.exec(existing_rec_stmt).first():
-                logger.info(f"URL {url} already exists in DS {datasource_id}, skipping creation.")
-                return None
-
-            # Scrape URL (use await here as scrape_url is async)
-            # Note: Cannot directly await inside sync func. Need refactor or keep scraping outside.
-            # Let's assume scraping happens *before* _create_sync for now.
-
-            # --- Placeholder for where scraping result would be used ---
-            # scraped_data = ... # This needs to be passed into _create_sync or handled differently
-            # text_content = scraped_data.get("text_content")
-            # record_title = scraped_data.get("title")
-            # publication_date = scraped_data.get("publication_date")
-            # --- End Placeholder ---
-            
-            # This function needs refactoring to handle async scraping properly.
-            # For now, returning None and logging the issue.
-            logger.error("Refactoring needed: Cannot call async scraping within sync DB transaction context of create_record_from_url.")
-            return None
-            
-            # --- Start original logic that needs scraped_data ---
-            # if not text_content:
-            #     logger.warning(f"No text content scraped from {url}. Skipping record creation.")
-            #     return None
-            # 
-            # text_content = text_content.replace('\\x00', '').strip()
-            # if not text_content:
-            #     logger.warning(f"Text content is empty after cleaning for {url}. Skipping.")
-            #     return None
-            # 
-            # event_ts = None
-            # if publication_date:
-            #     try:
-            #         parsed_dt = dateutil.parser.parse(publication_date)
-            #         event_ts = parsed_dt.replace(tzinfo=timezone.utc) if parsed_dt.tzinfo is None else parsed_dt
-            #     except Exception as parse_err:
-            #         logging.warning(f"Could not parse publication_date '{publication_date}' for URL {url}: {parse_err}")
-            # 
-            # # Create DataRecord
-            # record = DataRecord(
-            #     datasource_id=datasource_id,
-            #     title=record_title, # Use scraped title
-            #     text_content=text_content,
-            #     source_metadata={'original_url': url, 'scraped_title': record_title}, # Store original URL and title
-            #     event_timestamp=event_ts,
-            #     url_hash=url_hash,
-            #     created_at=datetime.now(timezone.utc)
-            # )
-            # self.session.add(record)
-            # self.session.commit()
-            # self.session.refresh(record)
-            # logger.info(f"Created DataRecord {record.id} from URL {url}")
-            # return record
-            # --- End original logic ---
-
-        # --- Refactored approach: Scrape first, then call sync DB part --- 
+        # --- Refactored approach: Scrape first, then call sync DB part ---
         try:
             # 1. Perform scraping (async)
             logger.debug(f"Scraping URL: {url}")
@@ -764,10 +703,9 @@ class IngestionService:
             logger.debug(f"Scraping completed for URL: {url}. Title found: {bool(scraped_data.get('title'))}")
 
             # 2. Define the synchronous DB operation function
-            def _create_record_sync(scraped_info: dict): 
+            def _create_record_sync(scraped_info: dict):
                 datasource = self.get_datasource(datasource_id, workspace_id=None, user_id=None)
-                if not datasource: raise DataSourceNotFoundException(f"DataSource {datasource_id} not found")
-                validate_workspace_access(self.session, datasource.workspace_id, user_id)
+                if not datasource: raise ValueError(f"DataSource {datasource_id} not found")
                 if datasource.type != DataSourceType.URL_LIST: raise ValueError("Can only add URLs to a URL_LIST DataSource")
 
                 url_hash = hashlib.sha256(url.encode()).hexdigest()
@@ -818,8 +756,8 @@ class IngestionService:
 
             # 3. Run the sync DB function in a thread
             return await asyncio.to_thread(_create_record_sync, scraped_data)
-        
-        except (DataSourceNotFoundException, ValueError) as e:
+
+        except (ValueError) as e:
             logger.warning(f"Error creating record from URL {url}: {e}")
             raise e # Re-raise validation/not found errors
         except Exception as e:
@@ -839,7 +777,7 @@ class IngestionService:
         
         # Ensure the parent DataSource exists and belongs to the user/workspace implicitly via access control on route
         datasource = self.get_datasource(datasource_id)
-        if not datasource: raise DataSourceNotFoundException(f"DataSource {datasource_id} not found")
+        if not datasource: raise ValueError(f"DataSource {datasource_id} not found")
         # Optional: Add check if datasource type allows direct text records?
         
         cleaned_text = text_content.replace('\\x00', '').strip()
@@ -1304,7 +1242,7 @@ class IngestionService:
             # Note: create_record_from_url handles scraping, timestamp parsing, duplicate checks, and DB operations.
             # It now implicitly uses the title from scraping, so the 'title' parameter here is ignored for URLs.
             try:
-                record = await self.create_record_from_url(datasource_id, content)
+                record = await self.create_record_from_url(datasource_id, content, user_id)
                 if record is None:
                     # This means the URL was likely a duplicate
                     raise ValueError(f"URL already exists or could not be processed: {content}")
@@ -1373,7 +1311,6 @@ class IngestionService:
             "datasource": {
                 "name": datasource.name,
                 "type": datasource.type.value,
-                "description": datasource.description, # Added description if available
                 "origin_details": datasource.origin_details,
                 "source_metadata": datasource.source_metadata
                 # Exclude user_id, workspace_id, status, timestamps
@@ -1757,3 +1694,60 @@ class IngestionService:
             logger.exception(f"Unexpected error during datasource transfer: {e}")
             # Raise a generic internal server error
             raise Exception("An unexpected error occurred during the transfer.") from e 
+
+    def update_datarecord(
+        self,
+        datarecord_id: int,
+        workspace_id: int,
+        user_id: int,
+        record_in: DataRecordUpdate
+    ) -> DataRecord:
+        """
+        Updates specific fields of an existing DataRecord.
+
+        Args:
+            datarecord_id: The ID of the DataRecord to update.
+            workspace_id: The ID of the workspace for authorization.
+            user_id: The ID of the user making the request.
+            record_in: The payload containing the fields to update.
+
+        Returns:
+            The updated DataRecord object.
+
+        Raises:
+            HTTPException: If the record is not found or the user lacks permission.
+        """
+        # --- Authorization Check using utility ---
+        try:
+            validate_workspace_access(self.session, workspace_id, user_id)
+        except HTTPException as e:
+            # Re-raise the exception from the validation utility
+            raise e
+        # --- End Authorization Check ---
+
+        db_record = self.session.get(DataRecord, datarecord_id)
+
+        if not db_record:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DataRecord not found")
+
+        # --- REMOVED complex authorization block ---
+
+        update_data = record_in.model_dump(exclude_unset=True) # Get only provided fields
+
+        updated = False
+        for key, value in update_data.items():
+            if hasattr(db_record, key):
+                setattr(db_record, key, value)
+                updated = True
+
+        if updated:
+            # db_record.updated_at = datetime.now(timezone.utc) # Update timestamp if changes were made
+            self.session.add(db_record)
+            self.session.commit()
+            self.session.refresh(db_record)
+        else:
+             # Optional: Log or inform if no actual changes were made
+             print(f"No update applied to DataRecord {datarecord_id} as payload contained no new values.")
+
+
+        return db_record 

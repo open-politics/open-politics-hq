@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_import_resource,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,DataRecordUpdate,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_export_resource,Body_shareables_import_resource,ExportBatchRequest,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,DataRecordUpdate,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
 
 export type AppData = {
         
@@ -170,13 +170,16 @@ AccessSharedResource: {
                     
                 };
 ExportResource: {
-                    resourceId: number
-resourceType: ResourceType
+                    formData: Body_shareables_export_resource
                     
                 };
 ImportResource: {
                     formData: Body_shareables_import_resource
 workspaceId: number
+                    
+                };
+ExportResourcesBatch: {
+                    requestBody: ExportBatchRequest
                     
                 };
     }
@@ -2015,20 +2018,18 @@ token,
 	 * Export Resource
 	 * Export a resource to a file.
  * Returns a file download.
-	 * @returns unknown Successful Response
+	 * @returns any Successful Response
 	 * @throws ApiError
 	 */
-	public static exportResource(data: ShareablesData['ExportResource']): CancelablePromise<unknown> {
+	public static exportResource(data: ShareablesData['ExportResource']): CancelablePromise<any> {
 		const {
-resourceType,
-resourceId,
+formData,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
 			url: '/api/v1/shareables/shareables/export',
-			query: {
-				resource_type: resourceType, resource_id: resourceId
-			},
+			formData: formData,
+			mediaType: 'application/x-www-form-urlencoded',
 			errors: {
 				422: `Validation Error`,
 			},
@@ -2055,6 +2056,27 @@ formData,
 			},
 			formData: formData,
 			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Export Resources Batch
+	 * Export multiple resources of the same type to a ZIP archive.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static exportResourcesBatch(data: ShareablesData['ExportResourcesBatch']): CancelablePromise<any> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/shareables/export-batch',
+			body: requestBody,
+			mediaType: 'application/json',
 			errors: {
 				422: `Validation Error`,
 			},
@@ -3925,7 +3947,7 @@ datarecordId,
 
 	/**
 	 * Update Datarecord
-	 * Update a specific DataRecord (e.g., title, event_timestamp).
+	 * Update specific fields of a DataRecord (e.g., title, event_timestamp).
 	 * @returns DataRecordRead Successful Response
 	 * @throws ApiError
 	 */
@@ -5340,7 +5362,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-04-29',
+timeframeTo = '2025-05-01',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

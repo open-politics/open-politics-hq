@@ -129,6 +129,7 @@ from app.api.services.ingestion import IngestionService
 from app.api.services.shareable import ShareableService
 from app.api.services.dataset import DatasetService
 from app.api.services.classification import ClassificationService
+from app.api.services.workspace import WorkspaceService
 
 # --- Service Dependencies ---
 
@@ -152,11 +153,11 @@ def get_ingestion_service(
 
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 
-def get_shareable_service(session: SessionDep) -> ShareableService:
-    """Dependency provider for ShareableService."""
-    return ShareableService(session=session)
+def get_workspace_service(session: SessionDep) -> WorkspaceService:
+    """Dependency provider for WorkspaceService."""
+    return WorkspaceService(session=session)
 
-ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
+WorkspaceServiceDep = Annotated[WorkspaceService, Depends(get_workspace_service)]
 
 def get_dataset_service(
     session: SessionDep,
@@ -174,5 +175,23 @@ def get_dataset_service(
     )
 
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
+
+def get_shareable_service(
+    session: SessionDep,
+    ingestion_service: IngestionServiceDep,
+    classification_service: ClassificationServiceDep,
+    workspace_service: WorkspaceServiceDep,
+    dataset_service: DatasetServiceDep
+) -> ShareableService:
+    """Dependency provider for ShareableService."""
+    return ShareableService(
+        session=session,
+        ingestion_service=ingestion_service,
+        classification_service=classification_service,
+        workspace_service=workspace_service,
+        dataset_service=dataset_service
+    )
+
+ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
 
 

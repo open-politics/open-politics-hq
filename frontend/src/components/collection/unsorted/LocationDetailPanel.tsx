@@ -28,7 +28,7 @@ const LocationDetailPanel: React.FC<LocationDetailPanelProps> = ({
       <Button onClick={toggleVisibility} className="absolute top-2 right-2 size-7 p-2 z-10">
         <CircleX size={24} />
       </Button>
-      <div className="flex-1 overflow-hidden md:mt-0">
+      <div className="flex-1 overflow-y-auto md:mt-0">
         { (searchTerm || results) && ( 
           <IssueAreas 
             locationName={searchTerm || ''}

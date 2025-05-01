@@ -395,6 +395,7 @@ const ClassificationSchemeManager: React.FC = () => {
                 key={selectedScheme?.id || 'create'}
                 show={isEditorOpen}
                 mode={editorMode}
+                schemeId={selectedScheme?.id}
                 defaultValues={selectedScheme}
                 onClose={handleCloseEditor}
             />

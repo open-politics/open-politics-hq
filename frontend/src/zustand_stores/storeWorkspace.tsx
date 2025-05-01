@@ -9,7 +9,7 @@ interface WorkspaceState {
   activeWorkspace: WorkspaceRead | null;
   error: string | null;
   fetchWorkspaces: () => Promise<void>;
-  createWorkspace: (workspace: WorkspaceCreate) => Promise<void>;
+  createWorkspace: (workspace: WorkspaceCreate) => Promise<WorkspaceRead | null>;
   updateWorkspace: (workspaceId: number, data: WorkspaceUpdate) => Promise<void>;
   deleteWorkspace: (workspaceId: number) => Promise<void>;
   setActiveWorkspace: (workspaceId: number) => void;
@@ -61,16 +61,15 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
       },
 
-      createWorkspace: async (workspace: WorkspaceCreate) => {
+      createWorkspace: async (workspace: WorkspaceCreate): Promise<WorkspaceRead | null> => {
         try {
-          const response = await WorkspacesService.createWorkspace({ requestBody: workspace });
+          const newWorkspace = await WorkspacesService.createWorkspace({ requestBody: workspace });
           await get().fetchWorkspaces();
-          if (response) {
-            get().setActiveWorkspace(response.id);
-          }
+          return newWorkspace;
         } catch (error: any) {
           set(state => ({ ...state, error: "Error creating workspace" }));
-          console.error(error);
+          console.error("Error creating workspace:", error);
+          return null;
         }
       },
 

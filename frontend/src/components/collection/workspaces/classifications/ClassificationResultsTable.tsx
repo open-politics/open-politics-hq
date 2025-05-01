@@ -180,6 +180,7 @@ export function ClassificationResultsTable({
   type EnrichedDataRecord = DataRecordRead & {
     dataSourceName: string | null;
     resultsMap: Record<number, ResultWithSourceInfo>; // Map scheme_id to result
+    title?: string | null;
   };
 
   // *** USE FLAT Data Preparation Logic ***
@@ -226,6 +227,7 @@ export function ClassificationResultsTable({
             ...record,
             dataSourceName: sourceInfo ? sourceInfo.name : 'Unknown Source',
             resultsMap: resultsMap,
+            title: record.title,
         };
     });
 
@@ -251,6 +253,27 @@ export function ClassificationResultsTable({
             </DocumentLink>
           </div>
         ),
+      },
+      {
+        accessorKey: 'title',
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          >
+            Title
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        ),
+        cell: ({ row }) => (
+          <div 
+            className="font-medium max-w-[250px] truncate" 
+            title={row.original.title || 'No Title'}
+          >
+            {row.original.title || <span className="italic text-muted-foreground">No Title</span>}
+          </div>
+        ),
+        size: 250,
       },
       {
          accessorKey: 'dataSourceName',

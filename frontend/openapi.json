@@ -1634,38 +1634,19 @@
         "summary": "Export Resource",
         "description": "Export a resource to a file.\nReturns a file download.",
         "operationId": "export_resource",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "resource_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ResourceType"
-            }
-          },
-          {
-            "name": "resource_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Resource Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_shareables-export_resource"
               }
             }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -1677,7 +1658,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/shareables/shareables/import/{workspace_id}": {
@@ -1735,6 +1721,47 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/shareables/shareables/export-batch": {
+      "post": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "Export Resources Batch",
+        "description": "Export multiple resources of the same type to a ZIP archive.",
+        "operationId": "export_resources_batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/search_histories/create": {
@@ -4789,7 +4816,7 @@
           "datarecords"
         ],
         "summary": "Update Datarecord",
-        "description": "Update a specific DataRecord (e.g., title, event_timestamp).",
+        "description": "Update specific fields of a DataRecord (e.g., title, event_timestamp).",
         "operationId": "update_datarecord",
         "security": [
           {
@@ -7891,7 +7918,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-04-29",
+              "default": "2025-05-01",
               "title": "Timeframe To"
             }
           }
@@ -8159,6 +8186,23 @@
           "password"
         ],
         "title": "Body_login-login_access_token"
+      },
+      "Body_shareables-export_resource": {
+        "properties": {
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "resource_id": {
+            "type": "integer",
+            "title": "Resource Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "resource_id"
+        ],
+        "title": "Body_shareables-export_resource"
       },
       "Body_shareables-import_resource": {
         "properties": {
@@ -8756,6 +8800,20 @@
               }
             ],
             "title": "Validation Rules"
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ClassificationFieldCreate"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fields"
           }
         },
         "type": "object",
@@ -9581,6 +9639,26 @@
         ],
         "title": "EnhancedClassificationResultRead",
         "description": "Adds a processed 'display_value' based on the raw 'value'."
+      },
+      "ExportBatchRequest": {
+        "properties": {
+          "resource_type": {
+            "$ref": "#/components/schemas/ResourceType"
+          },
+          "resource_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Resource Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "resource_ids"
+        ],
+        "title": "ExportBatchRequest"
       },
       "FieldType": {
         "type": "string",

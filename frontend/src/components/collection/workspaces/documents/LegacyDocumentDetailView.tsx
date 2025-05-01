@@ -66,14 +66,10 @@ import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AlertCircle, ArrowUp, ArrowDown, Files, Type } from 'lucide-react';
 import { Loader2 } from 'lucide-react';
+
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 // Define Sort Direction type
 type SortDirection = 'asc' | 'desc' | null;
-
-import DocumentDetailViewPdf from './DocumentDetailViewPdf';
-import DocumentDetailViewCsv from './DocumentDetailViewCsv';
-import DocumentDetailViewUrlList from './DocumentDetailViewUrlList';
-import DocumentDetailViewTextBlock from './DocumentDetailViewTextBlock';
 
 // ---> ADDED: State for inline editing <---
 interface EditState {
@@ -195,9 +191,7 @@ const DocumentDetailView = ({
   const {
     addUrlToDataSource,
     updateDataSourceUrls,
-    getDataSourceUrls,
-    // --- NEW: Import updateDataRecord from store ---
-    updateDataRecord
+    getDataSourceUrls
   } = useDataSourceStore();
 
   const { createDataset } = useDatasetStore();
@@ -438,23 +432,6 @@ const DocumentDetailView = ({
     return classificationResults.filter(r => r.datarecord_id === recordId);
   }, [classificationResults]);
 
-  // --- NEW: Effect to update selectedRowResults when selectedRowData or classificationResults change ---
-  useEffect(() => {
-      if (dataSource?.type === 'csv' && selectedRowData) {
-          const recordIdStr = selectedRowData.row_data?.id as string | null | undefined;
-          const recordId = recordIdStr ? parseInt(recordIdStr, 10) : NaN;
-          if (!isNaN(recordId)) {
-              setSelectedRowResults(getResultsForRecord(recordId));
-          } else {
-              setSelectedRowResults([]);
-          }
-      } else {
-          setSelectedRowResults([]);
-      }
-  }, [selectedRowData, classificationResults, getResultsForRecord, dataSource?.type]);
-  // --- END NEW ---
-
-
   const handleJobSelect = useCallback((jobIdStr: string | null) => {
     setSelectedJobId(jobIdStr === 'all' ? null : jobIdStr);
     setSelectedRowData(null);
@@ -489,44 +466,6 @@ const DocumentDetailView = ({
     setSelectedRowData(null);
   }, [sortColumn]);
 
-  // --- NEW: useEffect to parse cron expression ---
-  useEffect(() => {
-      if (ingestionSchedule) {
-          try {
-              setCronExplanation(Cronstrue.toString(ingestionSchedule));
-          } catch (e) {
-              setCronExplanation('Invalid cron format');
-          }
-      } else {
-          setCronExplanation('Enter a 5-part cron schedule.');
-      }
-  }, [ingestionSchedule]);
-  // --- END NEW ---
-
-  // --- NEW: useEffect to initialize scheduling state ---
-  useEffect(() => {
-      // Fix: Check if recurringTasks object is not empty instead of length
-      if (dataSource?.type === 'url_list' && activeWorkspace?.id && Object.keys(recurringTasks).length > 0) {
-          const task = getIngestTaskForDataSource(dataSource.id);
-          setLocalIngestTask(task);
-          const enabled = !!task && task.status === 'active';
-          const schedule = task?.schedule || '0 0 * * *';
-          setEnableScheduledIngestion(enabled);
-          setIngestionSchedule(schedule);
-          setInitialScheduleState({ enabled, schedule }); // Store initial state
-          console.log("Initialized schedule state:", { task, enabled, schedule });
-      } else if (dataSource?.type !== 'url_list') {
-           // Reset when not a URL list
-           setLocalIngestTask(null);
-           setEnableScheduledIngestion(false);
-           setIngestionSchedule('0 0 * * *');
-           setInitialScheduleState({ enabled: false, schedule: '' });
-           console.log("Reset schedule state as dataSource is not URL list");
-      }
-  }, [dataSource?.id, dataSource?.type, activeWorkspace?.id, recurringTasks, getIngestTaskForDataSource]);
-  // --- END NEW ---
-
-
   const handleScheduleUpdate = useCallback(async () => {
     if (!dataSource || dataSource.type !== 'url_list' || !activeWorkspace?.id) return;
 
@@ -557,10 +496,7 @@ const DocumentDetailView = ({
                 const updatePayload: RecurringTaskUpdate = { status: 'active', schedule: ingestionSchedule };
                 const updated = await updateRecurringTask(localIngestTask.id, updatePayload);
                 success = !!updated;
-                if (success) {
-                    taskName = updated!.name;
-                    setLocalIngestTask(updated!); // Update local task state
-                }
+                if (success) taskName = updated!.name;
             } else {
                 // Use the *current* editableUrls when creating a new task
                 const createPayload: RecurringTaskCreate = {
@@ -577,10 +513,7 @@ const DocumentDetailView = ({
                 };
                 const created = await createRecurringTask(createPayload);
                 success = !!created;
-                if (success) {
-                     taskName = created!.name;
-                     setLocalIngestTask(created!); // Set local task state
-                }
+                if (success) taskName = created!.name;
             }
             if (success) {
                 toast({ title: "Schedule Enabled", description: `Task "${taskName}" is now active with schedule: ${ingestionSchedule}` });
@@ -594,7 +527,6 @@ const DocumentDetailView = ({
                  success = !!updated;
                  if (success) {
                      toast({ title: "Schedule Disabled", description: `Task "${taskName}" is now paused.` });
-                     setLocalIngestTask(updated!); // Update local task state
                  } else {
                       toast({ title: "Update Failed", description: "Could not disable the schedule.", variant: "destructive" });
                  }
@@ -964,25 +896,27 @@ const DocumentDetailView = ({
             setPdfBlobUrl(null);
         }
         setIsPdfViewerOpen(false);
-        setHighlightedRecordId(null); // Reset highlight
-        setScrapedContentViewMode('flat'); // Reset view mode
     }
     // --- END MODIFICATION ---
 
     console.log(`Effect[dataSource]: ID ${currentId}. Type: ${dataSource.type}. Triggering type-specific actions. ID Changed: ${hasIdChanged}`);
 
+    // Clear states for other types initially (MOVED this reset above)
+    // setEditableUrls([]); 
+    // setPdfBlobUrl(null); 
+    // setDataRecords([]); 
+    // setSelectedRowData(null); 
+    // setCsvData(null); 
+    // setSelectedRowResults([]); 
+
     // Trigger actions based on type (only fetch if ID changed or data not present)
-    // Fetch CSV Data
-    if (hasIdChanged || (dataSource.type === 'csv' && !csvData)) {
+    if (hasIdChanged || dataSource.type === 'csv' && !csvData) {
         if (dataSource.type === 'csv') {
             console.log(`Effect[dataSource]: Fetching CSV data for ID ${currentId}`);
             fetchCsvData(activeWorkspace.id, dataSource.id, 1);
-            setCurrentPage(1); // Reset page on new CSV load
         }
     }
-
-    // Fetch URL List Data & Initialize URLs
-    if (hasIdChanged || (dataSource.type === 'url_list' && editableUrls.length === 0)) {
+    if (hasIdChanged || dataSource.type === 'url_list' && editableUrls.length === 0) {
         if (dataSource.type === 'url_list') {
              console.log(`Effect[dataSource]: Fetching URL list data/setting initial URLs for ID ${currentId}`);
             // Initialize editableUrls from the fetched dataSource
@@ -990,15 +924,12 @@ const DocumentDetailView = ({
             setEditableUrls(initialUrls);
             // Fetch associated data records (scraped content)
             fetchUrlListData(activeWorkspace.id, dataSource.id, 1, dataSource.data_record_count ?? 0);
-            setUrlListCurrentPage(1); // Reset page on new URL list load
         }
     }
-
-    // Fetch PDF Records
-    if (hasIdChanged || (dataSource.type === 'pdf' && associatedRecords.length === 0)) {
+    if (hasIdChanged || dataSource.type === 'pdf' && dataRecords.length === 0) {
         if (dataSource.type === 'pdf') {
           console.log(`Effect[dataSource]: Fetching records for PDF source ID ${currentId}`);
-          setIsLoadingRecords(true); // Set loading state
+          // Fetch the single data record associated with the PDF (or all for bulk)
           const isBulk = dataSource.source_metadata && typeof dataSource.source_metadata.file_count === 'number' && dataSource.source_metadata.file_count > 1;
           const limit = isBulk ? 1000 : 1; // Fetch all for bulk, 1 for single
           DatarecordsService.listDatarecords({
@@ -1006,34 +937,32 @@ const DocumentDetailView = ({
               datasourceId: dataSource.id,
               limit: limit
           }).then(recordsResponse => {
+              // Use setAssociatedRecords for bulk, setDataRecords for single?
+              // Let's use associatedRecords for consistency, the file list rendering already handles it.
               setAssociatedRecords(recordsResponse || []);
               console.log(`Effect[dataSource]: Fetched ${recordsResponse?.length || 0} records for PDF source ${currentId}`);
           }).catch(err => {
               console.error(`Effect[dataSource]: Failed to fetch records for PDF source ${currentId}:`, err);
-              setAssociatedRecords([]);
-          }).finally(() => {
-              setIsLoadingRecords(false); // Clear loading state
+              setAssociatedRecords([]); // Use associatedRecords setter
           });
         }
     }
-
-    // Fetch Text Block Record
-    if (hasIdChanged || (dataSource.type === 'text_block' && associatedRecords.length === 0)) {
+    if (hasIdChanged || dataSource.type === 'text_block' && dataRecords.length === 0) {
         if (dataSource.type === 'text_block') {
            console.log(`Effect[dataSource]: Fetching record for text_block source ID ${currentId}`);
-           setIsLoadingRecords(true); // Set loading state
+          // Fetch the single data record for the text block
           DatarecordsService.listDatarecords({
               workspaceId: activeWorkspace.id,
               datasourceId: dataSource.id,
               limit: 1
           }).then(recordsResponse => {
-              // Store in associatedRecords for consistency
+              setDataRecords(recordsResponse || []); // Keep using setDataRecords here?
+              // Maybe use associatedRecords here too for consistency?
               setAssociatedRecords(recordsResponse || []);
           }).catch(err => {
               console.error(`Effect[dataSource]: Failed to fetch record for text_block source ${currentId}:`, err);
+              setDataRecords([]);
               setAssociatedRecords([]);
-          }).finally(() => {
-              setIsLoadingRecords(false); // Clear loading state
           });
         }
     }
@@ -1042,6 +971,11 @@ const DocumentDetailView = ({
 
   }, [dataSource, activeWorkspace?.id, fetchCsvData, fetchUrlListData]); // Removed dataRecords, csvData, editableUrls from deps
 
+  useEffect(() => {
+    if (dataSource?.type === 'csv' && selectedRowData) {
+      toast({ title: "Duplicate URL", description: "This URL is already in the list.", variant: "default"});
+    }
+  }, [newUrlInput, editableUrls, toast]);
 
   const handleAddUrl = useCallback(() => {
     const urlToAdd = newUrlInput.trim();
@@ -1077,23 +1011,24 @@ const DocumentDetailView = ({
       }
 
       setIsSavingUrls(true);
-      // --- MODIFIED: Call store action directly ---
-      const updatedSource = await updateDataSourceUrls(dataSource.id, editableUrls);
-      // --- END MODIFICATION ---
+      const updatePayload: DataSourceUpdate = {
+          // Include existing origin_details and only update urls within it
+          origin_details: { ...dataSource.origin_details, urls: editableUrls }
+      };
+      // Use the store action
+      const updatedSource = await updateDataSource(dataSource.id, updatePayload);
       setIsSavingUrls(false);
       if (updatedSource) {
           // Update local dataSource state to reflect changes immediately
-          // Fetching happens automatically in store, but update local DS for responsiveness
-          const updatedClientSource = await DatasourcesService.getDatasource({workspaceId: activeWorkspace.id, datasourceId: dataSource.id});
-          setDataSource(updatedClientSource);
+          setDataSource(updatedSource);
           toast({ title: "Success", description: "URL list saved." });
       } else {
           // Error handled in store action
           // Revert editableUrls to original state if save failed
           setEditableUrls((dataSource.origin_details as any)?.urls || []);
       }
-    // Dependencies: dataSource, activeWorkspace, editableUrls, updateDataSourceUrls, toast
-  }, [dataSource, activeWorkspace?.id, editableUrls, updateDataSourceUrls, toast]);
+    // Dependencies: dataSource, activeWorkspace, editableUrls, updateDataSource, toast
+  }, [dataSource, activeWorkspace?.id, editableUrls, updateDataSource, toast]);
 
   const handleRefetch = useCallback(async () => {
       if (!dataSource || !activeWorkspace?.id) return;
@@ -1103,39 +1038,24 @@ const DocumentDetailView = ({
       setIsRefetching(false);
       if (success) {
          // Optionally trigger fetchAll again after a delay or rely on polling
-         // For URL lists, we might also want to refetch records
-          if (dataSource.type === 'url_list') {
-              setTimeout(() => fetchUrlListData(activeWorkspace.id, dataSource.id, 1, dataSource.data_record_count ?? 0), 1000); // Delay fetch
+         // setTimeout(fetchAll, 2000);
       }
-      }
-      // Dependencies: dataSource, activeWorkspace, refetchDataSource, fetchUrlListData
-  }, [dataSource, activeWorkspace?.id, refetchDataSource, fetchUrlListData]);
+      // Dependencies: dataSource, activeWorkspace, refetchDataSource
+  }, [dataSource, activeWorkspace?.id, refetchDataSource]);
 
   // Add function to create dataset from current data
   const handleCreateDataset = () => {
     if (!dataSource) return;
 
-    // Determine record IDs based on type and current view/selection
-    let recordIds: number[] = [];
-    if (dataSource.type === 'csv') {
-        recordIds = filteredAndSortedCsvData.map(r => {
-            const idStr = r.row_data?.id as string | null | undefined;
-            const idNum = idStr ? parseInt(idStr, 10) : NaN;
-            return !isNaN(idNum) ? idNum : null;
-        }).filter(id => id !== null) as number[];
-    } else if (dataSource.type === 'url_list') {
-        recordIds = (scrapedContentViewMode === 'flat' ? sortedFlatList : urlListDataRecords).map(r => r.id);
-    } else if (dataSource.type === 'pdf' || dataSource.type === 'text_block') {
-        recordIds = associatedRecords.map(r => r.id);
-    }
-
-    // Get all job IDs from results for *this* datasource
-    const jobIds = Array.from(new Set(classificationResults.map(r => r.job_id).filter(id => id != null) as number[]));
-
-    // Get all scheme IDs from results for *this* datasource
+    // Get all record IDs
+    const recordIds = dataRecords.map(r => r.id);
+    
+    // Get all job IDs from results
+    const jobIds = Array.from(new Set(classificationResults.map(r => r.job_id)));
+    
+    // Get all scheme IDs from results
     const schemeIds = Array.from(new Set(classificationResults.map(r => r.scheme_id)));
 
-    // Open the dialog (props will be passed internally now)
     setIsDatasetCreateDialogOpen(true);
   };
 
@@ -1146,7 +1066,7 @@ const DocumentDetailView = ({
         variant="outline"
         size="sm"
         onClick={handleCreateDataset}
-        disabled={!dataSource || (associatedRecords.length === 0 && urlListDataRecords.length === 0 && filteredAndSortedCsvData.length === 0)}
+        disabled={!dataSource || dataRecords.length === 0}
       >
         <PlusCircle className="h-4 w-4 mr-2" />
         Create Dataset
@@ -1166,8 +1086,78 @@ const DocumentDetailView = ({
     return dataSource.type;
   };
 
-  // --- MOVED: renderSelectedRowDetail moved to DocumentDetailViewCsv ---
-  // --- MOVED: renderScheduledIngestionCard moved to DocumentDetailViewUrlList ---
+  // Add selected row detail rendering
+  const renderSelectedRowDetail = () => {
+    if (!selectedRowData || dataSource?.type !== 'csv') {
+      return null;
+    }
+
+    const jobNameForDialog = selectedJobId !== null ? (availableJobsFromStore[selectedJobId]?.name || `Job ${selectedJobId}`) : 'All Jobs';
+
+    return (
+      <div className="mt-4 p-4 rounded-lg bg-muted/20 shadow-sm">
+        <h4 className="text-md font-semibold mb-3 flex items-center">
+          Details for Row {selectedRowData?.row_number}
+          <Badge variant="outline" className="ml-2 text-xs">Selected Row</Badge>
+        </h4>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2 rounded-md p-3 bg-background/50 shadow-sm">
+            <h5 className="text-sm font-medium mb-2 pb-1 border-b">Row Data</h5>
+            <div className="max-h-[350px] overflow-y-auto pr-1">
+              {csvData?.columns.map((column, colIndex) => (
+                <div key={`${column}-${colIndex}`} className="grid grid-cols-3 gap-2 text-sm border-b py-1 last:border-b-0">
+                  <span className="font-medium col-span-1 break-words">{column}</span>
+                  <span className="col-span-2 break-words text-muted-foreground">
+                    {typeof selectedRowData?.row_data?.[column] === 'object'
+                      ? JSON.stringify(selectedRowData?.row_data?.[column])
+                      : String(selectedRowData?.row_data?.[column] ?? '(empty)')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-md p-3 bg-background/50 shadow-sm">
+            <h5 className="text-sm font-medium mb-2 pb-1 border-b">Classifications for this Row</h5>
+            <div className="max-h-[350px] overflow-y-auto pr-1">
+              {selectedRowResults.length > 0 ? (
+                selectedRowResults.map((result) => {
+                  const scheme = schemes.find(s => s.id === result.scheme_id);
+                  if (!scheme) return null;
+                  const job = result.job_id ? availableJobsFromStore[result.job_id] : null;
+                  const jobName = job?.name || (result.job_id ? `Job ${result.job_id}` : 'N/A');
+                  return (
+                    <div
+                      key={result.id}
+                      className="p-2 bg-card rounded border text-xs cursor-pointer hover:bg-muted/50"
+                       onClick={() => {
+                         setSelectedResult(result);
+                         setIsResultDialogOpen(true);
+                       }}
+                    >
+                       <div className="flex items-center gap-1 mb-1">
+                         <span className="font-semibold">{scheme.name}</span>
+                         <Badge variant="outline" className="text-xs font-normal">{jobName}</Badge>
+                       </div>
+                      <ClassificationResultDisplay
+                        result={result}
+                        scheme={scheme}
+                        compact={true}
+                      />
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  No classification results found for this row {selectedJobId !== null ? `in ${jobNameForDialog}` : '(across all jobs)'}.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Add job name for dialog
   const jobNameForDialog = useMemo(() => {
@@ -1258,6 +1248,8 @@ const DocumentDetailView = ({
         if (isNaN(parsedDate.getTime())) {
           throw new Error("Invalid date format");
         }
+        // Format to ISO string with timezone offset (required by backend? Check model)
+        // Assuming backend expects ISO string like 'YYYY-MM-DDTHH:mm:ss.sssZ' or offset
         updatePayload.event_timestamp = parsedDate.toISOString();
       } catch (e) {
         toast({ title: "Error", description: "Invalid timestamp format. Use YYYY-MM-DDTHH:mm format." });
@@ -1266,31 +1258,48 @@ const DocumentDetailView = ({
       }
     }
 
-    // --- MODIFIED: Use imported store function ---
-    // Fix: updatedRecord is expected to be DataRecordRead | null from the service/store
-    const updatedRecord: DataRecordRead | null = await updateDataRecord(editingRecord.recordId, updatePayload) as DataRecordRead | null; // Assuming store returns compatible type
-    // --- END MODIFICATION ---
+    // Use the service directly
+    let updatedRecord: DataRecordRead | null = null;
+    try {
+        updatedRecord = await DatarecordsService.updateDatarecord({
+            workspaceId: activeWorkspace.id,
+            datarecordId: editingRecord.recordId,
+            requestBody: updatePayload
+        });
+    } catch (error) {
+        console.error("Failed to update data record:", error);
+        let errorMsg = "Failed to update record.";
+        if (error instanceof Error) errorMsg = error.message;
+        // Check if error has a body and detail (common pattern in API clients)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const body = (error as any)?.body;
+        if (typeof body === 'object' && body !== null && typeof body.detail === 'string') {
+            errorMsg = body.detail;
+        } else if (typeof body === 'string') {
+            errorMsg = body; // Handle plain string errors
+        }
+        toast({ title: "Update Error", description: errorMsg, variant: "destructive" });
+    }
 
     setIsSavingEdit(false);
     if (updatedRecord) {
       setEditingRecord(null); // Exit edit mode on success
       toast({ title: "Success", description: "Record updated." });
-
-      // Update the relevant local state array based on the *original* dataSource type
-      // Fix: Use updatedRecord directly, don't adapt with wrong adapter
+      // Update the relevant local state (associatedRecords or dataRecords)
       if (dataSource?.type === 'pdf' || dataSource?.type === 'text_block') {
          setAssociatedRecords(prev => prev.map(rec => rec.id === updatedRecord!.id ? updatedRecord! : rec));
          // Update selected record if it was the one edited
          if (selectedIndividualRecord?.id === updatedRecord!.id) {
-             setSelectedIndividualRecord(updatedRecord);
+             setSelectedIndividualRecord(updatedRecord!);
          }
-      } else if (dataSource?.type === 'url_list') {
-           setUrlListDataRecords(prev => prev.map(rec => rec.id === updatedRecord!.id ? updatedRecord! : rec));
-           // Update highlighted record? No, just let the list re-render
+         // --- Fix: Also update dataRecords if it holds the text block record --- 
+         if (dataSource?.type === 'text_block') {
+             setDataRecords(prev => prev.map(rec => rec.id === updatedRecord!.id ? updatedRecord! : rec));
+         }
       }
-       // Note: CSV records aren't directly held in state like this, their data comes from csvData
-    }
-    // Error handling is now managed within the store action (updateDataRecord)
+      // ADD LATER: Update URL list records if needed
+    } 
+    // Error handling is done within updateDataRecord store action
   };
 
   const handleCancelEdit = () => {
@@ -1303,6 +1312,81 @@ const DocumentDetailView = ({
   // ---> ADDED: Functions for handling inline edits --- END
 
   // ---> RE-INSERTED RENDER FUNCTIONS - START <---
+  const renderScheduledIngestionCard = () => {
+     if (!dataSource || dataSource.type !== 'url_list') {
+         return null;
+     }
+
+     const hasChanged =
+        enableScheduledIngestion !== initialScheduleState.enabled ||
+        (enableScheduledIngestion && ingestionSchedule !== initialScheduleState.schedule);
+
+     return (
+        <Card className="mt-4">
+            <CardHeader>
+                <CardTitle className="text-base">Scheduled Ingestion</CardTitle>
+                <CardDescription>
+                    Configure automatic scraping of the source URLs on a regular schedule.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                 <div className="flex items-center justify-between space-x-2 pt-2">
+                    <Label htmlFor="scheduled-ingestion-switch-detail" className="flex flex-col space-y-1">
+                        <span>Enable Scheduled Ingestion</span>
+                        <span className="font-normal leading-snug text-muted-foreground text-xs">
+                            {enableScheduledIngestion ? "Task is active and will run on schedule." : "Task is currently paused or not created."}
+                        </span>
+                    </Label>
+                    <Switch
+                        id="scheduled-ingestion-switch-detail"
+                        checked={enableScheduledIngestion}
+                        onCheckedChange={setEnableScheduledIngestion}
+                        disabled={isUpdatingSchedule}
+                        aria-label="Enable Scheduled Ingestion"
+                    />
+                </div>
+                {enableScheduledIngestion && (
+                    <div className="space-y-1 pl-3 ml-1 border-l">
+                        <Label htmlFor="ingestion-schedule-detail" className="text-sm">Schedule (Cron Format)</Label>
+                        <Input
+                            id="ingestion-schedule-detail"
+                            value={ingestionSchedule}
+                            onChange={(e) => setIngestionSchedule(e.target.value)}
+                            placeholder="e.g., 0 0 * * *"
+                            className="h-9 text-sm font-mono"
+                            disabled={isUpdatingSchedule}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                             {cronExplanation || 'Enter a 5-part cron schedule.'} (UTC)
+                        </p>
+                    </div>
+                )}
+                 {localIngestTask && (
+                     <div className="text-xs text-muted-foreground pt-3 border-t space-y-1">
+                         <p>Task Name: <span className='font-medium text-foreground'>{localIngestTask.name}</span></p>
+                         <p>Last Run: {localIngestTask.last_run_at ? formatDistanceToNow(new Date(localIngestTask.last_run_at), { addSuffix: true }) : 'Never'}</p>
+                         <p>Last Status: {localIngestTask.last_run_status ?
+                             <Badge variant={localIngestTask.last_run_status === 'success' ? 'default' : 'destructive'} className='text-xs'>
+                                 {localIngestTask.last_run_status}
+                             </Badge> : 'N/A'}
+                         </p>
+                         {localIngestTask.last_run_message && <p>Last Message: {localIngestTask.last_run_message}</p>}
+                     </div>
+                 )}
+            </CardContent>
+            <CardFooter>
+                 <Button
+                    onClick={handleScheduleUpdate}
+                    disabled={isUpdatingSchedule || !hasChanged}
+                    size="sm"
+                 >
+                     {isUpdatingSchedule && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                     Save Schedule Changes
+                 </Button>
+            </CardFooter>
+        </Card>
+     );
+  }
 
   const renderClassificationSection = () => {
     const renderTimeSeriesChart = () => {
@@ -1345,7 +1429,7 @@ const DocumentDetailView = ({
                   {results.map(result => (
                     <div
                       key={result.id}
-                      className="p-2 bg-muted/20 rounded border text-sm cursor-pointer hover:bg-muted/30 mb-1 last:mb-0"
+                      className="p-2 bg-muted/20 rounded border text-sm cursor-pointer hover:bg-muted/30"
                       onClick={() => {
                         setSelectedResult(result);
                         setIsResultDialogOpen(true);
@@ -1498,141 +1582,487 @@ const DocumentDetailView = ({
     );
   }
 
-  // ---> REFACTORED: renderContent now uses sub-components --- START
+  // ---> ADDED: Reintroduce renderContent logic based on older version ---
   const renderContent = () => {
     if (!dataSource) {
         return <div className="p-4 text-center text-muted-foreground">Data source details not loaded.</div>;
     }
 
-    // Fix: Handle all expected types explicitly or provide a better default
+    const isBulkPdf = dataSource.type === 'pdf' && dataSource.source_metadata && typeof dataSource.source_metadata.file_count === 'number' && dataSource.source_metadata.file_count > 1;
+
     switch (dataSource.type) {
         case 'pdf':
-        // case 'bulk_pdf': // Handled within DocumentDetailViewPdf logic
-            return (
-                <DocumentDetailViewPdf
-                  dataSource={dataSource}
-                  associatedRecords={associatedRecords}
-                  isLoadingRecords={isLoadingRecords}
-                  selectedIndividualRecord={selectedIndividualRecord}
-                  setSelectedIndividualRecord={setSelectedIndividualRecord}
-                  renderEditableField={renderEditableField}
-                  renderTextDisplay={renderTextDisplay}
-                  handleViewPdf={handleViewPdf}
-                  handleDownloadPdf={handleDownloadPdf}
-                  isFetchingPdfForView={isFetchingPdfForView}
-                  isPdfViewerOpen={isPdfViewerOpen}
-                />
+            const pageCount = dataSource.source_metadata?.page_count as number | undefined;
+            const processedPages = dataSource.source_metadata?.processed_page_count as number | undefined;
+            const fileCount = dataSource.source_metadata?.file_count as number | undefined;
+            const filenameFromDetails = dataSource.origin_details?.filename as string | undefined;
+            const displayFilename = isBulkPdf ? dataSource.name : (filenameFromDetails || dataSource.name || `DataSource ${dataSource.id}`);
+
+            const statusBadge = dataSource.status ? (
+                <Badge variant={
+                    dataSource.status === 'complete' ? 'default'
+                    : dataSource.status === 'failed' ? 'destructive'
+                    : dataSource.status === 'processing' ? 'secondary'
+                    : dataSource.status === 'pending' ? 'secondary'
+                    : 'outline'
+                }
+                    className="capitalize flex items-center gap-1"
+                >
+                    {dataSource.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {dataSource.status === 'complete' ? 'Completed'
+                     : dataSource.status === 'failed' ? 'Failed'
+                     : dataSource.status === 'processing' ? 'Processing'
+                     : dataSource.status === 'pending' ? 'Pending'
+                     : dataSource.status}
+                </Badge>
+            ) : (
+                <Badge variant="outline">Unknown</Badge>
             );
 
-        case 'csv':
+            return (
+                <div className="p-4 border rounded-lg bg-muted/30 h-full flex flex-col">
+                    <h3 className="text-lg font-semibold mb-3 flex items-center">
+                       {isBulkPdf ? <Files className="h-5 w-5 mr-2 text-primary" /> : <FileText className="h-5 w-5 mr-2 text-primary" />}
+                       {isBulkPdf ? 'Bulk PDF Details' : 'PDF Details'}
+                    </h3>
+                    <div className="space-y-2 mb-4 text-sm flex-grow">
+                        {renderEditableField(
+                            isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null),
+                            'title'
+                        )}
+                        <p><strong>Source Name:</strong> {displayFilename}</p>
+                        {isBulkPdf && fileCount !== undefined && <p><strong>Files Included:</strong> {fileCount}</p>}
+                        {!isBulkPdf && pageCount !== undefined && <p><strong>Total Pages:</strong> {pageCount}</p>}
+                        {!isBulkPdf && processedPages !== undefined && <p><strong>Processed Pages:</strong> {processedPages}</p>}
+                        <div className="flex items-center gap-1"><strong>Overall Status:</strong> {statusBadge}</div>
+                        {dataSource.status === 'failed' && dataSource.error_message && (
+                            <p className="text-destructive text-xs"><strong>Error:</strong> {dataSource.error_message}</p>
+                        )}
+                         {renderEditableField(
+                             isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null),
+                             'event_timestamp'
+                         )}
+
+                        {isBulkPdf && (
+                            <div className="mt-3 pt-3 border-t">
+                                <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Individual Files ({associatedRecords.length}):</h4>
+                                {isLoadingRecords ? (
+                                    <p className="text-xs italic text-muted-foreground">Loading file list...</p>
+                                ) : associatedRecords.length > 0 ? (
+                                    <ScrollArea className="max-h-32 pr-2">
+                                        <ul className="space-y-1 text-xs">
+                                            {associatedRecords.map(record => {
+                                                const originalFilename = (record.source_metadata as any)?.original_filename;
+                                                const isSelected = selectedIndividualRecord?.id === record.id;
+                                                return (
+                                                    <li key={record.id}
+                                                        className={cn(
+                                                            "truncate p-1 rounded border cursor-pointer hover:bg-muted/80 flex items-center gap-1",
+                                                            isSelected ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "bg-background"
+                                                        )}
+                                                        title={originalFilename || `Record ${record.id}`}
+                                                        onClick={() => setSelectedIndividualRecord(record)}
+                                                    >
+                                                        <FileText className="h-3 w-3 inline-block mr-1.5 align-middle shrink-0" />
+                                                        <span className="truncate flex-grow">{originalFilename || `Record ${record.id}`}</span>
+                                                        {/* Add Edit button next to each file? Maybe later */}
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    </ScrollArea>
+                                ) : (
+                                    <p className="text-xs italic text-muted-foreground">No individual file records found (or still processing).</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Text Content Display */}
+                    {(() => {
+                       const recordForTextDisplay = isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null);
+                       if (recordForTextDisplay) {
+                           const textTitle = isBulkPdf
+                               ? `Text Content for: ${(recordForTextDisplay.source_metadata as any)?.original_filename || `Record ${recordForTextDisplay.id}`}`
+                               : 'Extracted Text Content';
                            return (
-                <DocumentDetailViewCsv
-                  dataSource={dataSource}
-                  csvData={csvData}
-                  isLoadingCsv={isLoadingCsv}
-                  csvError={csvError}
-                  csvSearchTerm={csvSearchTerm}
-                  setCsvSearchTerm={setCsvSearchTerm}
-                  sortColumn={sortColumn}
-                  sortDirection={sortDirection}
-                  handleSort={handleSort}
-                  selectedRowData={selectedRowData}
-                  setSelectedRowData={setSelectedRowData}
-                  filteredAndSortedCsvData={filteredAndSortedCsvData}
-                  currentPage={currentPage}
-                  totalPages={totalPages}
-                  handlePageChange={handlePageChange}
-                  selectedRowResults={selectedRowResults}
-                  schemes={schemes}
-                  availableJobsFromStore={availableJobsFromStore}
-                  selectedJobId={selectedJobId}
-                  setSelectedResult={setSelectedResult}
-                  setIsResultDialogOpen={setIsResultDialogOpen}
-                />
+                               <div className="mt-3 pt-3 border-t">
+                                   <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">{textTitle}</h4>
+                                   {renderTextDisplay(recordForTextDisplay.text_content)}
+                               </div>
+                           );
+                       }
+                       else if (!isBulkPdf && !isLoadingRecords) {
+                           return (
+                               <div className="mt-3 pt-3 border-t">
+                                   <p className="text-xs italic text-muted-foreground">No text content record found.</p>
+                               </div>
+                           );
+                       }
+                       return null;
+                    })()}
+
+                    {/* PDF Action Buttons */}
+                    <div className="flex items-center gap-2 mb-4 border-t pt-4 mt-auto">
+                      <Button onClick={handleViewPdf} variant="outline" size="sm" disabled={isFetchingPdfForView || (isBulkPdf && !selectedIndividualRecord)} title={isBulkPdf && !selectedIndividualRecord ? "Select an individual file above to view" : ""}>
+                        {isFetchingPdfForView ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : isPdfViewerOpen ? (
+                          <X className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Eye className="mr-2 h-4 w-4" />
+                        )}
+                        {isPdfViewerOpen ? 'Close Viewer' : (isBulkPdf ? 'View Selected PDF' : 'View Inline')}
+                      </Button>
+                      <Button onClick={handleDownloadPdf} variant="outline" size="sm" disabled={isBulkPdf && !selectedIndividualRecord} title={isBulkPdf && !selectedIndividualRecord ? "Select an individual file above to download" : ""}>
+                        <Download className="mr-2 h-4 w-4" />
+                        {isBulkPdf ? 'Download Selected PDF' : 'Download PDF'}
+                      </Button>
+                    </div>
+                </div>
             );
 
         case 'url_list':
-        // case 'url': // Assuming url_list covers this conceptually
+            const originalUrls = (dataSource.origin_details as any)?.urls || [];
+            const hasUrlListChanged = JSON.stringify([...editableUrls].sort()) !== JSON.stringify([...originalUrls].sort());
+
             return (
-                <DocumentDetailViewUrlList
-                    dataSource={dataSource}
-                    urlListDataRecords={urlListDataRecords}
-                    isLoadingUrlList={isLoadingUrlList}
-                    urlListError={urlListError}
-                    scrapedContentViewMode={scrapedContentViewMode}
-                    setScrapedContentViewMode={setScrapedContentViewMode}
-                    highlightedRecordId={highlightedRecordId}
-                    setHighlightedRecordId={setHighlightedRecordId}
-                    editableUrls={editableUrls}
-                    setEditableUrls={setEditableUrls}
-                    newUrlInput={newUrlInput}
-                    setNewUrlInput={setNewUrlInput}
-                    handleAddUrl={handleAddUrl}
-                    handleRemoveUrl={handleRemoveUrl}
-                    handleSaveUrls={handleSaveUrls}
-                    isSavingUrls={isSavingUrls}
-                    handleRefetch={handleRefetch}
-                    isRefetching={isRefetching}
-                    renderEditableField={renderEditableField}
-                    renderTextDisplay={renderTextDisplay}
-                    urlListCurrentPage={urlListCurrentPage}
-                    urlListTotalPages={urlListTotalPages}
-                    urlListTotalRecords={urlListTotalRecords}
-                    handleUrlListPageChange={handleUrlListPageChange}
-                    sortedFlatList={sortedFlatList}
-                    groupedRecords={groupedRecords}
-                    localIngestTask={localIngestTask}
-                    enableScheduledIngestion={enableScheduledIngestion}
-                    setEnableScheduledIngestion={setEnableScheduledIngestion}
-                    ingestionSchedule={ingestionSchedule}
-                    setIngestionSchedule={setIngestionSchedule}
-                    cronExplanation={cronExplanation}
-                    isUpdatingSchedule={isUpdatingSchedule}
-                    handleScheduleUpdate={handleScheduleUpdate}
-                    initialScheduleState={initialScheduleState}
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* --- Left Column: URL Editor --- */}
+                  <div className="space-y-3">
+                      <h4 className="text-md font-semibold flex items-center justify-between">
+                          Source URLs ({editableUrls.length})
+                          <Button onClick={handleRefetch} variant="outline" size="sm" disabled={isRefetching || isSavingUrls}>
+                              {isRefetching ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                              Re-fetch All
+                          </Button>
+                      </h4>
+                      <ScrollArea className="h-[250px] w-full border rounded-md p-3">
+                          <div className="space-y-2 ">
+                              {editableUrls.map((url, index) => (
+                                  <div key={index} className="flex items-center justify-between gap-2 text-sm bg-background p-1.5 rounded">
+                                      <a href={url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-blue-600 flex-1" title={url}>
+                                          {url}
+                                      </a>
+                                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0" onClick={() => handleRemoveUrl(url)} disabled={isSavingUrls}>
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                  </div>
+                              ))}
+                              {editableUrls.length === 0 && (
+                                  <p className="text-sm text-muted-foreground italic text-center py-2">No URLs added yet.</p>
+                              )}
+                          </div>
+                      </ScrollArea>
+                      <div className="flex items-center gap-2">
+                          <Input
+                              type="url"
+                              placeholder="Add new URL (e.g., https://...)"
+                              value={newUrlInput}
+                              onChange={(e: ChangeEvent<HTMLInputElement>) => setNewUrlInput(e.target.value)}
+                              className="h-9 text-sm"
+                              onKeyDown={(e) => e.key === 'Enter' && handleAddUrl()}
+                              disabled={isSavingUrls}
+                          />
+                          <Button onClick={handleAddUrl} size="sm" disabled={isSavingUrls || !newUrlInput.trim()}>
+                              <PlusCircle className="h-4 w-4 mr-1" /> Add
+                          </Button>
+                      </div>
+                      <Button onClick={handleSaveUrls} size="sm" disabled={isSavingUrls || !hasUrlListChanged}>
+                          {isSavingUrls ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                          Save URL List Changes
+                      </Button>
+                      {renderScheduledIngestionCard()} {/* Move Schedule card here */}
+                  </div>
+
+                  {/* --- Right Column: Scraped Records --- */}
+                  <div className="space-y-3">
+                      <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Button
+                          variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
+                          size="sm"
+                          onClick={() => setScrapedContentViewMode('flat')}
+                          className="h-7 px-2 text-xs"
+                        >
+                          Flat List (Time)
+                        </Button>
+                        <Button
+                          variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
+                          size="sm"
+                          onClick={() => setScrapedContentViewMode('grouped')}
+                          className="h-7 px-2 text-xs"
+                        >
+                          Grouped by URL
+                        </Button>
+                      </div>
+
+                      {isLoadingUrlList ? (
+                           <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...</div>
+                      ) : urlListError ? (
+                           <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Error Loading Records</AlertTitle><AlertDescription>{urlListError}</AlertDescription></Alert>
+                      ) : (urlListDataRecords.length > 0 || sortedFlatList.length > 0) ? ( // Check sortedFlatList too
+                          <>
+                              <ScrollArea className="h-[400px] w-full border rounded-md p-3">
+                                  <div className="space-y-3">
+                                      {scrapedContentViewMode === 'flat' ? (
+                                          sortedFlatList.map((record) => {
+                                              const originalUrl = (record.source_metadata as any)?.original_url;
+                                              return (
+                                                  <div
+                                                    key={record.id}
+                                                    className={cn(
+                                                      "p-2 rounded bg-background space-y-1 border cursor-pointer transition-colors",
+                                                      highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
+                                                    )}
+                                                    onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
+                                                  >
+                                                      <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+                                                          <span>Record ID: {record.id}</span>
+                                                          {originalUrl &&
+                                                              <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-primary hover:underline inline-flex items-center text-xs" title={originalUrl}>
+                                                                  <span className="truncate max-w-[200px]">{originalUrl}</span>
+                                                                  <ExternalLink className="h-3 w-3 ml-1 shrink-0" />
+                                                              </a>
+                                                          }
+                                                          <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                                                             {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
+                                                          </span>
+                                                      </div>
+                                                       {/* --- Inline Edit Fields for URL List Record --- */}
+                                                       {renderEditableField(record, 'title')}
+                                                       {renderEditableField(record, 'event_timestamp')}
+                                                       {/* --- --- */}
+                                                       <Collapsible open={highlightedRecordId === record.id}>
+                                                            <CollapsibleContent>
+                                                               <div className="mt-1">
+                                                                {renderTextDisplay(record.text_content)}
+                                                               </div>
+                                                            </CollapsibleContent>
+                                                        </Collapsible>
+                                                  </div>
+                                              );
+                                          })
+                                      ) : (
+                                          Object.entries(groupedRecords).map(([url, recordsInGroup]) => (
+                                              <div key={url} className="mb-4 border rounded-md">
+                                                  <div className="bg-muted/50 px-3 py-1.5 border-b">
+                                                      <a href={url !== 'Unknown URL' ? url : undefined} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary hover:underline flex items-center" title={url}>
+                                                          {url}
+                                                          {url !== 'Unknown URL' && <ExternalLink className="h-3.5 w-3.5 ml-1.5 shrink-0" />}
+                                                      </a>
+                                                  </div>
+                                                  <div className="p-2 space-y-2">
+                                                      {recordsInGroup.map((record) => (
+                                                          <div
+                                                            key={record.id}
+                                                            className={cn(
+                                                              "p-1.5 rounded bg-background space-y-0.5 border cursor-pointer transition-colors",
+                                                              highlightedRecordId === record.id ? "bg-primary/10 border-primary/30 ring-1 ring-primary/30" : "hover:bg-muted/50"
+                                                            )}
+                                                            onClick={() => setHighlightedRecordId(prev => prev === record.id ? null : record.id)}
+                                                          >
+                                                              <div className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+                                                                  <span>Record ID: {record.id}</span>
+                                                                  <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                                                                     {record.event_timestamp ? formatDistanceToNow(new Date(record.event_timestamp), { addSuffix: true }) : 'No timestamp'}
+                                                                  </span>
+                                                              </div>
+                                                              {/* --- Inline Edit Fields for URL List Record (Grouped) --- */}
+                                                              {renderEditableField(record, 'title')}
+                                                              {renderEditableField(record, 'event_timestamp')}
+                                                              {/* --- --- */}
+                                                              <Collapsible open={highlightedRecordId === record.id}>
+                                                                <CollapsibleContent>
+                                                                    <div className="mt-1">
+                                                                     {renderTextDisplay(record.text_content)}
+                                                                    </div>
+                                                                </CollapsibleContent>
+                                                              </Collapsible>
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              </div>
+                                          ))
+                                      )}
+                                  </div>
+                              </ScrollArea>
+                              {urlListTotalPages > 0 && (
+                                  <div className="flex justify-center items-center pt-1 flex-none">
+                                      <Pagination>
+                                          <PaginationContent>
+                                              <PaginationItem><PaginationPrevious href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage - 1); }} className={cn(urlListCurrentPage === 1 ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
+                                              <PaginationItem><span className="px-3 text-sm">Page {urlListCurrentPage} of {urlListTotalPages}</span></PaginationItem>
+                                              <PaginationItem><PaginationNext href="#" onClick={(e) => { e.preventDefault(); handleUrlListPageChange(urlListCurrentPage + 1); }} className={cn(urlListCurrentPage === urlListTotalPages ? "pointer-events-none opacity-50" : "", "h-8 px-2")} /></PaginationItem>
+                                          </PaginationContent>
+                                      </Pagination>
+                                  </div>
+                              )}
+                          </>
+                      ) : (
+                          <div className="text-center py-4 text-muted-foreground italic">No scraped content records found for this URL list source.</div>
+                      )}
+                  </div>
+                </div>
             );
 
-        case 'text_block':
+        case 'csv':
              return (
-                <DocumentDetailViewTextBlock
-                  dataSource={dataSource}
-                  associatedRecords={associatedRecords}
-                  isLoadingRecords={isLoadingRecords}
-                  renderEditableField={renderEditableField}
-                  renderTextDisplay={renderTextDisplay}
-                />
+              <div className="space-y-3 h-full flex flex-col">
+                {isLoadingCsv ? (
+                   <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2">
+                     <Loader2 className="h-4 w-4 animate-spin" /> Loading CSV data...
+                   </div>
+                 ) : csvError ? (
+                   <div className="text-center py-4 text-red-600">
+                     {csvError}
+                   </div>
+                 ) : csvData && csvData.columns && csvData.columns.length > 0 && csvData.data ? (
+                   <>
+                     <div className="relative max-w-xs">
+                       <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                       <Input
+                         placeholder="Search this page..."
+                         value={csvSearchTerm}
+                         onChange={(e) => {
+                           setCsvSearchTerm(e.target.value);
+                           setSelectedRowData(null);
+                         }}
+                         className="pl-8 h-8 text-sm"
+                       />
+                     </div>
+
+                     <div className="border rounded-md overflow-auto relative w-full max-h-[50vh] flex-grow"> {/* Increased max-h */}
+                       <Table className="text-xs min-w-max"> {/* Use min-w-max for wide tables */}
+                         <TableHeader className="sticky top-0 bg-muted z-10">
+                           <TableRow>
+                             <TableHead className="w-[80px] px-2 py-2 font-semibold sticky left-0 bg-muted z-10 border-r shadow-sm">Row</TableHead>
+                             {csvData.columns.map((col, colIndex) => (
+                               <TableHead
+                                 key={`${col}-${colIndex}`}
+                                 className="px-2 py-2 font-semibold whitespace-nowrap overflow-hidden text-ellipsis cursor-pointer hover:bg-muted-foreground/10"
+                                 onClick={() => handleSort(col)}
+                               >
+                                 <div className="flex items-center gap-1">
+                                   {col}
+                                   {sortColumn === col && sortDirection === 'asc' && <ArrowUp className="h-3 w-3" />}
+                                   {sortColumn === col && sortDirection === 'desc' && <ArrowDown className="h-3 w-3" />}
+                                 </div>
+                               </TableHead>
+                             ))}
+                           </TableRow>
+                         </TableHeader>
+                         <TableBody>
+                           {filteredAndSortedCsvData.length > 0 ? (
+                             filteredAndSortedCsvData.map((row: CsvRowData) => (
+                               <TableRow
+                                 key={row.row_number}
+                                 onClick={() => {
+                                   const newSelectedRow = prev => prev?.row_number === row.row_number ? null : row;
+                                   setSelectedRowData(newSelectedRow);
+                                   // Fetch results for the newly selected row - Parse ID from row_data.id
+                                   const recordIdStr = row.row_data?.id as string | null | undefined;
+                                   const recordId = recordIdStr ? parseInt(recordIdStr, 10) : NaN; // Parse string ID to number
+                                   if (newSelectedRow(selectedRowData) && !isNaN(recordId)) { // Check if parsing was successful
+                                     setSelectedRowResults(getResultsForRecord(recordId));
+                                   } else {
+                                     setSelectedRowResults([]);
+                                   }
+                                 }}
+                                 className={cn(
+                                   "cursor-pointer hover:bg-muted/50",
+                                   selectedRowData?.row_number === row.row_number && "bg-primary/10 hover:bg-primary/20"
+                                 )}
+                               >
+                                 <TableCell className="px-2 py-1 text-foreground sticky left-0 bg-muted z-10 border-r">{row.row_number}</TableCell>
+                                 {csvData.columns.map((col, colIndex) => (
+                                   <TableCell
+                                     key={`${row.row_number}-${col}-${colIndex}`}
+                                     className="px-2 py-1 max-w-[300px] truncate whitespace-nowrap"
+                                     title={typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                                   >
+                                     {typeof row.row_data[col] === 'object' ? JSON.stringify(row.row_data[col]) : String(row.row_data[col] ?? '')}
+                                   </TableCell>
+                                 ))}
+                               </TableRow>
+                             ))
+                           ) : (
+                             <TableRow>
+                               <TableCell colSpan={(csvData.columns?.length ?? 0) + 1} className="h-24 text-center text-muted-foreground italic">
+                                 {csvSearchTerm ? 'No results found for your search.' : 'No data available for the current page.'}
+                               </TableCell>
+                             </TableRow>
+                           )}
+                         </TableBody>
+                       </Table>
+                     </div>
+
+                     {totalPages > 0 && (
+                        <div className="flex justify-center items-center pt-2 flex-none">
+                           <Pagination>
+                             <PaginationContent>
+                               <PaginationItem>
+                                 <PaginationPrevious
+                                   href="#"
+                                   onClick={(e) => { e.preventDefault(); handlePageChange(currentPage - 1); }}
+                                   className={cn(
+                                     currentPage === 1 ? "pointer-events-none opacity-50" : "",
+                                     "h-8 px-2"
+                                   )}
+                                 />
+                               </PaginationItem>
+                               <PaginationItem>
+                                 <span className="px-3 text-sm">Page {currentPage} of {totalPages}</span>
+                               </PaginationItem>
+                               <PaginationItem>
+                                 <PaginationNext
+                                   href="#"
+                                   onClick={(e) => { e.preventDefault(); handlePageChange(currentPage + 1); }}
+                                   className={cn(
+                                     currentPage === totalPages ? "pointer-events-none opacity-50" : "",
+                                     "h-8 px-2"
+                                   )}
+                                 />
+                               </PaginationItem>
+                             </PaginationContent>
+                           </Pagination>
+                        </div>
+                     )}
+                     {renderSelectedRowDetail()} {/* Show selected row details below table */}
+                   </>
+                 ) : (
+                   <div className="text-center py-4 text-muted-foreground italic">
+                     No rows found in this CSV file or the data format is unexpected (and not loading/error).
+                   </div>
+                    )}
+                 </div>
+             );
+
+        case 'text_block':
+            const charCount = dataSource.source_metadata?.character_count as number | undefined;
+            // Use associatedRecords which is now populated for text blocks as well
+            const textRecord = associatedRecords.length > 0 ? associatedRecords[0] : null;
+            return (
+                <div className="p-4 border rounded-lg bg-muted/30 h-full flex flex-col">
+                    <h3 className="text-lg font-semibold mb-3 flex items-center">
+                        <Type className="h-5 w-5 mr-2 text-primary" /> Text Block Content
+                    </h3>
+                    <div className="space-y-2 mb-4 text-sm flex-grow">
+                        {renderEditableField(textRecord, 'title')}
+                        {/*<p><strong>Source Name:</strong> {dataSource.name || `DataSource ${dataSource.id}`}</p>*/}
+                        {charCount !== undefined && <p><strong>Character Count:</strong> {charCount}</p>}
+                         {renderEditableField(textRecord, 'event_timestamp')}
+                        <Label className="text-xs font-semibold text-muted-foreground">Content:</Label>
+                         {renderTextDisplay(textRecord?.text_content || dataSource.origin_details?.text_content as string || null)}
+                    </div>
+                    {/* Add actions if needed, e.g., edit? */}
+                </div>
             );
         default:
-            // Fix: Remove exhaustive check or ensure all client types are handled
-            // const _exhaustiveCheck: never = dataSource.type;
-            console.warn("Unsupported data source type in renderContent:", dataSource.type);
-            return <div className="p-4 text-center text-muted-foreground">Unsupported data source type '{dataSource.type}'.</div>;
+            return <div className="p-4 text-center text-muted-foreground">Unsupported data source type or details not loaded.</div>;
     }
   };
-  // ---> REFACTORED: renderContent --- END
-
-  // Determine initial record IDs for Dataset Create Dialog based on current view
-  const initialDatasetRecordIds = useMemo(() => {
-    if (!dataSource) return [];
-    switch (dataSource.type) {
-      case 'csv':
-        return filteredAndSortedCsvData
-          .map(r => {
-            const idStr = r.row_data?.id as string | null | undefined;
-            const idNum = idStr ? parseInt(idStr, 10) : NaN;
-            return !isNaN(idNum) ? idNum : null;
-          })
-          .filter(id => id !== null) as number[];
-      case 'url_list':
-        return (scrapedContentViewMode === 'flat' ? sortedFlatList : urlListDataRecords).map(r => r.id);
-      case 'pdf':
-        case 'text_block':
-        return associatedRecords.map(r => r.id);
-        default:
-        return [];
-    }
-  }, [dataSource, filteredAndSortedCsvData, scrapedContentViewMode, sortedFlatList, urlListDataRecords, associatedRecords]);
+  // ---> END ADDED <---
 
   // Add this at the end of the DocumentDetailView function, before export default
   return (
@@ -1735,6 +2165,7 @@ const DocumentDetailView = ({
 
           {/* Dialogs and Toaster outside the main flex container */}
            <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
+              {/* ... DialogContent ... */}
              <DialogContent className="max-w-2xl">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
@@ -1798,11 +2229,26 @@ const DocumentDetailView = ({
                 });
                 setIsDatasetCreateDialogOpen(false);
              }}
-             initialDatarecordIds={initialDatasetRecordIds} // Use the memoized value
+             // Ensure these are updated correctly based on what's visible/selected
+             initialDatarecordIds={
+                 dataSource?.type === 'csv'
+                     // Parse IDs from row_data.id, ensuring they are numbers
+                     ? filteredAndSortedCsvData.map(r => {
+                         const idStr = r.row_data?.id as string | null | undefined;
+                         const idNum = idStr ? parseInt(idStr, 10) : NaN;
+                         return !isNaN(idNum) ? idNum : null;
+                       }).filter(id => id !== null) as number[]
+                     : (dataSource?.type === 'url_list'
+                         ? (scrapedContentViewMode === 'flat' ? sortedFlatList : urlListDataRecords)
+                         : associatedRecords // For PDF, Text
+                     ).map(r => r.id)
+             }
              initialSchemeIds={Array.from(new Set(classificationResults.map(r => r.scheme_id)))}
              initialJobIds={Array.from(new Set(classificationResults.map(r => r.job_id).filter(id => id != null) as number[]))}
+             // initialJobName={jobNameForDialog} // REMOVED: Prop does not exist on DatasetCreateDialogProps
             />
-            {/* Toaster is likely handled globally */}
+            {/* Toaster is likely handled globally, but keep if needed locally */}
+            {/* <Toaster /> */}
         </>
       )}
     </div>

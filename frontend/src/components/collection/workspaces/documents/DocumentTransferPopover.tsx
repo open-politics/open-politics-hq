@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CopyIcon, FolderIcon, FolderInput, Loader2 } from 'lucide-react';
+import { Check, CopyIcon, FolderIcon, FolderInput, Loader2, PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from "@/components/ui/input";
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
 // --- ADDED: Import necessary client services and models ---
 import { WorkspacesService } from '@/client/services';
@@ -35,67 +36,103 @@ export function DocumentTransferPopover({
   const [targetWorkspaceId, setTargetWorkspaceId] = useState<string>('');
   const [isCopy, setIsCopy] = useState(true); // Default to Copy for safety
   const [isLoading, setIsLoading] = useState(false);
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false); // State for creation mode
+  const [newWorkspaceName, setNewWorkspaceName] = useState(''); // State for new workspace name
 
-  const { workspaces, activeWorkspace } = useWorkspaceStore();
+  const { workspaces, activeWorkspace, createWorkspace } = useWorkspaceStore();
 
   const handleTransfer = async () => {
-    if (!activeWorkspace || !targetWorkspaceId || selectedDataSourceIds.length === 0) {
-       toast.warning("Please select data sources and a target workspace.");
+    if (!activeWorkspace || selectedDataSourceIds.length === 0) {
+       toast.warning("Please select data sources.");
        return;
     }
 
     setIsLoading(true);
-    const targetWsIdNum = parseInt(targetWorkspaceId, 10); // Convert to number
-    if (isNaN(targetWsIdNum)) {
-        toast.error("Invalid target workspace selected.");
-        setIsLoading(false);
-        return;
-    }
+    let finalTargetWorkspaceId: number | null = null;
 
-    // --- UPDATED: Use the actual backend service ---
     try {
-      console.log(`Initiating ${isCopy ? 'copy' : 'move'} of DataSources:`, selectedDataSourceIds);
-      console.log(`From Workspace: ${activeWorkspace.id} to Workspace: ${targetWsIdNum}`);
+        // --- Logic for Creating Workspace ---
+        if (isCreatingWorkspace) {
+            if (!newWorkspaceName.trim()) {
+                toast.warning("Please enter a name for the new workspace.");
+                setIsLoading(false);
+                return;
+            }
+            console.log(`Creating new workspace: ${newWorkspaceName}`);
+            const createdWorkspace = await createWorkspace({ name: newWorkspaceName, description: '' }); // Pass required fields
+            if (!createdWorkspace) {
+                // Error is handled within the store, but we stop the process here
+                toast.error("Failed to create the new workspace.");
+                setIsLoading(false);
+                return;
+            }
+            console.log("New workspace created:", createdWorkspace);
+            finalTargetWorkspaceId = createdWorkspace.id;
+            setNewWorkspaceName(''); // Clear input
+            setIsCreatingWorkspace(false); // Exit creation mode
+            // Optionally, you might want to refresh the workspace list in the dropdown
+            // but the store already calls fetchWorkspaces, so the list *should* update
+            // on next open or if we manually trigger a refresh here.
+            // For now, we'll proceed with the transfer using the new ID.
+        } else {
+            // --- Logic for Existing Workspace ---
+            if (!targetWorkspaceId) {
+                toast.warning("Please select a target workspace or create a new one.");
+                setIsLoading(false);
+                return;
+            }
+            const targetWsIdNum = parseInt(targetWorkspaceId, 10);
+            if (isNaN(targetWsIdNum)) {
+                toast.error("Invalid target workspace selected.");
+                setIsLoading(false);
+                return;
+            }
+            finalTargetWorkspaceId = targetWsIdNum;
+        }
 
-      // Construct the request body
-      const requestBody: DataSourceTransferRequest = {
-         source_workspace_id: activeWorkspace.id,
-         target_workspace_id: targetWsIdNum,
-         datasource_ids: selectedDataSourceIds,
-         copy: isCopy
-      };
+        if (finalTargetWorkspaceId === null) {
+             toast.error("Target workspace ID could not be determined.");
+             setIsLoading(false);
+             return;
+        }
 
-      // Call the backend service
-      // Assuming the client service method is named 'transferDatasourcesEndpoint'
-      const response: DataSourceTransferResponse = await WorkspacesService.transferDatasourcesEndpoint({
-          requestBody: requestBody // Pass the data nested under requestBody
-      });
+        // --- Transfer Logic (Common) ---
+        console.log(`Initiating ${isCopy ? 'copy' : 'move'} of DataSources:`, selectedDataSourceIds);
+        console.log(`From Workspace: ${activeWorkspace.id} to Workspace: ${finalTargetWorkspaceId}`);
 
-      if (response.success) {
-          toast.success(response.message || `Data Sources ${isCopy ? 'copied' : 'moved'} successfully.`);
-          setIsOpen(false);
-          onComplete(); // This will clear selection and refresh source/target lists possibly
-      } else {
-          // Handle partial or full failure reported by the backend
-          const errorDetails = response.errors
-              ? Object.entries(response.errors).map(([id, msg]) => `DS ${id}: ${msg}`).join(', ')
-              : 'No specific details provided.';
-          toast.error(response.message || `Failed to ${isCopy ? 'copy' : 'move'} some or all Data Sources.`, {
-              description: errorDetails,
-          });
-           // Keep popover open on partial failure? Or close? Let's close for now.
-          setIsOpen(false);
-          onComplete(); // Still call onComplete to potentially refresh lists
-      }
+        const requestBody: DataSourceTransferRequest = {
+            source_workspace_id: activeWorkspace.id,
+            target_workspace_id: finalTargetWorkspaceId,
+            datasource_ids: selectedDataSourceIds,
+            copy: isCopy
+        };
+
+        const response: DataSourceTransferResponse = await WorkspacesService.transferDatasourcesEndpoint({
+            requestBody: requestBody
+        });
+
+        if (response.success) {
+            toast.success(response.message || `Data Sources ${isCopy ? 'copied' : 'moved'} successfully.`);
+            setIsOpen(false);
+            onComplete();
+        } else {
+            const errorDetails = response.errors
+                ? Object.entries(response.errors).map(([id, msg]) => `DS ${id}: ${msg}`).join(', ')
+                : 'No specific details provided.';
+            toast.error(response.message || `Failed to ${isCopy ? 'copy' : 'move'} some or all Data Sources.`, {
+                description: errorDetails,
+            });
+            setIsOpen(false);
+            onComplete();
+        }
 
     } catch (error: any) {
-      // Handle network errors or unexpected backend errors (e.g., 500)
-      console.error("Transfer API call failed:", error);
-      const errorMsg = error?.body?.detail || `Failed to ${isCopy ? 'copy' : 'move'} Data Sources due to a network or server error.`;
-      toast.error("Transfer Failed", { description: errorMsg });
-      // Keep popover open on critical failure?
+        console.error("Transfer or Workspace Creation API call failed:", error);
+        const errorMsg = error?.body?.detail || `An unexpected error occurred during the ${isCreatingWorkspace ? 'workspace creation or ' : ''}transfer process.`;
+        toast.error("Operation Failed", { description: errorMsg });
+        // Keep popover open on critical failure? Maybe, depends on UX preference.
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
   };
   // --- END UPDATED ---
@@ -106,44 +143,85 @@ export function DocumentTransferPopover({
   // Disable button if nothing selected
   const isButtonDisabled = selectedDataSourceIds.length === 0;
 
+  // Determine if Confirm button should be disabled
+  const isConfirmDisabled = isLoading ||
+                            selectedDataSourceIds.length === 0 ||
+                            (isCreatingWorkspace && !newWorkspaceName.trim()) ||
+                            (!isCreatingWorkspace && !targetWorkspaceId);
+
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <Popover open={isOpen} onOpenChange={(open) => {
+        setIsOpen(open);
+        // Reset creation state when popover closes
+        if (!open) {
+            setIsCreatingWorkspace(false);
+            setNewWorkspaceName('');
+            setTargetWorkspaceId(''); // Also clear selection
+        }
+    }}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="ml-2" disabled={isButtonDisabled}>
-          <FolderInput className="h-4 w-4 mr-2" />
-           {isButtonDisabled ? 'Transfer' : `Transfer ${selectedDataSourceIds.length} selected`}
+        <Button variant="outline" size="sm" className="ml-2 h-7 px-2" disabled={isButtonDisabled}>
+          <FolderInput className="h-3.5 w-3.5 mr-1" />
+           {isButtonDisabled ? 'Transfer' : `${selectedDataSourceIds.length}`}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-80">
         <div className="space-y-4">
           <h4 className="font-medium leading-none">Transfer Data Sources</h4>
           <p className="text-xs text-muted-foreground">
-             {isCopy ? "Copy" : "Move"} the selected data sources to another workspace. Moving will delete them from the current workspace.
+             {isCopy ? "Copy" : "Move"} {selectedDataSourceIds.length} data source(s) to {isCreatingWorkspace ? 'a new' : 'another'} workspace.
           </p>
+
+          {/* --- Target Workspace Selection / Creation --- */}
           <div className="space-y-2">
             <label htmlFor="target-workspace" className="text-sm font-medium">
               Target Workspace
             </label>
-            <Select
-              value={targetWorkspaceId}
-              onValueChange={setTargetWorkspaceId}
-            >
-              <SelectTrigger id="target-workspace">
-                <SelectValue placeholder="Select workspace..." />
-              </SelectTrigger>
-              <SelectContent>
-                {availableWorkspaces.length > 0 ? (
-                  availableWorkspaces.map((workspace) => (
-                    <SelectItem key={workspace.id} value={workspace.id.toString()}>
-                      {workspace.name}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <div className="p-4 text-center text-sm text-muted-foreground">No other workspaces available.</div>
-                )}
-              </SelectContent>
-            </Select>
+            {!isCreatingWorkspace ? (
+              <div className="flex items-center gap-2">
+                 <Select
+                   value={targetWorkspaceId}
+                   onValueChange={setTargetWorkspaceId}
+                   disabled={isLoading}
+                 >
+                   <SelectTrigger id="target-workspace">
+                     <SelectValue placeholder="Select existing..." />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {availableWorkspaces.length > 0 ? (
+                       availableWorkspaces.map((workspace) => (
+                         <SelectItem key={workspace.id} value={workspace.id.toString()}>
+                           {workspace.name}
+                         </SelectItem>
+                       ))
+                     ) : (
+                       <div className="p-4 text-center text-sm text-muted-foreground">No other workspaces available.</div>
+                     )}
+                   </SelectContent>
+                 </Select>
+                 <Button variant="ghost" size="sm" onClick={() => setIsCreatingWorkspace(true)} className="text-xs" title="Create New Workspace">
+                     <PlusCircle className="h-4 w-4 mr-1" /> New
+                 </Button>
+              </div>
+            ) : (
+               <div className="flex items-center gap-2">
+                   <Input
+                      id="new-workspace-name"
+                      placeholder="New workspace name..."
+                      value={newWorkspaceName}
+                      onChange={(e) => setNewWorkspaceName(e.target.value)}
+                      disabled={isLoading}
+                      className="h-9" // Match select trigger height
+                   />
+                   <Button variant="ghost" size="sm" onClick={() => { setIsCreatingWorkspace(false); setNewWorkspaceName(''); }} className="text-xs" title="Cancel Creation">
+                      Cancel
+                   </Button>
+               </div>
+            )}
           </div>
+          {/* --- End Target Workspace --- */}
+
+
           {/* Simpler Move/Copy Toggle using Button variant */}
           <div className="flex items-center space-x-2">
              <Button
@@ -151,6 +229,7 @@ export function DocumentTransferPopover({
                size="sm"
                onClick={() => setIsCopy(false)}
                className="flex-1"
+               disabled={isLoading}
              >
                <FolderIcon className="h-4 w-4 mr-2" />
                Move
@@ -160,6 +239,7 @@ export function DocumentTransferPopover({
                size="sm"
                onClick={() => setIsCopy(true)}
                className="flex-1"
+               disabled={isLoading}
              >
                <CopyIcon className="h-4 w-4 mr-2" />
                Copy
@@ -168,17 +248,17 @@ export function DocumentTransferPopover({
           <Button
             className="w-full"
             onClick={handleTransfer}
-            disabled={!targetWorkspaceId || isLoading || availableWorkspaces.length === 0}
+            disabled={isConfirmDisabled} // Updated disabled logic
           >
             {isLoading ? (
                <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Processing...
+                   {isCreatingWorkspace ? 'Creating & Transferring...' : 'Processing...'}
                </>
             ) : (
               <>
                 <Check className="h-4 w-4 mr-2" />
-                Confirm {isCopy ? "Copy" : "Move"}
+                Confirm {isCopy ? "Copy" : "Move"} {isCreatingWorkspace ? 'to New Workspace' : ''}
               </>
             )}
           </Button>

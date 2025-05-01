@@ -448,11 +448,12 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setError(null);
     try {
       const workspaceId = getWorkspaceId();
-      const apiData: ClassificationSchemeUpdate = adaptSchemeFormDataToSchemeCreate(schemeData);
+      // Adapt the form data to the format expected by the API update endpoint
+      const apiData: ClassificationSchemeUpdate = adaptSchemeFormDataToSchemeCreate(schemeData); // Still using create adapter, but target type is now ClassificationSchemeUpdate
       const updatedScheme = await ClassificationSchemesService.updateClassificationScheme({
         workspaceId,
         schemeId,
-        requestBody: apiData,
+        requestBody: apiData, // Send the adapted data
       });
       setSchemes((prev) => prev.map(s => s.id === schemeId ? updatedScheme : s));
       clearSchemesCache(workspaceId);

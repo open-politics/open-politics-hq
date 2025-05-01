@@ -56,6 +56,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Eye, ExternalLink, Trash2 } from "lucide-react";
 import { ArrowUpDown } from "lucide-react";
 import { TimeAxisConfig } from './ClassificationTimeAxisControls';
+import { Settings2 } from 'lucide-react';
+import { cn } from "@/lib/utils";
 
 // Define gradient colors for bars
 const gradientColors = [
@@ -169,54 +171,57 @@ interface GroupedDataPoint {
 export type { ChartDataPoint, GroupedDataPoint };
 
 // Helper to get the primary value from a result, prioritizing numerical types for plotting
-const getPlottableValue = (result: ClassificationResultRead, scheme: ClassificationSchemeRead): number | string | null => {
+const getPlottableValue = (result: ClassificationResultRead, scheme: ClassificationSchemeRead): number | null => {
+  console.log(`[getPlottableValue] Checking Result ID: ${result.id}, Scheme: ${scheme.name} (ID: ${scheme.id})`);
+
   if (!result || !result.value || !scheme || !scheme.fields || scheme.fields.length === 0) {
+    console.log(`[getPlottableValue] Returning null due to missing result/value/scheme/fields.`);
     return null;
   }
 
-  const field = scheme.fields[0];
-  let fieldValue: any;
+  // --- MODIFICATION: Iterate through fields to find the first plottable one --- 
+  for (const field of scheme.fields) {
+      let fieldValue: any;
+      console.log(`[getPlottableValue] Trying field: ${field.name} (${field.type})`);
 
-  // Extract the potential value based on structure
-  if (typeof result.value !== 'object' || result.value === null) {
-    fieldValue = result.value; // Simple value
-  } else if (!Array.isArray(result.value)) {
-    // Object: try field name, then scheme name, then first value
-    if (result.value[field.name] !== undefined) {
-      fieldValue = result.value[field.name];
-    } else if (result.value[scheme.name] !== undefined) {
-      fieldValue = result.value[scheme.name];
-    } else if (Object.keys(result.value).length > 0) {
-      fieldValue = Object.values(result.value)[0];
-    } else {
-      fieldValue = null; // Empty object
-    }
-  } else {
-    // Array: Handle specific types or return null/count for plotting
-     if (field.type === 'List[Dict[str, any]]') {
-         // Plot the count of items for entity lists
-         return fieldValue.length;
-     }
-     // Cannot plot List[str] directly as a single point. Return null.
-     return null;
+      // Extract value based on field name from the result object
+      if (typeof result.value === 'object' && result.value !== null && !Array.isArray(result.value)) {
+          fieldValue = result.value[field.name];
+      } else if (scheme.fields.length === 1) {
+          // If only one field exists, the value might be directly the primitive/array
+          fieldValue = result.value;
+      } else {
+          // Cannot determine value for this field in a multi-field scheme if result.value is not an object
+          fieldValue = undefined; 
+      }
+      console.log(`[getPlottableValue] Extracted fieldValue for ${field.name}:`, fieldValue);
+
+      // Skip if value is null/undefined for this specific field
+      if (fieldValue === null || fieldValue === undefined) {
+          console.log(`[getPlottableValue] Field ${field.name} has null/undefined value. Skipping.`);
+          continue; 
+      }
+
+      // Check if this field is plottable (currently only supporting 'int')
+      if (field.type === 'int') {
+          const num = Number(fieldValue);
+          if (!isNaN(num)) {
+              console.log(`[getPlottableValue] Found plottable INT field '${field.name}'. Returning value: ${num}`);
+              return num; // Return the first valid number found
+          } else {
+              console.log(`[getPlottableValue] Field ${field.name} is INT but value '${fieldValue}' is not a number. Skipping.`);
+          }
+      }
+      
+      // Add checks for other plottable types here if needed (e.g., numeric strings)
+      // if (field.type === 'str') { ... }
+
+      console.log(`[getPlottableValue] Field ${field.name} (${field.type}) is not the target plottable type.`);
   }
+  // --- END MODIFICATION ---
 
-  // Return early if null/undefined
-  if (fieldValue === null || fieldValue === undefined) return null;
-
-  // Try to convert to number if the scheme expects it
-  if (field.type === 'int') { // FieldType doesn't include 'float'
-    const num = Number(fieldValue);
-    return !isNaN(num) ? num : null; // Return number or null if not convertible
-  }
-
-  // For 'str' types, try converting to number if possible, otherwise null
-  if (field.type === 'str') {
-      const num = Number(fieldValue);
-      if (!isNaN(num)) return num;
-  }
-
-  // Default: return null if not plottable as a number
+  // If no plottable field was found after checking all fields
+  console.log(`[getPlottableValue] No plottable field found in scheme ${scheme.name}. Returning null.`);
   return null;
 };
 
@@ -416,6 +421,7 @@ const getTimestamp = (
         const record = dataRecordsMap?.get(result.datarecord_id);
         if (record) {
             // Prioritize event_timestamp, then created_at
+            console.log(`[getTimestamp/event] Found record ID ${record.id}: event_timestamp='${record.event_timestamp}', created_at='${record.created_at}'`);
             const timestampStr = record.event_timestamp || record.created_at;
             if (timestampStr) {
                 try {
@@ -423,10 +429,14 @@ const getTimestamp = (
                     if (isNaN(parsedDate.getTime())) throw new Error('Invalid Date');
                     return parsedDate;
                 } catch (e) {
-                    console.warn(`Could not parse event timestamp \'${timestampStr}\' for record ${record.id}:`, e);
+                    console.warn(`[getTimestamp/event] Could not parse event timestamp '${timestampStr}' for record ${record.id}:`, e);
                     return null;
                 }
+            } else {
+                console.warn(`[getTimestamp/event] No timestamp string found (event_timestamp or created_at) for record ${record.id}`);
             }
+        } else {
+             console.warn(`[getTimestamp/event] DataRecord not found in map for ID: ${result.datarecord_id}`);
         }
         // Fallback if record or its timestamps are missing
         return null;
@@ -450,8 +460,8 @@ const processLineChartData = (
     results.forEach(result => {
         const timestamp = getTimestamp(result, dataRecordsMap, timeAxisConfig);
         if (!timestamp || isNaN(timestamp.getTime())) {
-             console.warn(`Skipping result ID ${result.id} due to invalid/missing timestamp.`);
-             return; // Skip results without a valid timestamp
+             // console.warn(`Skipping result ID ${result.id} due to invalid/missing timestamp.`); // Reduce noise now that we know map is populated
+              return; // Skip results without a valid timestamp
         }
 
         // Format the date based on the grouping interval
@@ -482,8 +492,10 @@ const processLineChartData = (
                 count: 0,
                 documents: [],
                 docSchemeValues: {},
-                stats: {},
+                stats: {}, // Keep internal stats object if needed elsewhere
                 categoryFrequency: {}
+                // Initialize stat keys directly on the point
+                // ... (will be added dynamically below)
             };
         }
 
@@ -497,43 +509,101 @@ const processLineChartData = (
         // Add scheme-specific aggregation
         const scheme = schemes.find(s => s.id === result.scheme_id);
         if (scheme) {
-             const schemeKey = `scheme_${scheme.id}`;
-             point[schemeKey] = (point[schemeKey] || 0) + 1; // Example: count per scheme
+            // --- MODIFICATION: Iterate through all fields in the scheme ---
+            for (const field of scheme.fields) {
+                const fieldName = field.name;
+                const fieldType = field.type;
 
-             // Store value for tooltip/drilldown
-             if (!point.docSchemeValues) point.docSchemeValues = {};
-             if (!point.docSchemeValues[result.datarecord_id]) point.docSchemeValues[result.datarecord_id] = {};
-             point.docSchemeValues[result.datarecord_id][scheme.id] = result.value;
+                // Construct the combined data key for this specific field
+                const dataKey = `${scheme.name}_${fieldName}`;
 
-             // Calculate stats for numeric fields
-             const numericValue = getPlottableValue(result, scheme);
-             if (typeof numericValue === 'number') {
-                 if (!point.stats) point.stats = {};
-                 if (!point.stats[schemeKey]) {
-                     point.stats[schemeKey] = { min: numericValue, max: numericValue, avg: numericValue, count: 1 };
-                 } else {
-                     const stats = point.stats[schemeKey];
-                     stats.min = Math.min(stats.min, numericValue);
-                     stats.max = Math.max(stats.max, numericValue);
-                     stats.avg = (stats.avg * stats.count + numericValue) / (stats.count + 1);
-                     stats.count++;
-                 }
-             }
+                // Attempt to extract the value for this specific field from the result object
+                let fieldValue: any = undefined;
+                if (typeof result.value === 'object' && result.value !== null && !Array.isArray(result.value)) {
+                    fieldValue = result.value[fieldName];
+                } else if (scheme.fields.length === 1 && fieldName === scheme.fields[0].name) {
+                    // Handle case where result.value might be the primitive value directly if only one field
+                    fieldValue = result.value;
+                }
 
-             // Calculate category frequency
-            if (scheme.fields[0]?.type === 'List[str]' && (scheme.fields[0] as any)?.config?.is_set_of_labels && Array.isArray(result.value)) {
-                if (!point.categoryFrequency) point.categoryFrequency = {};
-                if (!point.categoryFrequency[schemeKey]) point.categoryFrequency[schemeKey] = {};
-                result.value.forEach(label => {
-                     point.categoryFrequency![schemeKey][label] = (point.categoryFrequency![schemeKey][label] || 0) + 1;
-                });
-            }
+                // --- Process only if the field is 'int' and value is valid ---
+                if (fieldType === 'int' && fieldValue !== null && fieldValue !== undefined) {
+                    const numericValue = Number(fieldValue);
+
+                    if (!isNaN(numericValue)) {
+                        // Store the direct numeric value using the combined key
+                        // We'll calculate the average at the end if needed, but store individual points first
+                        // To handle multiple results for the same field on the same date, we might need to average or store an array.
+                        // For simplicity now, let's average if multiple values exist for the same dataKey on the same point.
+                        
+                        const currentFieldCountKey = `${dataKey}_countForAvg`;
+                        const currentFieldSumKey = `${dataKey}_sumForAvg`;
+                        point[currentFieldCountKey] = (point[currentFieldCountKey] || 0) + 1;
+                        point[currentFieldSumKey] = (point[currentFieldSumKey] || 0) + numericValue;
+                        point[dataKey] = point[currentFieldSumKey] / point[currentFieldCountKey]; // Store the running average
+
+                        // --- Calculate and store stats using combined keys ---
+                        const minKey = `${dataKey}_min`;
+                        const maxKey = `${dataKey}_max`;
+                        const avgKey = `${dataKey}_avg`; // Stats avg can differ from primary plot avg if needed
+                        const countKey = `${dataKey}_count`; // Key for the count contributing to these stats
+
+                        if (point[minKey] === undefined || numericValue < point[minKey]) point[minKey] = numericValue;
+                        if (point[maxKey] === undefined || numericValue > point[maxKey]) point[maxKey] = numericValue;
+
+                        // Sum and Count for calculating Avg stat
+                        const sumKey = `${dataKey}_sum`; // Key for the sum contributing to these stats
+                        point[countKey] = (point[countKey] || 0) + 1;
+                        point[sumKey] = (point[sumKey] || 0) + numericValue;
+                        point[avgKey] = point[sumKey] / point[countKey]; // Calculate average for stats
+                    } 
+                    // else: value for int field was not a number, skip plotting/stats for this field instance
+                }
+                 // --- Handle Categorical Frequency (can remain for non-int fields or all fields if desired) ---
+                 // This part is independent of numeric plotting but useful for tooltips
+                 if (fieldValue !== null && fieldValue !== undefined) { // Check fieldValue, not result.value directly
+                    if (!point.categoryFrequency) point.categoryFrequency = {};
+                    // Use a scheme-field specific key for categories too
+                    const categorySchemeKey = `${scheme.name}_${fieldName}`;
+                    if (!point.categoryFrequency[categorySchemeKey]) point.categoryFrequency[categorySchemeKey] = {};
+
+                    const displayValue = formatDisplayValue(fieldValue, scheme);
+                    const categoryKey = String(displayValue ?? 'N/A');
+
+                    point.categoryFrequency![categorySchemeKey][categoryKey] =
+                      (point.categoryFrequency![categorySchemeKey][categoryKey] || 0) + 1;
+                }
+            } // --- End of field loop ---
         }
     });
 
     // Convert to array and sort by date
     const chartData = Object.values(groupedData).sort((a, b) => a.timestamp - b.timestamp);
+
+    // --- ADD LOGGING --- 
+    console.log("[Chart] Final Processed Chart Data:", chartData);
+    // --- END LOGGING ---
+
+    // --- Post-processing (Optional): Clean up temporary keys if needed --- 
+    chartData.forEach(point => {
+        schemes.forEach(scheme => {
+             // Clean up keys used for calculating the primary line average
+             // --- MODIFIED: Clean up keys for each field --- 
+             scheme.fields.forEach(field => {
+                 if (field.type === 'int') {
+                     const cleanupKey = `${scheme.name}_${field.name}`;
+                     delete point[`${cleanupKey}_countForAvg`];
+                     delete point[`${cleanupKey}_sumForAvg`];
+                     delete point[`${cleanupKey}_sum`]; // Also cleanup stat helpers
+                 }
+             });
+             // --- END MODIFICATION ---
+        });
+    });
+    // --- End Post-processing ---
+
     console.log("[Chart] Processed data count:", chartData.length);
+    // console.log("[Chart] Sample processed point:", chartData[0]); // Uncomment for debugging
     return chartData;
 };
 
@@ -644,9 +714,34 @@ const processGroupedChartData = (
     return groupedData;
 };
 
+const tooltipStyle = `
+  .recharts-tooltip-wrapper {
+    max-height: 18rem; /* Corresponds to max-h-72 */
+    overflow-y: auto !important; /* Force overflow */
+    /* Add some scrollbar styling if desired */
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: hsl(var(--muted)) hsl(var(--background)); /* Firefox */
+  }
+  .recharts-tooltip-wrapper::-webkit-scrollbar {
+    width: 6px;
+  }
+  .recharts-tooltip-wrapper::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+    border-radius: 3px;
+  }
+  .recharts-tooltip-wrapper::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted));
+    border-radius: 3px;
+    border: 1px solid hsl(var(--background));
+  }
+`;
+
+// --- Add state for tooltip hover tracking ---
+type TooltipHoverSetter = (isHovered: boolean) => void;
+
 const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSources, dataRecords, onDataRecordSelect, onDataPointClick, filters, timeAxisConfig }) => {
   const [isGrouped, setIsGrouped] = useState(false);
-  const [showStatistics, setShowStatistics] = useState(false);
+  const [showStatistics, setShowStatistics] = useState(true);
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   
@@ -657,14 +752,8 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
   );
 
   // --- State for Grouping Selection ---
-  const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(schemes[0]?.id ?? null);
-  const [groupingFieldKey, setGroupingFieldKey] = useState<string | null>(() => {
-      if (schemes.length > 0 && groupingSchemeId !== null) {
-        const initialKeys = getTargetKeysForScheme(groupingSchemeId, schemes);
-        return initialKeys.length > 0 ? initialKeys[0].key : null;
-      }
-      return null;
-  });
+  const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(null);
+  const [groupingFieldKey, setGroupingFieldKey] = useState<string | null>(null);
 
   // Update field key when scheme changes
   useEffect(() => {
@@ -685,6 +774,26 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
     schemes.filter(scheme => selectedSchemaIds.includes(scheme.id)),
     [schemes, selectedSchemaIds]
   );
+
+  // --- NEW: Generate list of plottable field keys --- 
+  const plottableFieldKeys = useMemo(() => {
+      const keys: { key: string; name: string; color: string }[] = [];
+      let colorIndex = 0;
+      filteredSchemes.forEach(scheme => {
+          scheme.fields.forEach(field => {
+              if (field.type === 'int') {
+                  keys.push({
+                      key: `${scheme.name}_${field.name}`,
+                      name: `${scheme.name}: ${field.name}`, // Name for legend/tooltip
+                      color: colorPalette[colorIndex % colorPalette.length]
+                  });
+                  colorIndex++;
+              }
+          });
+      });
+      return keys;
+  }, [filteredSchemes]);
+  // --- END NEW --- 
 
   // Memoize the DataRecord map here
   const dataRecordsMap = useMemo(() => dataRecords ? new Map(dataRecords.map(dr => [dr.id, dr])) : undefined, [dataRecords]);
@@ -731,7 +840,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
       const lineData = processLineChartData(filteredResults, schemes, dataRecordsMap, timeAxisConfig, 'day');
       return { chartData: lineData, groupedData: [], maxGroupCount: 'auto' }; // 'auto' for line chart Y-axis
     }
-  }, [results, schemes, isGrouped, dataRecords, filters, groupingSchemeId, groupingFieldKey, timeAxisConfig]);
+  }, [results, schemes, isGrouped, dataRecordsMap, filters, groupingSchemeId, groupingFieldKey, timeAxisConfig]);
 
   // Determine which data source to use based on the switch
   const displayData = isGrouped ? groupedData : chartData;
@@ -756,6 +865,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
 
     if (point) {
       setSelectedPoint(point);
+      setIsDialogOpen(true);
       if (onDataPointClick) {
         onDataPointClick(point);
       }
@@ -799,7 +909,7 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
         name={`${scheme.name} (min/max range)`}
         isAnimationActive={false}
       >
-        <YAxis yAxisId={0} domain={["auto", "auto"]} />
+        <YAxis yAxisId={0} domain={[0, (dataMax: number) => Math.max(dataMax || 0, 10)]} />
         {/* Using the _max value for the upper bound of the area */}
         <YAxis yAxisId={1} orientation="right" domain={[0, 10]} />
       </Area>
@@ -812,8 +922,60 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
     setSelectedSchemaIds(schemaIds);
   }, []);
 
+  // State for selected fields per scheme (for Table/Display) - KEEP THIS
+  const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
+    const initialState: Record<number, string[]> = {};
+    schemes.forEach(scheme => {
+      initialState[scheme.id] = scheme.fields.map(f => f.name);
+    });
+    return initialState;
+  });
+
+  // --- NEW: State for selected keys to PLOT on the line chart ---
+  // Initialize with all plottable keys from initially selected schemes
+  const [selectedPlotKeys, setSelectedPlotKeys] = useState<string[]>(() => {
+      const initialKeys: string[] = [];
+      schemes
+        .filter(scheme => selectedSchemaIds.includes(scheme.id)) // Use initially selected schemes
+        .forEach(scheme => {
+          scheme.fields.forEach(field => {
+              if (field.type === 'int') {
+                  initialKeys.push(`${scheme.name}_${field.name}`);
+              }
+          });
+      });
+      // Ensure at least one key is selected initially if possible
+      return initialKeys.length > 0 ? initialKeys : [];
+  });
+  // --- END NEW ---
+
+  // --- NEW: Effect to sync selectedPlotKeys with available plottableFieldKeys ---
+  useEffect(() => {
+      const availableKeysSet = new Set(plottableFieldKeys.map(k => k.key));
+      const currentlySelected = selectedPlotKeys;
+      let newSelectedKeys = currentlySelected.filter(key => availableKeysSet.has(key));
+
+      // If no valid keys remain selected OR if no keys were selected initially,
+      // try to select the first available key.
+      if ((newSelectedKeys.length === 0 || currentlySelected.length === 0) && plottableFieldKeys.length > 0) {
+          newSelectedKeys = [plottableFieldKeys[0].key];
+      }
+
+      // Only update state if the selection actually changed
+      if (JSON.stringify(newSelectedKeys) !== JSON.stringify(currentlySelected)) {
+          setSelectedPlotKeys(newSelectedKeys);
+      }
+  }, [plottableFieldKeys, selectedPlotKeys]); // Rerun when available keys or current selection changes
+  // --- END NEW ---
+
+  // --- NEW: State to track if the mouse is over the custom tooltip ---
+  const [isTooltipHovered, setIsTooltipHovered] = useState(false);
+
   return (
     <div>
+      {/* Inject the style */}
+      <style>{tooltipStyle}</style> 
+
       {/* --- Chart Controls --- */}
       <div className="flex flex-wrap items-center gap-4 mb-4 p-3 rounded-md ">
         {/* Group Toggle */}
@@ -838,63 +1000,128 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
           </div>
         )}
 
-        {/* Schema Selection (only when not in group mode) */}
-        {!isGrouped && schemes.length > 1 && (
-          <div className="flex items-center gap-2">
-            <UiLabel htmlFor="schema-select" className="text-sm">Schemas to plot:</UiLabel>
-            <div className="flex flex-wrap gap-1 max-w-[50vw]">
-              {schemes.map(scheme => (
-                <Button
-                  key={scheme.id}
-                  variant={selectedSchemaIds.includes(scheme.id) ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    if (selectedSchemaIds.includes(scheme.id)) {
-                      // Don't allow deselecting the last schema
-                      if (selectedSchemaIds.length > 1) {
-                        setSelectedSchemaIds(selectedSchemaIds.filter(id => id !== scheme.id));
-                      }
-                    } else {
-                      setSelectedSchemaIds([...selectedSchemaIds, scheme.id]);
-                    }
-                  }}
-                  className="text-xs px-2 py-1 h-auto"
-                >
-                  {scheme.name}
-                </Button>
-              ))}
-              {/* Show "Select All" button only if not all schemas are selected */}
-              {selectedSchemaIds.length < schemes.length && (
-                <Button 
-                  variant="secondary" 
-                  size="sm" 
-                  onClick={() => setSelectedSchemaIds(schemes.map(s => s.id))}
-                  className="text-xs px-2 py-1 h-auto"
-                >
-                  Select All
-                </Button>
-              )}
-              {/* Show "Clear All" button only if more than one schema is selected */}
-              {selectedSchemaIds.length > 1 && (
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => {
-                    // Always keep at least one schema selected
-                    if (schemes.length > 0) {
-                      setSelectedSchemaIds([schemes[0].id]);
-                    }
-                  }}
-                  className="text-xs px-2 py-1 h-auto"
-                >
-                  Clear All
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
+        {/* --- MODIFIED: Consolidated Plot Configuration Popover --- */}
+        {!isGrouped && schemes.length > 0 && ( 
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="flex items-center gap-1.5 text-xs">
+                <Settings2 className="h-3.5 w-3.5" />
+                Configure Plotted Data ({selectedPlotKeys.length} fields)
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-0" align="start">
+              <div className="p-2 font-semibold text-sm border-b">Configure Plotted Data</div>
+              <ScrollArea className="max-h-[400px]">
+                <div className="p-3 space-y-3">
+                  {schemes.map((scheme) => {
+                    const schemeIsSelected = selectedSchemaIds.includes(scheme.id);
+                    const fieldsInScheme = scheme.fields.filter(f => f.type === 'int');
+                    const plottableKeysInScheme = fieldsInScheme.map(f => `${scheme.name}_${f.name}`);
+                    const allFieldsInSchemeSelected = plottableKeysInScheme.every(key => selectedPlotKeys.includes(key));
+                    const someFieldsInSchemeSelected = plottableKeysInScheme.some(key => selectedPlotKeys.includes(key));
 
-        {/* Scheme Selector (only show when grouping) */}
+                    if (fieldsInScheme.length === 0) return null; // Don't show schemes with no int fields
+
+                    return (
+                      <div key={scheme.id} className="border rounded-md p-2 space-y-1.5 bg-muted/30">
+                        {/* Scheme Toggle Header */}
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`scheme-toggle-${scheme.id}`}
+                            checked={schemeIsSelected && someFieldsInSchemeSelected} // Checked if scheme active and at least one field shown
+                            // Indeterminate state might be complex to implement here, stick to simple checked/unchecked
+                            onCheckedChange={(checked) => {
+                              const currentSchemeKeys = scheme.fields
+                                .filter(f => f.type === 'int')
+                                .map(f => `${scheme.name}_${f.name}`);
+                              
+                              let newSelectedPlotKeys = [...selectedPlotKeys];
+                              let newSelectedSchemeIds = [...selectedSchemaIds];
+
+                              if (checked) {
+                                // Add all keys for this scheme & ensure scheme ID is selected
+                                newSelectedPlotKeys = [...new Set([...newSelectedPlotKeys, ...currentSchemeKeys])];
+                                newSelectedSchemeIds = [...new Set([...newSelectedSchemeIds, scheme.id])];
+                              } else {
+                                // Remove all keys for this scheme & potentially remove scheme ID
+                                newSelectedPlotKeys = newSelectedPlotKeys.filter(key => !currentSchemeKeys.includes(key));
+                                // Ensure at least one key remains globally selected if possible
+                                const totalAvailableKeys = plottableFieldKeys.map(k => k.key);
+                                if (newSelectedPlotKeys.length === 0 && totalAvailableKeys.length > 0) {
+                                    // Find the first key not in the scheme being deselected
+                                    const fallbackKey = totalAvailableKeys.find(k => !currentSchemeKeys.includes(k));
+                                    if(fallbackKey) newSelectedPlotKeys = [fallbackKey];
+                                    // If no other keys exist, keep the first key of the current scheme
+                                    else if (currentSchemeKeys.length > 0) newSelectedPlotKeys = [currentSchemeKeys[0]];
+                                }
+                                
+                                // Update scheme selection based on remaining plot keys
+                                const remainingSchemeIds = new Set(newSelectedPlotKeys.map(k => k.split('_')[0])); 
+                                newSelectedSchemeIds = schemes.filter(s => remainingSchemeIds.has(s.name)).map(s => s.id);
+                              }
+                              setSelectedPlotKeys(newSelectedPlotKeys);
+                              setSelectedSchemaIds(newSelectedSchemeIds);
+                            }}
+                          />
+                          <UiLabel htmlFor={`scheme-toggle-${scheme.id}`} className="text-sm font-medium flex-1 truncate cursor-pointer">
+                            {scheme.name}
+                          </UiLabel>
+                        </div>
+
+                        {/* Field Toggles within Scheme */}
+                        <div className="pl-6 space-y-1">
+                          {fieldsInScheme.map((field) => {
+                            const fieldKey = `${scheme.name}_${field.name}`;
+                            const fieldInfo = plottableFieldKeys.find(k => k.key === fieldKey);
+                            const isSelected = selectedPlotKeys.includes(fieldKey);
+                            return (
+                              <div key={fieldKey} className="flex items-center space-x-2">
+                                <Checkbox
+                                  id={`plot-key-toggle-${fieldKey}`}
+                                  checked={isSelected}
+                                  onCheckedChange={(checked) => {
+                                      let newSelection = [...selectedPlotKeys];
+                                      if (checked && !isSelected) {
+                                          newSelection.push(fieldKey);
+                                      } else if (!checked && isSelected) {
+                                          // Prevent deselecting the last one globally
+                                          if (selectedPlotKeys.length > 1) {
+                                              newSelection = newSelection.filter(k => k !== fieldKey);
+                                          }
+                                      }
+                                      setSelectedPlotKeys(newSelection);
+                                      // Also ensure parent scheme is selected if any field is
+                                      if (checked && !selectedSchemaIds.includes(scheme.id)) {
+                                          setSelectedSchemaIds([...selectedSchemaIds, scheme.id]);
+                                      }
+                                  }}
+                                  disabled={selectedPlotKeys.length === 1 && isSelected}
+                                />
+                                <UiLabel
+                                  htmlFor={`plot-key-toggle-${fieldKey}`}
+                                  className="text-xs font-normal flex-1 truncate cursor-pointer"
+                                  title={field.name}
+                                >
+                                  {field.name}
+                                </UiLabel>
+                                {fieldInfo && (
+                                    <div className="h-3 w-3 rounded-full shrink-0 ml-auto" style={{ backgroundColor: fieldInfo.color }}></div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </PopoverContent>
+          </Popover>
+        )}
+        {/* --- END MODIFIED --- */}
+
+        {/* Grouping Scheme Selector (when grouping) */}
         {isGrouped && (
           <div className="flex items-center gap-2">
             <UiLabel htmlFor="group-scheme-select" className="text-sm">Scheme:</UiLabel>
@@ -972,7 +1199,13 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
                   allowDataOverflow={true}
                   label={{ value: "Count", angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                 />
-                <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} dataSources={dataSources} results={results} showStatistics={showStatistics} />} />
+                <Tooltip
+                   active={!isTooltipHovered} // Recharts tooltip inactive when custom one is hovered
+                   cursor={{ fill: 'transparent' }} // Make default cursor invisible
+                   wrapperStyle={{ zIndex: 100, pointerEvents: 'none' }} // Prevent Recharts wrapper from interfering
+                   content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} dataSources={dataSources} results={results} showStatistics={showStatistics} dataRecordsMap={dataRecordsMap} setIsTooltipHovered={setIsTooltipHovered} />}
+                   isAnimationActive={false} // Prevent animation delays
+                />
                 <Legend payload={[]} />
                 <Bar dataKey="count" isAnimationActive={false}>
                   {displayData.map((entry, index) => (
@@ -990,93 +1223,102 @@ const ClassificationResultsChart: React.FC<Props> = ({ results, schemes, dataSou
                 {/* <CartesianGrid strokeDasharray="3 3" /> */}
                 <XAxis dataKey="dateString" angle={-15} textAnchor="end" height={50} />
                 <YAxis
-                  domain={[0, 'auto']}
-                  allowDataOverflow={false}
+                  domain={[0, (dataMax: number) => Math.max(dataMax || 0, 10)]} // Ensure y-axis goes at least to 10
+                  allowDataOverflow={true}
                   width={60}
                 />
-                <Tooltip content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} dataSources={dataSources} results={results} showStatistics={showStatistics} />} />
+                <Tooltip
+                  active={!isTooltipHovered} // Recharts tooltip inactive when custom one is hovered
+                  cursor={{ fill: 'transparent' }} // Make default cursor invisible
+                  wrapperStyle={{ zIndex: 100, pointerEvents: 'none' }} // Prevent Recharts wrapper from interfering
+                  content={<CustomTooltip isGrouped={isGrouped} schemes={schemes} dataSources={dataSources} results={results} showStatistics={showStatistics} dataRecordsMap={dataRecordsMap} setIsTooltipHovered={setIsTooltipHovered} />}
+                  isAnimationActive={false} // Prevent animation delays
+                />
                 <Legend />
                 
                 {/* Render individual points or statistics based on toggle */}
-                {filteredSchemes.map((scheme, index) => {
-                  // Check if we have any data for this scheme
-                  const hasData = displayData.some(point => {
-                    const value = point[scheme.name];
-                    return value !== undefined && value !== null;
-                  });
-                  
-                  console.log(`Scheme ${scheme.name} has data: ${hasData}`);
-                  
-                  if (!hasData) return null;
-                  
-                  // Get unique color for this scheme
-                  const schemeColor = colorPalette[index % colorPalette.length];
-                  
-                  // If showing statistics and we have min/max data, render area + avg line
-                  if (showStatistics) {
-                    // --- MODIFIED: Check for stats AND if scheme is numerical ---
-                    const isNumericalScheme = scheme.fields[0]?.type === 'int'; // Add float etc. if needed
-                    const hasStats = isNumericalScheme && displayData.some(point => {
-                      return (
-                        point[`${scheme.name}_min`] !== undefined && 
-                        point[`${scheme.name}_max`] !== undefined && 
-                        point[`${scheme.name}_avg`] !== undefined
-                      );
+                {plottableFieldKeys
+                  .filter(fieldInfo => selectedPlotKeys.includes(fieldInfo.key)) // Filter based on state
+                  .map((fieldInfo) => {
+                    const dataKey = fieldInfo.key;
+                    const legendName = fieldInfo.name;
+                    const lineColor = fieldInfo.color;
+
+                    // Check if we have any data for this specific field key
+                    const hasData = displayData.some(point => {
+                      const value = point[dataKey];
+                      return value !== undefined && value !== null && !isNaN(Number(value)); // Check if it's a plottable number
                     });
-                    // --- END MODIFICATION ---
                     
-                    if (hasStats) {
-                      return (
-                        <React.Fragment key={`stats-${scheme.id}`}>
-                          {/* Create a reference area between min and max */}
-                          <Area
-                            type="monotone"
-                            dataKey={`${scheme.name}_min`}
-                            stroke="none"
-                            fillOpacity={0}
-                            name={`${scheme.name} (min)`}
-                            isAnimationActive={false}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey={`${scheme.name}_max`}
-                            stroke="none"
-                            fillOpacity={0.2}
-                            fill={schemeColor}
-                            name={`${scheme.name} (range)`}
-                            isAnimationActive={false}
-                          />
-                          
-                          {/* Average Line */}
-                          <Line
-                            type="monotone"
-                            dataKey={`${scheme.name}_avg`}
-                            stroke={schemeColor}
-                            strokeWidth={3}
-                            dot={renderDot}
-                            name={`${scheme.name} (avg)`}
-                            isAnimationActive={false}
-                            strokeOpacity={0.8}
-                          />
-                        </React.Fragment>
-                      );
+                    console.log(`Field Key ${dataKey} has data: ${hasData}`); // Log per field
+                    
+                    if (!hasData) return null;
+                    
+                    // If showing statistics and we have min/max data for this field key
+                    if (showStatistics) {
+                      const hasStats = displayData.some(point => {
+                        return (
+                          point[`${dataKey}_min`] !== undefined && 
+                          point[`${dataKey}_max`] !== undefined && 
+                          point[`${dataKey}_avg`] !== undefined
+                        );
+                      });
+                      
+                      if (hasStats) {
+                        return (
+                          <React.Fragment key={`stats-${dataKey}`}>
+                            {/* Min value area (invisible line essentially) */}
+                            <Area
+                              type="monotone"
+                              dataKey={`${dataKey}_min`}
+                              stroke="none"
+                              fillOpacity={0} // Make it invisible
+                              name={`${legendName} (min)`} // Use combined name
+                              isAnimationActive={false}
+                            />
+                            {/* Area between min and max */}
+                            <Area
+                              type="monotone"
+                              dataKey={`${dataKey}_max`} // Upper bound is max
+                              stroke="none"
+                              fillOpacity={0.2}
+                              fill={lineColor} // Use specific color
+                              name={`${legendName} (range)`} // Use combined name
+                              isAnimationActive={false}
+                            />
+                            
+                            {/* Average Line */}
+                            <Line
+                              type="monotone"
+                              dataKey={`${dataKey}_avg`}
+                              stroke={lineColor} // Use specific color
+                              strokeWidth={3}
+                              dot={renderDot}
+                              name={`${legendName} (avg)`} // Use combined name
+                              isAnimationActive={false}
+                              strokeOpacity={0.8}
+                            />
+                          </React.Fragment>
+                        );
+                      }
                     }
-                  }
-                  
-                  // Default: render individual points as a line
-                  return (
-                    <Line
-                      key={`line-${scheme.id}`}
-                      type="monotone"
-                      dataKey={scheme.name}
-                      stroke={schemeColor}
-                      strokeWidth={3}
-                      dot={renderDot}
-                      isAnimationActive={false}
-                      strokeOpacity={0.8}
-                    />
-                  );
-                })}
+                    
+                    // Default: render individual points as a line for the field
+                    return (
+                      <Line
+                        key={`line-${dataKey}`}
+                        type="monotone"
+                        dataKey={dataKey} // Use the specific field data key
+                        name={legendName} // Use combined name for legend
+                        stroke={lineColor} // Use specific color
+                        strokeWidth={3}
+                        dot={renderDot}
+                        activeDot={{ r: 6 }} // Add active dot styling
+                        isAnimationActive={false}
+                        strokeOpacity={0.8}
+                      />
+                    );
+                  })}
                 
                 {/* --- MODIFIED: Conditionally render ReferenceDot --- */}
                 {!isGrouped && selectedPoint && 'dateString' in selectedPoint && (
@@ -1134,24 +1376,45 @@ interface CustomTooltipProps extends TooltipProps<number, string> {
   dataSources?: DataSourceRead[];
   results: FormattedClassificationResult[];
   showStatistics?: boolean;
+  dataRecordsMap?: Map<number, DataRecordRead>;
+  // --- NEW: Prop to receive the state setter ---
+  setIsTooltipHovered: TooltipHoverSetter;
 }
 
-const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, isGrouped, schemes, dataSources, results, showStatistics }) => {
-  if (!active || !payload || !payload.length) return null;
-  
+const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, isGrouped, schemes, dataSources, results, showStatistics, dataRecordsMap, setIsTooltipHovered }) => {
+  // --- MODIFIED: Use Recharts 'active' prop to decide rendering, but control hover state independently ---
+  if (!active || !payload || !payload.length) {
+    // If Recharts thinks it's inactive, ensure our hover state is also false
+    // Use effect to avoid direct state update during render
+    React.useEffect(() => {
+      setIsTooltipHovered(false);
+    }, [active, setIsTooltipHovered]);
+    return null;
+  }
+  // --- END MODIFICATION ---
+
   const dataPoint = payload[0]?.payload as ChartDataPoint | GroupedDataPoint | undefined;
   if (!dataPoint) return null;
   
   const relevantDocIds = ('documents' in dataPoint) ? dataPoint.documents : []; 
-  const dataRecordsToShow = relevantDocIds.map(id => ({ id }));
-
-  // Helper type guard to check if it's a ChartDataPoint
+  const dataRecordsToShow = relevantDocIds
+    .map(id => dataRecordsMap?.get(id))
+    .filter((rec): rec is DataRecordRead => !!rec);
+  
   const isChartDataPoint = (point: any): point is ChartDataPoint => {
-    return point && typeof point === 'object' && 'dateString' in point && 'stats' in point && 'categoryFrequency' in point;
+    return point && typeof point === 'object' && 'dateString' in point;
   };
   
   return (
-    <div className="custom-tooltip bg-card/95 p-3 border border-border rounded-lg shadow-lg max-w-md">
+    <div 
+      className={cn(
+        "max-h-72 overflow-y-auto bg-card/95 p-3 border border-border rounded-lg shadow-lg max-w-md",
+        "overscroll-behavior-contain pointer-events-auto z-50" // Added overscroll, pointer-events, and z-index
+      )}
+      // Stop scroll events from bubbling up *within* the tooltip
+      onWheel={(e) => e.stopPropagation()}
+      // --- END MODIFICATION ---
+    >
       <div className="mb-3 pb-2 border-b border-border">
         <p className="text-sm font-semibold text-foreground">
           {isGrouped && 'valueString' in dataPoint
@@ -1163,129 +1426,109 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label, i
         </p>
       </div>
 
-      {/* --- Statistics Section --- */}
-      {/* FIX: Use type guard before accessing stats */}
-      {!isGrouped && showStatistics && isChartDataPoint(dataPoint) && dataPoint.stats && (
-        <div className="mb-3 pb-2 border-b border-border">
-          <p className="text-sm font-medium mb-2">Statistics:</p>
-          <div className="grid grid-cols-1 gap-2">
-            {schemes.map(scheme => {
-              const schemeName = scheme.name; 
-              const minKey = `${schemeName}_min`;
-              const maxKey = `${schemeName}_max`;
-              const avgKey = `${schemeName}_avg`;
-              const countKey = `${schemeName}_count`;
-              
-              // Access stats safely now
-              if (!(avgKey in dataPoint.stats!)) return null; 
-              
-              const statsData = {
-                min: dataPoint.stats![minKey],
-                max: dataPoint.stats![maxKey],
-                avg: dataPoint.stats![avgKey],
-                count: dataPoint.stats![countKey]
-              };
-              
-              // Ensure properties are numbers before using number methods
-              const count = typeof statsData.count === 'number' ? statsData.count : 0;
-              const min = typeof statsData.min === 'number' ? statsData.min : NaN;
-              const max = typeof statsData.max === 'number' ? statsData.max : NaN;
-              const avg = typeof statsData.avg === 'number' ? statsData.avg : NaN;
+      <div className="space-y-3">
+        {/* --- Statistics Section --- */}
+        {!isGrouped && showStatistics && isChartDataPoint(dataPoint) && (
+          <div className="pb-2 border-b border-border last:border-b-0">
+            <p className="text-sm font-medium mb-2">Statistics:</p>
+            <div className="grid grid-cols-1 gap-2">
+              {schemes
+                .flatMap(scheme => // Flatten fields with their schemes
+                   scheme.fields.map(field => ({ scheme, field }))
+                )
+                .filter(({ scheme, field }) => {
+                  // Check if stats keys exist for this scheme-field combination
+                  const avgKey = `${scheme.name}_${field.name}_avg`;
+                  const minKey = `${scheme.name}_${field.name}_min`;
+                  const maxKey = `${scheme.name}_${field.name}_max`;
+                  // Check if *all* stats keys are defined and numeric
+                  return dataPoint[avgKey] !== undefined && !isNaN(Number(dataPoint[avgKey])) &&
+                         dataPoint[minKey] !== undefined && !isNaN(Number(dataPoint[minKey])) &&
+                         dataPoint[maxKey] !== undefined && !isNaN(Number(dataPoint[maxKey]));
+                })
+                .map(({ scheme, field }) => {
+                  const schemeName = scheme.name;
+                  const fieldName = field.name;
+                  const baseKey = `${schemeName}_${fieldName}`;
+                  const minKey = `${baseKey}_min`;
+                  const maxKey = `${baseKey}_max`;
+                  const avgKey = `${baseKey}_avg`;
+                  const countKey = `${baseKey}_count`;
+                  const min = dataPoint[minKey] as number | null;
+                  const max = dataPoint[maxKey] as number | null;
+                  const avg = dataPoint[avgKey] as number | null;
+                  const count = dataPoint[countKey] as number | null;
+                  return (
+                    <div key={baseKey} className="px-2 py-1.5 bg-muted/30 rounded-sm">
+                       <p className="text-sm font-medium mb-1 truncate" title={`${schemeName}: ${fieldName}`}>{schemeName}: {fieldName}</p>
+                       <div className="grid grid-cols-3 gap-1 text-xs">
+                         <div className="flex flex-col items-center p-1 bg-blue-500/10 rounded"><span className="text-blue-500 font-semibold">Min</span><span>{(min !== null && !isNaN(min)) ? min.toFixed(1) : 'N/A'}</span></div>
+                         <div className="flex flex-col items-center p-1 bg-green-500/10 rounded"><span className="text-green-500 font-semibold">Avg</span><span>{(avg !== null && !isNaN(avg)) ? avg.toFixed(1) : 'N/A'}</span></div>
+                         <div className="flex flex-col items-center p-1 bg-red-500/10 rounded"><span className="text-red-500 font-semibold">Max</span><span>{(max !== null && !isNaN(max)) ? max.toFixed(1) : 'N/A'}</span></div>
+                       </div>
+                       {(count !== null && !isNaN(count)) && (<p className="text-xs text-muted-foreground mt-1 text-center">({count} value{count !== 1 ? 's' : ''})</p>)}
+                    </div>
+                  );
+              })}
+            </div>
+          </div>
+        )}
 
-              if (count === 0) return null;
+        {/* --- Top Categories Section --- */}
+        {!isGrouped && isChartDataPoint(dataPoint) && dataPoint.categoryFrequency && Object.keys(dataPoint.categoryFrequency).length > 0 && (
+          <div className="pb-2 border-b border-border last:border-b-0">
+            <p className="text-sm font-medium mb-2">Most Frequent Items:</p>
+            <div className="grid grid-cols-1 gap-2">
+              {Object.entries(dataPoint.categoryFrequency)
+                 .filter(([_, categories]) => typeof categories === 'object' && categories !== null && Object.keys(categories).length > 0)
+                 .map(([schemeFieldKey, categories]) => {
+                     const [schemeName, fieldName] = schemeFieldKey.split('_');
+                     if (!schemeName || !fieldName) return null;
+                     const topCategories = Object.entries(categories)
+                         .filter(([_, count]) => typeof count === 'number')
+                         .sort(([, countA], [, countB]) => (countB as number) - (countA as number))
+                         .slice(0, 3);
+                     if (topCategories.length === 0) return null;
+                     const originalScheme = schemes.find(s => s.name === schemeName);
+                     return (
+                         <div key={schemeFieldKey} className="px-2 py-1.5 bg-muted/30 rounded-sm">
+                             <p className="text-sm font-medium mb-1 truncate" title={`${originalScheme?.name ?? schemeName}: ${fieldName}`}>{originalScheme?.name ?? schemeName}: {fieldName}</p>
+                             <div className="space-y-1">
+                                 {topCategories.map(([category, count], idx) => (
+                                     <div key={idx} className="flex justify-between items-center text-xs">
+                                         <span className="font-medium truncate max-w-[70%]" title={category === '[object Object]' ? JSON.stringify(category) : category}>{category === '[object Object]' ? 'Complex Value' : category}</span>
+                                         <span className="bg-primary/20 px-1.5 py-0.5 rounded-full">{count as number}</span>
+                                     </div>
+                                 ))}
+                             </div>
+                         </div>
+                     );
+                 })}
+            </div>
+          </div>
+        )}
 
-              return (
-                <div key={schemeName} className="px-2 py-1.5 bg-muted/30 rounded-sm">
-                  <p className="text-sm font-medium mb-1">{schemeName}:</p>
-                  <div className="grid grid-cols-3 gap-1 text-xs">
-                    <div className="flex flex-col items-center p-1 bg-blue-500/10 rounded">
-                      <span className="text-blue-500 font-semibold">Min</span>
-                      <span>{!isNaN(min) ? min.toFixed(1) : 'N/A'}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-1 bg-green-500/10 rounded">
-                      <span className="text-green-500 font-semibold">Avg</span>
-                      <span>{!isNaN(avg) ? avg.toFixed(1) : 'N/A'}</span>
-                    </div>
-                    <div className="flex flex-col items-center p-1 bg-red-500/10 rounded">
-                      <span className="text-red-500 font-semibold">Max</span>
-                      <span>{!isNaN(max) ? max.toFixed(1) : 'N/A'}</span>
-                    </div>
-                  </div>
-                   <p className="text-xs text-muted-foreground mt-1 text-center">
-                      {count} data point{count !== 1 ? 's' : ''}
-                    </p>
+        {/* Documents List */}
+        {dataRecordsToShow.length > 0 && (
+          <div className="pb-1">
+            <p className="text-sm font-medium mb-2">Documents:</p>
+            <div className="space-y-1 pr-1">
+              {dataRecordsToShow.slice(0, 5).map((rec) => (
+                <div key={rec.id} className="flex items-center px-2 py-1 bg-muted/20 rounded-sm">
+                  <span className="text-xs truncate">
+                    <DocumentLink documentId={rec.id}>{rec.title ? rec.title : `ID: ${rec.id}`}</DocumentLink>
+                  </span>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* --- Top Categories Section --- */}
-      {/* FIX: Use type guard before accessing categoryFrequency */}
-      {!isGrouped && isChartDataPoint(dataPoint) && dataPoint.categoryFrequency && (
-        <div className="mb-3 pb-2 border-b border-border">
-          <p className="text-sm font-medium mb-2">Most Frequent Items:</p>
-          <div className="grid grid-cols-1 gap-2">
-            {schemes.map(scheme => {
-              const schemeName = scheme.name;
-              // Access categories safely now
-              const categories = dataPoint.categoryFrequency?.[schemeName]; 
-              
-              if (!categories || typeof categories !== 'object' || categories === null || Object.keys(categories).length === 0) return null;
-              
-              // FIX: Ensure category entries are correctly typed
-              const topCategories = Object.entries(categories)
-                .filter(([_, count]) => typeof count === 'number') // Ensure count is a number
-                .sort(([, countA], [, countB]) => (countB as number) - (countA as number)) // Type assertion for sort
-                .slice(0, 3);
-              
-              if (topCategories.length === 0) return null;
-              
-              return (
-                <div key={schemeName} className="px-2 py-1.5 bg-muted/30 rounded-sm">
-                  <p className="text-sm font-medium mb-1">{schemeName}:</p>
-                  <div className="space-y-1">
-                    {topCategories.map(([category, count], idx) => (
-                      <div key={idx} className="flex justify-between items-center text-xs">
-                        <span className="font-medium truncate max-w-[70%]" title={category}>
-                          {category}
-                        </span>
-                        <span className="bg-primary/20 px-1.5 py-0.5 rounded-full text-primary-foreground">
-                          {/* FIX: Render the numeric count */}
-                          {count as number} 
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+              ))}
+              {dataRecordsToShow.length > 5 && (
+                <div className="text-xs text-muted-foreground italic text-center mt-1">
+                  ...and {dataRecordsToShow.length - 5} more record{dataRecordsToShow.length - 5 !== 1 ? 's' : ''}
                 </div>
-              );
-            })}
+              )}
+            </div>
           </div>
-        </div>
-      )}
-       {/* Documents List (unchanged) */}
-       {dataRecordsToShow.length > 0 && (
-        <div>
-          <p className="text-sm font-medium mb-2">Documents:</p>
-          <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-            {dataRecordsToShow.slice(0, 5).map((rec) => (
-              <div key={rec.id} className="flex items-center px-2 py-1 bg-muted/20 rounded-sm">
-                <span className="text-xs truncate">
-                  <DocumentLink documentId={rec.id}>
-                    Record {rec.id}
-                  </DocumentLink>
-                </span>
-              </div>
-            ))}
-            {dataRecordsToShow.length > 5 && (
-              <div className="text-xs text-muted-foreground italic text-center mt-1">
-                ...and {dataRecordsToShow.length - 5} more record{dataRecordsToShow.length - 5 !== 1 ? 's' : ''}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
@@ -1304,25 +1547,27 @@ const DocumentResults: React.FC<{
   // Helper to get results for a specific doc ID relevant to the selected point/group
   const getRelevantResultsForRecord = (recordId: number): FormattedClassificationResult[] => {
     if ('dateString' in selectedPoint) {
+      // Logic for line chart (by date) - unchanged
       return results.filter(r =>
         r.datarecord_id === recordId &&
-        schemes.some(as => as.id === r.scheme_id)
+        schemes.some(as => as.id === r.scheme_id) // Show all relevant schemes for the date
       );
     } else if ('valueString' in selectedPoint) {
+      // Logic for bar chart (grouped by value)
       const pointData = selectedPoint as GroupedDataPoint;
       const relevantSchemeRead = schemes.find(s => s.name === pointData.schemeName);
       if (!relevantSchemeRead) return [];
 
-      // Adapter usage should be correct if imported at the top level
-      const adaptedScheme = adaptSchemeReadToScheme(relevantSchemeRead);
-
-      const specificResult = results.find(r =>
+      // --- MODIFIED ---
+      // Simply find all results for the document ID that match the grouping scheme ID.
+      // We trust that this document was part of the group already.
+      const allResultsForDocAndScheme = results.filter(r =>
         r.datarecord_id === recordId &&
-        r.scheme_id === relevantSchemeRead.id &&
-        // Use formatDisplayValue from utils
-        String(formatDisplayValue(r.value, relevantSchemeRead)) === String(pointData.valueKey)
+        r.scheme_id === relevantSchemeRead.id
       );
-      return specificResult ? [specificResult] : [];
+      // --- END MODIFICATION ---
+
+      return allResultsForDocAndScheme; // Return all results for this doc+scheme
     }
     return [];
   };
@@ -1381,6 +1626,7 @@ const DocumentResults: React.FC<{
           <div key={recId} className="pb-2">
             <div className="mb-3">
               <span className="font-medium">Record ID: </span>
+              {dataRecords?.find(dr => dr.id === recId)?.title}
               <DocumentLink documentId={recId}>
                 {recId}
               </DocumentLink>

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import DocumentDetailView from './DocumentDetailView';
+import DocumentDetailView from './LegacyDocumentDetailView';
 import { Button } from '@/components/ui/button';
 import { Maximize, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';

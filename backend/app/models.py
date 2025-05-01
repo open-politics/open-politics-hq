@@ -434,8 +434,7 @@ class ClassificationSchemeUpdate(ClassificationSchemeBase):
     description: Optional[str] = None
     model_instructions: Optional[str] = None
     validation_rules: Optional[Dict[str, Any]] = None
-    # TODO: Define how field updates work (replace all? partial?)
-    # fields: Optional[List[ClassificationFieldCreate]] = None # Commented out for now
+    fields: Optional[List[ClassificationFieldCreate]] = None # Uncommented
 
 # API model for returning ClassificationScheme data
 class ClassificationSchemeRead(ClassificationSchemeBase):

@@ -139,7 +139,7 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, results,
   const labelSourceId = 'label-source';
   const labelLayerId = 'label-layer';
 
-  const MAPBOX_TOKEN = 'pk.eyJ1IjoiamltdmluY2VudHdhZ25lciIsImEiOiJjbHhlbGJ5ZWcwYmJ4MmtxemxpeTNvYWpzIn0.wB1B9zQPb3z670auYgMEWA';
+  const MAPBOX_TOKEN = 'pk.eyJ1IjoiamltdnciLCJhIjoiY20xd2U3Z2pqMGprdDJqczV2OXJtMTBoayJ9.hlSx0Nc19j_Z1NRgyX7HHg';
   // || process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
   // --- Initialize Map ---

@@ -84,6 +84,13 @@ export type Body_login_login_access_token = {
 
 
 
+export type Body_shareables_export_resource = {
+	resource_type: ResourceType;
+	resource_id: number;
+};
+
+
+
 export type Body_shareables_import_resource = {
 	file: Blob | File;
 };
@@ -210,6 +217,7 @@ export type ClassificationSchemeUpdate = {
 	description?: string | null;
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
+	fields?: Array<ClassificationFieldCreate> | null;
 };
 
 
@@ -403,6 +411,13 @@ export type EnhancedClassificationResultRead = {
 	timestamp?: string;
 	id: number;
 	display_value?: number | string | Record<string, unknown> | Array<unknown> | null;
+};
+
+
+
+export type ExportBatchRequest = {
+	resource_type: ResourceType;
+	resource_ids: Array<number>;
 };
 
 

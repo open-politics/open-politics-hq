@@ -69,7 +69,7 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
     targetFieldKey = null,
     renderContext = 'default',
     selectedFieldKeys = null,
-    maxFieldsToShow = 3
+    maxFieldsToShow = 10
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 

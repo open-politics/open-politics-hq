@@ -33,10 +33,10 @@ interface ClassificationTimeAxisControlsProps {
 export type { ClassificationTimeAxisControlsProps };
 export const ClassificationTimeAxisControls: React.FC<ClassificationTimeAxisControlsProps> = ({
   schemes,
-  initialConfig = { type: 'default' }, // Default to using DataRecord timestamp
+  initialConfig = { type: 'event' }, // Default to using Original Event timestamp
   onTimeAxisConfigChange,
 }) => {
-  const [sourceType, setSourceType] = useState<TimeAxisSourceType>(initialConfig?.type ?? 'default');
+  const [sourceType, setSourceType] = useState<TimeAxisSourceType>(initialConfig?.type ?? 'event');
   const [selectedSchemeId, setSelectedSchemeId] = useState<number | null>(initialConfig?.type === 'schema' ? initialConfig.schemeId ?? null : null);
   const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(initialConfig?.type === 'schema' ? initialConfig.fieldKey ?? null : null);
 
@@ -87,6 +87,8 @@ export const ClassificationTimeAxisControls: React.FC<ClassificationTimeAxisCont
     let newConfig: TimeAxisConfig | null = null;
     if (sourceType === 'default') {
       newConfig = { type: 'default' };
+    } else if (sourceType === 'event') {
+      newConfig = { type: 'event' };
     } else if (sourceType === 'schema' && selectedSchemeId !== null && selectedFieldKey !== null) {
       // Validate that the field actually exists for the scheme before notifying
       const scheme = schemes.find(s => s.id === selectedSchemeId);
@@ -99,9 +101,10 @@ export const ClassificationTimeAxisControls: React.FC<ClassificationTimeAxisCont
     // Note: Comparing objects directly might not work as expected if they are recreated.
     // A simple JSON stringify comparison is often sufficient for basic config objects.
     if (JSON.stringify(newConfig) !== JSON.stringify(initialConfig)) { // Compare to initial prop to avoid loop on mount
+        console.log("[TimeAxisControls] Calling onTimeAxisConfigChange with:", newConfig);
         onTimeAxisConfigChange(newConfig);
     }
-  }, [sourceType, selectedSchemeId, selectedFieldKey, schemes, onTimeAxisConfigChange, initialConfig]); // Add initialConfig
+  }, [sourceType, selectedSchemeId, selectedFieldKey, schemes, onTimeAxisConfigChange, initialConfig]); // Keep initialConfig for now, might revisit
 
   return (
     <Card className="mb-3">

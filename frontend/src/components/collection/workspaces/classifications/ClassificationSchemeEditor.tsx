@@ -120,36 +120,27 @@ const ClassificationSchemeEditor: React.FC<ClassificationSchemeEditorProps> = ({
   // Handle form submission
   const handleSubmit = async (event: React.FormEvent) => {
       event.preventDefault(); // Prevent default form submission
-      if (!activeWorkspace?.id || mode === 'watch' || !validateForm()) return;
+      const isValid = validateForm();
+      console.log(`[handleSubmit] Mode: ${mode}, Scheme ID: ${schemeId}, Is Valid: ${isValid}`); // Add detailed log
+      // Condition to exit early:
+      if (!activeWorkspace?.id || mode === 'watch' || !isValid) {
+          console.log(`[handleSubmit] Exiting early. Workspace: ${!!activeWorkspace?.id}, Mode: ${mode}, Is Valid: ${isValid}`); // Log exit reason
+          return;
+      }
 
-      console.log("Submitting form data:", formData);
+      console.log("Submitting form data:", formData); // This logs successfully
       setFormErrors({}); // Clear previous errors before submit attempt
 
       try {
           let response: ClassificationSchemeRead | null = null;
-          // Ensure formData matches SchemeFormData expected by create/updateScheme
-          const dataToSend: SchemeFormData = {
-              ...formData,
-              description: formData.description ?? '', // Ensure description is string
-              model_instructions: formData.model_instructions ?? '', // Ensure instructions is string
-              fields: formData.fields.map(f => ({ // Ensure config exists and is well-formed
-                  ...f,
-                  description: f.description ?? '',
-                  config: {
-                      scale_min: f.config?.scale_min,
-                      scale_max: f.config?.scale_max,
-                      is_set_of_labels: f.config?.is_set_of_labels ?? false,
-                      labels: f.config?.labels,
-                      dict_keys: f.config?.dict_keys,
-                  }
-              }))
-          };
+          // REMOVED: dataToSend reconstruction
+          // const dataToSend: SchemeFormData = { ... };
 
           if (mode === 'create') {
-              response = await createScheme(dataToSend);
+              response = await createScheme(formData); // Pass formData directly
               toast({ title: "Scheme Created", description: `Scheme \"${response?.name}\" created successfully.`, variant: "default" });
           } else if (mode === 'edit' && schemeId) {
-              response = await updateScheme(schemeId, dataToSend); // Pass adapted SchemeFormData
+              response = await updateScheme(schemeId, formData); // Pass formData directly
               toast({ title: "Scheme Updated", description: `Scheme \"${response?.name}\" updated successfully.`, variant: "default" });
           }
           await loadSchemes(true); // Force refresh scheme list

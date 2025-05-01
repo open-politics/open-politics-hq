@@ -176,6 +176,19 @@ export const $Body_login_login_access_token = {
 	},
 } as const;
 
+export const $Body_shareables_export_resource = {
+	properties: {
+		resource_type: {
+	type: 'ResourceType',
+	isRequired: true,
+},
+		resource_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $Body_shareables_import_resource = {
 	properties: {
 		file: {
@@ -638,6 +651,17 @@ export const $ClassificationSchemeUpdate = {
 	properties: {
 	},
 },
+}, {
+	type: 'null',
+}],
+},
+		fields: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+		type: 'ClassificationFieldCreate',
+	},
 }, {
 	type: 'null',
 }],
@@ -1289,6 +1313,22 @@ export const $EnhancedClassificationResultRead = {
 }, {
 	type: 'null',
 }],
+},
+	},
+} as const;
+
+export const $ExportBatchRequest = {
+	properties: {
+		resource_type: {
+	type: 'ResourceType',
+	isRequired: true,
+},
+		resource_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
 },
 	},
 } as const;

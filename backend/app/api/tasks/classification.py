@@ -169,9 +169,9 @@ def process_classification_job(self, job_id: int):
                  final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
             else:
                  final_status = ClassificationJobStatus.COMPLETED
-            # service.update_job_status(job_id, final_status, error_message=final_job_message if error_count > 0 else None)
-            # PASS Job OBJECT instead of ID
+            # --- FIX: PASS Job OBJECT instead of ID ---
             job = service.update_job_status(job, final_status, error_message=final_job_message if error_count > 0 else None)
+            # --- END FIX ---
             
             # 10. Commit the entire transaction for this job run
             session.commit()
@@ -184,7 +184,7 @@ def process_classification_job(self, job_id: int):
             logging.exception(f"Critical error during classification task for Job {job_id}: {e}")
             final_status = ClassificationJobStatus.FAILED
             final_job_message = str(e)
-            # Update status to FAILED using service in a separate session (which commits)
+            # Update status to FAILED using service in a separate session
             try:
                 with SQLModelSession(engine) as error_session:
                     error_provider = get_classification_provider()
@@ -192,7 +192,9 @@ def process_classification_job(self, job_id: int):
                     # Fetch job again in separate session before passing to update_job_status
                     job_to_fail = error_session.get(ClassificationJob, job_id)
                     if job_to_fail:
+                        # --- FIX: Ensure the object is passed here too ---
                         error_service.update_job_status(job_to_fail, ClassificationJobStatus.FAILED, error_message=final_job_message)
+                        # --- END FIX ---
                         logging.debug(f"Job {job_id} status updated to FAILED.")
                     else:
                         logging.error(f"Could not find job {job_id} to mark as FAILED.")
