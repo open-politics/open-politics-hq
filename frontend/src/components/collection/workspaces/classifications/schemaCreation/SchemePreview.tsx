@@ -42,7 +42,7 @@ export function SchemePreview({ scheme }: SchemePreviewProps) {
           <p className="font-medium">{scheme.name}</p>
           <p className="text-muted-foreground">{scheme.description}</p>
           
-          <div className="pl-4 border-l-2 border-primary/20 space-y-2 mt-2">
+          <div className="pl-4 border-l-2 border-secondary/20 space-y-2 mt-2">
             {scheme.fields.map((field, index) => {
               const adaptedField = adaptFieldForDescription(field, isFormData);
               

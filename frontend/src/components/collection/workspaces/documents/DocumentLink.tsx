@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { useDocumentDetail } from './DocumentDetailProvider';
 
 interface DocumentLinkProps {
   documentId: number;
@@ -18,24 +19,27 @@ export default function DocumentLink({
   fullPage = false,
   onClick
 }: DocumentLinkProps) {
+  const { openDetailOverlay } = useDocumentDetail();
+
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    
+    e.stopPropagation();
+
     if (onClick) {
       onClick(e);
-      return;
+    } else {
+      openDetailOverlay(documentId);
     }
-    
-    console.warn(`DocumentLink clicked for ID: ${documentId}. Needs refactoring to open DataRecord/DataSource details.`);
   };
 
   return (
     <button
       onClick={handleClick}
       className={cn(
-        "text-foreground hover:text-primary hover:underline cursor-pointer text-left",
+        "text-foreground hover:text-primary hover:underline cursor-pointer text-left p-0 m-0 bg-transparent border-none",
         className
       )}
+      title={typeof children === 'string' ? children : `View details for ID ${documentId}`}
     >
       {children}
     </button>

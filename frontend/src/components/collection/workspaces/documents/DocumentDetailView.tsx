@@ -87,6 +87,7 @@ interface DocumentDetailViewProps {
   onEdit: (item: ClientDataSourceReadAlias) => void;
   schemes: ClassificationSchemeRead[];
   selectedDataSourceId: number | null;
+  highlightRecordIdOnOpen: number | null; // <-- Add prop
   onLoadIntoRunner?: (jobId: number, jobName: string) => void;
 }
 
@@ -94,6 +95,7 @@ const DocumentDetailView = ({
   onEdit,
   schemes,
   selectedDataSourceId,
+  highlightRecordIdOnOpen, // <-- Destructure prop
   onLoadIntoRunner
 }: DocumentDetailViewProps) => {
   // --- State Hooks ---
@@ -1480,9 +1482,19 @@ const DocumentDetailView = ({
                     <ResultsChart
                       results={filteredResults.map(adaptEnhancedResultReadToFormattedResult)}
                       schemes={schemes}
+                      dataSources={dataSource ? [dataSource] : []}
+                      dataRecords={dataRecords} // Make sure dataRecords holds the necessary records for the chart
                       onDataPointClick={handleChartPointClick}
-                      timeAxisConfig={timeAxisConfig}
+                      timeAxisConfig={timeAxisConfig} // This controls WHICH timestamp is used
                       filters={[]}
+                      selectedDataSourceIds={dataSource ? [dataSource.id] : []}
+                      onDataSourceSelectionChange={(ids) => {
+                        console.log("Chart requested source change (ignored in detail view):", ids);
+                      }}
+                      // --- Correction ---
+                      selectedTimeInterval={chartTimeInterval} // Use the dedicated state for interval
+                      onTimeIntervalChange={setChartTimeInterval} // Pass the setter for the interval state
+                      // --- End Correction ---
                     />
                   </div>
                 </div>
@@ -1633,6 +1645,38 @@ const DocumentDetailView = ({
         return [];
     }
   }, [dataSource, filteredAndSortedCsvData, scrapedContentViewMode, sortedFlatList, urlListDataRecords, associatedRecords]);
+
+  // --- NEW: Effect to handle initial highlight ---
+  useEffect(() => {
+    // Only run if highlightRecordIdOnOpen is provided and dataSource is loaded
+    if (highlightRecordIdOnOpen && dataSource) {
+      console.log(`[DocumentDetailView] Effect: Applying highlight for ID ${highlightRecordIdOnOpen}, Type: ${dataSource.type}`);
+      if (dataSource.type === 'pdf') {
+        // For PDFs, we need associatedRecords to be loaded first
+        if (associatedRecords.length > 0) {
+          const recordToHighlight = associatedRecords.find(r => r.id === highlightRecordIdOnOpen);
+          if (recordToHighlight) {
+            console.log(`[DocumentDetailView] Effect: Setting selected PDF record: ${recordToHighlight.id}`);
+            setSelectedIndividualRecord(recordToHighlight);
+          } else {
+             console.log(`[DocumentDetailView] Effect: Highlight ID ${highlightRecordIdOnOpen} not found in associated PDF records.`);
+          }
+        } else {
+          // Wait for associatedRecords to load if not yet available
+          console.log(`[DocumentDetailView] Effect: Waiting for associated PDF records to load before highlighting.`);
+        }
+      } else if (dataSource.type === 'url_list') {
+        // For URL lists, we can set the highlight ID directly
+        console.log(`[DocumentDetailView] Effect: Setting highlighted URL list record ID: ${highlightRecordIdOnOpen}`);
+        setHighlightedRecordId(highlightRecordIdOnOpen);
+      }
+      // No need to clear highlightRecordIdOnOpen here, provider clears it on close.
+    }
+  }, [highlightRecordIdOnOpen, dataSource, associatedRecords]); // Dependencies: trigger when highlight ID, source, or PDF records change
+  // --- END NEW Effect ---
+
+  // Inside DocumentDetailView component, near other state hooks
+  const [chartTimeInterval, setChartTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>('day');
 
   // Add this at the end of the DocumentDetailView function, before export default
   return (

@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   ClassificationSchemeRead,
   DataSourceRead,
@@ -63,6 +63,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useRecurringTasksStore } from '@/zustand_stores/storeRecurringTasks';
 import Link from 'next/link';
 import { ClassificationTimeAxisControls, TimeAxisConfig } from './ClassificationTimeAxisControls';
+import { SchemePreview } from '@/components/collection/workspaces/classifications/schemaCreation/SchemePreview';
+import { transformApiToFormData } from '@/lib/classification/service';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface ClassificationRunnerProps {
   allSchemes: ClassificationSchemeRead[];
@@ -88,6 +93,7 @@ export default function ClassificationRunner({
 
   const [activeFilters, setActiveFilters] = useState<ResultFilter[]>([]);
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
+  const [isHeaderSchemesDisplayUnfolded, setIsHeaderSchemesDisplayUnfolded] = useState(true);
   const [selectedDataRecordId, setSelectedDataRecordId] = useState<number | null>(null);
   const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
   const [filteredGeocodedPoints, setFilteredGeocodedPoints] = useState<MapPoint[]>([]);
@@ -111,6 +117,12 @@ export default function ClassificationRunner({
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [isSchemesCollapsed, setIsSchemesCollapsed] = useState(false);
+
+  const [selectedDataSourceIdsForChart, setSelectedDataSourceIdsForChart] = useState<number[]>([]);
+  const [selectedTimeInterval, setSelectedTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>('day');
+
+  const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
 
   const runSchemes = useMemo(() => {
     if (!activeJob?.target_scheme_ids) return [];
@@ -125,6 +137,47 @@ export default function ClassificationRunner({
   }, [activeJob, allDataSources]);
 
   const formattedRunResults = currentRunResults;
+
+  const sourceStats = useMemo(() => {
+    if (!currentRunDataRecords || currentRunDataRecords.length === 0 || !runDataSources) {
+      return null;
+    }
+
+    const totalRecords = currentRunDataRecords.length;
+    const sourceCounts: Record<number, number> = {};
+    const sourceMap = new Map(runDataSources.map(ds => [ds.id, ds.name || `Source ${ds.id}`]));
+    let sourcesWithRecordsCount = 0;
+
+    currentRunDataRecords.forEach(record => {
+      if (record.datasource_id !== null && record.datasource_id !== undefined) {
+        if(sourceMap.has(record.datasource_id)) {
+          sourceCounts[record.datasource_id] = (sourceCounts[record.datasource_id] || 0) + 1;
+        }
+      }
+    });
+
+    const detailedStats = Object.entries(sourceCounts)
+      .map(([dsIdStr, count]) => {
+        const dsId = parseInt(dsIdStr);
+        const percentage = totalRecords > 0 ? ((count / totalRecords) * 100).toFixed(1) : '0.0';
+        return {
+          id: dsId,
+          name: sourceMap.get(dsId) || `Source ${dsId}`,
+          count: count,
+          percentage: `${percentage}%`
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    sourcesWithRecordsCount = detailedStats.length;
+
+    return {
+      totalRecords,
+      totalSourcesInRun: runDataSources.length,
+      sourcesWithRecordsCount: sourcesWithRecordsCount,
+      detailedStats
+    };
+  }, [currentRunDataRecords, runDataSources]);
 
   useEffect(() => {
     if (runSchemes && runSchemes.length > 0) {
@@ -173,6 +226,11 @@ export default function ClassificationRunner({
       setInitialMapControlsConfig({ geocodeSchemeId: null, geocodeFieldKey: null, labelSchemeId: null, labelFieldKey: null, showLabels: false });
     }
   }, [runSchemes, allSchemes]);
+
+  useEffect(() => {
+    const initialDataSourceIds = runDataSources.map(ds => ds.id);
+    setSelectedDataSourceIdsForChart(initialDataSourceIds);
+  }, [runDataSources]);
 
   const generateGeocodingCacheKey = useCallback(() => {
     if (!activeWorkspace?.id || !activeJob?.id) return null;
@@ -428,6 +486,79 @@ export default function ClassificationRunner({
                   onTimeAxisConfigChange={setCurrentTimeAxisConfig}
                 />
              </div>
+             <div className="flex items-center gap-4 p-2 mb-2 border-b flex-wrap">
+               <Popover>
+                 <PopoverTrigger asChild>
+                   <Button variant="outline" size="sm" disabled={runDataSources.length === 0}>
+                     <SlidersHorizontal className="h-4 w-4 mr-2" />
+                     Sources ({selectedDataSourceIdsForChart.length} / {runDataSources.length})
+                   </Button>
+                 </PopoverTrigger>
+                 <PopoverContent className="w-64 p-0" align="start">
+                   <div className="p-2 font-medium text-xs border-b">Select Sources to Display</div>
+                   <ScrollArea className="max-h-60">
+                     <div className="p-2 space-y-1">
+                       {runDataSources.length > 0 ? (
+                         <>
+                           <div className="flex items-center space-x-2 px-1 py-1.5">
+                             <Checkbox
+                               id="chart-source-select-all"
+                               checked={selectedDataSourceIdsForChart.length === runDataSources.length}
+                               onCheckedChange={(checked) => {
+                                 setSelectedDataSourceIdsForChart(checked ? runDataSources.map(ds => ds.id) : []);
+                               }}
+                             />
+                             <Label htmlFor="chart-source-select-all" className="text-xs font-normal cursor-pointer flex-1">
+                               Select All ({runDataSources.length})
+                             </Label>
+                           </div>
+                           <Separator />
+                           {runDataSources.map(ds => (
+                             <div key={ds.id} className="flex items-center space-x-2 px-1 py-1.5">
+                               <Checkbox
+                                 id={`chart-source-${ds.id}`}
+                                 checked={selectedDataSourceIdsForChart.includes(ds.id)}
+                                 onCheckedChange={(checked) => {
+                                   setSelectedDataSourceIdsForChart(prev =>
+                                     checked
+                                       ? [...prev, ds.id]
+                                       : prev.filter(id => id !== ds.id)
+                                   );
+                                 }}
+                               />
+                               <Label htmlFor={`chart-source-${ds.id}`} className="text-xs font-normal cursor-pointer flex-1 truncate" title={ds.name ?? `Source ${ds.id}`}>
+                                 {ds.name ?? `Source ${ds.id}`}
+                               </Label>
+                             </div>
+                           ))}
+                         </>
+                       ) : (
+                         <div className="p-4 text-center text-xs text-muted-foreground">No sources in this job.</div>
+                       )}
+                     </div>
+                   </ScrollArea>
+                 </PopoverContent>
+               </Popover>
+
+               <div className="flex items-center gap-2">
+                 <Label htmlFor="chart-interval-select" className="text-sm whitespace-nowrap">Aggregate By:</Label>
+                 <Select
+                   value={selectedTimeInterval}
+                   onValueChange={(value: 'day' | 'week' | 'month' | 'quarter' | 'year') => setSelectedTimeInterval(value)}
+                 >
+                   <SelectTrigger id="chart-interval-select" className="w-[120px] h-9 text-sm">
+                     <SelectValue />
+                   </SelectTrigger>
+                   <SelectContent>
+                     <SelectItem value="day">Day</SelectItem>
+                     <SelectItem value="week">Week</SelectItem>
+                     <SelectItem value="month">Month</SelectItem>
+                     <SelectItem value="quarter">Quarter</SelectItem>
+                     <SelectItem value="year">Year</SelectItem>
+                   </SelectContent>
+                 </Select>
+               </div>
+             </div>
              <ClassificationResultsChart
                results={formattedRunResults}
                schemes={runSchemes}
@@ -435,6 +566,10 @@ export default function ClassificationRunner({
                filters={activeFilters}
                dataRecords={currentRunDataRecords}
                timeAxisConfig={currentTimeAxisConfig}
+               selectedDataSourceIds={selectedDataSourceIdsForChart}
+               onDataSourceSelectionChange={setSelectedDataSourceIdsForChart}
+               selectedTimeInterval={selectedTimeInterval}
+               onTimeIntervalChange={setSelectedTimeInterval}
              />
            </div>
          </TabsContent>
@@ -602,6 +737,50 @@ export default function ClassificationRunner({
                   <Button variant="outline" size="sm" onClick={onClearJob} disabled={!activeJob?.id}>
                     <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Job
                   </Button>
+                  <div className="w-full mt-2">
+                     {sourceStats && (
+                          <Collapsible
+                              open={isSourceStatsOpen}
+                              onOpenChange={setIsSourceStatsOpen}
+                              className="w-full"
+                          >
+                              <CollapsibleTrigger asChild>
+                                  <Button
+                                      variant="ghost"
+                                      className="flex justify-between items-center w-full px-2 py-1.5 text-xs h-auto hover:bg-muted/50"
+                                  >
+                                      <span className="text-muted-foreground">
+                                          Run involves {sourceStats.totalRecords} records from {sourceStats.sourcesWithRecordsCount} sources
+                                          {sourceStats.sourcesWithRecordsCount !== sourceStats.totalSourcesInRun && ` (of ${sourceStats.totalSourcesInRun} targeted)`}
+                                      </span>
+                                      {isSourceStatsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                  </Button>
+                              </CollapsibleTrigger>
+                              <CollapsibleContent className="mt-2 px-1 pb-1">
+                                   <ScrollArea className="max-h-[150px] border rounded-md">
+                                       <Table className="text-xs">
+                                           <TableHeader className="sticky top-0 bg-muted/90">
+                                               <TableRow>
+                                                   <TableHead className="h-7 px-2">Source Name</TableHead>
+                                                   <TableHead className="h-7 px-2 text-right">Records</TableHead>
+                                                   <TableHead className="h-7 px-2 text-right">% of Total</TableHead>
+                                               </TableRow>
+                                           </TableHeader>
+                                           <TableBody>
+                                               {sourceStats.detailedStats.map(stat => (
+                                                   <TableRow key={stat.id} className="h-7">
+                                                       <TableCell className="px-2 py-1 font-medium truncate" title={stat.name}>{stat.name}</TableCell>
+                                                       <TableCell className="px-2 py-1 text-right">{stat.count}</TableCell>
+                                                       <TableCell className="px-2 py-1 text-right">{stat.percentage}</TableCell>
+                                                   </TableRow>
+                                               ))}
+                                           </TableBody>
+                                       </Table>
+                                   </ScrollArea>
+                              </CollapsibleContent>
+                          </Collapsible>
+                     )}
+                  </div>
                 </div>
               ) : (
                  <div className="p-3 rounded-md bg-muted/10 text-center text-muted-foreground italic">
@@ -618,6 +797,36 @@ export default function ClassificationRunner({
                   />
                 </div>
               )}
+
+              {/* --- Added Scheme Preview Section --- */}
+              {activeJob && runSchemes.length > 0 && (
+                <div className="mt-4 p-3 rounded-md bg-muted/10 space-y-3 border">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium text-muted-foreground">Schemes Used in this Run:</h4>
+                    <Button variant="outline" size="sm" onClick={() => setIsHeaderSchemesDisplayUnfolded(!isHeaderSchemesDisplayUnfolded)}>
+                      {isHeaderSchemesDisplayUnfolded ? 'Collapse' : 'Expand'}
+                    </Button>
+                  </div>
+                  {isHeaderSchemesDisplayUnfolded ? (
+                    <>
+                      <ScrollArea className="h-60">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-1">
+                      {runSchemes.map(scheme => (
+                        <div key={scheme.id} className="border rounded-lg p-3 bg-card/50 shadow-sm">
+                          <SchemePreview scheme={transformApiToFormData(scheme)} />
+                        </div>
+                      ))}
+                    </div>
+                      </ScrollArea>
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      {runSchemes.length}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* --- End Added Scheme Preview Section --- */}
 
               {activeJob ? (
                 <div className="mt-2">

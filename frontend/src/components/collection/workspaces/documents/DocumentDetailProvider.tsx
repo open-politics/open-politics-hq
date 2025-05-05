@@ -1,9 +1,25 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, createContext, useContext, useCallback } from 'react';
 // Removed: import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import DocumentDetailOverlay from './DocumentDetailOverlay';
 import DocumentManagerOverlay from './DocumentManagerOverlay'; // Assuming this will be adapted or replaced
+
+// --- Create Context ---
+interface DocumentDetailContextType {
+  openDetailOverlay: (recordId: number) => void;
+}
+
+const DocumentDetailContext = createContext<DocumentDetailContextType | undefined>(undefined);
+
+export const useDocumentDetail = () => {
+  const context = useContext(DocumentDetailContext);
+  if (context === undefined) {
+    throw new Error('useDocumentDetail must be used within a DocumentDetailProvider');
+  }
+  return context;
+};
+// --- End Create Context ---
 
 interface DocumentDetailProviderProps {
   children: React.ReactNode;
@@ -16,19 +32,33 @@ export default function DocumentDetailProvider({
 }: DocumentDetailProviderProps) {
   // Removed: const { isDetailOpen, selectedDocumentId, closeDocumentDetail } = useDocumentStore();
   const [isManagerOpen, setIsManagerOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false); // Added local state as placeholder
-  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null); // Added local state as placeholder
+  // --- Manage Overlay State Here ---
+  const [isDetailOverlayOpen, setIsDetailOverlayOpen] = useState(false);
+  const [detailRecordId, setDetailRecordId] = useState<number | null>(null);
+  // --- Add state for initial highlight ---
+  const [highlightRecordIdOnOpen, setHighlightRecordIdOnOpen] = useState<number | null>(null);
+  // --- End Add state ---
+  // --- End Manage Overlay State ---
 
-  // Placeholder function, real logic depends on how detail is opened now
-  const closeDocumentDetail = () => {
-    setIsDetailOpen(false);
-    setSelectedDocumentId(null);
-  };
+  // --- Functions to control the overlay ---
+  const openDetailOverlay = useCallback((recordId: number) => {
+    console.log(`[DocumentDetailProvider] Opening detail for record ID: ${recordId} and setting highlight.`);
+    setDetailRecordId(recordId);
+    setHighlightRecordIdOnOpen(recordId); // Set the ID to highlight
+    setIsDetailOverlayOpen(true);
+  }, []);
+
+  const closeDetailOverlay = useCallback(() => {
+    setIsDetailOverlayOpen(false);
+    setDetailRecordId(null);
+    setHighlightRecordIdOnOpen(null); // Clear highlight ID on close
+  }, []);
+  // --- End Functions ---
 
   const handleLoadIntoRunner = (runId: number, runName: string) => {
     if (onLoadIntoRunner) {
       onLoadIntoRunner(runId, runName);
-      closeDocumentDetail();
+      closeDetailOverlay(); // Use the state function
       setIsManagerOpen(false);
     }
   };
@@ -41,16 +71,22 @@ export default function DocumentDetailProvider({
     setIsManagerOpen(false);
   };
 
-  // TODO: Need a way to set isDetailOpen and selectedDocumentId based on user action
-  // This component might need context or props to trigger the detail view
+  // --- Provide context value ---
+  const contextValue = {
+    openDetailOverlay,
+  };
+  // --- End Provide context value ---
 
   return (
-    <>
+    // --- Wrap children with Provider ---
+    <DocumentDetailContext.Provider value={contextValue}>
       {children}
       <DocumentDetailOverlay
-        open={isDetailOpen}
-        onClose={closeDocumentDetail}
-        documentId={selectedDocumentId}
+        // Use state for props
+        open={isDetailOverlayOpen}
+        onClose={closeDetailOverlay}
+        dataRecordId={detailRecordId} // Pass the correct ID
+        highlightRecordIdOnOpen={highlightRecordIdOnOpen} // Pass highlight ID
         onLoadIntoRunner={handleLoadIntoRunner}
         onOpenManagerRequest={handleOpenManagerRequest}
       />
@@ -59,6 +95,7 @@ export default function DocumentDetailProvider({
         onClose={handleCloseManager}
         onLoadIntoRunner={handleLoadIntoRunner}
       />
-    </>
+    </DocumentDetailContext.Provider>
+    // --- End Wrap children ---
   );
 } 

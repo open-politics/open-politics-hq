@@ -332,12 +332,10 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
 
                   return (
                       <div key={idx} className={'space-y-1'}>
-                          {/* Only show field name if not compact OR if scheme has multiple fields */}
-                          {/* --- MODIFIED: Show field name only if not in table context AND (either not compact OR target field is set) --- */}
-                          {/* --- REVISED: Always show field name if not compact, OR if specifically targeted, unless in table context --- */}
-                          {(renderContext !== 'table' && (!compact || targetFieldKey || (selectedFieldKeys && selectedFieldKeys.length > 0))) && (
-                             <div className="text-sm font-medium text-blue-400 italic inline-block mr-2">{schemeField.name}</div>
-                          )}
+                          {/* --- Always show field name, no conditions --- */}
+                          <div className="font-medium text-blue-400 italic inline-block mr-2">
+                            {schemeField.name}:
+                          </div>
                           <div className="inline-block">{formatFieldValue(result.value, schemeField)}</div>
                       </div>
                   );

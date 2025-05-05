@@ -160,17 +160,29 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Actions</TableHead>
                 <TableHead>Job Name</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Targets</TableHead>
                 <TableHead>Trigger</TableHead>
                 <TableHead>Last Updated</TableHead>
-                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredJobs.map((job) => (
                 <TableRow key={job.id}>
+                  <TableCell>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onLoadJob(job.id)}
+                      disabled={!job.status || ['pending', 'running'].includes(job.status)}
+                      className="h-7 text-xs"
+                    >
+                      <ExternalLink className="h-3 w-3 mr-1" />
+                      Load Results
+                    </Button>
+                  </TableCell>
                   <TableCell className="font-medium">
                      <TooltipProvider delayDuration={100}>
                        <Tooltip>
@@ -220,18 +232,6 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onLoadJob(job.id)}
-                      disabled={!job.status || ['pending', 'running'].includes(job.status)}
-                      className="h-7 text-xs"
-                    >
-                      <ExternalLink className="h-3 w-3 mr-1" />
-                      Load Results
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

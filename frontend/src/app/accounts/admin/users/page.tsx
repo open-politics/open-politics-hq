@@ -177,7 +177,7 @@ export default withAdminAuth(function UserManagementPage() {
   };
 
   return (
-    <div className="container mx-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-8">
+    <div className="container mx-auto p-4 grid grid-cols-1 md:grid-cols-2 mt-16 gap-8">
       <div className="space-y-8">
         <Card className="w-full">
           <CardHeader>
@@ -292,7 +292,7 @@ export default withAdminAuth(function UserManagementPage() {
             )}
 
             {csvProcessLog.length > 0 && (
-              <div className="mt-4 p-3 border rounded-md bg-gray-50 max-h-60 overflow-y-auto">
+              <div className="mt-4 p-3 border rounded-md bg-gray-50 dark:bg-gray-800 max-h-60 overflow-y-auto">
                 <h4 className="text-sm font-medium mb-2">Processing Log:</h4>
                 <pre className="text-xs whitespace-pre-wrap">
                   {csvProcessLog.join('\n')}
@@ -319,7 +319,7 @@ export default withAdminAuth(function UserManagementPage() {
             </Alert>
           )}
           {!isLoadingUsers && !fetchUsersError && (
-            <ScrollArea className="min-h-96 max-h-[400px] border rounded-md">
+            <ScrollArea className="h-[400px] border rounded-md">
               <div className="p-2 space-y-1">
                 {usersList.length === 0 ? (
                   <p className="text-center text-gray-500 p-4">No users found.</p>
@@ -328,8 +328,10 @@ export default withAdminAuth(function UserManagementPage() {
                     <div
                       key={user.id}
                       onClick={() => setSelectedUserId(user.id)}
-                      className={`p-2 border rounded-md cursor-pointer hover:bg-gray-100 transition-colors ${
-                        selectedUserId === user.id ? 'bg-indigo-100 border-indigo-300' : 'border-transparent'
+                      className={`p-2 border rounded-md cursor-pointer transition-colors ${
+                        selectedUserId === user.id 
+                          ? 'bg-indigo-100 dark:bg-indigo-900/50 border-indigo-300 dark:border-indigo-700' 
+                          : 'border-transparent hover:bg-gray-100 dark:hover:bg-gray-800/60'
                       }`}
                     >
                       <div className="flex justify-between items-center">

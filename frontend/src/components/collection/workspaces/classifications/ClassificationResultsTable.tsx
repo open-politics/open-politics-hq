@@ -349,11 +349,11 @@ export function ClassificationResultsTable({
                  </PopoverContent>
                </Popover>
             </div>
-            <div className=" my-1 flex flex-col items-start p-1">
+            {/* <div className=" my-1 flex flex-col items-start p-1">
                {currentSelectedFields.map(fieldName => (
                   <span key={fieldName} className="truncate max-w-[100px]" title={fieldName}> - {fieldName}</span>
                ))}
-            </div>
+            </div> */}
           </div>
         );
       },
@@ -374,7 +374,7 @@ export function ClassificationResultsTable({
             compact={false}
             selectedFieldKeys={fieldKeysToShow}
             maxFieldsToShow={undefined}
-            renderContext="table"
+            renderContext="default"
           />
         );
       },
