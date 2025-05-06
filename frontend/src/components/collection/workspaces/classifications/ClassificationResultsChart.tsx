@@ -585,14 +585,27 @@ const ClassificationResultsChart: React.FC<Props> = ({
 }) => {
   const [isGrouped, setIsGrouped] = useState(false);
   const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
-  const [showStatistics, setShowStatistics] = useState(true);
+  const [showStatistics, setShowStatistics] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isChartHovered, setIsChartHovered] = useState(false);
   const [isTooltipHovered, setIsTooltipHovered] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const hideTooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hideTooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null); // For global chart/tooltip hover
   const TOOLTIP_DELAY = 200;
+
+  // --- NEW: State for legend hover ---
+  const [hoveredLegendKey, setHoveredLegendKey] = useState<string | null>(null);
+  // --- END NEW ---
+
+  // --- NEW: States and Ref for Sub-Chart specific hover ---
+  const [hoveredSubChartId, setHoveredSubChartId] = useState<number | null>(null);
+  const [hoveredSubChartTooltipOwnerId, setHoveredSubChartTooltipOwnerId] = useState<number | null>(null);
+  // --- MODIFIED: Simplified timeout refs for sub-chart leave events ---
+  const subChartLeaveTimeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  const subChartLeaveDsIdRef = useRef<number | null>(null);
+  const subChartLeaveTypeRef = useRef<'card' | 'tooltip' | null>(null);
+  // --- END MODIFIED ---
 
   // Use simple date objects for range
   const [dateRangeFrom, setDateRangeFrom] = useState<Date | null>(null);
@@ -751,26 +764,31 @@ const ClassificationResultsChart: React.FC<Props> = ({
         const isInteger = processedGroupedData.length > 0 && processedGroupedData.every(point => point.valueString === 'N/A' || !isNaN(parseInt(point.valueString, 10)));
         setIsGroupedDataInteger(isInteger);
 
-        // Apply Sorting
+        // Apply Sorting for AGGREGATED data or if not integer sortable by value
         const finalGroupedData = [...processedGroupedData];
-        finalGroupedData.sort((a, b) => {
-            if (isInteger && (groupedSortOrder === 'value-asc' || groupedSortOrder === 'value-desc')) {
-                const valA = parseInt(a.valueString, 10); const valB = parseInt(b.valueString, 10);
-                const sortOrderMultiplier = groupedSortOrder === 'value-asc' ? 1 : -1;
-                if (isNaN(valA) && isNaN(valB)) return 0; if (isNaN(valA)) return 1 * sortOrderMultiplier; if (isNaN(valB)) return -1 * sortOrderMultiplier;
-                return (valA - valB) * sortOrderMultiplier;
-            } else { return b.totalCount - a.totalCount; }
-        });
+        if (aggregateSources || !isInteger || (groupedSortOrder !== 'value-asc' && groupedSortOrder !== 'value-desc')) {
+            finalGroupedData.sort((a, b) => {
+                // For aggregated view, or if not sorting by integer value, primarily sort by totalCount descending.
+                // Value sorting for aggregated or non-integer data can be refined if needed.
+                if (groupedSortOrder === 'value-asc' && !isInteger) return a.valueString.localeCompare(b.valueString);
+                if (groupedSortOrder === 'value-desc' && !isInteger) return b.valueString.localeCompare(a.valueString);
+                // Default to count-desc for aggregated, or if value sort isn't applicable for integers
+                return b.totalCount - a.totalCount; 
+            });
+        }
+        // If !aggregateSources and isInteger and sorting by value, the sorting will be handled per-subchart.
+        // Otherwise, the above sort is used.
 
-        // Calculate max count for Y-axis domain
-        const maxVal = finalGroupedData.reduce((max, point) => {
-            if (aggregateSources) return Math.max(max, point.totalCount || 0);
-            else return Math.max(max, selectedDataSourceIds.reduce((pointMax, dsId) => Math.max(pointMax, point[`ds_${dsId}_count`] || 0), 0));
-        }, 0);
-        const calculatedMaxGroupCount = maxVal > 0 ? maxVal + Math.ceil(maxVal * 0.1) : 10;
+        // Calculate max count for Y-axis domain for aggregated chart
+        let calculatedMaxGroupCount = 'auto' as number | 'auto';
+        if (aggregateSources) {
+            const maxVal = finalGroupedData.reduce((max, point) => Math.max(max, point.totalCount || 0), 0);
+            calculatedMaxGroupCount = maxVal > 0 ? maxVal + Math.ceil(maxVal * 0.1) : 10;
+        }
+
         return { 
           chartData: [], 
-          groupedData: finalGroupedData, 
+          groupedData: finalGroupedData, // This data might be sorted if aggregateSources is true
           maxGroupCount: calculatedMaxGroupCount,
           dateExtents: { min: null, max: null }
         };
@@ -1002,6 +1020,11 @@ const ClassificationResultsChart: React.FC<Props> = ({
           if (hideTooltipTimeoutRef.current) {
               clearTimeout(hideTooltipTimeoutRef.current);
           }
+          // --- MODIFIED: Cleanup for single sub-chart leave timeout ---
+          if (subChartLeaveTimeoutIdRef.current) {
+            clearTimeout(subChartLeaveTimeoutIdRef.current);
+          }
+          // --- END MODIFIED ---
       };
   }, []);
   // --- END NEW ---
@@ -1024,6 +1047,64 @@ const ClassificationResultsChart: React.FC<Props> = ({
       hideTooltipTimeoutRef.current = setTimeout(() => {
           setIsTooltipHovered(false);
       }, TOOLTIP_DELAY);
+  };
+  // --- END NEW ---
+
+  // --- NEW: Handlers for Sub-Chart specific hover ---
+  const handleSubChartCardEnter = (dsId: number) => {
+    if (subChartLeaveTimeoutIdRef.current) {
+      clearTimeout(subChartLeaveTimeoutIdRef.current);
+      subChartLeaveTimeoutIdRef.current = null;
+      subChartLeaveDsIdRef.current = null;
+      subChartLeaveTypeRef.current = null;
+    }
+    setHoveredSubChartId(dsId);
+    setHoveredSubChartTooltipOwnerId(null); 
+  };
+
+  const handleSubChartCardLeave = (dsId: number) => {
+    if (subChartLeaveTimeoutIdRef.current) { // Clear any existing pending leave, from card or tooltip
+      clearTimeout(subChartLeaveTimeoutIdRef.current);
+    }
+    subChartLeaveDsIdRef.current = dsId;
+    subChartLeaveTypeRef.current = 'card';
+    subChartLeaveTimeoutIdRef.current = setTimeout(() => {
+      // Only nullify if this timeout is still the active one for this dsId and type
+      if (subChartLeaveDsIdRef.current === dsId && subChartLeaveTypeRef.current === 'card') {
+        setHoveredSubChartId(null);
+        subChartLeaveTimeoutIdRef.current = null;
+        subChartLeaveDsIdRef.current = null;
+        subChartLeaveTypeRef.current = null;
+      }
+    }, TOOLTIP_DELAY);
+  };
+
+  const handleSubChartTooltipEnter = (dsId: number) => {
+    if (subChartLeaveTimeoutIdRef.current) {
+      clearTimeout(subChartLeaveTimeoutIdRef.current);
+      subChartLeaveTimeoutIdRef.current = null;
+      subChartLeaveDsIdRef.current = null;
+      subChartLeaveTypeRef.current = null;
+    }
+    setHoveredSubChartTooltipOwnerId(dsId);
+    // Keep hoveredSubChartId active as the tooltip belongs to it
+  };
+
+  const handleSubChartTooltipLeave = (dsId: number) => {
+    if (subChartLeaveTimeoutIdRef.current) { // Clear any existing pending leave
+      clearTimeout(subChartLeaveTimeoutIdRef.current);
+    }
+    subChartLeaveDsIdRef.current = dsId;
+    subChartLeaveTypeRef.current = 'tooltip';
+    subChartLeaveTimeoutIdRef.current = setTimeout(() => {
+      // Only nullify if this timeout is still the active one for this dsId and type
+      if (subChartLeaveDsIdRef.current === dsId && subChartLeaveTypeRef.current === 'tooltip') {
+        setHoveredSubChartTooltipOwnerId(null);
+        subChartLeaveTimeoutIdRef.current = null;
+        subChartLeaveDsIdRef.current = null;
+        subChartLeaveTypeRef.current = null;
+      }
+    }, TOOLTIP_DELAY);
   };
   // --- END NEW ---
 
@@ -1112,7 +1193,7 @@ const ClassificationResultsChart: React.FC<Props> = ({
           width={60}
         />
         <Tooltip
-          active={isChartHovered || isTooltipHovered}
+          active={(isChartHovered || isTooltipHovered) && hoveredLegendKey === null}
           cursor={{ fill: 'transparent' }}
           wrapperStyle={{ zIndex: 100, pointerEvents: 'auto' }}
           position={{ y: -20 }}
@@ -1133,7 +1214,10 @@ const ClassificationResultsChart: React.FC<Props> = ({
           }
           isAnimationActive={false}
         />
-        <Legend />
+        <Legend
+          onMouseEnter={(e: any) => setHoveredLegendKey(e.value)} // Use e.value which is the legend item's name
+          onMouseLeave={() => setHoveredLegendKey(null)}
+        />
         <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(128, 128, 128, 0.3)" />
 
         {/* Render Lines/Areas with better source and scheme distinction */}
@@ -1141,20 +1225,24 @@ const ClassificationResultsChart: React.FC<Props> = ({
           .filter(fieldInfo => selectedPlotKeys.includes(fieldInfo.key))
           .flatMap((fieldInfo) => {
             const { key: schemeFieldKey, name: baseLegendName, color: baseColor } = fieldInfo;
+
             if (aggregateSources) {
-              // Render ONE aggregated series per field
-              const targetKey = '_aggregated_';
-              const hasSeriesData = (displayData as ChartDataPoint[]).some(p => p[schemeFieldKey]?.[targetKey]?.avg !== undefined && !isNaN(Number(p[schemeFieldKey]?.[targetKey]?.avg)));
-              if (!hasSeriesData) return null;
+              const targetKeyAgg = '_aggregated_'; // Define targetKey for aggregate case
+              const seriesNameInLegend = `${baseLegendName} (all sources)`;
+              const isCurrentlyHovered = hoveredLegendKey === seriesNameInLegend;
+              const seriesOpacityAgg = hoveredLegendKey && !isCurrentlyHovered ? 0.2 : 1;
+
+              const hasSeriesDataAgg = (displayData as ChartDataPoint[]).some(p => p && p[schemeFieldKey]?.[targetKeyAgg]?.avg !== undefined && !isNaN(Number(p[schemeFieldKey]?.[targetKeyAgg]?.avg)));
+              if (!hasSeriesDataAgg) return null;
               
               return (
                 <Line 
                   key={`${schemeFieldKey}-agg`} 
-                  type="monotone" 
-                  dataKey={(p: ChartDataPoint) => p[schemeFieldKey]?.[targetKey]?.avg ?? null} 
-                  name={`${baseLegendName} (all sources)`} 
+                  dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyAgg]?.avg ?? null : null} 
+                  name={seriesNameInLegend} // This name is used by the legend
                   stroke={baseColor} 
                   strokeWidth={2} 
+                  strokeOpacity={seriesOpacityAgg}
                   dot={renderDot} 
                   activeDot={{ r: 6 }} 
                   isAnimationActive={false} 
@@ -1164,27 +1252,24 @@ const ClassificationResultsChart: React.FC<Props> = ({
             } else {
               // Enhanced visual distinction for source-specific series
               return selectedDataSourceIds.map((dsId, sourceIndex) => {
+                const targetKeyDs = dsId; // Define targetKey for per-dataSource case
                 const sourceName = dataSourceNameMap.get(dsId) || `Source ${dsId}`;
-                const targetKey = dsId;
-                const legendLabel = `${sourceName} (${schemeFieldKey})`;
-                const hasSeriesData = (displayData as ChartDataPoint[]).some(p => p[schemeFieldKey]?.[targetKey]?.avg !== undefined && !isNaN(Number(p[schemeFieldKey]?.[targetKey]?.avg)));
-                if (!hasSeriesData) return null;
+                const seriesNameInLegend = `${sourceName} (${schemeFieldKey.replace('_', ': ')})`;
+
+                const isCurrentlyHovered = hoveredLegendKey === seriesNameInLegend;
+                const seriesOpacityDs = hoveredLegendKey && !isCurrentlyHovered ? 0.2 : 1;
+                const areaFillOpacity = hoveredLegendKey && !isCurrentlyHovered ? 0.02 : 0.08;
+
+                const hasSeriesDataDs = (displayData as ChartDataPoint[]).some(p => p && p[schemeFieldKey]?.[targetKeyDs]?.avg !== undefined && !isNaN(Number(p[schemeFieldKey]?.[targetKeyDs]?.avg)));
+                if (!hasSeriesDataDs) return null;
                 
-                // Generate a distinct color for this source based on the scheme's color
                 const sourceColorShade = generateSourceColor(baseColor, sourceIndex, selectedDataSourceIds.length);
-                
-                // Use different dash patterns for visual distinction 
-                const strokeDasharray = sourceIndex % 2 === 0 ? undefined : "5 5";
-                
-                // Reduced opacity with less variability to avoid third color issues when overlapping
-                const strokeOpacity = 0.9; 
-                
-                // Adjust line width slightly by source to help with overlaps
-                const strokeWidth = 2 + (sourceIndex % 2) * 0.5;
+                const strokeWidth = 2; 
                 
                 if (showStatistics) {
                   const hasStats = (displayData as ChartDataPoint[]).some(p => { 
-                    const sd = p[schemeFieldKey]?.[targetKey]; 
+                    if (!p) return false;
+                    const sd = p[schemeFieldKey]?.[targetKeyDs]; 
                     return sd && typeof sd.min === 'number' && typeof sd.max === 'number' && typeof sd.avg === 'number'; 
                   });
                   
@@ -1193,36 +1278,36 @@ const ClassificationResultsChart: React.FC<Props> = ({
                       <React.Fragment key={`stats-${schemeFieldKey}-${dsId}`}>
                         <Area 
                           type="monotone" 
-                          dataKey={(p: ChartDataPoint) => p[schemeFieldKey]?.[targetKey]?.min ?? null} 
+                          dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyDs]?.min ?? null : null} 
                           stroke="none" 
-                          fillOpacity={0} 
-                          name={`${legendLabel} (min)`} 
+                          fillOpacity={0} // Min area is not directly filled, max area creates the fill range
+                          name={`${seriesNameInLegend} (min)`} // Name for tooltip, not legend item itself
                           isAnimationActive={false} 
                           legendType="none" 
                           connectNulls={true} 
                         />
                         <Area 
                           type="monotone" 
-                          dataKey={(p: ChartDataPoint) => p[schemeFieldKey]?.[targetKey]?.max ?? null} 
+                          dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyDs]?.max ?? null : null} 
                           stroke="none" 
-                          fillOpacity={0.08} // Reduced opacity for area fill to minimize overlap issues
+                          fillOpacity={areaFillOpacity} // Use calculated opacity
                           fill={sourceColorShade} 
-                          name={`${legendLabel} (range)`} 
+                          name={`${seriesNameInLegend} (range)`} // Name for tooltip
                           isAnimationActive={false} 
                           legendType="none" 
                           connectNulls={true} 
                         />
                         <Line 
                           type="monotone" 
-                          dataKey={(p: ChartDataPoint) => p[schemeFieldKey]?.[targetKey]?.avg ?? null} 
+                          dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyDs]?.avg ?? null : null} 
                           stroke={sourceColorShade} 
-                          strokeDasharray={strokeDasharray} 
-                          strokeOpacity={strokeOpacity}
+                          strokeOpacity={seriesOpacityDs} // Use calculated opacity
                           strokeWidth={strokeWidth} 
                           dot={false} 
-                          name={`${legendLabel}`} 
+                          name={seriesNameInLegend} // This name is used by the legend
                           isAnimationActive={false} 
                           connectNulls={true} 
+                          id={`line-${schemeFieldKey}-${dsId}`} // Keep id if used elsewhere
                         />
                       </React.Fragment>
                     );
@@ -1232,17 +1317,16 @@ const ClassificationResultsChart: React.FC<Props> = ({
                 return (
                   <Line 
                     key={`line-${schemeFieldKey}-${dsId}`} 
-                    type="monotone" 
-                    dataKey={(p: ChartDataPoint) => p[schemeFieldKey]?.[targetKey]?.avg ?? null} 
-                    name={legendLabel} 
+                    dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyDs]?.avg ?? null : null} 
+                    name={seriesNameInLegend} // This name is used by the legend
                     stroke={sourceColorShade} 
-                    strokeDasharray={strokeDasharray} 
-                    strokeOpacity={strokeOpacity}
+                    strokeOpacity={seriesOpacityDs} // Use calculated opacity
                     strokeWidth={strokeWidth} 
                     dot={renderDot} 
                     activeDot={{ r: 6 }} 
                     isAnimationActive={false} 
-                    connectNulls={true} 
+                    connectNulls={true}
+                    id={`line-${schemeFieldKey}-${dsId}`} // Keep id
                   />
                 );
               }).filter(Boolean);
@@ -1652,16 +1736,38 @@ const ClassificationResultsChart: React.FC<Props> = ({
                                <XAxis dataKey="valueString" fontSize={10} interval="preserveStartEnd"/>
                                <YAxis fontSize={10} domain={[0, maxGroupCount]} allowDataOverflow={true}/>
                                <Tooltip
-                                   active={isChartHovered || isTooltipHovered}
+                                   active={(isChartHovered || isTooltipHovered) && hoveredLegendKey === null}
                                    cursor={{ fill: 'transparent' }}
                                    wrapperStyle={{ zIndex: 100, pointerEvents: 'auto' }}
                                    position={{ y: -20 }}
                                    allowEscapeViewBox={{ x: true, y: true }}
                                    // Pass necessary info for the AGGREGATED tooltip
-                                   content={<CustomTooltip isGrouped={true} schemes={schemes} dataSources={dataSources} results={results} showStatistics={false} dataRecordsMap={dataRecordsMap} setIsTooltipHovered={setIsTooltipHovered} selectedDataSourceIds={selectedDataSourceIds} aggregateSources={true} selectedPlotKeys={selectedPlotKeys} />} // Pass aggregateSources=true
+                                   content={<CustomTooltip 
+                                      isGrouped={true} 
+                                      schemes={schemes} 
+                                      dataSources={dataSources} 
+                                      results={results} 
+                                      showStatistics={false} 
+                                      dataRecordsMap={dataRecordsMap} 
+                                      // For aggregated chart, use global setIsTooltipHovered
+                                      setIsTooltipHovered={setIsTooltipHovered} 
+                                      selectedDataSourceIds={selectedDataSourceIds} 
+                                      aggregateSources={true} 
+                                      selectedPlotKeys={selectedPlotKeys} 
+                                    />} 
                                    isAnimationActive={false}
                                />
-                               <Bar dataKey="totalCount" fill={colorPalette[0]} isAnimationActive={false} barSize={20} />
+                               <Legend 
+                                 onMouseEnter={(e: any) => setHoveredLegendKey(e.value)} // Use e.value
+                                 onMouseLeave={() => setHoveredLegendKey(null)}
+                               />
+                               <Bar 
+                                dataKey="totalCount" 
+                                fill={colorPalette[0]} 
+                                isAnimationActive={false} 
+                                barSize={20} 
+                                opacity={hoveredLegendKey && hoveredLegendKey !== "totalCount" ? 0.2 : 1}
+                               />
                            </ComposedChart>
                         </ResponsiveContainer>
                       </div>
@@ -1676,9 +1782,33 @@ const ClassificationResultsChart: React.FC<Props> = ({
                        const barDataKey = `ds_${dsId}_count`;
                        const barColor = colorPalette[index % colorPalette.length];
 
-                       const sourceSpecificData = (displayData as GroupedDataPoint[]).filter(point => (point[barDataKey] ?? 0) > 0);
+                       const sourceSpecificDataUnsorted = (displayData as GroupedDataPoint[]).filter(point => (point[barDataKey] ?? 0) > 0);
 
-                       if (sourceSpecificData.length === 0) {
+                       // --- NEW: Sort data specifically for this sub-chart ---
+                       const sortedSourceSpecificData = [...sourceSpecificDataUnsorted].sort((a, b) => {
+                        const countA = a[barDataKey] || 0;
+                        const countB = b[barDataKey] || 0;
+
+                        if (groupedSortOrder === 'value-asc' || groupedSortOrder === 'value-desc') {
+                            if (isGroupedDataInteger) {
+                                const valA = parseInt(a.valueString, 10);
+                                const valB = parseInt(b.valueString, 10);
+                                const multiplier = groupedSortOrder === 'value-asc' ? 1 : -1;
+                                if (isNaN(valA) && isNaN(valB)) return 0;
+                                if (isNaN(valA)) return 1 * multiplier;
+                                if (isNaN(valB)) return -1 * multiplier;
+                                return (valA - valB) * multiplier;
+                            } else {
+                                const multiplier = groupedSortOrder === 'value-asc' ? 1 : -1;
+                                return a.valueString.localeCompare(b.valueString) * multiplier;
+                            }
+                        } else { // count-desc (default)
+                            return countB - countA;
+                        }
+                       });
+                       // --- END NEW --- 
+
+                       if (sortedSourceSpecificData.length === 0) {
                             return (
                                 <Card key={`chart-ds-${dsId}`} className="opacity-50">
                                     <CardHeader><CardTitle className="text-sm font-medium">Source: {sourceName}</CardTitle></CardHeader>
@@ -1687,11 +1817,15 @@ const ClassificationResultsChart: React.FC<Props> = ({
                             )
                        }
 
-                       const subChartMaxY = Math.max(...sourceSpecificData.map(p => p[barDataKey] || 0), 0); // Use || 0 fallback
+                       const subChartMaxY = Math.max(...sortedSourceSpecificData.map(p => p[barDataKey] || 0), 0);
                        const yDomainMax = subChartMaxY > 0 ? subChartMaxY + Math.ceil(subChartMaxY * 0.1) : 10;
 
                        return (
-                         <Card key={`chart-ds-${dsId}`}>
+                         <Card 
+                           key={`chart-ds-${dsId}`}
+                           onMouseEnter={() => handleSubChartCardEnter(dsId)}
+                           onMouseLeave={() => handleSubChartCardLeave(dsId)}
+                         >
                            <CardHeader>
                              <CardTitle className="text-base">{sourceName}</CardTitle>
                              <p className="text-xs text-muted-foreground">Grouped by: {groupedData[0]?.schemeName} - {groupingFieldKey ?? 'N/A'}</p>
@@ -1701,32 +1835,54 @@ const ClassificationResultsChart: React.FC<Props> = ({
                              <div style={{ width: '100%', height: 250 }}>
                                <ResponsiveContainer>
                                  <ComposedChart
-                                   data={sourceSpecificData}
+                                   data={sortedSourceSpecificData}
                                    margin={{ top: 5, right: 10, left: -10, bottom: 5 }}
-                                   // Pass dsId to handleClick for context if needed later
                                    onClick={(e) => handleClick(e, dsId)}
                                  >
                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(128, 128, 128, 0.3)" />
                                    <XAxis dataKey="valueString" fontSize={10} interval="preserveStartEnd"/>
                                    <YAxis fontSize={10} domain={[0, yDomainMax]} allowDataOverflow={true}/>
                                    <Tooltip
-                                     active={isChartHovered || isTooltipHovered}
+                                     active={(hoveredSubChartId === dsId || hoveredSubChartTooltipOwnerId === dsId) && hoveredLegendKey === null}
                                      cursor={{ fill: 'transparent' }}
                                      wrapperStyle={{ zIndex: 100, pointerEvents: 'auto' }}
                                      position={{ y: -20 }}
                                      allowEscapeViewBox={{ x: true, y: true }}
-                                     // Pass necessary info for the specific source to the tooltip
-                                     content={<CustomTooltip isGrouped={true} schemes={schemes} dataSources={dataSources} results={results} showStatistics={false} dataRecordsMap={dataRecordsMap} setIsTooltipHovered={setIsTooltipHovered} highlightedSourceId={dsId} selectedDataSourceIds={selectedDataSourceIds} aggregateSources={false} selectedPlotKeys={selectedPlotKeys} />} // Pass aggregateSources=false
+                                     content={<CustomTooltip 
+                                        isGrouped={true} 
+                                        schemes={schemes} 
+                                        dataSources={dataSources} 
+                                        results={results} 
+                                        showStatistics={false} 
+                                        dataRecordsMap={dataRecordsMap} 
+                                        highlightedSourceId={dsId} 
+                                        // For sub-charts, use specific handlers
+                                        onOwnMouseEnter={() => handleSubChartTooltipEnter(dsId)} 
+                                        onOwnMouseLeave={() => handleSubChartTooltipLeave(dsId)} 
+                                        selectedDataSourceIds={selectedDataSourceIds} 
+                                        aggregateSources={false} 
+                                        selectedPlotKeys={selectedPlotKeys} 
+                                      />} 
                                      isAnimationActive={false}
-                                   />
-                                   <Bar dataKey={barDataKey} fill={barColor} isAnimationActive={false} barSize={20} />
-                                 </ComposedChart>
-                               </ResponsiveContainer>
-                             </div>
-                           </CardContent>
-                         </Card>
-                       );
-                     })
+                                 />
+                                 <Legend 
+                                   onMouseEnter={(e: any) => setHoveredLegendKey(e.value)} // Use e.value
+                                   onMouseLeave={() => setHoveredLegendKey(null)}
+                                 />
+                                 <Bar 
+                                  dataKey={barDataKey} 
+                                  fill={barColor} 
+                                  isAnimationActive={false} 
+                                  barSize={20} 
+                                  opacity={hoveredLegendKey && hoveredLegendKey !== barDataKey ? 0.2 : 1}
+                                 />
+                               </ComposedChart>
+                             </ResponsiveContainer>
+                           </div>
+                         </CardContent>
+                       </Card>
+                     );
+                   })
                    ) : (
                      <div className="text-center text-muted-foreground italic py-10">Please select source(s).</div>
                    )}
@@ -1804,7 +1960,9 @@ interface CustomTooltipProps extends TooltipProps<number, string> {
   results: FormattedClassificationResult[];
   showStatistics?: boolean; // Keep for time series
   dataRecordsMap?: Map<number, DataRecordRead>;
-  setIsTooltipHovered: (isHovered: boolean) => void;
+  setIsTooltipHovered?: (isHovered: boolean) => void; // For general charts
+  onOwnMouseEnter?: () => void; // For specific hover control e.g. subcharts
+  onOwnMouseLeave?: () => void; // For specific hover control e.g. subcharts
   highlightedSourceId?: number; // For grouped chart sub-charts
   selectedDataSourceIds: number[]; // <-- ADD THIS PROP
   aggregateSources: boolean; // <-- ADD PROP
@@ -1835,7 +1993,9 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
   highlightedSourceId,
   selectedDataSourceIds,
   aggregateSources,
-  selectedPlotKeys
+  selectedPlotKeys,
+  onOwnMouseEnter, // <-- Destructure new prop
+  onOwnMouseLeave  // <-- Destructure new prop
 }) => {
 
   // --- Create dataSourceNameMap at the top level --- 
@@ -1847,6 +2007,7 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
       // This runs when the component unmounts or before the effect runs again.
       // If the tooltip becomes inactive (due to `active` prop becoming false),
       // this cleanup ensures the hover state in the parent is reset.
+      // setIsTooltipHovered(false); // Consider if this is needed or if parent handles it well
     };
   }, []);
 
@@ -1893,8 +2054,14 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
     <div
       className={cn("max-h-72 overflow-y-auto bg-card/95 p-3 border border-border rounded-lg shadow-lg max-w-md overscroll-behavior-contain pointer-events-auto")} 
       style={{ zIndex: 101 }}
-      onMouseEnter={() => setIsTooltipHovered(true)}
-      onMouseLeave={() => setIsTooltipHovered(false)}
+      onMouseEnter={() => {
+        if (onOwnMouseEnter) onOwnMouseEnter();
+        else if (setIsTooltipHovered) setIsTooltipHovered(true);
+      }}
+      onMouseLeave={() => {
+        if (onOwnMouseLeave) onOwnMouseLeave();
+        else if (setIsTooltipHovered) setIsTooltipHovered(false);
+      }}
       onWheel={(e) => e.stopPropagation()}
     >
       {/* --- Header --- */}
@@ -2018,7 +2185,11 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
                           // Show stats block with min/avg/max
                           const { min, max, avg, count } = typedSourceData;
                           if (avg === undefined || avg === null || isNaN(Number(avg))) {
-                            return null;
+                            // If avg is not plottable, but we want to show other stats if available
+                            if ((min === undefined || min === null || isNaN(Number(min))) && 
+                                (max === undefined || max === null || isNaN(Number(max)))) {
+                              return null; // No valid numeric data to show for stats
+                            }
                           }
                           
                           // Format values for display with 1 decimal place
@@ -2057,26 +2228,69 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
                             </div>
                           );
                         } else {
-                          // Show simple value line when statistics are disabled
-                          // Find the value in the payload
-                          const payloadItem = payload.find(p => {
-                            const parts = p.name?.match(/(.+?):\s*(.+?)\s*\((.+?)\)/);
-                            return parts && parts[1] === schemeName && parts[2] === fieldName && parts[3] === sourceName;
-                          });
-                          
-                          const value = payloadItem?.value;
-                          const valueFormatted = (value !== null && value !== undefined && !isNaN(Number(value))) 
-                            ? Number(value).toFixed(1) 
-                            : 'N/A';
-                          
-                          return (
-                            <div key={`${schemeFieldKey}-${dsId}-val`} className="flex justify-between items-center text-xs px-2">
-                              <span className="font-medium truncate max-w-[70%]" title={`${schemeName}: ${fieldName} (${sourceName})`}>
-                                {schemeName}: {fieldName} <span className="text-muted-foreground">({sourceName})</span>
-                              </span>
-                              <span className="font-semibold">{valueFormatted}</span>
-                            </div>
-                          );
+                          // Show simple value line or top category when statistics are disabled
+                          const currentScheme = schemes.find(s => s.name === schemeName);
+                          const currentField = currentScheme?.fields.find(f => f.name === fieldName);
+
+                          if (currentField?.type === 'int') {
+                              // --- Integer field: Show Average Value ---
+                              const value = typedSourceData?.avg;
+                              const valueFormatted = (value !== null && value !== undefined && !isNaN(Number(value)))
+                                ? Number(value).toFixed(1)
+                                : 'N/A';
+
+                              return (
+                                <div key={`${schemeFieldKey}-${dsId}-val`} className="flex justify-between items-center text-xs px-2 py-0.5">
+                                  <span className="font-medium truncate max-w-[70%]" title={`${schemeName}: ${fieldName} (${sourceName})`}>
+                                    {schemeName}: {fieldName} <span className="text-muted-foreground">({sourceName})</span>
+                                  </span>
+                                  <span className="font-semibold">{valueFormatted}</span>
+                                </div>
+                              );
+                          } else {
+                              // --- Non-integer field: Show Most Frequent Category ---
+                              const categories = typedSourceData?.categories;
+                              const fallbackTopCategoryDisplay = 'N/A';
+                              let topCategory: string | null = null;
+                              let topCount: number | null = null;
+
+                              if (categories && typeof categories === 'object' && Object.keys(categories).length > 0) {
+                                  // Find the category with the highest count
+                                  [topCategory, topCount] = Object.entries(categories).reduce(
+                                      (top, [category, count]) => {
+                                          if (typeof count === 'number' && count > (top[1] ?? -1)) {
+                                              return [category, count];
+                                          }
+                                          return top;
+                                      },
+                                      [null as string | null, null as number | null] // Ensure types are consistent
+                                  );
+                              }
+
+                              if (topCategory !== null && topCount !== null) {
+                                  const categoryLabel = topCategory === '[object Object]' ? 'Complex Value' : topCategory;
+                                  return (
+                                      <div key={`${schemeFieldKey}-${dsId}-cat`} className="flex justify-between items-center text-xs px-2 py-0.5">
+                                          <span className="font-medium truncate max-w-[70%]" title={`${schemeName}: ${fieldName} (${sourceName}) - ${categoryLabel}`}>
+                                              {schemeName}: {fieldName} <span className="text-muted-foreground">({sourceName})</span>
+                                          </span>
+                                          <span className="font-semibold truncate" title={categoryLabel}>
+                                              {categoryLabel} <span className="bg-primary/20 px-1.5 py-0.5 rounded-full text-xs ml-1">{topCount}</span>
+                                          </span>
+                                      </div>
+                                  );
+                              } else {
+                                  // Fallback if no categories found
+                                   return (
+                                      <div key={`${schemeFieldKey}-${dsId}-cat-na`} className="flex justify-between items-center text-xs px-2 py-0.5">
+                                          <span className="font-medium truncate max-w-[70%]" title={`${schemeName}: ${fieldName} (${sourceName})`}>
+                                              {schemeName}: {fieldName} <span className="text-muted-foreground">({sourceName})</span>
+                                          </span>
+                                          <span className="font-semibold text-muted-foreground">{fallbackTopCategoryDisplay}</span>
+                                      </div>
+                                  );
+                              }
+                          }
                         }
                       }).filter(Boolean);
                   }

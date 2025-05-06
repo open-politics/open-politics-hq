@@ -15,7 +15,8 @@ from app.models import (
     ClassificationScheme,
     ClassificationResult,
     ClassificationResultCreate,
-    RecurringTask # Import RecurringTask model
+    RecurringTask, 
+    ClassificationResultStatus
 )
 # Import the status update helper function from the new utils module
 from app.api.tasks.utils import update_task_status
@@ -141,7 +142,9 @@ def process_classification_job(self, job_id: int):
                             "job_id": job_id,
                             "datarecord_id": record_id,
                             "scheme_id": scheme.id,
-                            "value": classification_value
+                            "value": classification_value,
+                            "status": ClassificationResultStatus.SUCCESS,
+                            "error_message": None
                         })
                         success_count += 1
 
@@ -155,6 +158,17 @@ def process_classification_job(self, job_id: int):
                         logging.error(f"Classification failed for Record {record_id}, Scheme {scheme.id}, Job {job_id}: {classify_error}")
                         error_count += 1
                         final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
+                        # --- ADDED: Record failure in batch data ---
+                        failure_data = {
+                            "job_id": job_id,
+                            "datarecord_id": record_id,
+                            "scheme_id": scheme.id,
+                            "value": {}, # Store empty value for failed attempts
+                            "status": ClassificationResultStatus.FAILED,
+                            "error_message": str(classify_error)[:1000] # Store truncated error
+                        }
+                        results_batch_data.append(failure_data)
+                        # --- END ADDED ---
                         # Optionally store error details in result?
                         # results_batch_data.append({... "value": {"error": str(classify_error)} ...})
 

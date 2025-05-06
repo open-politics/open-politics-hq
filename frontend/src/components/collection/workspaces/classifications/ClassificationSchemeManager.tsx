@@ -355,7 +355,7 @@ const ClassificationSchemeManager: React.FC = () => {
                                               />
                                           </TableCell>
                                           <TableCell className="font-medium truncate" title={scheme.name}>{scheme.name}</TableCell>
-                                          <TableCell className="text-muted-foreground truncate text-sm" title={scheme.description || undefined}>{scheme.description || '-'}</TableCell>
+                                          <TableCell className="text-muted-foreground text-sm max-w-sm truncate" title={scheme.description || undefined}>{scheme.description || '-'}</TableCell>
                                           <TableCell className="text-center text-sm">{scheme.fields?.length || 0}</TableCell>
                                           <TableCell className="text-center text-sm">{scheme.job_count ?? '-'}</TableCell>
                                           <TableCell className="text-muted-foreground text-xs">

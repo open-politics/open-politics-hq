@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException, Query
 import requests
 from datetime import datetime
+import asyncio
 
 router = APIRouter()
 
@@ -16,20 +17,22 @@ async def geojson_events_view(
     limit: int = Query(100, description="Maximum number of locations to return")
 ):
     # Validate date formats
-    if start_date and start_date is not None:
+    if start_date:
         try:
             datetime.fromisoformat(start_date.replace('Z', '+00:00'))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid start_date format")
     
-    if end_date and end_date is not None:
+    if end_date:
         try:
             datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
     try:
-        events_geojson_data = opol.geo.json_by_event(
+        # Run the blocking call in a separate thread
+        events_geojson_data = await asyncio.to_thread(
+            opol.geo.json_by_event,
             event_type=event_type,
             start_date=start_date,
             end_date=end_date,

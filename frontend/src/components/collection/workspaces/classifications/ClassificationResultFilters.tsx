@@ -10,6 +10,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { FilterLogicMode } from './ClassificationRunner';
 
 // Define the filter interface more formally
 export interface ResultFilter {
@@ -24,6 +26,8 @@ interface ResultFiltersProps {
   filters: ResultFilter[];
   schemes: ClassificationSchemeRead[];
   onChange: (filters: ResultFilter[]) => void;
+  logicMode: FilterLogicMode;
+  onLogicModeChange: (mode: FilterLogicMode) => void;
 }
 
 // Define an alias for the DictKeyDefinition structure derived from the API model for clarity in the return type
@@ -111,7 +115,10 @@ export const getTargetKeysForScheme = (schemeId: number, schemes: Classification
     return scheme.fields.map(f => ({ key: f.name, name: f.name, type: f.type }));
 };
 
-export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps) => {
+export const ResultFilters = ({ filters, schemes, onChange, logicMode, onLogicModeChange }: ResultFiltersProps) => {
+  // Count only *active* filters for showing the toggle
+  const activeFilterCount = filters.filter(f => f.isActive).length;
+
   const addFilter = () => {
     if (schemes.length === 0) return;
     const defaultScheme = schemes[0];
@@ -280,7 +287,7 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-2 flex-wrap">
         <h3 className="text-sm font-medium text-muted-foreground flex items-center">
             Filters
             <TooltipProvider delayDuration={100}>
@@ -297,7 +304,29 @@ export const ResultFilters = ({ filters, schemes, onChange }: ResultFiltersProps
                 </Tooltip>
             </TooltipProvider>
         </h3>
-        <Button variant="outline" size="sm" onClick={addFilter} disabled={schemes.length === 0}>
+
+        {activeFilterCount > 1 && (
+            <div className="flex items-center gap-2">
+               <Label className="text-xs text-muted-foreground">Match:</Label>
+               <ToggleGroup
+                   type="single"
+                   size="sm"
+                   variant="outline"
+                   value={logicMode}
+                   onValueChange={(value: FilterLogicMode) => { if (value) onLogicModeChange(value); }}
+                   className="gap-0.5"
+               >
+                   <ToggleGroupItem value="and" aria-label="Match all filters (AND)" title="Match all filters (AND)" className="h-7 px-2 text-xs">
+                       All (AND)
+                   </ToggleGroupItem>
+                   <ToggleGroupItem value="or" aria-label="Match any filter (OR)" title="Match any filter (OR)" className="h-7 px-2 text-xs">
+                       Any (OR)
+                   </ToggleGroupItem>
+               </ToggleGroup>
+            </div>
+        )}
+
+        <Button variant="outline" size="sm" onClick={addFilter} disabled={schemes.length === 0} className="ml-auto">
           <Plus className="h-3 w-3 mr-1" />
           Add Filter
         </Button>

@@ -8,11 +8,23 @@ import { ClassificationService } from '@/lib/classification/service';
 import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from "@/lib/utils"; // Import cn helper
+import { FormattedClassificationResult } from '@/lib/classification/types';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AlertCircle } from 'lucide-react';
+import {
+    RadarChart,
+    PolarGrid,
+    PolarAngleAxis,
+    PolarRadiusAxis,
+    Radar,
+    ResponsiveContainer,
+    Legend
+} from 'recharts';
 
 // Component-level types (if needed, e.g., for props)
 interface ClassificationResultDisplayProps {
   /** The classification result(s) to display. Can be a single result or an array. */
-  result: ClassificationResultRead | EnhancedClassificationResultRead | ClassificationResultRead[] | EnhancedClassificationResultRead[];
+  result: FormattedClassificationResult | FormattedClassificationResult[];
   /** The classification scheme(s) associated with the result(s). */
   scheme: ClassificationSchemeRead | ClassificationSchemeRead[];
   /** If true, renders a more compact version suitable for previews. Defaults to false. */
@@ -30,7 +42,7 @@ interface ClassificationResultDisplayProps {
 }
 
 interface SingleClassificationResultProps {
-  result: ClassificationResultRead | EnhancedClassificationResultRead;
+  result: FormattedClassificationResult;
   scheme: ClassificationSchemeRead;
   compact?: boolean;
   targetFieldKey?: string | null;
@@ -40,7 +52,7 @@ interface SingleClassificationResultProps {
 }
 
 interface ConsolidatedSchemesViewProps {
-  results: (ClassificationResultRead | EnhancedClassificationResultRead)[];
+  results: FormattedClassificationResult[];
   schemes: ClassificationSchemeRead[];
   compact?: boolean;
   targetFieldKey?: string | null;
@@ -104,19 +116,20 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
     } else if (compact) {
       // Compact mode: show only the first field
       fields = fields.slice(0, 1);
-    } else if (maxFieldsToShow !== undefined) {
-      // Non-compact, no specific fields selected: limit by maxFieldsToShow
-      fields = fields.slice(0, maxFieldsToShow);
     }
     // If no specific rules applied, 'fields' remains all adapted fields
 
     return fields;
-  }, [scheme.fields, selectedFieldKeys, targetFieldKey, compact, maxFieldsToShow]);
+  }, [scheme.fields, selectedFieldKeys, targetFieldKey, compact]);
 
   // Check if *any* of the fields *to be displayed* are potentially long
   const isPotentiallyLong = useMemo(() => {
     return fieldsToDisplay.some(f => f.type === 'List[Dict[str, any]]');
   }, [fieldsToDisplay]);
+
+  // --- ADD: Check status --- 
+  const isFailed = result.status === 'failed';
+  // --- END ADD --- 
 
   /**
    * Formats the value of a single classification field for display.
@@ -300,7 +313,25 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
       <div className={containerClasses}>
           {/* Only show scheme name if not compact OR if context is not dialog OR table (to avoid repetition) */}
           {(!compact || (renderContext !== 'dialog' && renderContext !== 'table')) && (
-             <div className="font-medium text-base text-yellow-500 mb-2">{scheme.name}</div>
+             <div className="flex items-center justify-between mb-2">
+               <span className="font-medium text-base text-yellow-500">{scheme.name}</span>
+               {/* --- ADD: Failure Indicator --- */} 
+               {isFailed && (
+                 <TooltipProvider delayDuration={100}>
+                   <Tooltip>
+                     <TooltipTrigger asChild>
+                       <AlertCircle className="h-4 w-4 text-destructive opacity-80 cursor-help ml-2" />
+                     </TooltipTrigger>
+                     <TooltipContent side="top" align="end">
+                       <p className="text-xs max-w-xs break-words">
+                         Failed: {result.error_message || 'Unknown error'}
+                       </p>
+                     </TooltipContent>
+                   </Tooltip>
+                 </TooltipProvider>
+               )}
+               {/* --- END ADD --- */} 
+             </div>
           )}
           {/* Add scheme name specifically for dialog if it's the compact view (might be redundant if title already shows) */}
           {/* {compact && renderContext === 'dialog' && (
@@ -340,10 +371,6 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                       </div>
                   );
               })}
-              {/* Show ellipsis if fields were truncated by maxFieldsToShow */}
-              {!compact && !targetFieldKey && !selectedFieldKeys && scheme.fields.length > fieldsToDisplay.length && (
-                <div className="text-xs text-muted-foreground italic pl-2">... (+{scheme.fields.length - fieldsToDisplay.length} more fields)</div>
-              )}
             </div>
           </div>
           {isPotentiallyLong && !compact && (
@@ -477,7 +504,7 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
     // Map results to include their schemes, then filter out those without a scheme
     const validResultsWithSchemes = result
       .map(r => ({ result: r, scheme: findSchemeForResult(r, scheme) }))
-      .filter((item): item is { result: ClassificationResultRead | EnhancedClassificationResultRead; scheme: ClassificationSchemeRead } => item.scheme !== null);
+      .filter((item): item is { result: FormattedClassificationResult; scheme: ClassificationSchemeRead } => item.scheme !== null);
       // This filter explicitly tells TS that item.scheme is non-null in the resulting array
 
     if (validResultsWithSchemes.length === 0) {

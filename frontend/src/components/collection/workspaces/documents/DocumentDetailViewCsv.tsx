@@ -15,7 +15,8 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, Search, ArrowUp, ArrowDown } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { DataSourceRead as ClientDataSourceRead, CsvRowsOut, CsvRowData, EnhancedClassificationResultRead, ClassificationSchemeRead } from '@/client/models';
-import ClassificationResultDisplay from '../classifications/ClassificationResultDisplay'; // Adjust path as needed
+import ClassificationResultDisplay from '../classifications/ClassificationResultDisplay'; 
+import { adaptEnhancedResultReadToFormattedResult } from '@/lib/classification/adapters';
 
 // Define Sort Direction type if not imported
 type SortDirection = 'asc' | 'desc' | null;
@@ -121,7 +122,7 @@ const DocumentDetailViewCsv: React.FC<DocumentDetailViewCsvProps> = ({
                          <Badge variant="outline" className="text-xs font-normal">{jobName}</Badge>
                        </div>
                       <ClassificationResultDisplay
-                        result={result}
+                        result={adaptEnhancedResultReadToFormattedResult(result)}
                         scheme={scheme}
                         compact={true}
                       />

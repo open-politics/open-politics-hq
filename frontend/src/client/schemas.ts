@@ -492,11 +492,28 @@ export const $ClassificationResultRead = {
 	type: 'string',
 	format: 'date-time',
 },
+		status: {
+	type: 'ClassificationResultStatus',
+	default: 'success',
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 		id: {
 	type: 'number',
 	isRequired: true,
 },
 	},
+} as const;
+
+export const $ClassificationResultStatus = {
+	type: 'Enum',
+	enum: ['success','failed',],
 } as const;
 
 export const $ClassificationSchemeCreate = {
@@ -1287,6 +1304,18 @@ export const $EnhancedClassificationResultRead = {
 		timestamp: {
 	type: 'string',
 	format: 'date-time',
+},
+		status: {
+	type: 'ClassificationResultStatus',
+	default: 'success',
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 		id: {
 	type: 'number',

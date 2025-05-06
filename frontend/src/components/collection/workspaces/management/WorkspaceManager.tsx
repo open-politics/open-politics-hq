@@ -66,7 +66,7 @@ export default function WorkspaceManager({ activeWorkspace }: WorkspaceManagerPr
   };
 
   const handleEdit = (workspace: Workspace) => {
-    setSelectedWorkspaceId(workspace.uid);
+    setSelectedWorkspaceId(workspace.id);
     setIsEditDialogOpen(true);
   };
 

@@ -118,25 +118,30 @@ export interface ClassificationJob {
   target_datasource_ids: number[]; // Derived from configuration in API
 }
 
+// --- ADD ClassificationResultStatus Enum ---
+export type ClassificationResultStatus = 'success' | 'failed';
+// --- END ADD ---
+
 // A classification result (Refactored)
 export interface ClassificationResult {
   id: number;
-  datarecord_id: number; // Changed from document_id
+  datarecord_id: number;
   scheme_id: number;
-  job_id: number; // Added
-  value: any;
+  job_id: number;
+  value: any; // Keep as any for flexibility from backend
   timestamp: string;
-  // Removed run_id, run_name, run_description
-  // Optional links to related objects
-  datarecord?: DataRecord | null; // Optional link, allow null
-  scheme?: ClassificationScheme | null; // Optional link, allow null
-  job?: ClassificationJob | null; // Optional link, allow null
+  // --- Make status non-nullable ---
+  status: ClassificationResultStatus; // Defaulted in adapter
+  error_message?: string | null;
+  // --- END CHANGE ---
+  datarecord?: DataRecord | null;
+  scheme?: ClassificationScheme | null;
+  job?: ClassificationJob | null;
 }
 
 // A classification result with formatted display value (Refactored)
 export interface FormattedClassificationResult extends ClassificationResult {
-  // Properties datarecord, scheme, job are inherited from ClassificationResult
-  displayValue?: string | number | string[] | Record<string, any> | null; // Allow complex display values too
+  displayValue?: string | number | string[] | Record<string, any> | null;
   isOptimistic?: boolean;
 }
 

@@ -110,6 +110,8 @@ const Globe = forwardRef<any, GlobeProps>(
     // Refs and states
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<mapboxgl.Map | null>(null);
+    const isProcessingGeoJsonRef = useRef(false);
+    const prevDataTypeRef = useRef<"events" | "articles" | null>(null);
 
     const [mapLoaded, setMapLoaded] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
@@ -301,298 +303,224 @@ const Globe = forwardRef<any, GlobeProps>(
 
     // Replace loadGeoJSONEventsData with a more generic function that handles both endpoints
     const loadGeoJSONData = useCallback(async () => {
-      if (!mapRef.current || !mapLoaded) return;
-      
-      try {
-        setIsLoading(true);
-        
-        // Define source ID for articles
-        const articlesSourceId = "opol-globe-articles";
-        
-        // Clear any existing layers and sources first
-        if (mapRef.current.getSource(articlesSourceId)) {
-          ["clusters-articles", "unclustered-point-articles", "cluster-count-articles"].forEach((layerId) => {
-            if (mapRef.current?.getLayer(layerId)) {
-              mapRef.current.removeLayer(layerId);
-            }
-          });
-          mapRef.current.removeSource(articlesSourceId);
-        }
+      const map = mapRef.current;
+      if (!map || !mapLoaded || isProcessingGeoJsonRef.current) {
+        // If map is not ready or a load is in progress, bail.
+        // If isProcessingGeoJsonRef is true, it will be reset by the ongoing process.
+        return;
+      }
+      isProcessingGeoJsonRef.current = true;
+      setIsLoading(true);
 
-        if (dataType === "events") {
-          console.log(`[Globe] Loading event GeoJSON data for ${eventTypes.length} event types`);
-          
-          // Process each event type sequentially instead of in parallel
-          const results: any[] = [];
-          for (const eventType of eventTypes) {
-            console.log(`[Globe] Loading event data for ${eventType.type}`);
-            try {
-              // Use the store's fetch method which already has caching built in
-              const result = await fetchEventGeoJson(
-                eventType.type,
-                startDate ?? undefined,
-                endDate ?? undefined,
-                eventLimit
-              );
-              results.push(result);
-              
-              // Add a small delay between requests to reduce server load
-              await new Promise(resolve => setTimeout(resolve, 300));
-            } catch (error) {
-              console.error(`Error fetching ${eventType.type} data:`, error);
-              results.push(null);
-            }
+      const actualCurrentDataType = dataType; // Capture for stable use in this execution
+      const previousDataType = prevDataTypeRef.current;
+
+      try {
+        // If dataType has switched, clean up sources/layers from the *previous* dataType
+        if (previousDataType && previousDataType !== actualCurrentDataType) {
+          console.log(`[Globe] DataType changed from ${previousDataType} to ${actualCurrentDataType}. Cleaning up old sources.`);
+          if (previousDataType === 'events') {
+            eventTypes.forEach(et => {
+              const sourceId = `geojson-events-${et.type}`;
+              [`clusters-${et.type}`, `unclustered-point-${et.type}`, `cluster-count-${et.type}`].forEach(layerId => {
+                if (map.getLayer(layerId)) map.removeLayer(layerId);
+              });
+              if (map.getSource(sourceId)) map.removeSource(sourceId);
+            });
+          } else if (previousDataType === 'articles') {
+            const articlesSourceId = "opol-globe-articles";
+            [`clusters-articles`, `unclustered-point-articles`, `cluster-count-articles`].forEach(layerId => {
+              if (map.getLayer(layerId)) map.removeLayer(layerId);
+            });
+            if (map.getSource(articlesSourceId)) map.removeSource(articlesSourceId);
           }
+        }
+        prevDataTypeRef.current = actualCurrentDataType; // Update ref for the next run
+
+        // Define source ID for articles (used by both branches)
+        const articlesSourceId = "opol-globe-articles";
+
+        // REMOVED the large block of code that unconditionally cleared sources/layers here.
+        // The logic above and Mapbox's setStyle behavior handle this.
+
+        if (actualCurrentDataType === "events") {
+          console.log(`[Globe] Loading/Updating event GeoJSON data for ${eventTypes.length} event types`);
           
-          // Process results, handling null values
-          eventTypes.forEach((eventType, index) => {
-            const result = results[index];
-            if (!result || !mapRef.current) return;
+          const results = await Promise.all(
+            eventTypes.map(async (eventType) => {
+              try {
+                const result = await fetchEventGeoJson(
+                  eventType.type,
+                  startDate ?? undefined,
+                  endDate ?? undefined,
+                  eventLimit
+                );
+                return { eventType, data: result }; // Return eventType along with data
+              } catch (error) {
+                console.error(`Error fetching ${eventType.type} data:`, error);
+                return { eventType, data: null };
+              }
+            })
+          );
+          
+          results.forEach(item => {
+            if (!item || !item.data) return;
             
+            const { eventType, data: resultData } = item;
             const sourceId = `geojson-events-${eventType.type}`;
             
-            // Define offsets array for distributing icons
-            const offsets = [
-              [-7, -7], // Top-left
-              [7, -7],  // Top-right
-              [-7, 7],  // Bottom-left
-              [7, 7],   // Bottom-right
-              [0, -10], // Top-center
-              [0, 10],  // Bottom-center
-              [-10, 0]  // Left-center
-              // Add more if needed, e.g., [10, 0] for Right-center
-            ];
-            const iconOffset = offsets[index % offsets.length]; // Calculate offset based on index
+            const offsets = [ [-7, -7], [7, -7], [-7, 7], [7, 7], [0, -10], [0, 10], [-10, 0] ];
+            const iconOffset = offsets[eventTypes.findIndex(et => et.type === eventType.type) % offsets.length];
 
-            // Adjust the feature properties for easier usage
-            const typedResult = result as any;
+            const typedResult = resultData as any;
             const adjustedData = {
               ...typedResult,
-              features: typedResult.features.map((feature: any) => {
-                let contents;
-                try {
-                  contents =
-                    typeof feature.properties.contents === "string"
-                      ? JSON.parse(feature.properties.contents)
-                      : feature.properties.contents;
-                } catch (error) {
-                  contents = [];
-                }
-                return {
-                  ...feature,
-                  properties: {
-                    ...feature.properties,
-                    contents: contents,
-                  },
-                };
-              }),
+              features: typedResult.features.map((feature: any) => ({
+                ...feature,
+                properties: {
+                  ...feature.properties,
+                  contents: typeof feature.properties.contents === "string"
+                    ? JSON.parse(feature.properties.contents)
+                    : feature.properties.contents || [],
+                },
+              })),
             };
             
-            // Add as a cluster source
-            mapRef.current.addSource(sourceId, {
+            if (map.getSource(sourceId)) {
+              (map.getSource(sourceId) as mapboxgl.GeoJSONSource).setData(adjustedData);
+              console.log(`[Globe] Updated data for source: ${sourceId}`);
+            } else {
+              map.addSource(sourceId, {
+                type: "geojson",
+                data: adjustedData,
+                cluster: true,
+                clusterMaxZoom: 14,
+                clusterRadius: CLUSTER_RADIUS,
+              });
+              console.log(`[Globe] Added source: ${sourceId}`);
+
+              if (!map.getLayer(`clusters-${eventType.type}`)) {
+                map.addLayer({
+                  id: `clusters-${eventType.type}`,
+                  type: "circle",
+                  source: sourceId,
+                  filter: ["has", "point_count"],
+                  paint: {
+                    "circle-color": eventType.color,
+                    "circle-radius": ["interpolate", ["linear"], ["get", "point_count"], 1, 15, 50, 30, 200, 40],
+                    "circle-opacity": 1, "circle-stroke-width": 2, "circle-stroke-color": "#fff",
+                  },
+                });
+              }
+              if (!map.getLayer(`unclustered-point-${eventType.type}`)) {
+                map.addLayer({
+                  id: `unclustered-point-${eventType.type}`,
+                  type: "symbol",
+                  source: sourceId,
+                  filter: ["!", ["has", "point_count"]],
+                  layout: {
+                    "icon-image": eventType.icon, "icon-size": 1, "icon-allow-overlap": true, "icon-ignore-placement": true,
+                    "icon-offset": iconOffset, "symbol-placement": "point", "symbol-spacing": 50, "icon-padding": 5,
+                    "symbol-sort-key": ["get", "content_count"], "icon-pitch-alignment": "viewport",
+                    "icon-rotation-alignment": "viewport", "text-size": 18, "text-offset": [0, 0],
+                    "text-allow-overlap": true, "text-ignore-placement": true, "text-anchor": "top",
+                  },
+                  paint: {
+                    "icon-opacity": ['case', ['boolean', ['feature-state', 'selected'], false], 1.0, 0.7],
+                    "icon-color": eventType.color,
+                    "icon-halo-width": ['case', ['boolean', ['feature-state', 'selected'], false], 2, 0],
+                    "icon-halo-color": "#ffffff", "icon-halo-blur": 1
+                   },
+                });
+              }
+              if (!map.getLayer(`cluster-count-${eventType.type}`)) {
+                map.addLayer({
+                  id: `cluster-count-${eventType.type}`,
+                  type: "symbol",
+                  source: sourceId,
+                  filter: ["has", "point_count"],
+                  layout: { "text-field": "{point_count_abbreviated}", "text-size": 14, "text-allow-overlap": true },
+                  paint: { "text-color": "#ffffff" },
+                });
+              }
+            }
+          });
+        } else { // actualCurrentDataType === "articles"
+          console.log(`[Globe] Loading/Updating article GeoJSON data`);
+          const response = await fetchBaselineGeoJson();
+          
+          if (!response) {
+            throw new Error("Failed to load articles data");
+          }
+          
+          const articlesColor = theme === "dark" ? "#6C5CE7" : "#4361EE";
+          const adjustedData = {
+            ...response,
+            features: response.features.map((feature: any) => ({
+              ...feature,
+              properties: {
+                ...feature.properties,
+                contents: typeof feature.properties.contents === "string"
+                  ? JSON.parse(feature.properties.contents)
+                  : feature.properties.contents || [],
+              },
+            })),
+          };
+
+          if (map.getSource(articlesSourceId)) {
+            (map.getSource(articlesSourceId) as mapboxgl.GeoJSONSource).setData(adjustedData);
+            console.log(`[Globe] Updated data for source: ${articlesSourceId}`);
+          } else {
+            map.addSource(articlesSourceId, {
               type: "geojson",
               data: adjustedData,
               cluster: true,
               clusterMaxZoom: 14,
               clusterRadius: CLUSTER_RADIUS,
             });
+            console.log(`[Globe] Added source: ${articlesSourceId}`);
 
-            // Add the cluster layer (circles)
-            mapRef.current.addLayer({
-              id: `clusters-${eventType.type}`,
-              type: "circle",
-              source: sourceId,
-              filter: ["has", "point_count"],
-              paint: {
-                "circle-color": eventType.color,
-                "circle-radius": [
-                  "interpolate",
-                  ["linear"],
-                  ["get", "point_count"],
-                  1,
-                  15,
-                  50,
-                  30,
-                  200,
-                  40,
-                ],
-                "circle-opacity": 1,
-                "circle-stroke-width": 2,
-                "circle-stroke-color": "#fff",
-              },
-            });
-
-            // Single unclustered points
-            mapRef.current.addLayer({
-              id: `unclustered-point-${eventType.type}`,
-              type: "symbol",
-              source: sourceId,
-              filter: ["!", ["has", "point_count"]],
-              layout: {
-                "icon-image": eventType.icon,
-                "icon-size": 1,
-                "icon-allow-overlap": true,
-                "icon-ignore-placement": true,
-                "icon-offset": iconOffset, // Apply the calculated offset
-                "symbol-placement": "point",
-                "symbol-spacing": 50,
-                "icon-padding": 5,
-                "symbol-sort-key": ["get", "content_count"],
-                "icon-pitch-alignment": "viewport",
-                "icon-rotation-alignment": "viewport",
-                "text-size": 18,
-                "text-offset": [0, 0],
-                "text-allow-overlap": true,
-                "text-ignore-placement": true,
-                "text-anchor": "top",
-              },
-              paint: {
-                "icon-opacity": [
-                  'case',
-                  ['boolean', ['feature-state', 'selected'], false],
-                  1.0, // Full opacity if selected
-                  0.7 // Default opacity otherwise
-                ],
-                "icon-color": eventType.color,
-                // Optional: Add halo effect when selected
-                "icon-halo-width": [
-                  'case',
-                  ['boolean', ['feature-state', 'selected'], false],
-                  2, // Halo width when selected
-                  0 // No halo otherwise
-                ],
-                "icon-halo-color": "#ffffff", 
-                "icon-halo-blur": 1
-              },
-            });
-
-            // Cluster count label
-            mapRef.current.addLayer({
-              id: `cluster-count-${eventType.type}`,
-              type: "symbol",
-              source: sourceId,
-              filter: ["has", "point_count"],
-              layout: {
-                "text-field": "{point_count_abbreviated}",
-                "text-size": 14,
-                "text-allow-overlap": true,
-              },
-              paint: {
-                "text-color": "#ffffff",
-              },
-            });
-          });
-        } else {
-          // Handle the baseline articles endpoint
-          const response = await fetchBaselineGeoJson();
-          
-          // Check if response is null or undefined
-          if (!response || !mapRef.current) {
-            throw new Error("Failed to load articles data");
+            if (!map.getLayer("clusters-articles")) {
+              map.addLayer({
+                id: "clusters-articles", type: "circle", source: articlesSourceId, filter: ["has", "point_count"],
+                paint: { "circle-color": articlesColor, "circle-radius": ["interpolate", ["linear"], ["get", "point_count"], 1, 15, 50, 30, 200, 40], "circle-opacity": 0.8, "circle-stroke-width": 1, "circle-stroke-color": "#fff" },
+              });
+            }
+            if (!map.getLayer("cluster-count-articles")) {
+              map.addLayer({
+                id: "cluster-count-articles", type: "symbol", source: articlesSourceId, filter: ["has", "point_count"],
+                layout: { "text-field": "{point_count_abbreviated}", "text-size": 14, "text-allow-overlap": true },
+                paint: { "text-color": "#ffffff" },
+              });
+            }
+            if (!map.getLayer("unclustered-point-articles")) {
+              map.addLayer({
+                id: "unclustered-point-articles", type: "symbol", source: articlesSourceId, filter: ["!", ["has", "point_count"]],
+                layout: { "icon-image": "article", "icon-size": 1.2, "icon-allow-overlap": true, "symbol-placement": "point" },
+                paint: { "icon-color": articlesColor, "icon-opacity": 0.8 },
+              });
+            }
           }
-          
-          // Use a default color for articles
-          const articlesColor = theme === "dark" ? "#6C5CE7" : "#4361EE";
-          
-          // Adjust the feature properties for easier usage
-          const adjustedData = {
-            ...response,
-            features: response.features.map((feature: any) => {
-              let contents;
-              try {
-                contents =
-                  typeof feature.properties.contents === "string"
-                    ? JSON.parse(feature.properties.contents)
-                    : feature.properties.contents;
-              } catch (error) {
-                contents = [];
-              }
-              return {
-                ...feature,
-                properties: {
-                  ...feature.properties,
-                  contents: contents,
-                },
-              };
-            }),
-          };
-
-          // Add as a cluster source with single layer for articles
-          mapRef.current.addSource(articlesSourceId, {
-            type: "geojson",
-            data: adjustedData,
-            cluster: true,
-            clusterMaxZoom: 14,
-            clusterRadius: CLUSTER_RADIUS,
-          });
-
-          // Add a single layer for articles clusters
-          mapRef.current.addLayer({
-            id: "clusters-articles",
-            type: "circle",
-            source: articlesSourceId,
-            filter: ["has", "point_count"],
-            paint: {
-              "circle-color": articlesColor,
-              "circle-radius": [
-                "interpolate",
-                ["linear"],
-                ["get", "point_count"],
-                1,
-                15,
-                50,
-                30,
-                200,
-                40,
-              ],
-              "circle-opacity": 0.8,
-              "circle-stroke-width": 1,
-              "circle-stroke-color": "#fff",
-            },
-          });
-
-          // Add text count for article clusters
-          mapRef.current.addLayer({
-            id: "cluster-count-articles",
-            type: "symbol",
-            source: articlesSourceId,
-            filter: ["has", "point_count"],
-            layout: {
-              "text-field": "{point_count_abbreviated}",
-              "text-size": 14,
-              "text-allow-overlap": true,
-            },
-            paint: {
-              "text-color": "#ffffff",
-            },
-          });
-
-          // Add unclustered article points
-          mapRef.current.addLayer({
-            id: "unclustered-point-articles",
-            type: "symbol",
-            source: articlesSourceId,
-            filter: ["!", ["has", "point_count"]],
-            layout: {
-              "icon-image": "article",
-              "icon-size": 1.2,
-              "icon-allow-overlap": true,
-              "symbol-placement": "point",
-            },
-            paint: {
-              "icon-color": articlesColor,
-              "icon-opacity": 0.8,
-            },
-          });
         }
-
-        setGeojsonLoaded(true);
+        setGeojsonLoaded(true); // Mark as loaded/updated
       } catch (error) {
-        console.error("Error fetching GeoJSON data:", error);
+        console.error("[Globe] Error in loadGeoJSONData:", error);
+        // Potentially set an error state here to show in UI
       } finally {
         setIsLoading(false);
+        isProcessingGeoJsonRef.current = false;
       }
-    }, [eventTypes, startDate, endDate, eventLimit, mapLoaded, dataType, theme, onLocationClick]);
+    }, [
+      eventTypes, 
+      startDate, 
+      endDate, 
+      eventLimit, 
+      mapLoaded, 
+      dataType, 
+      theme, 
+      fetchEventGeoJson, // Removed onLocationClick as it's not directly used here
+      fetchBaselineGeoJson
+    ]);
 
     /**
      * CREATE A SIMPLE SPIKE CHART USING D3
@@ -967,8 +895,6 @@ const Globe = forwardRef<any, GlobeProps>(
         mapRef.current.once('style.load', () => {
           addIconsToMap();
           setFogProperties(theme || 'dark');
-          // Reset geojsonLoaded flag to trigger a reload
-          setGeojsonLoaded(false);
           // Force reload GeoJSON data
           loadGeoJSONData();
         });
@@ -1230,32 +1156,39 @@ const Globe = forwardRef<any, GlobeProps>(
         return; // Don't proceed until map is loaded
       }
 
-      // Debounce data loading to prevent multiple rapid calls
       const loadTimer = setTimeout(() => {
-        console.log(`Globe: MapLoaded: ${mapLoaded}, GeojsonLoaded: ${geojsonLoaded}, DataType: ${dataType}`);
-
-        const shouldLoadArticles = dataType === 'articles' && !geojsonData;
-        const shouldLoadEvents = dataType === 'events' && !eventGeojsonData;
-
-        if (shouldLoadArticles || shouldLoadEvents) {
-          console.log(`Globe: Loading data for ${dataType}...`);
-          loadGeoJSONData(); // Calls store fetch actions
-          setGeojsonLoaded(true); // Prevent re-triggering 
-        } else if ((geojsonData || eventGeojsonData) && !geojsonLoaded) {
-          console.log("Globe: Adding layers for existing data...");
-          loadGeoJSONData(); // Add sources/layers without fetching
-          setGeojsonLoaded(true);
+        // Check if a data loading/processing operation is already in progress
+        if (isProcessingGeoJsonRef.current) {
+          // console.log("Globe: Load operation already in progress. Skipping this trigger.");
+          return;
         }
+
+        const currentGeoJsonData = dataType === 'events' ? eventGeojsonData : geojsonData;
+        // console.log(`Globe: useEffect check. MapLoaded: ${mapLoaded}, GeojsonLoadedState: ${geojsonLoaded}, DataType: ${dataType}, HasDataInStore: ${!!currentGeoJsonData}`);
+
+        const shouldLoadBecauseDataMissing = 
+          (dataType === 'articles' && !geojsonData) ||
+          (dataType === 'events' && !eventGeojsonData);
+
+        if (shouldLoadBecauseDataMissing) {
+          console.log(`Globe: Data for ${dataType} seems missing or stale in store. Initiating load... (MapLoaded: ${mapLoaded}, GeojsonLoaded: ${geojsonLoaded})`);
+          loadGeoJSONData();
+        } else if (currentGeoJsonData && !geojsonLoaded) {
+          // Data is in the store, but geojsonLoaded is false.
+          // This can happen on initial load if data is present, or after theme changes
+          // where layers need to be re-applied.
+          console.log(`Globe: Data for ${dataType} present in store, but layers need (re)initialization (geojsonLoaded: ${geojsonLoaded}). Reloading layers...`);
+          loadGeoJSONData(); // This will use cached data and re-apply layers
+        }
+        // else: Data present and geojsonLoaded is true, or no data and geojsonLoaded false (covered by first if)
+        // No action needed from this effect in that case.
+        // else {
+        //   console.log(`Globe: useEffect check. MapLoaded: ${mapLoaded}, GeojsonLoadedState: ${geojsonLoaded}, DataType: ${dataType}, HasDataInStore: ${!!currentGeoJsonData}. No load action.`);
+        // }
       }, 300); // 300ms debounce
 
       return () => clearTimeout(loadTimer);
-    }, [mapLoaded, dataType, geojsonData, eventGeojsonData, geojsonLoaded]);
-
-    // Create a function to format dates for ISO string
-    // const formatDateForAPI = (date: Date | null): string | null => {
-    //   if (!date) return null;
-    //   return date.toISOString(); Removed as we have a new function
-    // };
+    }, [mapLoaded, dataType, geojsonData, eventGeojsonData, geojsonLoaded, loadGeoJSONData]);
 
     // Add a function to clear date filters
     const clearDateFilters = () => {
@@ -1263,25 +1196,11 @@ const Globe = forwardRef<any, GlobeProps>(
       setStartDate(defaultStart);
       setEndDate(defaultEnd);
       setEventLimit(100);
-      // Force reload data with cleared filters
-      if (mapRef.current) {
-        // Remove existing sources first
-        eventTypes.forEach((eventType) => {
-          const sourceId = `geojson-events-${eventType.type}`;
-          if (mapRef.current?.getSource(sourceId)) {
-            ["clusters-", "unclustered-point-", "cluster-count-"].forEach((prefix) => {
-              const layerId = `${prefix}${eventType.type}`;
-              if (mapRef.current?.getLayer(layerId)) {
-                mapRef.current.removeLayer(layerId);
-              }
-            });
-            mapRef.current.removeSource(sourceId);
-          }
-        });
-        
-        // Reload with cleared filters
-        loadGeoJSONData();
-      }
+      // The useEffect watching startDate, endDate, eventLimit (via loadGeoJSONData dependency)
+      // will trigger the reload. Or call loadGeoJSONData() explicitly if preferred.
+      // Calling explicitly ensures it runs with the *very latest* state if there are any
+      // nuances with state update batching, though useEffect should usually cover it.
+      loadGeoJSONData();
     };
 
     // Some extra styles

@@ -180,8 +180,17 @@ export type ClassificationResultRead = {
 	job_id: number;
 	value?: Record<string, unknown>;
 	timestamp?: string;
+	status?: ClassificationResultStatus;
+	error_message?: string | null;
 	id: number;
 };
+
+
+
+/**
+ * Defines the status of an individual classification result attempt.
+ */
+export type ClassificationResultStatus = 'success' | 'failed';
 
 
 
@@ -409,6 +418,8 @@ export type EnhancedClassificationResultRead = {
 	job_id: number;
 	value?: Record<string, unknown>;
 	timestamp?: string;
+	status?: ClassificationResultStatus;
+	error_message?: string | null;
 	id: number;
 	display_value?: number | string | Record<string, unknown> | Array<unknown> | null;
 };

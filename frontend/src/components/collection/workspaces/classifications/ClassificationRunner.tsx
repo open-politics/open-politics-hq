@@ -68,6 +68,11 @@ import { transformApiToFormData } from '@/lib/classification/service';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useClassificationSystem } from '@/hooks/useClassificationSystem';
+import { ClassificationResultStatus } from '@/lib/classification/types';
+
+// Filter Logic Type defined earlier
+export type FilterLogicMode = 'and' | 'or';
 
 interface ClassificationRunnerProps {
   allSchemes: ClassificationSchemeRead[];
@@ -84,7 +89,7 @@ export default function ClassificationRunner({
   allSchemes,
   allDataSources,
   activeJob,
-  isClassifying,
+  isClassifying: isClassifyingProp,
   results: currentRunResults,
   activeJobDataRecords: currentRunDataRecords,
   retryJob,
@@ -93,7 +98,6 @@ export default function ClassificationRunner({
 
   const [activeFilters, setActiveFilters] = useState<ResultFilter[]>([]);
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
-  const [isHeaderSchemesDisplayUnfolded, setIsHeaderSchemesDisplayUnfolded] = useState(true);
   const [selectedDataRecordId, setSelectedDataRecordId] = useState<number | null>(null);
   const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
   const [filteredGeocodedPoints, setFilteredGeocodedPoints] = useState<MapPoint[]>([]);
@@ -109,6 +113,10 @@ export default function ClassificationRunner({
     showLabels: boolean;
   }>({ geocodeSchemeId: null, geocodeFieldKey: null, labelSchemeId: null, labelFieldKey: null, showLabels: false });
 
+  // --- State for Filter Logic (defined here) ---
+  const [filterLogicMode, setFilterLogicMode] = useState<FilterLogicMode>('and');
+  // --- END State Definition ---
+
   const { toast } = useToast();
   const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
   const { getCache, setCache } = useGeocodingCacheStore();
@@ -123,6 +131,26 @@ export default function ClassificationRunner({
   const [selectedTimeInterval, setSelectedTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>('day');
 
   const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
+
+  // --- NEW: State for Excluded Record IDs --- 
+  const [excludedRecordIdsSet, setExcludedRecordIdsSet] = useState<Set<number>>(new Set());
+  // --- END NEW ---
+
+  // --- Get retry functions from hook ---
+  const {
+    retryJobFailures,
+    isRetryingJob,
+    retrySingleResult,
+    isRetryingResultId,
+    isClassifying: isClassifyingHook,
+    activeJob: activeJobFromHook,
+    loadJob,
+  } = useClassificationSystem();
+  // --- End hook usage ---
+
+  // Determine the actual active job and classifying state
+  const currentActiveJob = activeJobFromHook || activeJob;
+  const isActuallyClassifying = isClassifyingHook || isClassifyingProp || isRetryingJob;
 
   const runSchemes = useMemo(() => {
     if (!activeJob?.target_scheme_ids) return [];
@@ -188,14 +216,11 @@ export default function ClassificationRunner({
       let shouldShowLabels = false;
 
       const classificationSchemes = runSchemes.filter(s => s.name.toLowerCase() === 'classification');
-
       const schemeToUseForGeo = classificationSchemes.length > 0 ? classificationSchemes[0] : runSchemes[0];
 
       if (schemeToUseForGeo) {
         const geoTargetKeys = getTargetKeysForScheme(schemeToUseForGeo.id, allSchemes);
-
         const locationKey = geoTargetKeys.find(k => k.name.toLowerCase().includes('location') || k.name.toLowerCase().includes('address'));
-
         const firstStringKeyGeo = geoTargetKeys.find(k => k.type === 'str');
 
         if(locationKey || firstStringKeyGeo || geoTargetKeys.length > 0) {
@@ -250,6 +275,30 @@ export default function ClassificationRunner({
         if (cachedPoints) {
             console.log("Using cached geocoded points.");
             setGeocodedPoints(cachedPoints);
+            // Apply filters to cached points immediately
+            const activeEnabledFilters = activeFilters.filter(f => f.isActive);
+            if (activeEnabledFilters.length === 0) {
+              setFilteredGeocodedPoints(cachedPoints);
+            } else {
+              const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+                  const recordId = result.datarecord_id;
+                  if (!acc[recordId]) acc[recordId] = [];
+                  acc[recordId].push(result);
+                  return acc;
+              }, {});
+              const newlyFilteredPoints = cachedPoints.filter(point =>
+                  point.documentIds.some(recordId => {
+                      const recordResults = resultsByDataRecordId[recordId];
+                      if (!recordResults) return false;
+                      if (filterLogicMode === 'and') {
+                          return activeEnabledFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
+                      } else { // 'or'
+                          return activeEnabledFilters.some(filter => checkFilterMatch(filter, recordResults, runSchemes));
+                      }
+                  })
+              );
+              setFilteredGeocodedPoints(newlyFilteredPoints);
+            }
             return;
         }
     }
@@ -322,6 +371,31 @@ export default function ClassificationRunner({
     if (cacheKey) setCache(cacheKey, newPoints);
     setIsLoadingGeocoding(false);
     console.log("Finished geocoding.");
+
+    // Apply filters to newly geocoded points
+    const activeEnabledFilters = activeFilters.filter(f => f.isActive);
+    if (activeEnabledFilters.length === 0) {
+        setFilteredGeocodedPoints(newPoints);
+    } else {
+        const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+            const recordId = result.datarecord_id;
+            if (!acc[recordId]) acc[recordId] = [];
+            acc[recordId].push(result);
+            return acc;
+        }, {});
+        const newlyFilteredPointsPostGeocode = newPoints.filter(point =>
+            point.documentIds.some(recordId => {
+                const recordResults = resultsByDataRecordId[recordId];
+                if (!recordResults) return false;
+                if (filterLogicMode === 'and') {
+                    return activeEnabledFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
+                } else { // 'or'
+                    return activeEnabledFilters.some(filter => checkFilterMatch(filter, recordResults, runSchemes));
+                }
+            })
+        );
+        setFilteredGeocodedPoints(newlyFilteredPointsPostGeocode);
+    }
   }, [
     activeJob?.id,
     currentRunResults,
@@ -333,54 +407,105 @@ export default function ClassificationRunner({
     generateGeocodingCacheKey,
     getCache,
     setCache,
+    activeFilters,
+    filterLogicMode,
+    runSchemes
   ]);
 
+  // --- NEW: Handler to toggle record exclusion --- 
+  const toggleRecordExclusion = useCallback((recordId: number) => {
+    setExcludedRecordIdsSet(prevSet => {
+        const newSet = new Set(prevSet);
+        if (newSet.has(recordId)) {
+            newSet.delete(recordId);
+        } else {
+            newSet.add(recordId);
+        }
+        return newSet;
+    });
+  }, []);
+  // --- END NEW ---
+
   const filteredResults = useMemo(() => {
-    if (activeFilters.length === 0) return currentRunResults;
+    const activeEnabledFilters = activeFilters.filter(f => f.isActive);
+    let resultsToFilter = currentRunResults;
 
-    const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
-      const recordId = result.datarecord_id;
-      if (!acc[recordId]) acc[recordId] = [];
-      acc[recordId].push(result);
-      return acc;
-    }, {});
+    // 1. Apply criteria filters (AND/OR)
+    if (activeEnabledFilters.length > 0) {
+      const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+        const recordId = result.datarecord_id;
+        if (!acc[recordId]) acc[recordId] = [];
+        acc[recordId].push(result);
+        return acc;
+      }, {});
 
-    const filteredDataRecordIds = Object.keys(resultsByDataRecordId)
-      .map(Number)
-      .filter(recordId => {
-        const recordResults = resultsByDataRecordId[recordId];
-        return activeFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
-      });
+      const filteredDataRecordIds = Object.keys(resultsByDataRecordId)
+        .map(Number)
+        .filter(recordId => {
+          const recordResults = resultsByDataRecordId[recordId];
+          if (filterLogicMode === 'and') {
+            return activeEnabledFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
+          } else { // 'or'
+            return activeEnabledFilters.some(filter => checkFilterMatch(filter, recordResults, runSchemes));
+          }
+        });
+      resultsToFilter = currentRunResults.filter(result => filteredDataRecordIds.includes(result.datarecord_id));
+    }
 
-    return currentRunResults.filter(result => filteredDataRecordIds.includes(result.datarecord_id));
-  }, [currentRunResults, activeFilters, runSchemes]);
+    // --- MODIFIED: Apply exclusion filter --- 
+    // 2. Apply exclusion filter AFTER criteria filters
+    if (excludedRecordIdsSet.size > 0) {
+      return resultsToFilter.filter(result => !excludedRecordIdsSet.has(result.datarecord_id));
+    }
+    // --- END MODIFICATION ---
+
+    return resultsToFilter; // Return if no exclusions or no criteria filters applied
+
+  }, [currentRunResults, activeFilters, filterLogicMode, runSchemes, excludedRecordIdsSet]); // Added excludedRecordIdsSet
 
   useEffect(() => {
     const sourcePoints = geocodedPoints;
-    if (activeFilters.length === 0) {
-      setFilteredGeocodedPoints(sourcePoints);
-      return;
-    }
-    if (!sourcePoints || sourcePoints.length === 0 || !currentRunResults || currentRunResults.length === 0) {
-      setFilteredGeocodedPoints([]);
-      return;
-    }
-    const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
-      const recordId = result.datarecord_id;
-      if (!acc[recordId]) acc[recordId] = [];
-      acc[recordId].push(result);
-      return acc;
-    }, {});
+    const activeEnabledFilters = activeFilters.filter(f => f.isActive);
+    let recordIdsToInclude: Set<number> | null = null; // Set to store IDs passing filters
 
-    const newlyFilteredPoints = sourcePoints.filter(point =>
-      point.documentIds.some(recordId => {
-        const recordResults = resultsByDataRecordId[recordId];
-        if (!recordResults) return false;
-        return activeFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
-      })
+    // Determine which record IDs pass the criteria filters
+    if (activeEnabledFilters.length > 0) {
+      const resultsByDataRecordId = currentRunResults.reduce<Record<number, FormattedClassificationResult[]>>((acc, result) => {
+        const recordId = result.datarecord_id;
+        if (!acc[recordId]) acc[recordId] = [];
+        acc[recordId].push(result);
+        return acc;
+      }, {});
+
+      recordIdsToInclude = new Set(
+        Object.keys(resultsByDataRecordId)
+          .map(Number)
+          .filter(recordId => {
+            const recordResults = resultsByDataRecordId[recordId];
+            if (!recordResults) return false;
+            if (filterLogicMode === 'and') {
+              return activeEnabledFilters.every(filter => checkFilterMatch(filter, recordResults, runSchemes));
+            } else { // 'or'
+              return activeEnabledFilters.some(filter => checkFilterMatch(filter, recordResults, runSchemes));
+            }
+          })
+      );
+    }
+
+    // Filter points: must pass criteria (if any) AND not be excluded
+    const finalFilteredPoints = sourcePoints.filter(point =>
+      point.documentIds.some(recordId =>
+        // Check if ID passes criteria filter (if applicable)
+        (recordIdsToInclude === null || recordIdsToInclude.has(recordId)) &&
+        // Check if ID is NOT excluded
+        !excludedRecordIdsSet.has(recordId)
+      )
     );
-    setFilteredGeocodedPoints(newlyFilteredPoints);
-  }, [geocodedPoints, activeFilters, currentRunResults, runSchemes]);
+
+    setFilteredGeocodedPoints(finalFilteredPoints);
+
+  // Added excludedRecordIdsSet to dependencies
+  }, [geocodedPoints, activeFilters, filterLogicMode, currentRunResults, runSchemes, excludedRecordIdsSet]);
 
   useEffect(() => {
     setGeocodedPoints([]);
@@ -457,13 +582,16 @@ export default function ClassificationRunner({
   };
 
   const renderResultsTabs = () => {
-    if (isClassifying) {
+    if (isActuallyClassifying) {
       return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Job is running...</span></div>;
     }
-    if (!formattedRunResults || formattedRunResults.length === 0) {
+    if (!filteredResults || filteredResults.length === 0) {
        if (activeJob && activeJob.status !== 'running' && activeJob.status !== 'pending') {
+           const noResultsReason = activeFilters.length > 0
+              ? "No results match the current filters."
+              : "No results found for this job.";
           return <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                    <span>No results found for this job.</span>
+                    <span>{noResultsReason}</span>
                     {activeJob.status === 'failed' && <span className="text-xs mt-1">(Job Failed)</span>}
                  </div>;
        }
@@ -560,11 +688,11 @@ export default function ClassificationRunner({
                </div>
              </div>
              <ClassificationResultsChart
-               results={formattedRunResults}
+               results={filteredResults}
                schemes={runSchemes}
                dataSources={runDataSources}
-               filters={activeFilters}
                dataRecords={currentRunDataRecords}
+               filters={activeFilters}
                timeAxisConfig={currentTimeAxisConfig}
                selectedDataSourceIds={selectedDataSourceIdsForChart}
                onDataSourceSelectionChange={setSelectedDataSourceIdsForChart}
@@ -576,19 +704,23 @@ export default function ClassificationRunner({
          <TabsContent value="table">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
              <ClassificationResultsTable
-               results={formattedRunResults}
+               results={filteredResults}
                schemes={runSchemes}
                dataSources={runDataSources}
                dataRecords={currentRunDataRecords}
                filters={activeFilters}
                onResultSelect={handleTableRowClick}
+               onRetrySingleResult={retrySingleResult}
+               retryingResultId={isRetryingResultId}
+               excludedRecordIds={excludedRecordIdsSet}
+               onToggleRecordExclusion={toggleRecordExclusion}
              />
            </div>
          </TabsContent>
          <TabsContent value="map">
             <ClassificationMapControls
                schemes={allSchemes}
-               results={formattedRunResults}
+               results={currentRunResults}
                onGeocodeRequest={handleGeocodeRequest}
                isLoadingGeocoding={isLoadingGeocoding}
                geocodingError={geocodingError}
@@ -606,7 +738,7 @@ export default function ClassificationRunner({
                   <ClassificationResultsMap
                       points={filteredGeocodedPoints}
                       dataSources={allDataSources}
-                      results={formattedRunResults}
+                      results={currentRunResults}
                       schemes={allSchemes}
                       labelConfig={currentMapLabelConfig}
                       onPointClick={handleMapPointClick}
@@ -622,7 +754,6 @@ export default function ClassificationRunner({
     );
   };
 
-  // --- NEW: Prepare Recurring Task Info Element --- 
   let recurringTaskInfoElement: React.ReactNode = null;
   if (activeJob?.configuration?.recurring_task_id) {
     const recurringTaskId = activeJob.configuration.recurring_task_id;
@@ -637,7 +768,6 @@ export default function ClassificationRunner({
       </div>
     );
   }
-  // --- End Prepare Recurring Task Info Element --- 
 
   return (
     <DocumentDetailProvider>
@@ -695,36 +825,52 @@ export default function ClassificationRunner({
                     {recurringTaskInfoElement}
                     <div className="mt-2 flex items-center gap-2">
                       <Badge variant={
-                         activeJob.status === 'completed' ? 'default'
-                         : activeJob.status === 'failed' ? 'destructive'
-                         : activeJob.status === 'running' ? 'secondary'
-                         : activeJob.status === 'pending' ? 'secondary'
-                         : activeJob.status === 'completed_with_errors' ? 'outline'
+                         activeJob?.status === 'completed' ? 'default'
+                         : activeJob?.status === 'failed' ? 'destructive'
+                         : activeJob?.status === 'running' ? 'secondary'
+                         : activeJob?.status === 'pending' ? 'secondary'
+                         : activeJob?.status === 'completed_with_errors' ? 'outline'
                          : 'outline'
                       } className="capitalize">
-                        {(isClassifying || activeJob.status === 'running' || activeJob.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                        {(activeJob.status ?? '').replace(/_/g, ' ')}
+                        {(isActuallyClassifying || activeJob?.status === 'running' || activeJob?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                        {(activeJob?.status ?? '').replace(/_/g, ' ')}
                       </Badge>
-                      {(activeJob.status === 'failed' || activeJob.status === 'completed_with_errors') && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => retryJob(activeJob.id)}
-                          disabled={isClassifying}
-                          className="h-6 px-2"
-                        >
-                           <RefreshCw className="h-3 w-3 mr-1"/> Retry Job
-                        </Button>
+                      {(activeJob?.status === 'failed' || activeJob?.status === 'completed_with_errors') && (
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  if (activeJob?.status === 'failed' && retryJob && activeJob.id) {
+                                      retryJob(activeJob.id);
+                                  } else if (activeJob?.status === 'completed_with_errors' && activeJob.id) {
+                                    retryJobFailures(activeJob.id);
+                                  }
+                                }}
+                                disabled={isActuallyClassifying || !activeJob?.id}
+                                className="h-6 px-2"
+                              >
+                                <RefreshCw className={`h-3 w-3 mr-1 ${isRetryingJob ? 'animate-spin' : ''}`} />
+                                {activeJob?.status === 'failed' ? 'Retry Job' : 'Retry Failed Items'}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{activeJob?.status === 'failed' ? 'Restart the entire job from the beginning.' : 'Attempt to re-run only the classifications that failed in this job.'}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
-                    {activeJob.status === 'failed' && activeJob.error_message && (
+                    {activeJob?.status === 'failed' && activeJob.error_message && (
                        <Alert variant="destructive" className="mt-2 text-xs p-2">
                          <AlertCircle className="h-4 w-4" />
                          <AlertTitle>Job Failed</AlertTitle>
                          <AlertDescription>{activeJob.error_message}</AlertDescription>
                        </Alert>
                     )}
-                     {activeJob.status === 'completed_with_errors' && (
+                     {activeJob?.status === 'completed_with_errors' && (
                        <Alert variant="default" className="mt-2 text-xs p-2 bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
                          <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                          <AlertTitle className="text-yellow-800 dark:text-yellow-200">Completed with Errors</AlertTitle>
@@ -750,33 +896,56 @@ export default function ClassificationRunner({
                                       className="flex justify-between items-center w-full px-2 py-1.5 text-xs h-auto hover:bg-muted/50"
                                   >
                                       <span className="text-muted-foreground">
-                                          Run involves {sourceStats.totalRecords} records from {sourceStats.sourcesWithRecordsCount} sources
-                                          {sourceStats.sourcesWithRecordsCount !== sourceStats.totalSourcesInRun && ` (of ${sourceStats.totalSourcesInRun} targeted)`}
+                                          Run Overview: Sources & Schemes
                                       </span>
                                       {isSourceStatsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                                   </Button>
                               </CollapsibleTrigger>
-                              <CollapsibleContent className="mt-2 px-1 pb-1">
-                                   <ScrollArea className="max-h-[150px] border rounded-md">
-                                       <Table className="text-xs">
-                                           <TableHeader className="sticky top-0 bg-muted/90">
-                                               <TableRow>
-                                                   <TableHead className="h-7 px-2">Source Name</TableHead>
-                                                   <TableHead className="h-7 px-2 text-right">Records</TableHead>
-                                                   <TableHead className="h-7 px-2 text-right">% of Total</TableHead>
-                                               </TableRow>
-                                           </TableHeader>
-                                           <TableBody>
-                                               {sourceStats.detailedStats.map(stat => (
-                                                   <TableRow key={stat.id} className="h-7">
-                                                       <TableCell className="px-2 py-1 font-medium truncate" title={stat.name}>{stat.name}</TableCell>
-                                                       <TableCell className="px-2 py-1 text-right">{stat.count}</TableCell>
-                                                       <TableCell className="px-2 py-1 text-right">{stat.percentage}</TableCell>
-                                                   </TableRow>
-                                               ))}
-                                           </TableBody>
-                                       </Table>
-                                   </ScrollArea>
+                              <CollapsibleContent className="mt-2 px-1 pb-1 space-y-4">
+                                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                       <div className="flex flex-col">
+                                           <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Source Distribution</h4>
+                                           <ScrollArea className="max-h-[200px] border rounded-md">
+                                               <Table className="text-xs">
+                                                   <TableHeader className="sticky top-0 bg-muted/90">
+                                                       <TableRow>
+                                                           <TableHead className="h-7 px-2">Source Name</TableHead>
+                                                           <TableHead className="h-7 px-2 text-right">Records</TableHead>
+                                                           <TableHead className="h-7 px-2 text-right">% of Total</TableHead>
+                                                       </TableRow>
+                                                   </TableHeader>
+                                                   <TableBody>
+                                                       {sourceStats.detailedStats.map(stat => (
+                                                           <TableRow key={stat.id} className="h-7">
+                                                               <TableCell className="px-2 py-1 font-medium truncate" title={stat.name}>{stat.name}</TableCell>
+                                                               <TableCell className="px-2 py-1 text-right">{stat.count}</TableCell>
+                                                               <TableCell className="px-2 py-1 text-right">{stat.percentage}</TableCell>
+                                                           </TableRow>
+                                                       ))}
+                                                   </TableBody>
+                                               </Table>
+                                           </ScrollArea>
+                                           <p className="text-xs text-muted-foreground mt-1 px-1">
+                                               Total: {sourceStats.totalRecords} records from {sourceStats.sourcesWithRecordsCount} sources
+                                               {sourceStats.sourcesWithRecordsCount !== sourceStats.totalSourcesInRun && ` (of ${sourceStats.totalSourcesInRun} targeted)`}
+                                           </p>
+                                       </div>
+
+                                       {activeJob && runSchemes.length > 0 && (
+                                           <div className="flex flex-col">
+                                                 <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Schemes Used</h4>
+                                                 <ScrollArea className="max-h-[200px] border rounded-md p-1">
+                                                        <div className="grid grid-cols-1 gap-3 p-1">
+                                                          {runSchemes.map(scheme => (
+                                                            <div key={scheme.id} className="border rounded-lg p-3 bg-card/50 shadow-sm">
+                                                              <SchemePreview scheme={transformApiToFormData(scheme)} />
+                                                            </div>
+                                                          ))}
+                                                        </div>
+                                                 </ScrollArea>
+                                            </div>
+                                        )}
+                                   </div>
                               </CollapsibleContent>
                           </Collapsible>
                      )}
@@ -788,52 +957,24 @@ export default function ClassificationRunner({
                  </div>
               )}
 
-              {activeJob && !isClassifying && (
+              {activeJob && !isActuallyClassifying && (
                 <div className="p-3 rounded-md bg-muted/10 space-y-3">
                   <ResultFilters
                     filters={activeFilters}
                     schemes={runSchemes}
                     onChange={setActiveFilters}
+                    logicMode={filterLogicMode}
+                    onLogicModeChange={setFilterLogicMode}
                   />
                 </div>
               )}
-
-              {/* --- Added Scheme Preview Section --- */}
-              {activeJob && runSchemes.length > 0 && (
-                <div className="mt-4 p-3 rounded-md bg-muted/10 space-y-3 border">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-medium text-muted-foreground">Schemes Used in this Run:</h4>
-                    <Button variant="outline" size="sm" onClick={() => setIsHeaderSchemesDisplayUnfolded(!isHeaderSchemesDisplayUnfolded)}>
-                      {isHeaderSchemesDisplayUnfolded ? 'Collapse' : 'Expand'}
-                    </Button>
-                  </div>
-                  {isHeaderSchemesDisplayUnfolded ? (
-                    <>
-                      <ScrollArea className="h-60">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-1">
-                      {runSchemes.map(scheme => (
-                        <div key={scheme.id} className="border rounded-lg p-3 bg-card/50 shadow-sm">
-                          <SchemePreview scheme={transformApiToFormData(scheme)} />
-                        </div>
-                      ))}
-                    </div>
-                      </ScrollArea>
-                    </>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      {runSchemes.length}
-                    </div>
-                  )}
-                </div>
-              )}
-              {/* --- End Added Scheme Preview Section --- */}
 
               {activeJob ? (
                 <div className="mt-2">
                   {renderResultsTabs()}
                 </div>
               ) : (
-                 !isClassifying && <div className="text-center p-12 text-muted-foreground border rounded-lg border-dashed mt-4">
+                 !isActuallyClassifying && <div className="text-center p-12 text-muted-foreground border rounded-lg border-dashed mt-4">
                   Load a job from the dock to view results.
                 </div>
               )}
@@ -851,58 +992,36 @@ export default function ClassificationRunner({
             <ScrollArea className="py-4 max-h-[70vh]">
               {selectedDataRecordId !== null && (() => {
                    const dataRecord = currentRunDataRecords.find(dr => dr.id === selectedDataRecordId);
-                   // Get all results for this record ID from the current run
-                   const allResultsForRecord = currentRunResults.filter(r => r.datarecord_id === selectedDataRecordId);
-
-                   // Filter these results based *only* on schemes available in the runSchemes list
-                   const validResultsForRecord = allResultsForRecord.filter(r =>
-                       runSchemes.some(s => s.id === r.scheme_id)
-                   );
-
-                   // Get the schemes corresponding ONLY to the valid results
-                   const schemesForValidResults = runSchemes.filter(s =>
-                       validResultsForRecord.some(r => r.scheme_id === s.id)
-                   );
+                   const allResultsForRecord = filteredResults.filter(r => r.datarecord_id === selectedDataRecordId);
+                   const validResultsForRecord = allResultsForRecord.filter(r => runSchemes.some(s => s.id === r.scheme_id));
+                   const schemesForValidResults = runSchemes.filter(s => validResultsForRecord.some(r => r.scheme_id === s.id));
 
                    if (!dataRecord) return <p>Data Record details not found.</p>;
-
-                    // Check if there are any valid results left to display
                     if (validResultsForRecord.length === 0) {
-                        // Optionally, show a different message if some results existed but didn't match run schemes
-                        return <p className="text-muted-foreground italic">No results found for this record matching the schemes used in this job run.</p>;
+                        return <p className="text-muted-foreground italic">No results found for this record matching the schemes and filters used in this job run.</p>;
                     }
 
-                   // Find the data source that contains this record
-                   const recordSource = runDataSources.find(ds => ds.id === dataRecord.datasource_id); // Renamed to avoid conflict
+                   const recordSource = runDataSources.find(ds => ds.id === dataRecord.datasource_id);
 
                    return (
                      <div className="space-y-4">
-                       {/* --- NEW: Enhanced Data Record Header --- */}
                        <div className="p-3 rounded-md bg-muted/40 border border-border space-y-1 mb-4">
                           <h3 className="font-semibold text-lg">{dataRecord.title || 'Untitled Data Record'}</h3>
                           <p className="text-sm text-muted-foreground">
                              Record ID: {dataRecord.id}
-                             {dataRecord.title && (
-                               <span className="ml-2"> | Title: {dataRecord.title}</span>
-                             )}
                              {recordSource?.name && (
                                <span className="ml-2"> | Source: {recordSource.name}</span>
                              )}
                           </p>
-                          {/* Optional: Add timestamp if available and desired */}
                           {dataRecord.event_timestamp && <p className="text-xs text-muted-foreground">Event Date: {format(new Date(dataRecord.event_timestamp), 'PPP p')}</p>}
-                          {/* {!dataRecord.event_timestamp && dataRecord.created_at && <p className="text-xs text-muted-foreground">Created: {format(new Date(dataRecord.created_at), 'PPP p')}</p>} */}
                        </div>
-                       {/* --- END: Enhanced Data Record Header --- */}
 
-                       {/* Classification Results - Pass the filtered results and their corresponding schemes */}
-                       {/* Add a title for the results section */}
                        <h4 className="text-md font-medium text-muted-foreground border-b pb-1 mb-3">Classification Results:</h4>
                        <ClassificationResultDisplay
-                           result={validResultsForRecord} // Use filtered results
-                           scheme={schemesForValidResults} // Use corresponding schemes
+                           result={validResultsForRecord}
+                           scheme={schemesForValidResults}
                            useTabs={schemesForValidResults.length > 1}
-                           renderContext="dialog" // Keep dialog context
+                           renderContext="dialog"
                            compact={false}
                        />
                      </div>

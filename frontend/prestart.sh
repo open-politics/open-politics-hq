@@ -9,6 +9,7 @@ npm run generate-client
 sed -i "s/default: pending,/default: 'pending',/g" ./src/client/schemas.ts
 sed -i "s/default: paused,/default: 'paused',/g" ./src/client/schemas.ts
 sed -i "s/default: read_only,/default: 'read_only',/g" ./src/client/schemas.ts
+sed -i "s/default: success,/default: 'success',/g" ./src/client/schemas.ts
 
 npx biome format --write ./src/client 
 

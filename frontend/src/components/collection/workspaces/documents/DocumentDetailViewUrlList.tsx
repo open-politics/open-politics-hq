@@ -57,6 +57,7 @@ interface DocumentDetailViewUrlListProps {
   isUpdatingSchedule: boolean;
   handleScheduleUpdate: () => void;
   initialScheduleState: { enabled: boolean; schedule: string };
+  fetchedHighlightRecord: DataRecordRead | null;
 }
 
 const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
@@ -95,12 +96,13 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
   isUpdatingSchedule,
   handleScheduleUpdate,
   initialScheduleState,
+  fetchedHighlightRecord,
 }) => {
 
-  // Find the highlighted record
+  // Find the highlighted record *from the current page data*
   const highlightedRecord = React.useMemo(() => {
       if (highlightedRecordId === null) return null;
-      // Check both flat list and grouped records
+      // Check both flat list and grouped records *for the current page*
       let foundRecord = sortedFlatList.find(r => r.id === highlightedRecordId);
       if (foundRecord) return foundRecord;
 
@@ -109,9 +111,22 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
           if (foundRecord) return foundRecord;
       }
       // It might be in the original urlListDataRecords if pagination is active and the record is not on the current page's flat/grouped list
-      // Ideally, the parent component should ensure the highlighted record is always available or fetch it
-      return urlListDataRecords.find(r => r.id === highlightedRecordId) || null;
-  }, [highlightedRecordId, urlListDataRecords, sortedFlatList, groupedRecords]);
+      // This fallback is less reliable now, as urlListDataRecords is also paged.
+      // The primary mechanism now is the `fetchedHighlightRecord` prop for records not on the current page.
+      // return urlListDataRecords.find(r => r.id === highlightedRecordId) || null; // Keep commented or remove
+      return null; // Return null if not found in current page data
+  }, [highlightedRecordId, sortedFlatList, groupedRecords]);
+
+  // ---> ADDED: Determine the record to display in the highlighted view ---
+  // Prioritize the fetched record if its ID matches and it's not found on the current page.
+  // Otherwise, use the record found on the current page (if any).
+  const displayRecord = React.useMemo(() => {
+    if (highlightedRecordId === null) return null;
+    if (highlightedRecord) return highlightedRecord; // Prefer record from current page if available
+    if (fetchedHighlightRecord?.id === highlightedRecordId) return fetchedHighlightRecord; // Fallback to fetched record
+    return null;
+  }, [highlightedRecord, fetchedHighlightRecord, highlightedRecordId]);
+  // ---> END ADDED ---
 
   const renderScheduledIngestionCard = () => {
      const hasChanged =
@@ -191,14 +206,14 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
   return (
     <div className='space-y-6'> {/* Add parent div with spacing */}
       {/* --- Highlighted Record Display (Full Width) --- */}
-       {highlightedRecord && (
+       {displayRecord && (
             <Card className="w-full border-primary/30 bg-primary/5">
                 <CardHeader className="flex flex-row items-center justify-between py-2 px-4 border-b">
                     <CardTitle className="text-base flex items-center gap-2">
-                      Selected Record (ID: {highlightedRecord.id})
-                      {(highlightedRecord.source_metadata as any)?.original_url &&
-                          <a href={(highlightedRecord.source_metadata as any)?.original_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center text-xs font-normal ml-1" title={(highlightedRecord.source_metadata as any)?.original_url}>
-                              <span className="truncate max-w-[300px]">{(highlightedRecord.source_metadata as any)?.original_url}</span>
+                      Selected Record (ID: {displayRecord.id})
+                      {(displayRecord.source_metadata as any)?.original_url &&
+                          <a href={(displayRecord.source_metadata as any)?.original_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center text-xs font-normal ml-1" title={(displayRecord.source_metadata as any)?.original_url}>
+                              <span className="truncate max-w-[300px]">{(displayRecord.source_metadata as any)?.original_url}</span>
                               <ExternalLink className="h-3 w-3 ml-1 shrink-0" />
                           </a>
                       }
@@ -211,12 +226,12 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
                 <CardContent className="p-4 space-y-3">
                      {/* Use existing render functions */}
                      <div className="max-w-full">
-                       {renderEditableField(highlightedRecord, 'title')}
+                       {renderEditableField(displayRecord, 'title')}
                      </div>
-                     {renderEditableField(highlightedRecord, 'event_timestamp')}
+                     {renderEditableField(displayRecord, 'event_timestamp')}
                      <div className="pt-2 border-t">
                         <Label className='text-xs text-muted-foreground'>Text Content</Label>
-                        {renderTextDisplay(highlightedRecord.text_content)}
+                        {renderTextDisplay(displayRecord.text_content)}
                      </div>
                 </CardContent>
             </Card>
@@ -273,25 +288,27 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
 
             {/* --- Right Column: Scraped Records --- */}
             <div className="space-y-3">
-                <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
-                <div className="flex items-center space-x-2 mb-2">
-                  <Button
-                    variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
-                    size="sm"
-                    onClick={() => setScrapedContentViewMode('flat')}
-                    className="h-7 px-2 text-xs"
-                  >
-                    Flat List (Time)
-                  </Button>
-                  <Button
-                    variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
-                    size="sm"
-                    onClick={() => setScrapedContentViewMode('grouped')}
-                    className="h-7 px-2 text-xs"
-                  >
-                    Grouped by URL
-                  </Button>
-                </div>
+                <div className="flex items-center justify-between"> {/* Make heading row flex */}
+                    <h4 className="text-md font-semibold">Scraped Content ({urlListTotalRecords} records)</h4>
+                    <div className="flex items-center space-x-2"> {/* Container for buttons */}
+                      <Button
+                        variant={scrapedContentViewMode === 'flat' ? 'secondary' : 'outline'}
+                        size="sm"
+                        onClick={() => setScrapedContentViewMode('flat')}
+                        className="h-7 px-2 text-xs"
+                      >
+                        Flat List (Time)
+                      </Button>
+                      <Button
+                        variant={scrapedContentViewMode === 'grouped' ? 'secondary' : 'outline'}
+                        size="sm"
+                        onClick={() => setScrapedContentViewMode('grouped')}
+                        className="h-7 px-2 text-xs"
+                      >
+                        Grouped by URL
+                      </Button>
+                    </div>
+                </div> {/* End heading row flex */}
 
                 {isLoadingUrlList ? (
                      <div className="text-center py-4 text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading scraped content...</div>
@@ -334,14 +351,6 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
                                                  {renderEditableField(record, 'event_timestamp')} */}
                                                  {/* --- --- */}
                                                  {/* Only show trigger, content is shown in the dedicated view */}
-                                                 {record.text_content && (
-                                                      <CollapsibleTrigger asChild>
-                                                          <Button variant="link" className="h-auto p-0 text-xs text-muted-foreground hover:text-primary">
-                                                              {isHighlighted ? <ChevronUp className="h-3 w-3 mr-1"/> : <ChevronDown className="h-3 w-3 mr-1"/>}
-                                                              {isHighlighted ? 'Hide' : 'Show'} Content
-                                                          </Button>
-                                                      </CollapsibleTrigger>
-                                                 )}
                                             </div>
                                         );
                                     })
@@ -380,14 +389,6 @@ const DocumentDetailViewUrlList: React.FC<DocumentDetailViewUrlListProps> = ({
                                                             {renderEditableField(record, 'event_timestamp')} */}
                                                             {/* --- --- */}
                                                             {/* Only show trigger, content is shown in the dedicated view */}
-                                                             {record.text_content && (
-                                                                 <CollapsibleTrigger asChild>
-                                                                      <Button variant="link" className="h-auto p-0 text-xs text-muted-foreground hover:text-primary">
-                                                                          {isHighlighted ? <ChevronUp className="h-3 w-3 mr-1"/> : <ChevronDown className="h-3 w-3 mr-1"/>}
-                                                                          {isHighlighted ? 'Hide' : 'Show'} Content
-                                                                      </Button>
-                                                                 </CollapsibleTrigger>
-                                                             )}
                                                         </div>
                                                     );
                                                 })}

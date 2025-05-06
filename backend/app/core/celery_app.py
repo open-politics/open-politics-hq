@@ -41,7 +41,8 @@ celery.conf.update(
         'app.api.tasks.classification',
         'app.api.tasks.scheduling',
         'app.api.tasks.recurring_ingestion',
-        'app.api.tasks.recurring_classification'
+        'app.api.tasks.recurring_classification',
+        'app.api.tasks.retry_classification'
     )
 )
 

@@ -39,7 +39,8 @@ from app.models import (
     ClassificationResultRead,
     ClassificationJobUpdate,
     ClassificationJobRead,
-    ClassificationSchemeRead
+    ClassificationSchemeRead,
+    ClassificationResultStatus
 )
 # Removed direct provider import, use dependency injection
 # from app.api.services.providers import ClassificationProvider, get_classification_provider
@@ -176,7 +177,11 @@ class StatusTransition:
             ClassificationJobStatus.FAILED    # Can fail from paused
         },
         ClassificationJobStatus.COMPLETED: set(),  # Terminal state
-        ClassificationJobStatus.COMPLETED_WITH_ERRORS: set(),  # Terminal state
+        ClassificationJobStatus.COMPLETED_WITH_ERRORS: {
+            ClassificationJobStatus.RUNNING, # Allow starting a retry task
+            ClassificationJobStatus.PENDING  # Allow retry via PENDING? Maybe just RUNNING is cleaner?
+                                             # Let's stick to RUNNING for the retry task for now.
+        }, # Make it non-terminal for retry
         ClassificationJobStatus.FAILED: {ClassificationJobStatus.PENDING}  # Can retry failed jobs
     }
 
@@ -406,7 +411,7 @@ class ClassificationService:
         self.session = session
         self.provider = classification_provider
 
-    @log_method
+    
     def create_job(
         self,
         workspace_id: int,
@@ -464,7 +469,7 @@ class ClassificationService:
             )
             raise ValueError(f"Failed to create classification job: {str(e)}")
 
-    @log_method
+    
     def queue_classification_job(self, job_id: int) -> None:
         """
         Queue a classification job for processing.
@@ -485,7 +490,7 @@ class ClassificationService:
             logger.error("Failed to queue job %d: %s", job_id, str(e), exc_info=True)
             raise ValueError(f"Failed to queue job: {str(e)}")
 
-    @log_method
+    
     def get_job(
         self,
         job_id: int,
@@ -2069,3 +2074,110 @@ class ClassificationService:
         missing_datasource_ids = set(config['datasource_ids']) - found_datasource_ids
         if missing_datasource_ids:
             raise ValidationError(f"Datasources not found: {missing_datasource_ids}")
+
+    # --- NEW METHOD: Trigger Batch Retry ---
+    
+    def trigger_retry_failed_results(self, job_id: int, user_id: int, workspace_id: int) -> bool:
+        """
+        Triggers a background task to retry failed classifications for a given job.
+        READ-ONLY (triggers task) - Does not commit.
+        """
+        logger.info(f"Attempting to trigger batch retry for Job {job_id} by user {user_id}")
+
+        job = self.get_job(job_id, user_id)
+        if not job or job.workspace_id != workspace_id:
+            raise JobNotFoundError(f"Job {job_id} not found or access denied")
+
+        if job.status != ClassificationJobStatus.COMPLETED_WITH_ERRORS:
+            raise ValueError(f"Batch retry can only be triggered for jobs completed with errors. Current status: {job.status}")
+
+        try:
+            # Import the task dynamically to avoid circular imports if needed
+            from app.api.tasks.retry_classification import retry_failed_classifications_task
+            retry_failed_classifications_task.delay(job_id)
+            logger.info(f"Successfully queued batch retry task for Job {job_id}")
+            return True
+        except ImportError as e:
+            logger.exception(f"Failed to import retry task for job {job_id}: {e}")
+            raise ValueError(f"Failed to queue retry task: {e}")
+        except Exception as e:
+            logger.exception(f"Failed to queue batch retry task for Job {job_id}: {e}")
+            raise ValueError(f"Failed to queue retry task: {e}")
+    # --- END NEW METHOD ---
+
+    # --- NEW METHOD: Individual Result Retry ---
+    
+    def retry_single_result(self, result_id: int, user_id: int, workspace_id: int) -> ClassificationResult:
+        """
+        Retries a single failed classification result synchronously.
+        MODIFIES DATA - Commits transaction.
+        """
+        logger.info(f"Attempting to retry single result {result_id} by user {user_id}")
+
+        # Fetch the result and validate workspace access via job
+        result_stmt = select(ClassificationResult).options(
+            selectinload(ClassificationResult.job).selectinload(ClassificationJob.workspace) # Load job and workspace
+        ).where(ClassificationResult.id == result_id)
+        result = self.session.exec(result_stmt).first()
+
+        if not result:
+            raise ResultNotFoundError(f"ClassificationResult {result_id} not found")
+        if not result.job or result.job.workspace_id != workspace_id:
+            raise ValueError(f"ClassificationResult {result_id} does not belong to workspace {workspace_id}")
+
+        # Validate user access to the workspace
+        validate_workspace_access(self.session, workspace_id, user_id)
+
+        if result.status != ClassificationResultStatus.FAILED:
+            raise ValueError(f"Can only retry results with status FAILED. Current status: {result.status}")
+
+        # Fetch required related data (record and scheme)
+        record = self.session.get(DataRecord, result.datarecord_id)
+        if not record:
+            raise ValueError(f"DataRecord {result.datarecord_id} not found for result {result_id}")
+
+        scheme = self.session.get(ClassificationScheme, result.scheme_id)
+        if not scheme:
+            raise SchemeNotFoundError(f"ClassificationScheme {result.scheme_id} not found for result {result_id}")
+
+        # Attempt the classification again using the core logic
+        try:
+            # Extract API key if stored in job config? Assume None for now.
+            api_key = result.job.configuration.get('api_key') if result.job.configuration else None
+
+            new_value = _core_classify_text(
+                session=self.session,
+                provider=self.provider,
+                text=record.text_content,
+                title=record.title,
+                scheme_id=scheme.id,
+                api_key=api_key
+            )
+
+            # Update result on success
+            result.value = new_value
+            result.status = ClassificationResultStatus.SUCCESS
+            result.error_message = None
+            result.timestamp = datetime.now(timezone.utc)
+            logger.info(f"Successfully retried result {result_id}. New status: SUCCESS")
+
+        except Exception as retry_error:
+            # Update result on failure
+            error_str = str(retry_error)[:1000] # Truncate error message
+            result.status = ClassificationResultStatus.FAILED
+            result.error_message = error_str
+            result.timestamp = datetime.now(timezone.utc)
+            logger.error(f"Failed to retry result {result_id}: {error_str}")
+            # Keep the old value or set to {}? Let's keep the old one for context.
+
+        # Commit changes for this single result
+        try:
+            self.session.add(result)
+            self.session.commit()
+            self.session.refresh(result)
+            return result
+        except Exception as commit_error:
+            self.session.rollback()
+            logger.exception(f"Failed to commit retry update for result {result_id}: {commit_error}")
+            raise ValueError(f"Database error saving retry result: {commit_error}")
+    # --- END NEW METHOD ---

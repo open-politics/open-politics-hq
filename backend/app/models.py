@@ -6,6 +6,7 @@ from pydantic import BaseModel, model_validator, computed_field
 import enum
 import uuid
 import logging
+import sqlalchemy as sa
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,11 @@ class ClassificationJobStatus(str, enum.Enum):
     COMPLETED = "completed" # Job finished successfully
     COMPLETED_WITH_ERRORS = "completed_with_errors" # Job finished, but some classifications failed
     FAILED = "failed" # Job execution failed critically
+
+class ClassificationResultStatus(str, enum.Enum):
+    """Defines the status of an individual classification result attempt."""
+    SUCCESS = "success"
+    FAILED = "failed"
 
 class FieldType(str, enum.Enum):
     """Defines the data type for a ClassificationField."""
@@ -570,6 +576,10 @@ class ClassificationResultBase(SQLModel):
 
     value: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON)) # The actual classification output (JSON)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # --- MODIFIED: Use String type directly, map Enum in Python --- 
+    status: ClassificationResultStatus = Field(default=ClassificationResultStatus.SUCCESS, sa_column=Column(sa.String(50), nullable=False))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # --- END MODIFICATION --- 
 
 # Database table model for ClassificationResult
 class ClassificationResult(ClassificationResultBase, table=True):
@@ -591,12 +601,20 @@ class ClassificationResultCreate(SQLModel):
     job_id: int
     value: Dict[str, Any] = Field(default_factory=dict) # The classification output
     timestamp: Optional[datetime] = None # Allow overriding default
+    # --- ADDED FIELDS (Optional for creation, default to SUCCESS/None) ---
+    status: Optional[ClassificationResultStatus] = ClassificationResultStatus.SUCCESS
+    error_message: Optional[str] = None
+    # --- END ADDED FIELDS ---
 
 # API model for returning ClassificationResult data
 # Keep nested objects minimal by default to avoid large responses.
 # Frontend can fetch details for datarecord, scheme, job separately if needed.
 class ClassificationResultRead(ClassificationResultBase):
     id: int
+    # --- ADDED FIELDS (inherited from base, will be included) ---
+    # status: ClassificationResultStatus
+    # error_message: Optional[str]
+    # --- END ADDED FIELDS ---
     # Maybe include basic info from related objects? Or just IDs? Let's stick to IDs for now.
     # datarecord: DataRecordRead # Too large potentially
     # scheme: ClassificationSchemeRead # Too large potentially
@@ -607,6 +625,10 @@ class ClassificationResultRead(ClassificationResultBase):
 class EnhancedClassificationResultRead(ClassificationResultBase):
     """Adds a processed 'display_value' based on the raw 'value'."""
     id: int # Add id back as it's not in Base
+    # --- ADDED FIELDS (inherited from base, will be included) ---
+    # status: ClassificationResultStatus
+    # error_message: Optional[str]
+    # --- END ADDED FIELDS ---
     display_value: Union[float, str, Dict[str, Any], List[Any], None] = Field(default=None)
     # Include nested objects needed for display_value calculation or context?
     # For now, assume calculation relies only on 'value'. If scheme info is needed,
@@ -668,7 +690,6 @@ class EnhancedClassificationResultRead(ClassificationResultBase):
             else:
                 # Multiple keys found, or structure is unexpected. Render the dict as string? Or pick first?
                 # For now, fallback to showing the dict representation
-                logger.warning(f"EnhancedClassificationResultRead: Value is dict with multiple keys ({field_keys}) or unexpected structure for scheme {scheme_id}. Falling back to raw dict for display_value.")
                 display_value = value
         elif isinstance(value, list):
              display_value = value
@@ -983,7 +1004,7 @@ class ShareableLinkStats(SQLModel): # Use SQLModel
 class DatasetBase(SQLModel):
     name: str
     description: Optional[str] = None
-    custom_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON)) # Renamed from metadata
+    custom_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON)) 
 
 # Database table model for Dataset
 class Dataset(DatasetBase, table=True):

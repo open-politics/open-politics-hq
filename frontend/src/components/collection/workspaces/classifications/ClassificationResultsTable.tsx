@@ -32,7 +32,7 @@ import { checkFilterMatch, getTargetKeysForScheme } from '@/lib/classification/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2 } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search } from 'lucide-react';
 import { getTargetFieldDefinition } from './ClassificationResultFilters';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
@@ -50,6 +50,10 @@ import { Input } from "@/components/ui/input";
 import { DataTable } from "@/components/collection/workspaces/tables/data-table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { ClassificationResultStatus } from '@/lib/classification/types';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AlertCircle } from 'lucide-react';
+import { FormattedClassificationResult } from '@/lib/classification/types';
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
@@ -89,6 +93,10 @@ interface ClassificationResultsTableProps {
   onResultSelect?: (result: ResultWithSourceInfo) => void;
   onResultDelete?: (resultId: number) => void;
   onResultAction?: (action: string, result: ResultWithSourceInfo) => void;
+  onRetrySingleResult?: (resultId: number) => Promise<ClassificationResultRead | null>;
+  retryingResultId?: number | null;
+  excludedRecordIds: Set<number>;
+  onToggleRecordExclusion: (recordId: number) => void;
 }
 
 // --- UTILITY FUNCTIONS (Keep existing helpers like getHeaderClassName) --- //
@@ -138,6 +146,10 @@ export function ClassificationResultsTable({
   onResultSelect,
   onResultDelete,
   onResultAction,
+  onRetrySingleResult,
+  retryingResultId,
+  excludedRecordIds,
+  onToggleRecordExclusion,
 }: ClassificationResultsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -145,8 +157,9 @@ export function ClassificationResultsTable({
   const [rowSelection, setRowSelection] = useState({});
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
-    pageSize: 10, // Default page size
+    pageSize: 20, // Default page size
   });
+  const [globalFilter, setGlobalFilter] = useState('');
   const { activeWorkspace } = useWorkspaceStore();
   const { loadSchemes } = useClassificationSystem();
 
@@ -243,9 +256,46 @@ export function ClassificationResultsTable({
     // Static columns first
     const staticColumns: ColumnDef<EnrichedDataRecord>[] = [
       {
+        id: 'exclude',
+        header: ({ table }) => (
+            <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                    <TooltipTrigger className="flex items-center justify-center w-full h-full cursor-help">
+                        <Ban className="h-3.5 w-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                        <p className="text-xs">Exclude from Analysis</p>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        ),
+        cell: ({ row }) => (
+            <Checkbox
+                checked={!!excludedRecordIds && excludedRecordIds.has(row.original.id)}
+                onCheckedChange={(checked) => {
+                    onToggleRecordExclusion(row.original.id);
+                }}
+                aria-label="Exclude this record from analysis"
+                className="ml-1 data-[state=checked]:bg-orange-600 data-[state=checked]:border-orange-700"
+                onClick={(e) => e.stopPropagation()}
+            />
+        ),
+        size: 40,
+        enableSorting: false,
+        enableHiding: false,
+      },
+      {
         accessorKey: 'id',
-        header: 'Record ID',
-        size: 80,
+        header: ({ column }) => (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+            className="px-1"
+          >
+            Record ID
+            <ArrowUpDown className="ml-2 h-3.5 w-3.5" />
+          </Button>
+        ),
         cell: ({ row }) => (
           <div className="pl-1 w-[60px] truncate">
             <DocumentLink documentId={row.original.id}>
@@ -253,6 +303,7 @@ export function ClassificationResultsTable({
             </DocumentLink>
           </div>
         ),
+        size: 100,
       },
       {
         accessorKey: 'title',
@@ -366,16 +417,36 @@ export function ClassificationResultsTable({
         }
 
         const fieldKeysToShow = selectedFieldsPerScheme[scheme.id] || []; // Get keys for THIS scheme
+        const isFailed = resultForThisCell.status === 'failed';
 
         return (
-          <ClassificationResultDisplay
-            result={resultForThisCell as unknown as ClassificationResultRead}
-            scheme={scheme} // Pass the scheme for this column
-            compact={false}
-            selectedFieldKeys={fieldKeysToShow}
-            maxFieldsToShow={undefined}
-            renderContext="default"
-          />
+          <div className={cn(
+            "relative h-full", 
+            isFailed && "border-l-2 border-destructive pl-1"
+          )}>
+            {isFailed && (
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <AlertCircle className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="end">
+                    <p className="text-xs max-w-xs break-words">
+                      Failed: {resultForThisCell.error_message || 'Unknown error'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            <ClassificationResultDisplay
+              result={resultForThisCell as FormattedClassificationResult}
+              scheme={scheme} // Pass the scheme for this column
+              compact={false}
+              selectedFieldKeys={fieldKeysToShow}
+              maxFieldsToShow={undefined}
+              renderContext="default"
+            />
+          </div>
         );
       },
     }));
@@ -397,36 +468,57 @@ export function ClassificationResultsTable({
           id: 'actions',
           size: 50,
           cell: ({ row }) => {
-             const firstResult = Object.values(row.original.resultsMap)[0]; // Get first result for context
+             // Find *any* result to get context, preferably one with an ID.
+             // Use the whole enriched record context for actions?
+             const recordContext = row.original; // Use the whole row
+             const firstResult = Object.values(recordContext.resultsMap)[0]; // Get first result for basic checks
+
              if (!firstResult) return null; // No actions if no results for this record
-             // Pass the EnrichedDataRecord if needed, or just the first result?
-             // Let's assume actions operate on the first result contextually.
-             const resultContext = firstResult; 
+
+             const isCurrentlyRetryingThis = retryingResultId === firstResult.id; // Check if *this specific result* is retrying
 
              return (
                <DropdownMenu>
                  <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="h-8 w-8 p-0">
+                  <Button variant="ghost" className="h-8 w-8 p-0" disabled={isCurrentlyRetryingThis}>
                     <span className="sr-only">Open menu</span>
-                    <MoreHorizontal className="h-4 w-4" />
+                    {isCurrentlyRetryingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuLabel>Actions</DropdownMenuLabel>
                   {onResultSelect && (
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultSelect(resultContext); }}>
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultSelect(firstResult); }} disabled={isCurrentlyRetryingThis}>
                       <Eye className="mr-2 h-4 w-4" /> View Details
                     </DropdownMenuItem>
                   )}
                   {onResultAction && (
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultAction('load_in_runner', resultContext); }}>
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultAction('load_in_runner', firstResult); }} disabled={isCurrentlyRetryingThis}>
                        <ExternalLink className="mr-2 h-4 w-4" /> Load Job in Runner
                     </DropdownMenuItem>
                   )}
-                  {(onResultSelect || onResultAction) && <DropdownMenuSeparator />} 
+                  {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
+                   {/* --- NEW: Retry Action --- */}
+                   {onRetrySingleResult && firstResult.status === 'failed' && (
+                     <DropdownMenuItem
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         if (firstResult && typeof firstResult.id === 'number') {
+                             onRetrySingleResult(firstResult.id);
+                         } else {
+                             console.error("Invalid result or ID for retry action.");
+                         }
+                       }}
+                       disabled={isCurrentlyRetryingThis}
+                       className="text-orange-600 hover:text-orange-700 focus:bg-orange-100 focus:text-orange-800"
+                     >
+                       <RefreshCw className="mr-2 h-4 w-4" /> Retry Classification
+                     </DropdownMenuItem>
+                   )}
+                   {/* --- END NEW --- */}
                   {onResultDelete && (
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(resultContext.id); }} className="text-red-600 hover:text-red-700">
-                      <Trash2 className="mr-2 h-4 w-4" /> Delete Result
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(firstResult.id); }} className="text-red-600 hover:text-red-700" disabled={isCurrentlyRetryingThis}>
+                      <Trash2 className="mr-2 h-4 w-4" /> Delete Result(s) {/* Consider rewording if it deletes all */}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
@@ -443,7 +535,17 @@ export function ClassificationResultsTable({
         ...staticEndColumns
     ];
   // Dependencies for column generation
-  }, [schemes, selectedFieldsPerScheme, onResultSelect, onResultAction, onResultDelete]); // Removed 'results' as cell now uses row.original.resultsMap
+  }, [
+      schemes, 
+      selectedFieldsPerScheme, 
+      onResultSelect, 
+      onResultAction, 
+      onResultDelete, 
+      onRetrySingleResult, 
+      retryingResultId,
+      excludedRecordIds,
+      onToggleRecordExclusion
+  ]);
   // *** END FLAT COLUMNS Definition ***
 
 
@@ -456,6 +558,7 @@ export function ClassificationResultsTable({
       columnVisibility,
       rowSelection,
       pagination, 
+      globalFilter,
     },
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -466,11 +569,23 @@ export function ClassificationResultsTable({
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
+    onGlobalFilterChange: setGlobalFilter,
   });
 
   return (
     <div className="w-full">
-      <div className="rounded-md">
+      <div className="flex items-center py-3">
+         <div className="relative w-full max-w-sm">
+           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+           <Input
+             placeholder="Search records (ID, Title...)"
+             value={globalFilter ?? ''}
+             onChange={(event) => setGlobalFilter(event.target.value)}
+             className="pl-9 h-9"
+           />
+         </div>
+      </div>
+      <div className="rounded-md border">
         <div className="overflow-x-auto"> 
           <ScrollArea className="max-h-full"> 
             <Table>
@@ -493,15 +608,17 @@ export function ClassificationResultsTable({
               <TableBody>
                 {table.getRowModel().rows?.length ? (
                   table.getRowModel().rows.map((row) => (
-                    // *** RENDER SIMPLE ROW - NO EXPANSION ***
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
-                      className="cursor-pointer hover:bg-muted/30"
+                      className={cn(
+                          "cursor-pointer hover:bg-muted/30 transition-opacity",
+                          !!excludedRecordIds && excludedRecordIds.has(row.original.id) && "opacity-50 bg-muted/10 hover:bg-muted/20"
+                      )}
                       onClick={() => {
                         const firstResult = Object.values(row.original.resultsMap)[0];
                         if (firstResult && onResultSelect) {
-                          onResultSelect(firstResult);
+                           onResultSelect(firstResult);
                         }
                       }}
                     >
@@ -516,7 +633,6 @@ export function ClassificationResultsTable({
                         </TableCell>
                       ))}
                     </TableRow>
-                    // *** END SIMPLE ROW ***
                   ))
                 ) : (
                   <TableRow>
@@ -533,10 +649,29 @@ export function ClassificationResultsTable({
           </ScrollArea>
         </div>
       </div>
-      {/* Pagination Footer (Keep using Record count) */}
-      <div className="flex items-center justify-end space-x-2 py-4">
-        <div className="flex-1 text-sm text-muted-foreground">
-          {table.getFilteredRowModel().rows.length} Record(s).
+      <div className="flex items-center justify-between space-x-2 py-4 flex-wrap gap-y-2">
+         <div className="flex items-center space-x-2">
+           <p className="text-sm font-medium text-muted-foreground whitespace-nowrap">Rows per page</p>
+           <Select
+             value={`${table.getState().pagination.pageSize}`}
+             onValueChange={(value) => {
+               table.setPageSize(Number(value))
+             }}
+           >
+             <SelectTrigger className="h-8 w-[70px] text-xs">
+               <SelectValue placeholder={table.getState().pagination.pageSize} />
+             </SelectTrigger>
+             <SelectContent side="top">
+               {[10, 25, 50, 100].map((pageSize) => (
+                 <SelectItem key={pageSize} value={`${pageSize}`} className="text-xs">
+                   {pageSize}
+                 </SelectItem>
+               ))}
+             </SelectContent>
+           </Select>
+         </div>
+        <div className="flex-1 text-sm text-muted-foreground text-center">
+          {table.getFilteredRowModel().rows.length} Record(s) matching filters.
           Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}.
         </div>
         <div className="flex items-center space-x-2">

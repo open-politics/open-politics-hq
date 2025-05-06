@@ -14,7 +14,7 @@ import {
   ClassificationJobUpdate,
   DataSourceRead,
   EnhancedClassificationResultRead,
-  ClassificationJobStatus,
+  ClassificationJobStatus as ClassificationJobStatusType,
   WorkspaceRead,
   DataRecordRead,
 } from '@/client/models';
@@ -112,7 +112,24 @@ interface UseClassificationSystemResult {
 
   // *** ADD isLoadingJobData to the interface ***
   isLoadingJobData: boolean;
+
+  // --- NEW: Retry Exports ---
+  isRetryingJob: boolean; // Derived state for general job retry loading
+  isRetryingResultId: number | null; // Expose the specific result ID being retried
+  retryJobFailures: (jobId: number) => Promise<boolean>;
+  retrySingleResult: (resultId: number) => Promise<EnhancedClassificationResultRead | null>;
+  // --- END NEW ---
 }
+
+// Define enum values as constants for comparison
+const ClassificationJobStatus = {
+  PENDING: 'pending' as ClassificationJobStatusType,
+  RUNNING: 'running' as ClassificationJobStatusType,
+  PAUSED: 'paused' as ClassificationJobStatusType,
+  COMPLETED: 'completed' as ClassificationJobStatusType,
+  COMPLETED_WITH_ERRORS: 'completed_with_errors' as ClassificationJobStatusType,
+  FAILED: 'failed' as ClassificationJobStatusType,
+};
 
 /**
  * A consolidated hook for all classification operations
@@ -162,6 +179,11 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
   const [isCreatingJob, setIsCreatingJob] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // --- NEW: Retry Loading States ---
+  const [isRetryingJobId, setIsRetryingJobId] = useState<number | null>(null);
+  const [retryingResultId, setRetryingResultId] = useState<number | null>(null);
+  // --- END NEW ---
+
   // Classification Progress State
   const [classificationProgress, setClassificationProgress] = useState<{ current: number; total: number } | null>(null);
 
@@ -200,20 +222,12 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     setIsLoadingResults(true);
     setError(null);
     try {
-      const apiResults = await ClassificationResultsService.listClassificationResults({
+      const apiResults: EnhancedClassificationResultRead[] = await ClassificationResultsService.listClassificationResults({
         workspaceId: targetWorkspaceId,
         jobId,
         limit: 5000
       });
-      const formatted = apiResults.map(r => ({
-          id: r.id,
-          datarecord_id: r.datarecord_id,
-          scheme_id: r.scheme_id,
-          job_id: r.job_id,
-          value: r.value,
-          timestamp: r.timestamp || new Date().toISOString(),
-          displayValue: (r as any).display_value ?? null,
-      }));
+      const formatted = apiResults.map(adaptEnhancedResultReadToFormattedResult);
       setResults(formatted); // Update main results state
       return formatted;
     } catch (err: any) {
@@ -509,20 +523,12 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
       setIsLoadingResults(true);
       setError(null);
       try {
-         const apiResults = await ClassificationResultsService.listClassificationResults({
+         const apiResults: EnhancedClassificationResultRead[] = await ClassificationResultsService.listClassificationResults({
            workspaceId: activeWorkspace.id,
            schemeIds: [schemeId],
            limit: 5000
          });
-         const formatted = apiResults.map(r => ({
-             id: r.id,
-             datarecord_id: r.datarecord_id,
-             scheme_id: r.scheme_id,
-             job_id: r.job_id,
-             value: r.value,
-             timestamp: r.timestamp || new Date().toISOString(),
-             displayValue: (r as any).display_value ?? null,
-         }));
+         const formatted = apiResults.map(adaptEnhancedResultReadToFormattedResult);
          setResults(formatted);
          return formatted;
       } catch (err: any) {
@@ -616,15 +622,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
         limit: 2000
       });
 
-      const formattedResults: FormattedClassificationResult[] = loadedApiResults.map(r => ({
-         id: r.id,
-         datarecord_id: r.datarecord_id,
-         scheme_id: r.scheme_id,
-         job_id: r.job_id,
-         value: r.value,
-         timestamp: r.timestamp || new Date().toISOString(),
-         displayValue: (r.display_value as string | number | string[] | null) ?? null,
-      }));
+      const formattedResults: FormattedClassificationResult[] = loadedApiResults.map(adaptEnhancedResultReadToFormattedResult);
 
       setResults(formattedResults);
       if (useCache) resultsCache.current.set(cacheKey, formattedResults);
@@ -905,6 +903,91 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     loadJob
   ]);
 
+  // --- NEW: Retry Job Failures Function ---
+  const retryJobFailures = useCallback(async (jobId: number): Promise<boolean> => {
+    const workspaceId = getWorkspaceId();
+    const job = getJobById(jobId);
+    if (!job) {
+      setError(`Job ${jobId} not found for retry.`);
+      sonnerToast.error('Retry Failed', { description: `Job ${jobId} not found.` });
+      return false;
+    }
+    if (job.status !== ClassificationJobStatus.COMPLETED_WITH_ERRORS) {
+      setError(`Job ${jobId} is not in COMPLETED_WITH_ERRORS state.`);
+      sonnerToast.warning('Cannot Retry', { description: `Job must be 'Completed with Errors' to retry failed items. Current: ${job.status}` });
+      return false;
+    }
+
+    setIsRetryingJobId(jobId);
+    setError(null);
+    sonnerToast.info(`Starting retry for failed items in Job "${job.name}"...`);
+
+    try {
+      // Call the new API endpoint
+      await ClassificationJobsService.retryFailedJobClassifications({ workspaceId, jobId });
+      // The backend returns 202 Accepted and queues the task.
+      // We need to start polling again to track the job's progress from RUNNING.
+      pollJobStatus(jobId, workspaceId);
+      sonnerToast.success('Retry Started', { description: `Job "${job.name}" is now processing retries.` });
+      return true;
+    } catch (err: any) {
+      console.error(`Error triggering retry for job ${jobId}:`, err);
+      const detail = err.body?.detail || `Failed to start retry for job ${jobId}.`;
+      setError(detail);
+      sonnerToast.error('Retry Failed', { description: detail });
+      return false;
+    } finally {
+      setIsRetryingJobId(null);
+    }
+  }, [getWorkspaceId, getJobById, pollJobStatus, sonnerToast, setError]);
+  // --- END NEW ---
+
+  // --- NEW: Retry Single Result Function ---
+  const retrySingleResult = useCallback(async (resultId: number): Promise<EnhancedClassificationResultRead | null> => {
+    const workspaceId = getWorkspaceId();
+    setRetryingResultId(resultId);
+    setError(null);
+    sonnerToast.info(`Retrying classification for result ID ${resultId}...`);
+
+    try {
+      // Call the new API endpoint
+      const updatedResult = await ClassificationResultsService.retrySingleClassificationResult({ workspaceId, resultId });
+
+      // Update the local results state optimistically or reload
+      // For simplicity, let's update the specific result in the local state
+      setResults(prevResults =>
+        prevResults.map(r =>
+          r.id === resultId
+            ? { ...adaptEnhancedResultReadToFormattedResult(updatedResult as EnhancedClassificationResultRead), isOptimistic: false } // Adapt the raw result read
+            : r
+        )
+      );
+
+      sonnerToast.success('Retry Successful', { description: `Classification for result ID ${resultId} completed.` });
+      return updatedResult;
+    } catch (err: any) {
+      console.error(`Error retrying result ${resultId}:`, err);
+      const detail = err.body?.detail || `Failed to retry classification for result ID ${resultId}.`;
+      setError(detail);
+      sonnerToast.error('Retry Failed', { description: detail });
+
+      // Optionally: Update the result in local state to show the retry failed error?
+      setResults(prevResults =>
+        prevResults.map(r =>
+          r.id === resultId
+            ? { ...r, status: 'failed', error_message: `Retry Failed: ${detail}`.substring(0, 500) } // Mark as failed again with error
+            : r
+        )
+      );
+
+      return null;
+    } finally {
+      setRetryingResultId(null);
+    }
+  // Add `adaptEnhancedResultReadToFormattedResult` to dependencies if it's not stable
+  }, [getWorkspaceId, sonnerToast, setError, adaptEnhancedResultReadToFormattedResult]);
+  // --- END NEW ---
+
   // Return all the state and functions
   return {
     // Schemes
@@ -962,5 +1045,12 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
 
     // *** ADD isLoadingJobData to the returned object ***
     isLoadingJobData: isLoadingJobDataState,
+
+    // --- NEW: Retry Exports ---
+    isRetryingJob: isRetryingJobId !== null, // Derived boolean state
+    isRetryingResultId: retryingResultId,
+    retryJobFailures,
+    retrySingleResult,
+    // --- END NEW ---
   };
 }

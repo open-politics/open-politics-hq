@@ -456,6 +456,16 @@ skip?: number
 workspaceId: number
                     
                 };
+RetrySingleClassificationResult: {
+                    resultId: number
+workspaceId: number
+                    
+                };
+RetrySingleClassificationResult1: {
+                    resultId: number
+workspaceId: number
+                    
+                };
     }
 
 export type ClassificationJobsData = {
@@ -555,6 +565,16 @@ workspaceId: number
                     
                 };
 DeleteClassificationJob1: {
+                    jobId: number
+workspaceId: number
+                    
+                };
+RetryFailedJobClassifications: {
+                    jobId: number
+workspaceId: number
+                    
+                };
+RetryFailedJobClassifications1: {
                     jobId: number
 workspaceId: number
                     
@@ -1863,7 +1883,7 @@ export class ShareablesService {
 	/**
 	 * Create Shareable Link
 	 * Create a new shareable link for a resource.
- * Transaction managed by SessionDep.
+ * Transaction managed by SessionDep within the service dependency.
 	 * @returns ShareableLinkRead Successful Response
 	 * @throws ApiError
 	 */
@@ -2039,7 +2059,7 @@ formData,
 	/**
 	 * Import Resource
 	 * Import a resource from a file into a specific workspace.
- * Transaction managed by SessionDep.
+ * Transaction managed by SessionDep within the service dependency.
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
@@ -3222,6 +3242,52 @@ limit = 100,
 		});
 	}
 
+	/**
+	 * Retry Single Classification Result
+	 * Retries a single failed classification result synchronously.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static retrySingleClassificationResult(data: ClassificationResultsData['RetrySingleClassificationResult']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+resultId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}/retry',
+			path: {
+				workspace_id: workspaceId, result_id: resultId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Single Classification Result
+	 * Retries a single failed classification result synchronously.
+	 * @returns ClassificationResultRead Successful Response
+	 * @throws ApiError
+	 */
+	public static retrySingleClassificationResult1(data: ClassificationResultsData['RetrySingleClassificationResult1']): CancelablePromise<ClassificationResultRead> {
+		const {
+workspaceId,
+resultId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}/retry',
+			path: {
+				workspace_id: workspaceId, result_id: resultId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
 }
 
 export class ClassificationJobsService {
@@ -3581,6 +3647,54 @@ jobId,
 		return __request(OpenAPI, {
 			method: 'DELETE',
 			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
+			path: {
+				workspace_id: workspaceId, job_id: jobId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Failed Job Classifications
+	 * Trigger a background task to retry all failed classifications within a job
+ * that previously completed with errors.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static retryFailedJobClassifications(data: ClassificationJobsData['RetryFailedJobClassifications']): CancelablePromise<Message> {
+		const {
+workspaceId,
+jobId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/retry_failures',
+			path: {
+				workspace_id: workspaceId, job_id: jobId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Failed Job Classifications
+	 * Trigger a background task to retry all failed classifications within a job
+ * that previously completed with errors.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static retryFailedJobClassifications1(data: ClassificationJobsData['RetryFailedJobClassifications1']): CancelablePromise<Message> {
+		const {
+workspaceId,
+jobId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/retry_failures',
 			path: {
 				workspace_id: workspaceId, job_id: jobId
 			},
@@ -5362,7 +5476,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-05-01',
+timeframeTo = '2025-05-05',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

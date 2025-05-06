@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional
 import logging
 
+logger = logging.getLogger(__name__)
+
 from app.models import (
     ClassificationResultRead,
     EnhancedClassificationResultRead,
@@ -113,3 +115,41 @@ def get_job_results(
     except Exception as e:
         logging.exception(f"Route: Error listing results for job {job_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+# --- NEW: Endpoint to trigger individual retry --- 
+@router.post("/classification_results/{result_id}/retry", response_model=ClassificationResultRead)
+def retry_single_classification_result(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    result_id: int,
+    session: SessionDep, # SessionDep needed for validate_workspace_access in service
+    service: ClassificationServiceDep, # Inject ClassificationService
+) -> ClassificationResultRead:
+    """
+    Retries a single failed classification result synchronously.
+    """
+    logger.info(f"Route: Received request to retry single classification result {result_id}")
+    try:
+        # Service method handles fetching, validation, retry logic, and commit
+        updated_result = service.retry_single_result(
+            result_id=result_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id
+        )
+        # Service method raises errors if result not found, access denied, wrong status, or retry fails
+        # If it returns, the retry was processed (though it might have failed again)
+        return ClassificationResultRead.model_validate(updated_result)
+
+    except ValueError as ve:
+        logger.warning(f"Route: Validation or retry error for result {result_id}: {ve}")
+        # Service raises ValueError for not found, access denied, wrong status, or DB errors
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        # Re-raise other HTTP exceptions (e.g., from workspace validation)
+        raise he
+    except Exception as e:
+        # Handle unexpected errors during the retry process
+        logger.exception(f"Route: Unexpected error retrying result {result_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during result retry")
+# --- END NEW ENDPOINT ---

@@ -16,12 +16,13 @@ from app.models import (
     DataSource,
     ClassificationResult,
     DataSourceTransferRequest,
-    DataSourceTransferResponse
+    DataSourceTransferResponse,
+    Message
 )
 # Deps: Remove SessionDep if not needed, keep CurrentUser
-from app.api.deps import SessionDep, CurrentUser, ClassificationProviderDep
+from app.api.deps import SessionDep, CurrentUser, ClassificationProviderDep, ClassificationServiceDep
 # Service: Import class directly for DI
-# from app.api.services.classification import ClassificationService
+from app.api.services.classification import ClassificationService
 # Task import removed, service handles triggering
 from app.api.tasks.classification import process_classification_job
 from app.api.services.service_utils import validate_workspace_access
@@ -363,4 +364,47 @@ def delete_classification_job(
         # Handle unexpected errors
         session.rollback()
         logger.exception(f"Route: Unexpected error deleting job {job_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during deletion")
+
+# --- NEW: Endpoint to trigger batch retry for failed results ---
+@router.post("/{job_id}/retry_failures", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
+def retry_failed_job_classifications(
+    *,
+    current_user: CurrentUser,
+    workspace_id: int,
+    job_id: int,
+    session: SessionDep, # SessionDep needed for validate_workspace_access in service
+    service: ClassificationServiceDep, # Inject ClassificationService
+) -> Message:
+    """
+    Trigger a background task to retry all failed classifications within a job
+    that previously completed with errors.
+    """
+    logger.info(f"Route: Received request to retry failed classifications for Job {job_id}")
+    try:
+        # Service method handles job validation and task queuing
+        success = service.trigger_retry_failed_results(
+            job_id=job_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id
+        )
+        # Service method raises errors if job not found, access denied, or wrong status
+        if success: # Should always be true if no exception raised
+             return Message(message=f"Batch retry task successfully queued for Job {job_id}")
+        else:
+            # This case might indicate an unexpected issue in the service logic
+             logger.error(f"Route: service.trigger_retry_failed_results returned False for job {job_id}")
+             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to queue retry task")
+
+    except ValueError as ve:
+        logger.warning(f"Route: Validation error triggering retry for job {job_id}: {ve}")
+        # Service raises ValueError for not found, access denied, or wrong status
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except HTTPException as he:
+        # Re-raise other HTTP exceptions
+        raise he
+    except Exception as e:
+        # Handle unexpected errors during task queuing
+        logger.exception(f"Route: Unexpected error triggering retry for job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error triggering retry")
+# --- END NEW ENDPOINT --- 

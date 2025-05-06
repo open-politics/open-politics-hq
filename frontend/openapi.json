@@ -1278,7 +1278,7 @@
           "shareables"
         ],
         "summary": "Create Shareable Link",
-        "description": "Create a new shareable link for a resource.\nTransaction managed by SessionDep.",
+        "description": "Create a new shareable link for a resource.\nTransaction managed by SessionDep within the service dependency.",
         "operationId": "create_shareable_link",
         "security": [
           {
@@ -1673,7 +1673,7 @@
           "shareables"
         ],
         "summary": "Import Resource",
-        "description": "Import a resource from a file into a specific workspace.\nTransaction managed by SessionDep.",
+        "description": "Import a resource from a file into a specific workspace.\nTransaction managed by SessionDep within the service dependency.",
         "operationId": "import_resource",
         "security": [
           {
@@ -3494,6 +3494,64 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/classification_results/{result_id}/retry": {
+      "post": {
+        "tags": [
+          "classification-results",
+          "ClassificationResults"
+        ],
+        "summary": "Retry Single Classification Result",
+        "description": "Retries a single failed classification result synchronously.",
+        "operationId": "retry_single_classification_result",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassificationResultRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/classification_jobs/": {
       "post": {
         "tags": [
@@ -3941,6 +3999,64 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/retry_failures": {
+      "post": {
+        "tags": [
+          "classification-jobs",
+          "ClassificationJobs"
+        ],
+        "summary": "Retry Failed Job Classifications",
+        "description": "Trigger a background task to retry all failed classifications within a job\nthat previously completed with errors.",
+        "operationId": "retry_failed_job_classifications",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -7918,7 +8034,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-05-01",
+              "default": "2025-05-05",
               "title": "Timeframe To"
             }
           }
@@ -8593,6 +8709,21 @@
             "format": "date-time",
             "title": "Timestamp"
           },
+          "status": {
+            "$ref": "#/components/schemas/ClassificationResultStatus",
+            "default": "success"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
           "id": {
             "type": "integer",
             "title": "Id"
@@ -8606,6 +8737,15 @@
           "id"
         ],
         "title": "ClassificationResultRead"
+      },
+      "ClassificationResultStatus": {
+        "type": "string",
+        "enum": [
+          "success",
+          "failed"
+        ],
+        "title": "ClassificationResultStatus",
+        "description": "Defines the status of an individual classification result attempt."
       },
       "ClassificationSchemeCreate": {
         "properties": {
@@ -9602,6 +9742,21 @@
             "type": "string",
             "format": "date-time",
             "title": "Timestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClassificationResultStatus",
+            "default": "success"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
           },
           "id": {
             "type": "integer",

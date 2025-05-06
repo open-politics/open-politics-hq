@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useRouter } from "next/navigation";
 
 function DefaultSchemeSelector() {
   const { activeWorkspace } = useWorkspaceStore();
@@ -93,9 +94,13 @@ function DefaultSchemeSelector() {
 export default function DesksLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();  
   const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-
+  const router = useRouter();
   if (typeof window === 'undefined' || isLoading) {
     return <LottiePlaceholder />
+  }
+
+  if (!user) {
+    router.push('/accounts/login');
   }
 
   return (

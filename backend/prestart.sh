@@ -7,7 +7,7 @@ python /app/app/backend_pre_start.py
 python /app/app/initial_data.py
 
 # alembic stamp head
-# alembic revision --autogenerate -m "initial migration"
+# alembic revision --autogenerate -m "changed status enum to string"
 
 # # Run migrations
 alembic upgrade head

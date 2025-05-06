@@ -147,41 +147,25 @@ const DocumentDetailView = ({
   const [newUrlInput, setNewUrlInput] = useState<string>('');
   const [isSavingUrls, setIsSavingUrls] = useState(false);
   const [isRefetching, setIsRefetching] = useState(false);
-
-  // State for classification results specific to the selected CSV row
   const [selectedRowResults, setSelectedRowResults] = useState<EnhancedClassificationResultRead[]>([]);
-
-  // State for Scheduling UI
   const [localIngestTask, setLocalIngestTask] = useState<RecurringTask | null>(null);
   const [enableScheduledIngestion, setEnableScheduledIngestion] = useState(false);
   const [ingestionSchedule, setIngestionSchedule] = useState('0 0 * * *');
   const [cronExplanation, setCronExplanation] = useState('');
   const [isUpdatingSchedule, setIsUpdatingSchedule] = useState(false);
   const [initialScheduleState, setInitialScheduleState] = useState({ enabled: false, schedule: '' });
-
-  // --- State for Inline PDF Viewer ---
   const [isPdfViewerOpen, setIsPdfViewerOpen] = useState(false);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [isFetchingPdfForView, setIsFetchingPdfForView] = useState(false);
-
-  // --- NEW: State for selected individual PDF record ---
   const [selectedIndividualRecord, setSelectedIndividualRecord] = useState<DataRecordRead | null>(null);
-  // --- END NEW ---
-
-  // ---> ADDED: Ref to track previous dataSource ID
   const prevDataSourceIdRef = useRef<number | null>(null);
-  // <--- END ADDED
-
-  // ---> MOVED: State for PDF viewer tracking
   const [currentlyViewedRecordId, setCurrentlyViewedRecordId] = useState<number | null>(null);
-  // <--- END MOVED
-
-  // ---> ADDED: State for inline editing <---
   const [editingRecord, setEditingRecord] = useState<EditState | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
-  // ---> END ADDED <---
+  const [fetchedHighlightRecord, setFetchedHighlightRecord] = useState<DataRecordRead | null>(null);
+  const [isLoadingHighlightRecord, setIsLoadingHighlightRecord] = useState(false);
 
-  // --- Custom Hook Calls --- (Should come after state)
+  // --- Custom Hook Calls --- 
   const { classificationJobs: availableJobsFromStore } = useClassificationJobsStore();
   const { fetchClassificationJobs } = useClassificationJobsActions();
   const {
@@ -198,7 +182,6 @@ const DocumentDetailView = ({
     addUrlToDataSource,
     updateDataSourceUrls,
     getDataSourceUrls,
-    // --- NEW: Import updateDataRecord from store ---
     updateDataRecord
   } = useDataSourceStore();
 
@@ -272,6 +255,24 @@ const DocumentDetailView = ({
     },
     [] // Keep dependency array minimal, setters are stable
   );
+
+  // ---> Function to fetch a single data record <---
+  const fetchSingleDataRecord = useCallback(async (recordId: number): Promise<DataRecordRead | null> => {
+    if (!activeWorkspace?.id) return null;
+    try {
+      console.log(`[DocumentDetailView] Fetching single record ID: ${recordId}`);
+      const record = await DatarecordsService.getDatarecord({
+        workspaceId: activeWorkspace.id,
+        datarecordId: recordId,
+      });
+      return record;
+    } catch (error) {
+      console.error(`Error fetching single data record ${recordId}:`, error);
+      toast({ title: "Error", description: `Could not load details for record ${recordId}.`, variant: "destructive"});
+      return null;
+    }
+  }, [activeWorkspace?.id, toast]);
+  // ---> END ADDED <---
 
   const fetchCsvData = useCallback(async (workspaceId: number, datasourceId: number, pageToFetch: number) => {
     if (!datasourceId || !workspaceId) {
@@ -1383,7 +1384,7 @@ const DocumentDetailView = ({
                               </Button>
                       </div>
                       <ClassificationResultDisplay
-                        result={result}
+                        result={adaptEnhancedResultReadToFormattedResult(result)}
                         scheme={scheme}
                         compact={true}
                       />
@@ -1602,6 +1603,9 @@ const DocumentDetailView = ({
                     isUpdatingSchedule={isUpdatingSchedule}
                     handleScheduleUpdate={handleScheduleUpdate}
                     initialScheduleState={initialScheduleState}
+                    // ---> ADDED: Pass fetched highlight record ---
+                    fetchedHighlightRecord={fetchedHighlightRecord}
+                    // ---> END ADDED <---
                 />
             );
 
@@ -1673,6 +1677,38 @@ const DocumentDetailView = ({
       // No need to clear highlightRecordIdOnOpen here, provider clears it on close.
     }
   }, [highlightRecordIdOnOpen, dataSource, associatedRecords]); // Dependencies: trigger when highlight ID, source, or PDF records change
+  
+  // --- Effect to fetch the specific highlight record if needed ---
+  useEffect(() => {
+    if (highlightRecordIdOnOpen && dataSource?.type === 'url_list' && !fetchedHighlightRecord && !isLoadingHighlightRecord) {
+        // Check if the record is already in the current page's data to avoid unnecessary fetch
+        const recordInPage = urlListDataRecords.find(r => r.id === highlightRecordIdOnOpen);
+        if (!recordInPage) {
+            console.log(`[DocumentDetailView] Effect: Highlight record ${highlightRecordIdOnOpen} not on current page. Fetching individually.`);
+            setIsLoadingHighlightRecord(true);
+            fetchSingleDataRecord(highlightRecordIdOnOpen)
+                .then(record => {
+                    if (record) {
+                        setFetchedHighlightRecord(record);
+                    } else {
+                        // Handle case where record fetch fails but highlight ID is still set
+                         console.warn(`[DocumentDetailView] Effect: Failed to fetch highlight record ${highlightRecordIdOnOpen}, highlight might not display correctly.`);
+                    }
+                })
+                .finally(() => {
+                    setIsLoadingHighlightRecord(false);
+                });
+        } else {
+            console.log(`[DocumentDetailView] Effect: Highlight record ${highlightRecordIdOnOpen} found on current page. No extra fetch needed.`);
+            // Clear any previously fetched record if the user navigated to its page
+            setFetchedHighlightRecord(null);
+        }
+    } else if (!highlightRecordIdOnOpen && fetchedHighlightRecord) {
+         // Clear fetched record if highlight ID is removed
+         setFetchedHighlightRecord(null);
+    }
+    // Add urlListDataRecords to deps to re-check if fetch is needed when page changes
+  }, [highlightRecordIdOnOpen, dataSource?.type, fetchSingleDataRecord, fetchedHighlightRecord, isLoadingHighlightRecord, urlListDataRecords]);
   // --- END NEW Effect ---
 
   // Inside DocumentDetailView component, near other state hooks
@@ -1798,7 +1834,7 @@ const DocumentDetailView = ({
                 <div className="max-h-[60vh] overflow-y-auto pr-2">
                   {selectedResult && schemes.find(s => s.id === selectedResult.scheme_id) && ( // Added check for scheme
                     <ClassificationResultDisplay
-                      result={selectedResult}
+                      result={adaptEnhancedResultReadToFormattedResult(selectedResult)}
                       scheme={schemes.find(s => s.id === selectedResult.scheme_id)!}
                       renderContext="dialog"
                     />

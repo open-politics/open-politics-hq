@@ -9,7 +9,8 @@ import {
   DictKeyDefinition,
   DataSourceType,
   DataSourceStatus,
-  ClassificationJobStatus
+  ClassificationJobStatus,
+  ClassificationResultStatus
 } from './types';
 import {
   ClassificationResultRead as ClientClassificationResultRead,
@@ -139,6 +140,8 @@ export function adaptResultReadToResult(resultRead: ClientClassificationResultRe
     job_id: resultRead.job_id,
     value: resultRead.value,
     timestamp: resultRead.timestamp || new Date().toISOString(),
+    status: 'success',
+    error_message: null,
     datarecord: undefined,
     scheme: undefined,
     job: undefined
@@ -152,10 +155,12 @@ export function adaptEnhancedResultReadToFormattedResult(enhancedRead: ClientEnh
     datarecord_id: enhancedRead.datarecord_id,
     scheme_id: enhancedRead.scheme_id,
     job_id: enhancedRead.job_id,
-    value: enhancedRead.value || {},
+    value: enhancedRead.value ?? {},
     timestamp: enhancedRead.timestamp || new Date().toISOString(),
     displayValue: (enhancedRead.display_value as string | number | string[] | Record<string, any> | null) ?? null,
     isOptimistic: false,
+    status: (enhancedRead.status as ClassificationResultStatus) ?? 'success',
+    error_message: enhancedRead.error_message ?? null,
     datarecord: undefined,
     scheme: undefined,
     job: undefined,
