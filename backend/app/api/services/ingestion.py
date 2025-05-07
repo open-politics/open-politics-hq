@@ -717,6 +717,10 @@ class IngestionService:
                 text_content = scraped_info.get("text_content")
                 record_title = scraped_info.get("title") # Use scraped title
                 publication_date = scraped_info.get("publication_date")
+                top_image = scraped_info.get("top_image")
+                images = scraped_info.get("images")
+
+                logger.info(f"[IngestionService] Scraped data for {url} PRE-SAVE - Title: '{record_title}', TopImage: '{top_image}', Images: {images}")
 
                 if not text_content:
                     logger.warning(f"No text content scraped from {url}. Skipping record creation.")
@@ -746,8 +750,11 @@ class IngestionService:
                     source_metadata={'original_url': url, 'scraped_title': scraped_info.get("title")}, # Store original URL and originally scraped title
                     event_timestamp=event_ts,
                     url_hash=url_hash,
-                    created_at=datetime.now(timezone.utc)
+                    created_at=datetime.now(timezone.utc),
+                    top_image=top_image,
+                    images=images
                 )
+                logger.info(f"[IngestionService] DataRecord object PRE-ADD for {url}: {record.model_dump_json(indent=2)}")
                 self.session.add(record)
                 self.session.commit()
                 self.session.refresh(record)
@@ -1415,7 +1422,9 @@ class IngestionService:
                      text_content=record_data.get("text_content", ""),
                      source_metadata=record_data.get("source_metadata", {}),
                      event_timestamp=record_timestamp,
-                     url_hash=record_data.get("url_hash")
+                     url_hash=record_data.get("url_hash"),
+                     top_image=record_data.get("top_image"),
+                     images=record_data.get("images")
                  )
                  new_record = DataRecord.model_validate(record_in)
                  imported_records.append(new_record)
@@ -1490,19 +1499,21 @@ class IngestionService:
                 if record_data.get("event_timestamp"):
                     record_timestamp = dateutil.parser.isoparse(record_data["event_timestamp"])
 
-                record_create_data = DataRecordCreate(
+                record_in = DataRecordCreate(
                     text_content=text_content,
                     source_metadata=record_data.get("source_metadata", {}),
                     event_timestamp=record_timestamp,
                     url_hash=record_data.get("url_hash"), # Include if present in export
                     content_hash=content_hash,
-                    datasource_id=None # Explicitly set to None
+                    datasource_id=None, # Explicitly set to None
+                    top_image=record_data.get("top_image"),
+                    images=record_data.get("images")
                 )
             except Exception as pydantic_error:
                 raise ValueError(f"Invalid record data format: {pydantic_error}") from pydantic_error
 
             # Create the record model instance
-            new_record = DataRecord.model_validate(record_create_data)
+            new_record = DataRecord.model_validate(record_in)
             # Add to session, but DO NOT COMMIT (caller manages transaction)
             self.session.add(new_record)
             self.session.flush() # Flush to assign an ID to the new record
@@ -1637,6 +1648,8 @@ class IngestionService:
                             datasource_id=new_ds_id,
                             entity_uuid=str(uuid.uuid4()), # Generate new UUID
                             imported_from_uuid=record.entity_uuid if is_copy else None, # Link if copying
+                            top_image=record.top_image,
+                            images=record.images
                         )
                         self.session.add(new_record)
                         new_record_count += 1

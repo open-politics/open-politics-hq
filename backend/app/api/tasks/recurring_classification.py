@@ -107,10 +107,26 @@ def process_recurring_classify(self, recurring_task_id: int):
             # 4. Prepare ClassificationJob data
             timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             job_name = job_name_template.format(task_name=task.name, timestamp=timestamp_str)
+            
+            # --- ADDED: Get provider/model from recurring task config --- 
+            recurring_task_config = task.configuration or {}
+            provider_from_task = recurring_task_config.get('llm_provider') # Optional
+            model_from_task = recurring_task_config.get('llm_model')       # Optional
+            # Optionally get API key from recurring task config if stored there - requires secure handling
+            # api_key_from_task = recurring_task_config.get('api_key') 
+            # --- END ADDED ---
+            
             job_config = {
                 "datasource_ids": target_datasource_ids,
                 "scheme_ids": target_scheme_ids,
                 "recurring_task_id": recurring_task_id,
+                # --- ADDED: Include provider/model in job config --- 
+                # Pass them along so the classification task uses the correct ones.
+                # If None, the classification task's provider factory will use defaults.
+                "llm_provider": provider_from_task, 
+                "llm_model": model_from_task,
+                # "api_key": api_key_from_task # Include if handling API keys this way
+                # --- END ADDED ---
             }
             job_create_data = ClassificationJobCreate(
                 name=job_name,

@@ -33,6 +33,8 @@ export interface DataRecord {
   created_at: string;
   content_hash?: string | null;
   url_hash?: string | null;
+  top_image?: string | null;
+  images?: string[] | null;
   datasource?: DataSource; // Optional link for context
 }
 
@@ -66,6 +68,9 @@ export interface SchemeField {
   type: FieldType;
   description: string;
   config: FieldConfig;
+  request_justification?: boolean | null;
+  request_bounding_boxes?: boolean;
+  use_enum_for_labels?: boolean;
 }
 
 // A classification scheme definition
@@ -88,6 +93,9 @@ export interface SchemeFormData {
   fields: SchemeField[];
   model_instructions?: string;
   validation_rules?: Record<string, any>;
+  default_thinking_budget?: number | null;
+  request_justifications_globally?: boolean;
+  enable_image_analysis_globally?: boolean;
 }
 
 // --- REMOVED: ClassifiableDocument --- //
@@ -155,9 +163,9 @@ export interface ClassificationJobParams {
   description?: string;
   datasourceIds: number[];
   schemeIds: number[];
-  // Optional configuration like LLM provider/model can go here
-  configuration?: Record<string, any>;
-  // Callbacks for monitoring are handled by store/hook
+  // New optional overrides for job creation
+  thinking_budget_override?: number | null;
+  enable_image_analysis_override?: boolean;
 }
 
 // --- REMOVED: ClassificationParams (replaced by JobParams) --- //

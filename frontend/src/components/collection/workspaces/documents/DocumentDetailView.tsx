@@ -154,12 +154,8 @@ const DocumentDetailView = ({
   const [cronExplanation, setCronExplanation] = useState('');
   const [isUpdatingSchedule, setIsUpdatingSchedule] = useState(false);
   const [initialScheduleState, setInitialScheduleState] = useState({ enabled: false, schedule: '' });
-  const [isPdfViewerOpen, setIsPdfViewerOpen] = useState(false);
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
-  const [isFetchingPdfForView, setIsFetchingPdfForView] = useState(false);
   const [selectedIndividualRecord, setSelectedIndividualRecord] = useState<DataRecordRead | null>(null);
   const prevDataSourceIdRef = useRef<number | null>(null);
-  const [currentlyViewedRecordId, setCurrentlyViewedRecordId] = useState<number | null>(null);
   const [editingRecord, setEditingRecord] = useState<EditState | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [fetchedHighlightRecord, setFetchedHighlightRecord] = useState<DataRecordRead | null>(null);
@@ -326,6 +322,8 @@ const DocumentDetailView = ({
            skip: skip,
            limit: urlListRecordsPerPage
         });
+        // >>> ADD THIS LOG <<<
+        console.log('[DocumentDetailView] Raw recordsResponse for URL List:', recordsResponse);
         setUrlListDataRecords(recordsResponse || []);
 
     } catch (err: any) {
@@ -345,8 +343,7 @@ const DocumentDetailView = ({
         // Reset logic copied from user merge
         setDataSource(null); setDataRecords([]); setClassificationResults([]); setCsvData(null); setCurrentPage(1); setSourceError(null); setCsvError(null);
         setSelectedRowData(null); setCsvSearchTerm(''); setSortColumn(null); setSortDirection(null); setUrlListDataRecords([]); setUrlListCurrentPage(1);
-        setUrlListTotalRecords(0); setUrlListError(null); setLocalIngestTask(null); setIsPdfViewerOpen(false);
-        if (pdfBlobUrl) { window.URL.revokeObjectURL(pdfBlobUrl); setPdfBlobUrl(null); }
+        setUrlListTotalRecords(0); setUrlListError(null); setLocalIngestTask(null); 
         setEditableUrls([]); setNewUrlInput(''); setIsSavingUrls(false); setIsRefetching(false);
         return;
     }
@@ -379,7 +376,7 @@ const DocumentDetailView = ({
     } finally {
         setIsLoadingSource(false);
     }
-  }, [selectedDataSourceId, activeWorkspace?.id, fetchClassificationResults, pdfBlobUrl]);
+  }, [selectedDataSourceId, activeWorkspace?.id, fetchClassificationResults]); // Removed pdfBlobUrl from dependencies
 
   const handleLoadIntoRunner = useCallback((result: EnhancedClassificationResultRead) => {
     const jobId = result.job_id;
@@ -424,7 +421,7 @@ const DocumentDetailView = ({
     } else {
       onLoadIntoRunner(jobId, jobName);
     }
-  }, [onLoadIntoRunner, activeWorkspace?.id, toast, availableJobsFromStore]);
+  }, [onLoadIntoRunner, activeWorkspace?.id, toast, selectedIndividualRecord]);
 
   const handleChartPointClick = useCallback((point: any) => {
     console.log("Chart point clicked:", point);
@@ -738,103 +735,6 @@ const DocumentDetailView = ({
   // Dependencies updated
   }, [dataSource, activeWorkspace?.id, toast, selectedIndividualRecord]);
 
-  // ---> NEW: Reusable function to fetch and set PDF blob URL <---
-  const fetchAndSetPdfBlob = useCallback(async (recordToView: DataRecordRead | null): Promise<string | null> => {
-    if (!recordToView?.id || !activeWorkspace?.id) {
-      console.error("Cannot fetch PDF blob: Missing record ID or workspace ID.");
-      // Don't toast here, let the caller decide based on context
-      return null;
-    }
-
-    const viewUrl = `/api/v1/workspaces/${activeWorkspace.id}/datarecords/${recordToView.id}/content`;
-    const token = typeof window !== 'undefined' ? localStorage.getItem("access_token") : null;
-
-    if (!token) {
-      toast({ title: "Authentication Error", description: "Could not find authentication token.", variant: "destructive" });
-      return null;
-    }
-
-    try {
-      const response = await fetch(viewUrl, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        let errorDetail = `HTTP error! Status: ${response.status}`;
-        try {
-          const errorData = await response.json();
-          errorDetail = errorData.detail || errorDetail;
-        } catch (e) { /* Ignore */ }
-        throw new Error(errorDetail);
-      }
-
-      const blob = await response.blob();
-      if (blob.size === 0 || blob.type !== 'application/pdf') {
-        throw new Error(blob.type !== 'application/pdf' ? "Received file is not a PDF." : "Received empty PDF file.");
-      }
-
-      const objectUrl = window.URL.createObjectURL(blob);
-      return objectUrl; // Return the new URL on success
-
-    } catch (error: any) {
-      console.error("Failed to fetch PDF blob:", error);
-      toast({
-        title: "PDF Load Failed",
-        description: error.message || "Could not load the PDF file.",
-        variant: "destructive"
-      });
-      return null; // Return null on failure
-    }
-  }, [activeWorkspace?.id, toast]);
-  // ---> END NEW FUNCTION <---
-
-  // --- MODIFIED: Callback to handle viewing PDF inline ---
-  const handleViewPdf = useCallback(async () => {
-    // If viewer is already open, just close it
-    if (isPdfViewerOpen) {
-      setIsPdfViewerOpen(false);
-      if (pdfBlobUrl) {
-        window.URL.revokeObjectURL(pdfBlobUrl);
-        setPdfBlobUrl(null);
-      }
-      setCurrentlyViewedRecordId(null); // Clear viewed ID when closing
-      return;
-    }
-
-    // Determine which record to view when opening
-    const recordToView = selectedIndividualRecord || (dataSource?.type === 'pdf' && associatedRecords.length === 1 ? associatedRecords[0] : null);
-    const isBulkSource = dataSource?.type === 'pdf' && (dataSource.source_metadata as any)?.file_count > 1;
-
-    if (!recordToView) {
-      toast({ title: "Cannot View PDF", description: isBulkSource ? "Please select an individual PDF file to view." : "Cannot identify PDF record to view.", variant: "destructive" });
-      return;
-    }
-
-    setIsFetchingPdfForView(true);
-    // Revoke any existing URL before fetching a new one
-    if (pdfBlobUrl) {
-      window.URL.revokeObjectURL(pdfBlobUrl);
-      setPdfBlobUrl(null); // Clear immediately
-      setCurrentlyViewedRecordId(null); // Clear viewed ID
-    }
-    setCurrentlyViewedRecordId(null); // Clear potentially stale ID before fetching
-
-    const newBlobUrl = await fetchAndSetPdfBlob(recordToView); // Use the extracted function
-
-    setIsFetchingPdfForView(false);
-    if (newBlobUrl) {
-      setPdfBlobUrl(newBlobUrl);
-      setIsPdfViewerOpen(true); // Open viewer only if fetch succeeded
-      setCurrentlyViewedRecordId(recordToView.id); // Set viewed ID on successful open
-    } else {
-      // Error handled within fetchAndSetPdfBlob
-      setIsPdfViewerOpen(false); // Ensure viewer remains closed on error
-      setCurrentlyViewedRecordId(null); // Ensure ID is cleared on error
-    }
-    // Dependencies updated
-  }, [activeWorkspace?.id, toast, isPdfViewerOpen, pdfBlobUrl, selectedIndividualRecord, dataSource, associatedRecords, fetchAndSetPdfBlob]); // Added fetchAndSetPdfBlob dependency
-
   // --- Memoized Values (useMemo) --- (Define after callbacks)
 
   const jobsWithResultsForDataSource = useMemo(() => {
@@ -962,11 +862,6 @@ const DocumentDetailView = ({
         setCsvData(null); // Clear raw CSV data
         setSelectedRowResults([]); // Clear results for selected row
         // Also close viewer and revoke URL if ID changes
-        if (pdfBlobUrl) {
-            window.URL.revokeObjectURL(pdfBlobUrl);
-            setPdfBlobUrl(null);
-        }
-        setIsPdfViewerOpen(false);
         setHighlightedRecordId(null); // Reset highlight
         setScrapedContentViewMode('flat'); // Reset view mode
     }
@@ -1530,10 +1425,8 @@ const DocumentDetailView = ({
                   setSelectedIndividualRecord={setSelectedIndividualRecord}
                   renderEditableField={renderEditableField}
                   renderTextDisplay={renderTextDisplay}
-                  handleViewPdf={handleViewPdf}
                   handleDownloadPdf={handleDownloadPdf}
-                  isFetchingPdfForView={isFetchingPdfForView}
-                  isPdfViewerOpen={isPdfViewerOpen}
+                  activeWorkspaceId={activeWorkspace?.id || 0} // Pass activeWorkspaceId
                 />
             );
 
@@ -1588,11 +1481,7 @@ const DocumentDetailView = ({
                     isRefetching={isRefetching}
                     renderEditableField={renderEditableField}
                     renderTextDisplay={renderTextDisplay}
-                    urlListCurrentPage={urlListCurrentPage}
-                    urlListTotalPages={urlListTotalPages}
                     urlListTotalRecords={urlListTotalRecords}
-                    handleUrlListPageChange={handleUrlListPageChange}
-                    sortedFlatList={sortedFlatList}
                     groupedRecords={groupedRecords}
                     localIngestTask={localIngestTask}
                     enableScheduledIngestion={enableScheduledIngestion}
@@ -1603,9 +1492,7 @@ const DocumentDetailView = ({
                     isUpdatingSchedule={isUpdatingSchedule}
                     handleScheduleUpdate={handleScheduleUpdate}
                     initialScheduleState={initialScheduleState}
-                    // ---> ADDED: Pass fetched highlight record ---
                     fetchedHighlightRecord={fetchedHighlightRecord}
-                    // ---> END ADDED <---
                 />
             );
 
@@ -1778,19 +1665,6 @@ const DocumentDetailView = ({
               </TabsList>
 
               <TabsContent value="content" className="flex-1 min-h-0 overflow-y-auto p-4">
-                 {/* --- NEW POSITION for PDF Viewer --- */}
-                  {dataSource?.type === 'pdf' && isPdfViewerOpen && pdfBlobUrl && (
-                      <div className="mb-4 border rounded-lg overflow-hidden shadow-md flex-shrink-0" style={{ height: '60vh', maxHeight: '500px' }}>
-                          <iframe
-                              src={pdfBlobUrl}
-                              title={selectedIndividualRecord ? (selectedIndividualRecord.source_metadata as any)?.original_filename || `Record ${selectedIndividualRecord.id}` : dataSource?.name || 'PDF Viewer'}
-                              width="100%"
-                              height="100%"
-                              style={{ border: 'none' }}
-                          />
-                      </div>
-                  )}
-                 {/* --- END NEW POSITION --- */}
                  {renderContent()} {/* Render the actual data source content */}
               </TabsContent>
 

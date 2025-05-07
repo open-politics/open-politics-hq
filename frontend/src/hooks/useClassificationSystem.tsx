@@ -316,17 +316,6 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
 
     const workspaceId = getWorkspaceId();
 
-    // *** START EDIT: Add check for existing schemes in local state ***
-    // If not forcing refresh and schemes for this workspace are already loaded, return early.
-    if (!forceRefresh && schemes.length > 0) {
-        // Optional: Add a check here to ensure the loaded schemes actually belong
-        // to the current workspace if that becomes an issue, but for now,
-        // assume the state is correctly tied to the activeWorkspace.
-        // console.log('Schemes already loaded in state for workspace:', workspaceId);
-        return;
-    }
-    // *** END EDIT ***
-
     // Cache check
     if (!forceRefresh && options.useCache !== false) {
       const cachedData = schemesCache.get(workspaceId);
@@ -745,22 +734,77 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
   // Create Job
   const createJob = useCallback(async (params: ClassificationJobParams): Promise<ClassificationJobRead | null> => {
     const workspaceId = getWorkspaceId();
+    setSelectedDataSourceState(null);
     setIsCreatingJob(true);
     setError(null);
     stopPolling(); // Stop any polling from previous job
 
     try {
       const timestamp = new Date().toISOString();
+      
+      const jobConfiguration: Record<string, any> = {
+        datasource_ids: params.datasourceIds,
+        scheme_ids: params.schemeIds,
+        llm_provider: selectedProvider,
+        llm_model: selectedModel,
+      };
+
+      // --- Corrected Override Logic --- 
+      const thinkingBudgetOverride = params.thinking_budget_override;
+      const enableImageAnalysisOverride = params.enable_image_analysis_override;
+
+      // Handle Thinking Budget
+      console.log(`[createJob Debug] Received thinking_budget_override param: ${thinkingBudgetOverride}`); // Log received value
+      if (thinkingBudgetOverride !== undefined && thinkingBudgetOverride !== null) {
+          // Use the value passed from params (should be 1024 or 0 from Dock switch)
+          jobConfiguration['actual_thinking_budget'] = thinkingBudgetOverride; // Explicitly use bracket notation
+          console.log("[createJob Debug] USING thinking_budget_override from params:", jobConfiguration.actual_thinking_budget); // Log value *from the object*
+      } else {
+          // Fallback to scheme default ONLY if no override was passed
+          console.log("[createJob Debug] No override in params, checking scheme default...");
+          const firstScheme = schemes.find(s => params.schemeIds.includes(s.id));
+          if (firstScheme && firstScheme.default_thinking_budget !== null && firstScheme.default_thinking_budget !== undefined) {
+              jobConfiguration['actual_thinking_budget'] = firstScheme.default_thinking_budget; // Explicitly use bracket notation
+              console.log(`[createJob Debug] Using default thinking budget from scheme '${firstScheme.name}':`, jobConfiguration.actual_thinking_budget); // Log value *from the object*
+          } else {
+              console.log("[createJob Debug] No scheme default found either.");
+          }
+      }
+      
+      // Handle Image Analysis
+      console.log(`[createJob Debug] Received enable_image_analysis_override param: ${enableImageAnalysisOverride}`); // Log received value
+      if (enableImageAnalysisOverride !== undefined) {
+          jobConfiguration['perform_image_analysis'] = enableImageAnalysisOverride; // Explicitly use bracket notation
+          console.log("[createJob Debug] Using enable_image_analysis_override:", jobConfiguration.perform_image_analysis);
+      } else {
+          const imageAnalysisNeeded = schemes
+              .filter(s => params.schemeIds.includes(s.id))
+              .some(s => s.enable_image_analysis_globally);
+          jobConfiguration['perform_image_analysis'] = imageAnalysisNeeded; // Explicitly use bracket notation
+           console.log("[createJob Debug] Setting perform_image_analysis based on scheme defaults:", jobConfiguration.perform_image_analysis);
+      }
+      
+      // Add API Key
+      console.log(`[createJob Debug] Adding API Key check. Provider: ${selectedProvider}`);
+      if (selectedProvider && apiKeys[selectedProvider]) {
+         const apiKey = apiKeys[selectedProvider];
+         jobConfiguration['api_key'] = apiKey; // Explicitly use bracket notation
+         console.log("[createJob Debug] Added API Key to job configuration.");
+      } else {
+        console.log("[createJob Debug] No API Key available for the selected provider.");
+      }
+      // --- End Corrected Override Logic ---
+
       const jobRequestBody: ClassificationJobCreate = {
         name: params.name || `Classification Job ${timestamp}`,
         description: params.description || `Created on ${timestamp}`,
-        configuration: {
-          datasource_ids: params.datasourceIds,
-          scheme_ids: params.schemeIds,
-        },
+        configuration: jobConfiguration
       };
 
-      // Use the API service directly, as the store might not immediately trigger polling
+      // --- ADD LOGGING before API Call ---
+      console.log("[createJob] Final jobRequestBody being sent:", JSON.stringify(jobRequestBody, null, 2));
+      // --- END LOGGING ---
+
       const newJob = await ClassificationJobsService.createClassificationJob({ workspaceId, requestBody: jobRequestBody });
 
       if (newJob) {
@@ -787,7 +831,7 @@ export function useClassificationSystem(options: UseClassificationSystemOptions 
     } finally {
       setIsCreatingJob(false);
     }
-  }, [getWorkspaceId, updateStoreJob, stopPolling, pollJobStatus, sonnerToast]); // Removed createStoreJob
+  }, [getWorkspaceId, updateStoreJob, stopPolling, pollJobStatus, sonnerToast, schemes, apiKeys, selectedProvider, selectedModel]);
 
   // Set Active Job
   const setActiveJob = useCallback((job: ClassificationJobRead | null) => {

@@ -141,6 +141,7 @@ class WorkspaceBase(SQLModel):
     # 'sources' might be deprecated or repurposed if DataSources cover this
     # sources: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
     icon: Optional[str] = None
+    system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text), description="System-level prompt applied to all classifications in this workspace.")
 
 # Database table model for Workspace
 class Workspace(WorkspaceBase, table=True):
@@ -167,6 +168,7 @@ class WorkspaceUpdate(WorkspaceBase):
     name: Optional[str] = None
     description: Optional[str] = None
     icon: Optional[str] = None
+    system_prompt: Optional[str] = None
 
 # API model for returning Workspace data
 class WorkspaceRead(WorkspaceBase):
@@ -174,6 +176,7 @@ class WorkspaceRead(WorkspaceBase):
     created_at: datetime
     updated_at: datetime
     user_id_ownership: int # Include owner ID
+    system_prompt: Optional[str]
 
 # API model for returning a list of Workspaces
 class WorkspacesOut(SQLModel):
@@ -318,6 +321,8 @@ class DataRecordBase(SQLModel):
     # TEXT_BLOCK: {}
     source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     event_timestamp: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True)) # When the event occurred
+    top_image: Optional[str] = Field(default=None, nullable=True)
+    images: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(String), nullable=True))
 
 # Database table model for DataRecord
 class DataRecord(DataRecordBase, table=True):
@@ -340,6 +345,8 @@ class DataRecordCreate(DataRecordBase):
     content_hash: Optional[str] = None # Allow passing hash during creation
     title: Optional[str] = None # ADDED: Explicitly allow setting title on creation
     event_timestamp: Optional[datetime] = None # Allow overriding default
+    top_image: Optional[str] = None
+    images: Optional[List[str]] = None
 
 # API model for returning DataRecord data
 class DataRecordRead(DataRecordBase):
@@ -349,6 +356,8 @@ class DataRecordRead(DataRecordBase):
     content_hash: Optional[str] = None # Include hash in read model
     title: Optional[str] = None # ADDED: Include title in read model
     # event_timestamp is inherited from DataRecordBase
+    top_image: Optional[str] = None
+    images: Optional[List[str]] = None
 
 # API model for returning a list of DataRecords
 class DataRecordsOut(SQLModel):
@@ -384,6 +393,10 @@ class ClassificationFieldCreate(SQLModel):
     labels: Optional[List[str]] = None # Predefined labels if is_set_of_labels is True
     dict_keys: Optional[List[DictKeyDefinition]] = None # Definitions if type is LIST_DICT
     is_time_axis_hint: Optional[bool] = None # Hint for UI to suggest this field for time axis
+    # New fields for justification, bounding boxes, and enum usage
+    request_justification: Optional[bool] = Field(default=None, description="Request justification for this field. True enables, False disables, None inherits from scheme's global setting.")
+    request_bounding_boxes: Optional[bool] = Field(default=False, description="Request bounding boxes for this field if global image analysis is enabled and the field's value could be derived from an image region.")
+    use_enum_for_labels: Optional[bool] = Field(default=False, description="For LIST_STR with predefined labels, generate a strict enum in the Pydantic model for the LLM.")
 
 # Database table model for ClassificationField (defines one field within a scheme)
 class ClassificationField(SQLModel, table=True):
@@ -398,6 +411,10 @@ class ClassificationField(SQLModel, table=True):
     labels: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(String))) # For LIST_STR type
     dict_keys: Optional[List[Dict[str, str]]] = Field(default=None, sa_column=Column(JSON)) # For LIST_DICT type, store as JSON
     is_time_axis_hint: Optional[bool] = Field(default=False, nullable=True) # Hint for UI
+    # New fields mirrored from Create model
+    request_justification: Optional[bool] = Field(default=None)
+    request_bounding_boxes: Optional[bool] = Field(default=False)
+    use_enum_for_labels: Optional[bool] = Field(default=False)
 
     # Relationship
     scheme: Optional["ClassificationScheme"] = Relationship(back_populates="fields")
@@ -410,6 +427,9 @@ class ClassificationSchemeBase(SQLModel):
     description: str
     model_instructions: Optional[str] = Field(default=None, sa_column=Column(Text)) # Instructions for the LLM
     validation_rules: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON)) # Optional JSON schema for validation
+    default_thinking_budget: Optional[int] = Field(default=None, description="Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.")
+    request_justifications_globally: Optional[bool] = Field(default=False, description="If true, justification fields will be added for all applicable fields unless overridden at the field level.")
+    enable_image_analysis_globally: Optional[bool] = Field(default=False, description="If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.")
 
 # Database table model for ClassificationScheme
 class ClassificationScheme(ClassificationSchemeBase, table=True):

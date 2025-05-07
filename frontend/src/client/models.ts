@@ -119,6 +119,18 @@ export type ClassificationFieldCreate = {
 	labels?: Array<string> | null;
 	dict_keys?: Array<DictKeyDefinition> | null;
 	is_time_axis_hint?: boolean | null;
+	/**
+	 * Request justification for this field. True enables, False disables, None inherits from scheme's global setting.
+	 */
+	request_justification?: boolean | null;
+	/**
+	 * Request bounding boxes for this field if global image analysis is enabled and the field's value could be derived from an image region.
+	 */
+	request_bounding_boxes?: boolean | null;
+	/**
+	 * For LIST_STR with predefined labels, generate a strict enum in the Pydantic model for the LLM.
+	 */
+	use_enum_for_labels?: boolean | null;
 };
 
 
@@ -199,6 +211,18 @@ export type ClassificationSchemeCreate = {
 	description: string;
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
+	/**
+	 * Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.
+	 */
+	default_thinking_budget?: number | null;
+	/**
+	 * If true, justification fields will be added for all applicable fields unless overridden at the field level.
+	 */
+	request_justifications_globally?: boolean | null;
+	/**
+	 * If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.
+	 */
+	enable_image_analysis_globally?: boolean | null;
 	fields: Array<ClassificationFieldCreate>;
 };
 
@@ -209,6 +233,18 @@ export type ClassificationSchemeRead = {
 	description: string;
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
+	/**
+	 * Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.
+	 */
+	default_thinking_budget?: number | null;
+	/**
+	 * If true, justification fields will be added for all applicable fields unless overridden at the field level.
+	 */
+	request_justifications_globally?: boolean | null;
+	/**
+	 * If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.
+	 */
+	enable_image_analysis_globally?: boolean | null;
 	id: number;
 	workspace_id: number;
 	user_id: number;
@@ -226,6 +262,18 @@ export type ClassificationSchemeUpdate = {
 	description?: string | null;
 	model_instructions?: string | null;
 	validation_rules?: Record<string, unknown> | null;
+	/**
+	 * Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.
+	 */
+	default_thinking_budget?: number | null;
+	/**
+	 * If true, justification fields will be added for all applicable fields unless overridden at the field level.
+	 */
+	request_justifications_globally?: boolean | null;
+	/**
+	 * If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.
+	 */
+	enable_image_analysis_globally?: boolean | null;
 	fields?: Array<ClassificationFieldCreate> | null;
 };
 
@@ -251,6 +299,8 @@ export type DataRecordRead = {
 	text_content: string;
 	source_metadata?: Record<string, unknown>;
 	event_timestamp?: string | null;
+	top_image?: string | null;
+	images?: Array<string> | null;
 	id: number;
 	datasource_id?: number | null;
 	created_at: string;
@@ -781,6 +831,10 @@ export type WorkspaceCreate = {
 	name: string;
 	description?: string | null;
 	icon?: string | null;
+	/**
+	 * System-level prompt applied to all classifications in this workspace.
+	 */
+	system_prompt?: string | null;
 };
 
 
@@ -789,6 +843,7 @@ export type WorkspaceRead = {
 	name: string;
 	description?: string | null;
 	icon?: string | null;
+	system_prompt: string | null;
 	id: number;
 	created_at: string;
 	updated_at: string;
@@ -801,5 +856,6 @@ export type WorkspaceUpdate = {
 	name?: string | null;
 	description?: string | null;
 	icon?: string | null;
+	system_prompt?: string | null;
 };
 

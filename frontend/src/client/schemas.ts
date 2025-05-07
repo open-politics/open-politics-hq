@@ -287,6 +287,33 @@ export const $ClassificationFieldCreate = {
 	type: 'null',
 }],
 },
+		request_justification: {
+	type: 'any-of',
+	description: `Request justification for this field. True enables, False disables, None inherits from scheme's global setting.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		request_bounding_boxes: {
+	type: 'any-of',
+	description: `Request bounding boxes for this field if global image analysis is enabled and the field's value could be derived from an image region.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		use_enum_for_labels: {
+	type: 'any-of',
+	description: `For LIST_STR with predefined labels, generate a strict enum in the Pydantic model for the LLM.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -546,6 +573,33 @@ export const $ClassificationSchemeCreate = {
 	type: 'null',
 }],
 },
+		default_thinking_budget: {
+	type: 'any-of',
+	description: `Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.`,
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		request_justifications_globally: {
+	type: 'any-of',
+	description: `If true, justification fields will be added for all applicable fields unless overridden at the field level.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		enable_image_analysis_globally: {
+	type: 'any-of',
+	description: `If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
 		fields: {
 	type: 'array',
 	contains: {
@@ -582,6 +636,33 @@ export const $ClassificationSchemeRead = {
 	properties: {
 	},
 },
+}, {
+	type: 'null',
+}],
+},
+		default_thinking_budget: {
+	type: 'any-of',
+	description: `Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.`,
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		request_justifications_globally: {
+	type: 'any-of',
+	description: `If true, justification fields will be added for all applicable fields unless overridden at the field level.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		enable_image_analysis_globally: {
+	type: 'any-of',
+	description: `If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.`,
+	contains: [{
+	type: 'boolean',
 }, {
 	type: 'null',
 }],
@@ -672,6 +753,33 @@ export const $ClassificationSchemeUpdate = {
 	type: 'null',
 }],
 },
+		default_thinking_budget: {
+	type: 'any-of',
+	description: `Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.`,
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		request_justifications_globally: {
+	type: 'any-of',
+	description: `If true, justification fields will be added for all applicable fields unless overridden at the field level.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		enable_image_analysis_globally: {
+	type: 'any-of',
+	description: `If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.`,
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
 		fields: {
 	type: 'any-of',
 	contains: [{
@@ -756,6 +864,25 @@ export const $DataRecordRead = {
 	contains: [{
 	type: 'string',
 	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		top_image: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		images: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'string',
+},
 }, {
 	type: 'null',
 }],
@@ -2308,6 +2435,15 @@ export const $WorkspaceCreate = {
 	type: 'null',
 }],
 },
+		system_prompt: {
+	type: 'any-of',
+	description: `System-level prompt applied to all classifications in this workspace.`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -2332,6 +2468,15 @@ export const $WorkspaceRead = {
 }, {
 	type: 'null',
 }],
+},
+		system_prompt: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
 },
 		id: {
 	type: 'number',
@@ -2373,6 +2518,14 @@ export const $WorkspaceUpdate = {
 }],
 },
 		icon: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		system_prompt: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',

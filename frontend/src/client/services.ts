@@ -5476,7 +5476,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-05-05',
+timeframeTo = '2025-05-07',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

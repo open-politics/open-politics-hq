@@ -31,11 +31,16 @@ const WorkspaceInfo: React.FC = () => {
             Name: {activeWorkspace.name}
           </p>
           <p className="text-secondary-400">
-            Description: {activeWorkspace.description}
+            Description: {activeWorkspace.description || 'N/A'}
           </p>
-          <p className="text-secondary-400">
-            Sources: {activeWorkspace.sources?.join(', ') || 'N/A'}
-          </p>
+          {activeWorkspace.system_prompt && (
+             <div>
+                <p className="text-secondary-400 font-medium mt-2">System Prompt:</p>
+                <p className="text-secondary-400 text-xs font-mono whitespace-pre-wrap bg-black/20 p-2 rounded">
+                   {activeWorkspace.system_prompt}
+                </p>
+             </div>
+          )}
         </div>
       </CardContent>
     </Card>

@@ -600,10 +600,10 @@ export default function ClassificationRunner({
 
     return (
        <Tabs defaultValue="table" className="w-full">
-         <TabsList className="grid w-full grid-cols-3 mb-2 sticky top-0 z-10 bg-background/80 backdrop-blur">
-           <TabsTrigger value="chart">Chart</TabsTrigger>
-           <TabsTrigger value="table">Table</TabsTrigger>
-           <TabsTrigger value="map">Map</TabsTrigger>
+         <TabsList className="grid w-full grid-cols-3 mb-2 border border-background! sticky top-0 z-10 bg-background/80 backdrop-blur">
+           <TabsTrigger value="chart"><BarChart3 className="h-4 w-4 mr-2" />Chart</TabsTrigger>
+           <TabsTrigger value="table"><TableIcon className="h-4 w-4 mr-2" />Table</TabsTrigger>
+           <TabsTrigger value="map"><MapPin className="h-4 w-4 mr-2" />Map</TabsTrigger>
          </TabsList>
          <TabsContent value="chart">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">

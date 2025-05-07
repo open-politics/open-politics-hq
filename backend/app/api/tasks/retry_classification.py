@@ -37,12 +37,24 @@ def retry_failed_classifications_task(self, job_id: int):
     # Task manages the session
     with SQLModelSession(engine) as session:
         # Instantiate provider and service
-        provider = get_classification_provider()
+        # Fetch job first to get config
+        job = session.get(ClassificationJob, job_id)
+        if not job:
+             logging.error(f"[RetryTask] Job {job_id} not found when trying to determine provider. Aborting task.")
+             return 
+        
+        config_for_provider = job.configuration or {}
+        provider_name = config_for_provider.get('llm_provider')
+        model_name = config_for_provider.get('llm_model')
+        api_key_from_config = config_for_provider.get('api_key')
+
+        logging.debug(f"[RetryTask] Job {job_id}: Using provider='{provider_name}', model='{model_name}' from original job config.")
+        provider = get_classification_provider(provider=provider_name, model_name=model_name, api_key=api_key_from_config)
+        
         service = ClassificationService(session=session, classification_provider=provider)
 
         try:
             # 1. Fetch the Job using service
-            job = service.get_job(job_id)
             if not job:
                 logging.error(f"[RetryTask] Job {job_id} not found. Aborting task.")
                 return
@@ -130,12 +142,13 @@ def retry_failed_classifications_task(self, job_id: int):
 
                 # Attempt re-classification using the core service logic
                 try:
-                    api_key = job.configuration.get('api_key') if job.configuration else None
+                    # api_key = job.configuration.get('api_key') if job.configuration else None
                     new_value = service.classify_text(
                         text=record_data["text_content"],
                         title=record_data["title"],
                         scheme_id=scheme.id,
-                        api_key=api_key
+                        # api_key=api_key # API key handled by provider instance now
+                        provider_config={'thinking_budget': config_for_provider.get('actual_thinking_budget')} # Pass thinking budget if needed
                     )
 
                     # Update result on SUCCESS

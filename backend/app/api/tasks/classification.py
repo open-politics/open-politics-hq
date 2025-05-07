@@ -22,6 +22,9 @@ from app.models import (
 from app.api.tasks.utils import update_task_status
 # Import Classification Service and provider factory directly
 from app.api.services.classification import ClassificationService
+# --- ADDED: Import the core function for batch creation --- 
+from app.api.services.classification import _core_create_results_batch 
+# --- END ADDED ---
 # from app.api.services.providers.classification import OpolClassificationProvider # Keep if using directly
 from app.api.deps import get_classification_provider
 
@@ -37,212 +40,243 @@ def process_classification_job(self, job_id: int):
     """
     logging.debug(f"Starting classification task for Job ID: {job_id}")
     start_time = time.time()
-    error_count = 0
-    success_count = 0
-    final_status = ClassificationJobStatus.COMPLETED # Assume success initially
-    job = None # Initialize job variable outside try block
+    job = None # Initialize job variable
 
-    # Task manages the session
     with SQLModelSession(engine) as session:
-        # Instantiate provider using factory and service with session/provider
-        provider = get_classification_provider()
+        # --- Setup Provider and Service ---
+        job_for_config = session.get(ClassificationJob, job_id)
+        if not job_for_config: # Initial check
+            logging.error(f"Job {job_id} not found. Aborting.")
+            return
+        if job_for_config.status != ClassificationJobStatus.PENDING:
+             logging.warning(f"Job {job_id} is not PENDING (status: {job_for_config.status}). Skipping.")
+             return
+
+        config = job_for_config.configuration or {}
+        provider_name = config.get('llm_provider')
+        model_name = config.get('llm_model')
+        api_key_from_config = config.get('api_key')
+
+        provider = get_classification_provider(provider=provider_name, model_name=model_name, api_key=api_key_from_config)
         service = ClassificationService(session=session, classification_provider=provider)
+        # --- End Setup ---
+
+        # --- Set to RUNNING Robustly --- 
+        try:
+            # Use the already fetched job object
+            job = service.update_job_status(job_for_config, ClassificationJobStatus.RUNNING)
+            session.commit() # Commit RUNNING status immediately
+            session.refresh(job) # Ensure job object reflects RUNNING status
+            logging.debug(f"Job {job_id} status confirmed as RUNNING.")
+        except Exception as status_err:
+            session.rollback()
+            logging.exception(f"Failed to set Job {job_id} to RUNNING status: {status_err}")
+            # Attempt to mark as FAILED in a separate session
+            try:
+                 with SQLModelSession(engine) as error_session:
+                    job_to_fail = error_session.get(ClassificationJob, job_id)
+                    if job_to_fail and job_to_fail.status == ClassificationJobStatus.PENDING:
+                        error_provider = get_classification_provider(provider=provider_name, model_name=model_name, api_key=api_key_from_config)
+                        error_service = ClassificationService(session=error_session, classification_provider=error_provider)
+                        error_service.update_job_status(job_to_fail, ClassificationJobStatus.FAILED, error_message=f"Failed to start: {status_err}")
+                        error_session.commit()
+            except Exception as fail_err:
+                 logging.error(f"CRITICAL: Failed to mark Job {job_id} as FAILED after startup error: {fail_err}")
+            # Re-raise the original error to trigger Celery retry if applicable
+            raise status_err 
+        # --- End Set to RUNNING --- 
+
+        # --- Main Classification Logic --- 
+        error_count = 0
+        success_count = 0
+        final_status = ClassificationJobStatus.COMPLETED # Assume success
+        final_job_message = "Classification completed successfully."
 
         try:
-            # 1. Fetch the Job and check status using the service
-            job = service.get_job(job_id)
-            if not job:
-                logging.error(f"ClassificationJob {job_id} not found. Aborting task.")
-                return
-            if job.status != ClassificationJobStatus.PENDING:
-                logging.warning(f"ClassificationJob {job_id} is not PENDING (status: {job.status}). Skipping task.")
-                return
-
-            # 2. Update status to RUNNING using the service (DO NOT COMMIT WITHIN SERVICE)
-            job = service.update_job_status(job, ClassificationJobStatus.RUNNING)
-            # --- FIX: Commit the status update immediately ---
-            session.add(job) # Ensure job is attached if not already
-            session.commit()
-            logging.debug(f"Committed RUNNING status for Job {job_id}")
-            # --- FIX: Refresh job object AFTER commit to get updated status ---
-            session.refresh(job)
-            # --- END FIX ---
-
-            # 3. Load Configuration
-            config = job.configuration or {}
+            # Re-read config needed for the loop (API key passed via provider now)
+            actual_thinking_budget = config.get('actual_thinking_budget')
+            perform_image_analysis = config.get('perform_image_analysis', False)
             datasource_ids = config.get('datasource_ids', [])
             scheme_ids = config.get('scheme_ids', [])
-            api_key = config.get('api_key') # Get API key from job config
 
             if not datasource_ids or not scheme_ids:
-                 # Mark as failed immediately if config is invalid
-                 # Use service to update status (method will commit failure)
-                 service.update_job_status(job, ClassificationJobStatus.FAILED, error_message="Job configuration missing datasource_ids or scheme_ids")
-                 raise ValueError("Job configuration missing datasource_ids or scheme_ids")
+                 # This should ideally be caught during job validation, but double-check
+                 raise ValueError("Job configuration missing datasource_ids or scheme_ids") 
 
-            # 4. Fetch Target DataRecords (Keep direct query for now)
-            datarecord_stmt = select(DataRecord).where(DataRecord.datasource_id.in_(datasource_ids))
-            data_records = session.exec(datarecord_stmt).all()
+            data_records = session.exec(select(DataRecord).where(DataRecord.datasource_id.in_(datasource_ids))).all()
+            schemes = session.exec(select(ClassificationScheme).options(selectinload(ClassificationScheme.fields)).where(ClassificationScheme.id.in_(scheme_ids))).all()
+
             if not data_records:
                  logging.warning(f"No DataRecords found for Job {job_id}. Marking as complete.")
+                 # Status is RUNNING, transition to COMPLETED is valid
                  final_status = ClassificationJobStatus.COMPLETED
-                 # Update final status using service (method will commit)
-                 service.update_job_status(job, final_status)
-                 # Need to handle recurring task update in finally block even in this case
-                 return
-            logging.debug(f"Found {len(data_records)} DataRecords to classify for Job {job_id}.")
+                 final_job_message = "No data records found to classify."
+                 # Skip the loop by letting the code proceed to final status update
 
-            # 5. Fetch Target ClassificationSchemes (Keep direct query for now)
-            scheme_stmt = select(ClassificationScheme).where(ClassificationScheme.id.in_(scheme_ids)).options(selectinload(ClassificationScheme.fields))
-            schemes = session.exec(scheme_stmt).all()
-            if len(schemes) != len(scheme_ids):
-                 error_msg = f"Could not find all specified ClassificationSchemes: {scheme_ids}"
-                 service.update_job_status(job, ClassificationJobStatus.FAILED, error_message=error_msg)
-                 raise ValueError(error_msg)
-            logging.debug(f"Loaded {len(schemes)} ClassificationSchemes for Job {job_id}.")
+            elif len(schemes) != len(scheme_ids):
+                 # Invalid config found after starting
+                 raise ValueError(f"Could not find all specified ClassificationSchemes: {scheme_ids}") 
             
-            # 6. Prepare field map for faster lookup within loop
-            # Fetch title and text_content together
-            data_records_with_fields = session.exec(select(DataRecord.id, DataRecord.title, DataRecord.text_content).where(DataRecord.id.in_(r.id for r in data_records))).all()
-            record_content_map = {rec.id: {"title": rec.title, "text_content": rec.text_content} for rec in data_records_with_fields}
+            else: # Records and schemes are valid, proceed with classification
+                logging.debug(f"Found {len(data_records)} DataRecords and {len(schemes)} Schemes for Job {job_id}.")
+                # Prepare map for efficient lookup (only fetch necessary fields)
+                record_content_map = {rec.id: {"title": rec.title, "text_content": rec.text_content} 
+                                      for rec in session.exec(select(DataRecord.id, DataRecord.title, DataRecord.text_content)
+                                                              .where(DataRecord.id.in_(dr.id for dr in data_records)))} # Efficiently fetch only needed fields
+                
+                results_batch_data = []
+                batch_size = 100 # Adjust as needed
+                total_classifications = len(data_records) * len(schemes)
+                processed_classifications = 0
 
-            # 7. Iterate and Classify
-            results_batch_data = [] # Store dicts
-            batch_size = 100
-            total_classifications = len(data_records) * len(schemes)
-            processed_classifications = 0
-            
-            for record_id, record_data in record_content_map.items():
-                for scheme in schemes:
-                    processed_classifications += 1
-                    logging.debug(f"Classifying Record {record_id} with Scheme {scheme.id} ({processed_classifications}/{total_classifications}) for Job {job_id}")
-                    try:
-                        # Optional: Check for existing result via direct query or a potential service method
-                        existing_result_check = session.exec(select(ClassificationResult.id).where(
-                            ClassificationResult.job_id == job_id,
-                            ClassificationResult.datarecord_id == record_id,
-                            ClassificationResult.scheme_id == scheme.id
-                        )).first()
-                        if existing_result_check:
-                            logging.debug(f"Skipping existing result for Record {record_id}, Scheme {scheme.id}")
+                for record_id, record_data in record_content_map.items():
+                    current_datarecord_obj = next((dr for dr in data_records if dr.id == record_id), None) # Still needed for image URLs
+                    for scheme in schemes:
+                        processed_classifications += 1
+                        
+                        # --- Prepare provider_config using the job's main 'config' dict --- 
+                        current_provider_config = {}
+                        # 'config' was fetched before the try block and holds the job.configuration
+                        thinking_budget_from_job_config = config.get('actual_thinking_budget') 
+                        if thinking_budget_from_job_config is not None:
+                            current_provider_config['thinking_budget'] = thinking_budget_from_job_config
+                            logger.info(f"Job {job_id}, Record {record_id}, Scheme {scheme.id}: Adding thinking_budget={thinking_budget_from_job_config} to provider_config.") 
+                        else:
+                            logger.debug(f"Job {job_id}, Record {record_id}, Scheme {scheme.id}: No actual_thinking_budget found in job config.")
+                        
+                        # Image Analysis Placeholder
+                        perform_image_analysis_from_job = config.get('perform_image_analysis', False)
+                        if perform_image_analysis_from_job and current_datarecord_obj and current_datarecord_obj.images:
+                            logger.info(f"Image analysis requested for record {record_id}, scheme {scheme.id}. Image URLs: {current_datarecord_obj.images}. Actual image fetching not implemented.")
+                            # Placeholder: 
+                            # image_bytes_list = fetch_images(current_datarecord_obj.images)
+                            # current_provider_config['images'] = image_bytes_list
+                        
+                        logger.info(f"Job {job_id}, Record {record_id}, Scheme {scheme.id}: Final provider_config before classify_text: {current_provider_config}")
+
+                        try:
+                            existing_result_check = session.exec(select(ClassificationResult.id).where(
+                                ClassificationResult.job_id == job_id,
+                                ClassificationResult.datarecord_id == record_id,
+                                ClassificationResult.scheme_id == scheme.id
+                            )).first()
+                            if existing_result_check:
+                                # logging.debug(f"Skipping existing result for Record {record_id}, Scheme {scheme.id}")
+                                success_count += 1 # Count skipped as success for job status
+                                continue
+                            
+                            classification_value = service.classify_text(
+                                text=record_data["text_content"],
+                                title=record_data["title"],
+                                scheme_id=scheme.id,
+                                provider_config=current_provider_config
+                            )
+                            results_batch_data.append({
+                                "job_id": job_id,
+                                "datarecord_id": record_id,
+                                "scheme_id": scheme.id,
+                                "value": classification_value,
+                                "status": ClassificationResultStatus.SUCCESS,
+                                "error_message": None
+                            })
                             success_count += 1
-                            continue
-                        
-                        # --- Call Core Classification Logic via Service --- 
-                        classification_value = service.classify_text(
-                            text=record_data["text_content"], # Pass text content
-                            title=record_data["title"],     # Pass title
-                            scheme_id=scheme.id,
-                            api_key=api_key
-                        )
-                        # --- End Core Classification Logic --- 
-                        
-                        # Add result data dict to batch
-                        results_batch_data.append({
-                            "job_id": job_id,
-                            "datarecord_id": record_id,
-                            "scheme_id": scheme.id,
-                            "value": classification_value,
-                            "status": ClassificationResultStatus.SUCCESS,
-                            "error_message": None
-                        })
-                        success_count += 1
 
-                        # Write batch to DB periodically using service (DO NOT COMMIT)
+                        except Exception as classify_error:
+                            logging.error(f"Classification failed for Record {record_id}, Scheme {scheme.id}, Job {job_id}: {classify_error}")
+                            error_count += 1
+                            failure_data = {
+                                "job_id": job_id,
+                                "datarecord_id": record_id,
+                                "scheme_id": scheme.id,
+                                "value": {}, 
+                                "status": ClassificationResultStatus.FAILED,
+                                "error_message": str(classify_error)[:1000]
+                            }
+                            results_batch_data.append(failure_data)
+                        
+                        # Write batch periodically (NO commit inside service)
                         if len(results_batch_data) >= batch_size:
-                            # Pass job_id to the service method
-                            service.create_results_batch(job_id=job_id, results_data=results_batch_data)
+                             # Use internal core function to add to session without commit
+                            _core_create_results_batch(session, results_batch_data)
+                            # service.create_results_batch(job_id=job_id, results_data=results_batch_data) # Avoid this if it commits
                             results_batch_data = [] # Reset batch
-                    
-                    except Exception as classify_error:
-                        logging.error(f"Classification failed for Record {record_id}, Scheme {scheme.id}, Job {job_id}: {classify_error}")
-                        error_count += 1
-                        final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
-                        # --- ADDED: Record failure in batch data ---
-                        failure_data = {
-                            "job_id": job_id,
-                            "datarecord_id": record_id,
-                            "scheme_id": scheme.id,
-                            "value": {}, # Store empty value for failed attempts
-                            "status": ClassificationResultStatus.FAILED,
-                            "error_message": str(classify_error)[:1000] # Store truncated error
-                        }
-                        results_batch_data.append(failure_data)
-                        # --- END ADDED ---
-                        # Optionally store error details in result?
-                        # results_batch_data.append({... "value": {"error": str(classify_error)} ...})
+                
+                # Create final batch (NO commit inside service)
+                if results_batch_data:
+                    _core_create_results_batch(session, results_batch_data)
+                    # service.create_results_batch(job_id=job_id, results_data=results_batch_data)
 
-            # 8. Create final batch of results using service (DO NOT COMMIT)
-            if results_batch_data:
-                # Pass job_id to the service method
-                service.create_results_batch(job_id=job_id, results_data=results_batch_data)
+                # Determine final status based on errors AFTER loop
+                if error_count > 0:
+                    final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
+                    final_job_message = f"Classification finished. Success: {success_count}, Errors: {error_count}"
+                else:
+                    final_status = ClassificationJobStatus.COMPLETED
+                    final_job_message = "Classification finished successfully."
+
+            # --- Update Final Status --- 
+            # Ensure the job object reflects the RUNNING status before this call
+            if job.status != ClassificationJobStatus.RUNNING:
+                 # This shouldn't happen with the new structure, but log a warning if it does
+                 logging.warning(f"Job {job_id} status was unexpectedly {job.status} before final update to {final_status}. Attempting update anyway.")
             
-            # 9. Update final job status using service (DO NOT COMMIT)
-            final_job_message = f"Classification finished. Success: {success_count}, Errors: {error_count}"
-            if error_count > 0:
-                 final_status = ClassificationJobStatus.COMPLETED_WITH_ERRORS
-            else:
-                 final_status = ClassificationJobStatus.COMPLETED
-            # --- FIX: PASS Job OBJECT instead of ID ---
-            job = service.update_job_status(job, final_status, error_message=final_job_message if error_count > 0 else None)
-            # --- END FIX ---
+            # Call update_job_status (which doesn't commit) using the 'job' variable (now guaranteed to be RUNNING)
+            job_updated_in_session = service.update_job_status(job, final_status, error_message=final_job_message if error_count > 0 else None)
             
-            # 10. Commit the entire transaction for this job run
-            session.commit()
+            # --- Commit Everything --- 
+            session.commit() # Commit final status update AND all batched results
             logging.debug(f"Committed final state for Job {job_id}. Status: {final_status}. Message: {final_job_message}")
-            # Refresh job state if needed after commit for finally block?
-            session.refresh(job) 
+            session.refresh(job_updated_in_session) # Refresh job state with the final committed status
+            job = job_updated_in_session # Ensure 'job' variable holds the latest state for finally block
 
         except Exception as e:
-            session.rollback() # Rollback the main transaction on critical error
-            logging.exception(f"Critical error during classification task for Job {job_id}: {e}")
-            final_status = ClassificationJobStatus.FAILED
-            final_job_message = str(e)
-            # Update status to FAILED using service in a separate session
+            session.rollback() # Rollback classification work if error occurred in main logic
+            logging.exception(f"Critical error during classification task main logic for Job {job_id}: {e}")
+            final_status_on_error = ClassificationJobStatus.FAILED
+            final_message_on_error = f"Processing Error: {str(e)[:500]}"
+            
+            # Attempt to update status to FAILED in a separate transaction
             try:
-                with SQLModelSession(engine) as error_session:
-                    error_provider = get_classification_provider()
-                    error_service = ClassificationService(session=error_session, classification_provider=error_provider)
-                    # Fetch job again in separate session before passing to update_job_status
-                    job_to_fail = error_session.get(ClassificationJob, job_id)
-                    if job_to_fail:
-                        # --- FIX: Ensure the object is passed here too ---
-                        error_service.update_job_status(job_to_fail, ClassificationJobStatus.FAILED, error_message=final_job_message)
-                        # --- END FIX ---
-                        logging.debug(f"Job {job_id} status updated to FAILED.")
-                    else:
-                        logging.error(f"Could not find job {job_id} to mark as FAILED.")
-                logging.debug(f"Job {job_id} status updated to FAILED.")
+                 with SQLModelSession(engine) as error_session:
+                     job_to_fail = error_session.get(ClassificationJob, job_id)
+                     if job_to_fail:
+                         # Check current status before trying to fail
+                         if job_to_fail.status not in [ClassificationJobStatus.COMPLETED, ClassificationJobStatus.FAILED, ClassificationJobStatus.COMPLETED_WITH_ERRORS]:
+                              error_provider = get_classification_provider(provider=provider_name, model_name=model_name, api_key=api_key_from_config)
+                              error_service = ClassificationService(session=error_session, classification_provider=error_provider)
+                              # Pass the job *object* to the service method
+                              error_service.update_job_status(job_to_fail, final_status_on_error, error_message=final_message_on_error)
+                              error_session.commit() # Commit the FAILED status
+                              logging.debug(f"Job {job_id} status updated to FAILED after error.")
+                              # Update the main 'job' variable status for the finally block if possible
+                              if job: job.status = ClassificationJobStatus.FAILED 
+                         else:
+                              logging.warning(f"Job {job_id} was already in a terminal state ({job_to_fail.status}) when trying to mark as FAILED.")
+                     else:
+                         logging.error(f"Could not find job {job_id} to mark as FAILED after error.")
             except Exception as final_status_err:
-                logging.error(f"CRITICAL: Failed to update Job {job_id} status to FAILED after error: {final_status_err}")
+                 logging.error(f"CRITICAL: Failed to update Job {job_id} status to FAILED after error: {final_status_err}")
 
-            # Retry logic
-            try:
-                self.retry(exc=e, countdown=60 * (self.request.retries + 1))
-                logging.warning(f"Retrying task for Job {job_id} due to error: {e}")
-            except self.MaxRetriesExceededError:
-                logging.error(f"Max retries exceeded for Job {job_id}. Remains FAILED.")
-                # Status is already set to FAILED
+            # Celery Retry Logic - re-raise the original exception to trigger retry
+            raise e
 
         finally:
-            # Update RecurringTask status only if the job finished (or failed after retries)
+            # Update RecurringTask status if needed
+            # Ensure 'job' is the most up-to-date version possible here
             is_final_attempt = True
-            if final_status == ClassificationJobStatus.FAILED:
-                try:
-                    if self.request.retries < self.max_retries: is_final_attempt = False
-                except AttributeError: pass 
-
-            if job and is_final_attempt: 
+            if isinstance(self.request.retries, int) and isinstance(self.max_retries, int):
+                if self.request.retries < self.max_retries: is_final_attempt = False
+            
+            if job and is_final_attempt: # Only update recurring task on final attempt (success or fail)
                 recurring_task_id = job.configuration.get('recurring_task_id')
                 if recurring_task_id and isinstance(recurring_task_id, int):
                     logging.debug(f"Updating originating RecurringTask {recurring_task_id} based on final Job {job_id} status: {job.status}")
-                    # Use job status AFTER potential commit/refresh or final FAILED update
-                    final_job_status = job.status if job else final_status # Get latest known status
-                    recurring_task_status = "success" if final_job_status == ClassificationJobStatus.COMPLETED else "error"
-                    recurring_task_message = job.error_message if job and job.error_message else f"Job {job_id} finished with status {final_job_status}."
+                    # Use the final committed/refreshed job status
+                    final_job_status_for_recur = job.status
+                    recurring_task_status = "success" if final_job_status_for_recur == ClassificationJobStatus.COMPLETED else "error"
+                    recurring_task_message = job.error_message if job.error_message else f"Job {job_id} finished with status {final_job_status_for_recur}."
                     
                     try:
-                        # Use utility function which handles its own session
                         update_task_status(recurring_task_id, recurring_task_status, recurring_task_message)
                         logging.debug(f"Successfully updated status for RecurringTask {recurring_task_id}.")
                     except Exception as update_err:
@@ -251,7 +285,7 @@ def process_classification_job(self, job_id: int):
                     logging.debug(f"Job {job_id} not linked to a recurring task. Skipping update.")
             
             end_time = time.time()
-            logging.debug(f"Classification task finished for Job {job_id} in {end_time - start_time:.2f} seconds.")
+            logging.debug(f"Classification task finished processing for Job {job_id} in {end_time - start_time:.2f} seconds.")
 
 # Example of how to potentially call the task
 # Needs integration via API route

@@ -18,6 +18,12 @@ import { ClassificationSchemeRead } from '@/client';
 import { adaptSchemeReadToSchemeFormData, adaptSchemeFormDataToSchemeCreate } from '@/lib/classification/adapters';
 import { useToast } from "@/components/ui/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ClassificationSchemeEditorProps {
   show: boolean;
@@ -277,6 +283,54 @@ const ClassificationSchemeEditor: React.FC<ClassificationSchemeEditorProps> = ({
               </div>
           </div>
 
+          {/* --- NEW: Global Scheme Settings --- */}
+          <div className="space-y-4 p-4 border rounded-lg bg-card">
+              <h3 className="text-lg font-medium border-b pb-2">Global AI Settings</h3>
+              {/* Request Justifications Globally */}
+              <div className="flex items-center justify-between">
+                  <Label htmlFor="request-justifications-globally" className="flex flex-col space-y-1">
+                      <span>Request Justifications Globally</span>
+                      <span className="text-xs font-normal text-muted-foreground">If enabled, justification will be requested for all applicable fields unless overridden at the field level.</span>
+                  </Label>
+                  <Switch
+                      id="request-justifications-globally"
+                      checked={formData.request_justifications_globally ?? false}
+                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, request_justifications_globally: checked }))}
+                      disabled={isLoadingSchemes || mode === 'watch'}
+                  />
+              </div>
+              {/* Default Thinking Budget */}
+              <div>
+                  <Label htmlFor="default-thinking-budget">Default Thinking Budget (Tokens)</Label>
+                  <Input
+                      id="default-thinking-budget"
+                      type="number"
+                      value={formData.default_thinking_budget === null || formData.default_thinking_budget === undefined ? '' : formData.default_thinking_budget}
+                      onChange={(e) => setFormData(prev => ({ ...prev, default_thinking_budget: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+                      placeholder="e.g., 1024 (0 to disable for all, empty for provider default)"
+                      disabled={isLoadingSchemes || mode === 'watch'}
+                  />
+                   <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                     <Info className="h-3 w-3 shrink-0"/>
+                     Budget for AI reasoning. Overrides provider defaults if set. Field-specific requests may still apply.
+                   </p>
+              </div>
+               {/* Enable Image Analysis Globally */}
+              <div className="flex items-center justify-between">
+                  <Label htmlFor="enable-image-analysis-globally" className="flex flex-col space-y-1">
+                      <span>Enable Image Analysis Globally</span>
+                      <span className="text-xs font-normal text-muted-foreground">If enabled, this scheme can process images, and fields can request bounding boxes.</span>
+                  </Label>
+                  <Switch
+                      id="enable-image-analysis-globally"
+                      checked={formData.enable_image_analysis_globally ?? false}
+                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, enable_image_analysis_globally: checked }))}
+                      disabled={isLoadingSchemes || mode === 'watch'}
+                  />
+              </div>
+          </div>
+          {/* --- END NEW: Global Scheme Settings --- */}
+
           {/* Fields Section */} 
           <div className="space-y-4">
               <h3 className="text-lg font-medium border-b pb-2">Fields</h3>
@@ -346,6 +400,93 @@ const ClassificationSchemeEditor: React.FC<ClassificationSchemeEditorProps> = ({
                         disabled={isLoadingSchemes || mode === 'watch'}
                         errors={Array.isArray(formErrors.fields) ? formErrors.fields[index] : undefined}
                      />
+
+                    {/* --- NEW: Per-Field AI Settings --- */}
+                    <div className="mt-3 space-y-3 pt-3 border-t border-dashed">
+                        <div className="flex items-center justify-between">
+                            <Label htmlFor={`fields.${index}.request_justification`} className="text-xs flex items-center">
+                                Request Justification for this Field
+                                <TooltipProvider delayDuration={100}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3 w-3 ml-1.5 text-muted-foreground cursor-help"/>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p className="text-xs max-w-xs">Overrides global setting. If null, inherits from global.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                            </Label>
+                            <Select
+                                value={item.request_justification === null ? 'inherit' : (item.request_justification ? 'yes' : 'no')}
+                                onValueChange={(value) => {
+                                    let val: boolean | null = null;
+                                    if (value === 'yes') val = true;
+                                    else if (value === 'no') val = false;
+                                    updateField(index, 'request_justification', val);
+                                }}
+                                disabled={isLoadingSchemes || mode === 'watch'}
+                            >
+                                <SelectTrigger id={`fields.${index}.request_justification`} className="h-7 w-[100px] text-xs">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="inherit">Inherit</SelectItem>
+                                    <SelectItem value="yes">Yes</SelectItem>
+                                    <SelectItem value="no">No</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {(item.type === 'str' || item.type === 'List[str]') && formData.enable_image_analysis_globally && (
+                            <div className="flex items-center justify-between">
+                                <Label htmlFor={`fields.${index}.request_bounding_boxes`} className="text-xs flex items-center">
+                                    Request Bounding Boxes for this Field
+                                    <TooltipProvider delayDuration={100}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Info className="h-3 w-3 ml-1.5 text-muted-foreground cursor-help"/>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p className="text-xs max-w-xs">Only if image analysis is globally enabled and field value might come from image.</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                </Label>
+                                <Switch
+                                    id={`fields.${index}.request_bounding_boxes`}
+                                    checked={item.request_bounding_boxes ?? false}
+                                    onCheckedChange={(checked) => updateField(index, 'request_bounding_boxes', checked)}
+                                    disabled={isLoadingSchemes || mode === 'watch'}
+                                />
+                            </div>
+                        )}
+
+                        {item.type === 'List[str]' && item.config.is_set_of_labels && (
+                            <div className="flex items-center justify-between">
+                                <Label htmlFor={`fields.${index}.use_enum_for_labels`} className="text-xs flex items-center">
+                                    Use Strict Choices (Enum for AI)
+                                    <TooltipProvider delayDuration={100}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Info className="h-3 w-3 ml-1.5 text-muted-foreground cursor-help"/>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p className="text-xs max-w-xs">More reliable for predefined lists, but less flexible.</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                </Label>
+                                <Switch
+                                    id={`fields.${index}.use_enum_for_labels`}
+                                    checked={item.use_enum_for_labels ?? false}
+                                    onCheckedChange={(checked) => updateField(index, 'use_enum_for_labels', checked)}
+                                    disabled={isLoadingSchemes || mode === 'watch'}
+                                />
+                            </div>
+                        )}
+                    </div>
+                    {/* --- END NEW: Per-Field AI Settings --- */}
 
                      {/* Remove Field Button */} 
                     {mode !== 'watch' && (

@@ -55,9 +55,15 @@ class OpolScrapingProvider(ScrapingProvider):
                 raise ValueError("Scraping yielded no data")
             
             # Extract data from the response, with fallbacks
+            url = getattr(article_data, 'url', None) or article_data.get('url', '')
             title = getattr(article_data, 'title', None) or article_data.get('title', '')
             text_content = getattr(article_data, 'text', None) or article_data.get('text', '')
+            top_image = getattr(article_data, 'top_image', None) or article_data.get('top_image', '')
+            images = getattr(article_data, 'images', None) or article_data.get('images', [])
             publication_date = getattr(article_data, 'publication_date', None) or article_data.get('publication_date', None)
+            summary = getattr(article_data, 'summary', None) or article_data.get('summary', '')
+            meta_summary = getattr(article_data, 'meta_summary', None) or article_data.get('meta_summary', '')
+            last_updated = getattr(article_data, 'last_updated', None) or article_data.get('last_updated', None)
             
             # Convert publication_date to string if present
             if publication_date:
@@ -70,6 +76,11 @@ class OpolScrapingProvider(ScrapingProvider):
                 "title": title,
                 "text_content": text_content,
                 "publication_date": publication_date,
+                "top_image": top_image,
+                "images": images,
+                "summary": summary,
+                "meta_summary": meta_summary,
+                "last_updated": last_updated,
                 "original_data": article_data  # Include raw data for downstream processing
             }
             

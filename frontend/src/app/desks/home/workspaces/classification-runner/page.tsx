@@ -16,6 +16,7 @@ import { ClassificationJobParams } from '@/lib/classification/types';
 export default function ClassificationRunnerPage() {
   const { activeWorkspace } = useWorkspaceStore();
   const { toast } = useToast();
+  const [activeUITab, setActiveUITab] = useState<string>("runner");
 
   const {
     schemes: allSchemesHook,
@@ -32,6 +33,8 @@ export default function ClassificationRunnerPage() {
     setActiveJob,
     deleteJob,
     activeJobDataRecords,
+    retrySingleResult,
+    isRetryingResultId,
   } = useClassificationSystem({ autoLoadSchemes: true, autoLoadDataSources: false });
 
   const [targetJobId, setTargetJobId] = useState<number | null>(null);
@@ -76,7 +79,9 @@ export default function ClassificationRunnerPage() {
       dataSourceIds: number[],
       schemeIds: number[],
       name?: string,
-      description?: string
+      description?: string,
+      thinking_budget_override?: number | null,
+      enable_image_analysis_override?: boolean
     ) => {
       if (!activeWorkspace) {
           toast({ title: "No Workspace", description: "Cannot create job without an active workspace.", variant: "destructive" });
@@ -88,35 +93,49 @@ export default function ClassificationRunnerPage() {
           name: name || `Analysis @ ${new Date().toLocaleString()}`,
           description: description,
           datasourceIds: dataSourceIds,
-          schemeIds: schemeIds
+          schemeIds: schemeIds,
+          thinking_budget_override: thinking_budget_override,
+          enable_image_analysis_override: enable_image_analysis_override
       };
 
       const newJob = await createJob(jobParams);
 
-      if (newJob) {
+      if (newJob && newJob.id) {
           console.log("[RunnerPage] Job created via callback, setting target ID:", newJob.id);
-          setTargetJobId(newJob.id);
-          toast({ title: "Job Created", description: `Job "${newJob.name}" was created successfully.` });
+          await loadJob(newJob.id);
+          setActiveUITab("runner");
+          toast({
+            title: `Job "${newJob.name || `ID: ${newJob.id}`}" created and loaded`,
+            description: "Results will appear in the runner as they are processed.",
+          });
       } else {
           console.error("[RunnerPage] Job creation callback failed.");
       }
-  }, [activeWorkspace, createJob, toast]);
+  }, [activeWorkspace, createJob, toast, loadJob]);
 
-  const handleLoadJobCallback = useCallback((jobId: number) => {
-     console.log(`[RunnerPage] Setting target job ID from callback: ${jobId}`);
-     setTargetJobId(jobId);
-  }, []);
+  const handleLoadJobCallback = useCallback(
+    async (jobId: number | null, jobName?: string, jobDescription?: string) => {
+      if (jobId === null) {
+        setActiveJob(null);
+        return;
+      }
+      await loadJob(jobId);
+      setActiveUITab("runner");
+      toast({
+        title: `Job "${jobName || `ID: ${jobId}`}" loaded`,
+      });
+  }, [loadJob, toast, setActiveJob]);
 
   const handleClearJobCallback = useCallback(() => {
       console.log("[RunnerPage] Clearing active job.");
-      setTargetJobId(null);
+      setActiveJob(null);
       toast({ title: "Job Cleared", description: "Loaded job data has been cleared." });
-  }, [toast]);
+  }, [toast, setActiveJob]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-muted/30">
       <div className="flex-1 overflow-auto pb-28 p-4 space-y-4">
-          <Tabs defaultValue="runner" className="space-y-4">
+          <Tabs value={activeUITab} onValueChange={setActiveUITab} className="space-y-4">
             <TabsList>
               <TabsTrigger value="runner">Runner</TabsTrigger>
               <TabsTrigger value="recurring">Recurring Tasks</TabsTrigger>

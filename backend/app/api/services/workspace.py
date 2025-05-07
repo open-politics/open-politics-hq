@@ -175,6 +175,7 @@ class WorkspaceService:
             "name": workspace.name,
             "description": workspace.description,
             "icon": workspace.icon,
+            "system_prompt": workspace.system_prompt,
             "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
             "updated_at": workspace.updated_at.isoformat() if workspace.updated_at else None,
         }
@@ -249,7 +250,8 @@ class WorkspaceService:
             workspace_data = WorkspaceCreate(
                 name=import_data.get("name", "Imported Workspace"),
                 description=import_data.get("description", "Imported workspace configuration"),
-                icon=import_data.get("icon")
+                icon=import_data.get("icon"),
+                system_prompt=import_data.get("system_prompt")
             )
             workspace = self.create_workspace(user_id, workspace_data)
 

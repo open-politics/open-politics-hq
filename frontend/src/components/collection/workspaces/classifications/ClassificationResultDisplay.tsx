@@ -20,6 +20,7 @@ import {
     ResponsiveContainer,
     Legend
 } from 'recharts';
+import { HelpCircle } from 'lucide-react';
 
 // Component-level types (if needed, e.g., for props)
 interface ClassificationResultDisplayProps {
@@ -361,13 +362,53 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                   }
                   // --- END MODIFICATION ---
 
+                  const justificationValue = (typeof result.value === 'object' && result.value !== null) ? result.value[`${schemeField.name}_justification`] : undefined;
+                  const boxesValue = (typeof result.value === 'object' && result.value !== null) ? result.value[`${schemeField.name}_boxes`] : undefined;
+  
                   return (
-                      <div key={idx} className={'space-y-1'}>
-                          {/* --- Always show field name, no conditions --- */}
-                          <div className="font-medium text-blue-400 italic inline-block mr-2">
-                            {schemeField.name}:
+                      <div key={idx} className={ 'space-y-1 border-b border-dashed border-border/30 pb-3 last:border-b-0 last:pb-0'}>
+                          {/* --- Primary Field Value --- */}
+                          <div>
+                            <div className="font-medium text-blue-400 italic inline-flex items-center mr-2">
+                              {schemeField.name}
+                              {/* --- ADDED: Tooltip for Justification --- */}
+                              {justificationValue && typeof justificationValue === 'string' && (
+                                  <TooltipProvider delayDuration={100}>
+                                      <Tooltip>
+                                          <TooltipTrigger asChild>
+                                              {/* Using a subtle icon as the trigger */}
+                                              <HelpCircle className="h-3.5 w-3.5 ml-1.5 text-muted-foreground cursor-help opacity-70 hover:opacity-100" />
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top" align="start" className="max-w-xs border-border shadow-lg z-[1000]">
+                                              <p className="text-xs font-semibold mb-1 text-indigo-400">Justification:</p>
+                                              <p className="text-xs">{justificationValue}</p>
+                                          </TooltipContent>
+                                      </Tooltip>
+                                  </TooltipProvider>
+                              )}
+                              {/* --- END ADDED --- */}
+                            </div>
+                            <div className="inline-block">{formatFieldValue(result.value, schemeField)}</div>
                           </div>
-                          <div className="inline-block">{formatFieldValue(result.value, schemeField)}</div>
+  
+                          {/* --- Justification (Removed direct display) --- */}
+                          {/* {justificationValue && typeof justificationValue === 'string' && (
+                            <div className="pl-4 mt-1 text-xs text-muted-foreground bg-muted/10 p-1.5 rounded border border-dashed border-indigo-300/30">
+                                <span className="font-semibold text-indigo-400 mr-1">Justification:</span>
+                                {justificationValue}
+                            </div>
+                          )} */}
+  
+                          {/* --- Bounding Boxes (Keep as is) --- */}
+                          {boxesValue && Array.isArray(boxesValue) && boxesValue.length > 0 && (
+                              <div className="mt-1 text-xs text-muted-foreground italic">
+                                  {boxesValue.map((box, index) => (
+                                      <span key={index} className="text-xs">
+                                          {box.toString()}
+                                      </span>
+                                  ))}
+                              </div>
+                          )}
                       </div>
                   );
               })}

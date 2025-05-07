@@ -8,6 +8,7 @@ import logging.config
 import logging
 import json # Added for import
 import uuid # Added for export
+import os # <<< Import os for environment variables
 from typing import Any, Dict, List, Optional, Type, Union, Tuple, Set
 from datetime import datetime, timezone
 from enum import Enum
@@ -19,6 +20,8 @@ from fastapi import HTTPException #
 
 # Import ClassificationProvider base type
 from app.api.services.providers.base import ClassificationProvider
+
+GLOBAL_PROMPT = "You are an AI assistant performing text classification. Follow the user's instructions and the provided schema carefully. Be accurate and concise. Use the scheme's language for results and explanations."
 
 from app.models import (
     ClassificationScheme,
@@ -42,45 +45,10 @@ from app.models import (
     ClassificationSchemeRead,
     ClassificationResultStatus
 )
-# Removed direct provider import, use dependency injection
-# from app.api.services.providers import ClassificationProvider, get_classification_provider
 from app.api.services.service_utils import validate_workspace_access
 from app.api.v2.classification import generate_pydantic_model
-# Removed Celery app import, tasks will handle their own logic
-# from app.core.celery_app import celery # Import celery app instance
-
-# Configure logging
-logging.config.dictConfig({
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'detailed': {
-            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s - [%(filename)s:%(lineno)d]'
-        }
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'detailed',
-            'level': 'DEBUG'
-        },
-        'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'classification_service.log',
-            'maxBytes': 10485760,  # 10MB
-            'backupCount': 5,
-            'formatter': 'detailed',
-            'level': 'INFO'
-        }
-    },
-    'loggers': {
-        'classification_service': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
-            'propagate': False
-        }
-    }
-})
+from app.core.celery_app import celery # Import celery app instance
+ 
 
 logger = logging.getLogger('classification_service')
 
@@ -89,26 +57,6 @@ from functools import wraps
 from time import time
 from typing import Callable
 
-def log_method(func: Callable) -> Callable:
-    """Decorator to log method entry, exit, and execution time."""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        method_name = func.__name__
-        logger.debug(f"Entering {method_name}")
-        start_time = time()
-        try:
-            result = func(*args, **kwargs)
-            execution_time = time() - start_time
-            logger.debug(f"Exiting {method_name} - Execution time: {execution_time:.2f}s")
-            return result
-        except Exception as e:
-            execution_time = time() - start_time
-            logger.error(
-                f"Error in {method_name} - Execution time: {execution_time:.2f}s - Error: {str(e)}",
-                exc_info=True
-            )
-            raise
-    return wrapper
 
 # --- Custom Exceptions ---
 
@@ -297,42 +245,79 @@ def _core_classify_text(
     text: str,
     title: Optional[str],
     scheme_id: int,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None # Added provider_config
 ) -> Dict[str, Any]:
     """Core logic to classify text using a specific scheme and provider."""
-    # Fetch scheme with fields (using selectinload for efficiency)
-    stmt = select(ClassificationScheme).options(selectinload(ClassificationScheme.fields)).where(ClassificationScheme.id == scheme_id)
+    # Fetch scheme with fields AND workspace (using selectinload for efficiency)
+    stmt = select(ClassificationScheme).options(
+        selectinload(ClassificationScheme.fields),
+        selectinload(ClassificationScheme.workspace) # <<< Load workspace relationship
+    ).where(ClassificationScheme.id == scheme_id)
     scheme = session.exec(stmt).first()
     if not scheme:
         raise SchemeNotFoundError(f"Classification Scheme {scheme_id} not found")
+    # --- Added check for workspace ---
+    if not scheme.workspace:
+        logger.error(f"Workspace not found for Scheme {scheme_id}. Cannot retrieve workspace system prompt.")
+        # Decide behavior: proceed without workspace prompt or raise error?
+        # Let's proceed but log a warning.
+        workspace_prompt = ""
+    else:
+        workspace_prompt = scheme.workspace.system_prompt or "" # Get workspace prompt
+    # --- End check ---
 
     # Safely construct input string, handling None title
-    input_parts = [text]
-    if title:
-        input_parts.append(title)
-    input_str = " ".join(input_parts) # Join with space only if title exists
+    # The provider will decide how to best use text, title, and instructions along with images.
+    # For Gemini, instructions are prepended to text for the main text part.
+    # For now, we just pass the raw text and title; instructions come from scheme.description.
+    input_text_content = text # Preserve original text
+    # The `title` might be used by the provider if it has a specific way to handle it
+    # or it could be part of the `instructions` or overall context preparation.
 
     # Generate Pydantic model for the scheme
+    # scheme.fields should be loaded due to selectinload above.
     dynamic_model = generate_pydantic_model(scheme)
     if not dynamic_model:
-        raise SchemeNotFoundError(f"Could not generate model for scheme {scheme_id}")
+        # generate_pydantic_model logs details if it fails or returns a default model
+        raise SchemeNotFoundError(f"Could not generate a valid Pydantic model for scheme {scheme_id} (\'{scheme.name}\')")
 
-    instructions = scheme.description # Use scheme description as instructions
+    # --- Combine Global ENV, Workspace DB, and Scheme Instructions --- 
+    global_env_prompt = os.getenv("OPOL_GLOBAL_CLASSIFICATION_PROMPT", GLOBAL_PROMPT).strip()
+    # workspace_prompt is already fetched above
+    scheme_instructions = scheme.model_instructions or scheme.description or ""
+    
+    # Start building the final prompt parts
+    prompt_parts = []
+    if global_env_prompt: # Highest precedence
+        prompt_parts.append(global_env_prompt)
+    if workspace_prompt: # Middle precedence
+        prompt_parts.append(workspace_prompt)
+    if scheme_instructions: # Lowest precedence
+        prompt_parts.append(scheme_instructions)
+        
+    # Join the parts with separators
+    final_instructions = "\n\n---\n\n".join(prompt_parts)
+    # --- End Combination ---
 
     try:
         # Call the provider with arguments in the correct order
+        # <<< Added logging for final instructions >>>
+        logger.debug(f"_core_classify_text: Final combined instructions for scheme {scheme_id}:\n{final_instructions}") 
+        logger.debug(f"_core_classify_text: Calling provider.classify for scheme {scheme_id} (\'{scheme.name}\') with provider_config: {provider_config}")
         result_value = provider.classify(
-            text=input_str, # Use the safely constructed string
+            text=input_text_content, 
             model_class=dynamic_model,
-            instructions=instructions,
-            api_key=api_key
+            instructions=final_instructions, # <<< Use combined instructions
+            api_key=api_key,
+            provider_config=provider_config # Pass through provider_config
         )
         # TODO: Add validation against scheme.validation_rules if present
         return result_value
     except Exception as provider_error:
-        logger.error(f"Classification provider failed for Scheme {scheme_id}: {provider_error}", exc_info=True)
-        # Re-raise as a specific error type?
-        raise ClassificationError(f"Classification provider error: {provider_error}") from provider_error
+        logger.error(f"Classification provider failed for Scheme {scheme_id} (\'{scheme.name}\'): {provider_error}", exc_info=True)
+        # Re-raise as a specific error type or let it propagate
+        raise ClassificationError(f"Classification provider error for scheme '{scheme.name}': {provider_error}") from provider_error
 
 
 def _core_create_results_batch(
@@ -524,7 +509,8 @@ class ClassificationService:
         text: str,
         title: Optional[str],
         scheme_id: int,
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        provider_config: Optional[Dict[str, Any]] = None # Added provider_config
     ) -> Dict[str, Any]:
         """
         Classifies a single piece of text against a given scheme using the configured provider.
@@ -534,6 +520,7 @@ class ClassificationService:
             title: The optional title associated with the text.
             scheme_id: The ID of the ClassificationScheme to use.
             api_key: Optional API key if required by the provider.
+            provider_config: Optional provider-specific configuration (e.g., thinking_budget, images).
 
         Returns:
             A dictionary representing the classification result.
@@ -542,8 +529,19 @@ class ClassificationService:
             SchemeNotFoundError: If the scheme ID is invalid.
             ClassificationError: If the classification provider fails.
         """
-        # Log entry moved to decorator
-        return _core_classify_text(self.session, self.provider, text, title, scheme_id, api_key)
+        # Log entry moved to decorator or can be added here if specific details needed
+        provider_config_keys_str = str(list(provider_config.keys())) if provider_config else "[]"
+        log_title = title[:20] if title else "N/A"
+        logger.debug(f"Service classify_text: scheme_id={scheme_id}, title='{log_title}', text_len={len(text)}, provider_config_keys={provider_config_keys_str}")
+        return _core_classify_text(
+            session=self.session, 
+            provider=self.provider, 
+            text=text, 
+            title=title, # Pass original title to core function
+            scheme_id=scheme_id, 
+            api_key=api_key,
+            provider_config=provider_config # Pass through provider_config
+        )
 
     def create_result(
         self,

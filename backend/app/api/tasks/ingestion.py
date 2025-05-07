@@ -533,7 +533,9 @@ def process_datasource(self, datasource_id: int, task_origin_details_override: O
                                     "text_content": text_content,
                                     "source_metadata": record_meta,
                                     "event_timestamp": event_ts,
-                                    "url_hash": url_hash
+                                    "url_hash": url_hash,
+                                    "top_image": scraped_data.get("top_image", None), # Added
+                                    "images": scraped_data.get("images", []) # Added
                                 })
                                 processed_count += 1
                             else: error_msg = "No text content after cleaning"

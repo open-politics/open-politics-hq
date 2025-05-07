@@ -105,10 +105,18 @@ export const adaptSchemeFormDataToSchemeCreate = (formData: SchemeFormData): Cla
     dict_keys: field.config.dict_keys?.map((dk): ClientDictKeyDefinition => ({
       name: dk.name,
       type: dk.type
-    })) ?? null
+    })) ?? null,
+    // Pass through per-field settings
+    request_justification: field.request_justification,
+    request_bounding_boxes: field.request_bounding_boxes,
+    use_enum_for_labels: field.use_enum_for_labels
   })),
   model_instructions: formData.model_instructions ?? undefined,
-  validation_rules: formData.validation_rules ?? undefined
+  validation_rules: formData.validation_rules ?? undefined,
+  // Pass through global scheme settings
+  default_thinking_budget: formData.default_thinking_budget,
+  request_justifications_globally: formData.request_justifications_globally,
+  enable_image_analysis_globally: formData.enable_image_analysis_globally
 });
 
 // Convert API ClassificationSchemeRead to frontend SchemeFormData (for editing)
@@ -125,10 +133,18 @@ export const adaptSchemeReadToSchemeFormData = (apiData: ClientClassificationSch
       is_set_of_labels: field.is_set_of_labels ?? undefined,
       labels: field.labels ?? undefined,
       dict_keys: field.dict_keys ? field.dict_keys.map(adaptApiDictKeyDefinition) : undefined
-    }
+    },
+    // Populate per-field settings
+    request_justification: field.request_justification ?? null, // Default to null if undefined
+    request_bounding_boxes: field.request_bounding_boxes ?? false,
+    use_enum_for_labels: field.use_enum_for_labels ?? false
   })),
   model_instructions: apiData.model_instructions ?? undefined,
-  validation_rules: apiData.validation_rules ?? undefined
+  validation_rules: apiData.validation_rules ?? undefined,
+  // Populate global scheme settings
+  default_thinking_budget: apiData.default_thinking_budget ?? null, // Default to null if undefined
+  request_justifications_globally: apiData.request_justifications_globally ?? false,
+  enable_image_analysis_globally: apiData.enable_image_analysis_globally ?? false
 });
 
 // Convert API ClassificationResultRead to frontend ClassificationResult
@@ -196,6 +212,8 @@ export const adaptDataRecordReadToDataRecord = (clientRecord: ClientDataRecordRe
         event_timestamp: clientRecord.event_timestamp,
         created_at: clientRecord.created_at,
         content_hash: clientRecord.content_hash,
+        top_image: clientRecord.top_image,
+        images: clientRecord.images,
     };
 };
 

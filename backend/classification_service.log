@@ -1,0 +1,1790 @@
+2025-05-07 14:13:34,940 - classification_service - INFO - Job 189 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:13:36,223 - classification_service - ERROR - Invalid status transition for Job 189: Cannot transition from ClassificationJobStatus.PENDING to ClassificationJobStatus.COMPLETED - [classification.py:683]
+2025-05-07 14:13:36,232 - classification_service - INFO - Job 189 status updated to ClassificationJobStatus.FAILED in session. - [classification.py:679]
+2025-05-07 14:24:21,387 - classification_service - INFO - Job 190 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:24:22,470 - classification_service - ERROR - Invalid status transition for Job 190: Cannot transition from ClassificationJobStatus.PENDING to ClassificationJobStatus.COMPLETED - [classification.py:683]
+2025-05-07 14:24:22,479 - classification_service - INFO - Job 190 status updated to ClassificationJobStatus.FAILED in session. - [classification.py:679]
+2025-05-07 14:25:22,490 - classification_service - INFO - Job 190 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:25:22,504 - classification_service - INFO - Job 190 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 14:49:33,431 - classification_service - INFO - Job 191 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:49:34,260 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a8502dbc10 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:34,462 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a8502dabd0 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:34,644 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85022c390 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:34,850 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a8525b0250 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:35,046 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85022de50 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:35,201 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85010b810 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:35,389 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a850135050 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:35,567 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a8501454d0 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:35,758 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85014d910 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:35,921 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85014e150 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:36,077 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a8501465d0 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:49:36,148 - classification_service - INFO - Job 191 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 14:50:09,349 - classification_service - INFO - Job 192 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:50:09,541 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85010bc90 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:09,729 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a850108050 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:09,881 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85010bf90 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:10,044 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a8501097d0 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:10,208 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a850119e90 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:10,361 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85010aa10 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:10,405 - classification_service - ERROR - Invalid status transition for Job 192: Cannot transition from ClassificationJobStatus.PENDING to ClassificationJobStatus.COMPLETED_WITH_ERRORS - [classification.py:683]
+2025-05-07 14:50:10,416 - classification_service - INFO - Job 192 status updated to ClassificationJobStatus.FAILED in session. - [classification.py:679]
+2025-05-07 14:50:33,043 - classification_service - INFO - Job 193 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:50:33,233 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Classification failed: 429 Resource has been exhausted (e.g. check quota). - [classification.py:342]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 168, in retry_sync
+    response = func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+               ^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 293, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 153, in retry_target
+    _retry_error_helper(
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_base.py", line 212, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/retry/retry_unary.py", line 144, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/grpc_helpers.py", line 78, in error_remapped_callable
+    raise exceptions.from_grpc_error(exc) from exc
+google.api_core.exceptions.ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 163, in retry_sync
+    for attempt in max_retries:
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 445, in __iter__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 378, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/tenacity/__init__.py", line 421, in exc_check
+    raise retry_exc from fut.exception()
+tenacity.RetryError: RetryError[<Future at 0x76a85011bd50 state=finished raised ResourceExhausted>]
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 98, in classify
+    result = fastclass.classify(model_class, instructions, text)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/classification.py", line 35, in classify
+    return self.fastclass.infer(response_type, input_text, prompt)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/opol/api/fastclass.py", line 93, in infer
+    llm_response = self.client.messages.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/client.py", line 180, in create
+    return self.create_fn(
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/patch.py", line 193, in new_create_sync
+    response = retry_sync(
+               ^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/instructor/retry.py", line 194, in retry_sync
+    raise InstructorRetryException(
+instructor.exceptions.InstructorRetryException: 429 Resource has been exhausted (e.g. check quota).
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 113, in classify
+    raise RuntimeError(f"Classification failed: {str(e)}")
+RuntimeError: Classification failed: 429 Resource has been exhausted (e.g. check quota).
+2025-05-07 14:50:33,255 - classification_service - INFO - Job 193 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 14:50:55,569 - classification_service - INFO - Job 194 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:50:56,177 - classification_service - ERROR - Invalid status transition for Job 194: Cannot transition from ClassificationJobStatus.PENDING to ClassificationJobStatus.COMPLETED - [classification.py:683]
+2025-05-07 14:50:56,184 - classification_service - INFO - Job 194 status updated to ClassificationJobStatus.FAILED in session. - [classification.py:679]
+2025-05-07 14:56:28,065 - classification_service - INFO - Job 195 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:56:28,137 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 220, in classify
+    response = client.models.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'generation_config'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 266, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config'
+2025-05-07 14:56:28,151 - classification_service - INFO - Job 195 status updated to ClassificationJobStatus.FAILED in session. - [classification.py:679]
+2025-05-07 14:57:22,579 - classification_service - INFO - Job 196 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 14:57:22,647 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 220, in classify
+    response = client.models.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'generation_config'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 266, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config'
+2025-05-07 14:57:22,666 - classification_service - INFO - Job 196 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:07:44,085 - classification_service - INFO - Job 197 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:07:44,157 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 220, in classify
+    response = client.models.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'generation_config'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 266, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config'
+2025-05-07 15:07:44,177 - classification_service - INFO - Job 197 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:08:59,576 - classification_service - INFO - Job 198 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:08:59,640 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 220, in classify
+    response = client.models.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'generation_config'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 266, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Models.generate_content() got an unexpected keyword argument 'generation_config'
+2025-05-07 15:08:59,653 - classification_service - INFO - Job 198 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:09:42,014 - classification_service - INFO - Job 199 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:09:49,188 - classification_service - INFO - Job 199 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 15:16:54,830 - classification_service - INFO - Job 200 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:16:54,902 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 235, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 241, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 288, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:16:54,923 - classification_service - INFO - Job 200 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:17:09,538 - classification_service - INFO - Job 201 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:17:09,596 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 235, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 241, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 288, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:17:09,610 - classification_service - INFO - Job 201 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:19:12,814 - classification_service - INFO - Job 202 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:19:34,683 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: name 'job_id' is not defined - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 233, in classify
+    logger.warning(f"Temporarily returning raw text output for Job {job_id}, Scheme {model_class.__name__}.")
+                                                                    ^^^^^^
+NameError: name 'job_id' is not defined
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: name 'job_id' is not defined
+2025-05-07 15:19:34,704 - classification_service - INFO - Job 202 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:19:36,196 - classification_service - INFO - Job 203 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:20:04,085 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: name 'job_id' is not defined - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 233, in classify
+    logger.warning(f"Temporarily returning raw text output for Job {job_id}, Scheme {model_class.__name__}.")
+                                                                    ^^^^^^
+NameError: name 'job_id' is not defined
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: name 'job_id' is not defined
+2025-05-07 15:20:04,096 - classification_service - INFO - Job 203 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:20:42,428 - classification_service - INFO - Job 204 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:21:05,963 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: name 'job_id' is not defined - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 233, in classify
+NameError: name 'job_id' is not defined
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: name 'job_id' is not defined
+2025-05-07 15:21:05,974 - classification_service - INFO - Job 204 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:21:12,654 - classification_service - INFO - Job 205 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:21:55,635 - classification_service - INFO - Job 206 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:21:55,712 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 235, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 240, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:21:55,731 - classification_service - INFO - Job 206 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:22:37,231 - classification_service - INFO - Job 207 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:22:37,304 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 235, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 240, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:22:37,321 - classification_service - INFO - Job 207 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:23:00,088 - classification_service - INFO - Job 208 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:23:00,147 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 235, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 240, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:23:00,160 - classification_service - INFO - Job 208 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:23:59,893 - classification_service - INFO - Job 209 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:23:59,968 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 235, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 240, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 264, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:23:59,988 - classification_service - INFO - Job 209 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:26:08,108 - classification_service - INFO - Job 210 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:26:30,674 - classification_service - INFO - Job 210 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 15:26:30,693 - classification_service - INFO - Job 211 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:27:04,005 - classification_service - INFO - Job 211 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 15:29:13,466 - classification_service - INFO - Job 212 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:29:33,369 - classification_service - INFO - Job 212 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 15:31:48,560 - classification_service - INFO - Job 213 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:31:48,634 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 243, in classify
+    response = client.models.generate_content(**generate_args) # Unpack dict as kwargs
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 248, in classify
+    raise RuntimeError(f"Gemini classification failed (TypeError with direct args): {e}") from e
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 296, in classify
+    raise RuntimeError(f"Gemini classification failed: {str(e)}")
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:31:48,657 - classification_service - INFO - Job 213 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 15:36:06,296 - classification_service - INFO - Job 214 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 15:36:06,367 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 243, in classify
+    parsed_object = model_class.model_validate_json(response.text)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 248, in classify
+    elif response.text:
+         ^^^^^^^^^^^^^^^
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 296, in classify
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 15:36:06,381 - classification_service - INFO - Job 214 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 16:22:32,310 - classification_service - INFO - Job 205 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 16:22:32,373 - classification_service - ERROR - Classification provider failed for Scheme 16 ('Positionierung NahOstKonflikt '): Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type' - [classification.py:342]
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 243, in classify
+    try:
+       ^^
+TypeError: Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/providers/classification.py", line 248, in classify
+    raise RuntimeError(f"Failed to parse Gemini response JSON (fallback): {e_parse_fallback}") from e_parse_fallback
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/app/api/services/classification.py", line 332, in _core_classify_text
+    result_value = provider.classify(
+                   ^^^^^^^^^^^^^^^^^^
+  File "/app/app/api/services/providers/classification.py", line 296, in classify
+    # Priority: Argument > Environment Variable > Hardcoded Default
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Gemini classification failed: Gemini classification failed (TypeError with direct args): Models.generate_content() got an unexpected keyword argument 'response_mime_type'
+2025-05-07 16:22:32,387 - classification_service - INFO - Job 205 status updated to ClassificationJobStatus.COMPLETED_WITH_ERRORS in session. - [classification.py:679]
+2025-05-07 21:37:00,600 - classification_service - INFO - Job 215 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 21:37:29,069 - classification_service - INFO - Job 215 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 21:38:49,941 - classification_service - INFO - Job 216 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 21:39:01,643 - classification_service - INFO - Job 216 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 21:40:27,209 - classification_service - INFO - Job 217 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 21:41:07,738 - classification_service - INFO - Job 217 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 21:41:07,755 - classification_service - INFO - Job 218 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 21:41:26,567 - classification_service - INFO - Job 218 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 21:46:09,326 - classification_service - INFO - Job 219 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 21:46:19,624 - classification_service - INFO - Job 219 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 21:54:20,055 - classification_service - INFO - Job 220 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 21:54:26,064 - classification_service - INFO - Job 220 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 22:01:30,472 - classification_service - INFO - Updating fields for scheme 16. New field count: 4 - [classification.py:817]
+2025-05-07 22:01:30,495 - classification_service - INFO - Successfully updated scheme 16 - [classification.py:845]
+2025-05-07 22:01:50,225 - classification_service - INFO - Updating fields for scheme 16. New field count: 4 - [classification.py:817]
+2025-05-07 22:01:50,237 - classification_service - INFO - Successfully updated scheme 16 - [classification.py:845]
+2025-05-07 22:04:22,396 - classification_service - INFO - Updating fields for scheme 16. New field count: 4 - [classification.py:817]
+2025-05-07 22:04:22,408 - classification_service - INFO - Successfully updated scheme 16 - [classification.py:845]
+2025-05-07 22:13:31,434 - classification_service - INFO - Job 221 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 22:13:39,436 - classification_service - INFO - Job 221 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 22:21:30,446 - classification_service - INFO - Job 222 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 22:22:45,585 - classification_service - INFO - Job 222 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]
+2025-05-07 22:24:13,073 - classification_service - INFO - Updating fields for scheme 15. New field count: 6 - [classification.py:817]
+2025-05-07 22:24:13,087 - classification_service - INFO - Successfully updated scheme 15 - [classification.py:845]
+2025-05-07 22:25:21,043 - classification_service - INFO - Job 223 status updated to ClassificationJobStatus.RUNNING in session. - [classification.py:679]
+2025-05-07 22:27:05,521 - classification_service - INFO - Job 223 status updated to ClassificationJobStatus.COMPLETED in session. - [classification.py:679]

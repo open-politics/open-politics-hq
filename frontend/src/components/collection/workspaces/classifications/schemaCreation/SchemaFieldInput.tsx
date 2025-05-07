@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { PlusIcon, XIcon, Clock } from "lucide-react";
+import { PlusIcon, XIcon, Clock, HelpCircle } from "lucide-react";
 import { useEffect } from "react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface SchemaFieldInputProps {
   field: SchemeField;
@@ -98,6 +99,85 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
   );
   // --- End Common Time Axis Hint Switch ---
 
+  // --- NEW: Justification Request Select ---
+  const renderJustificationSelect = () => (
+    <div className="pt-3 mt-3 border-t border-border/50">
+      <Label htmlFor={`justification-request-${field.name || 'new'}`} className="text-xs font-medium mb-1 block">Request Justification</Label>
+      <Select
+        value={
+          field.request_justification === true ? "yes" :
+          field.request_justification === false ? "no" :
+          "inherit"
+        }
+        onValueChange={(value) => {
+          let justificationValue: boolean | null;
+          if (value === "yes") justificationValue = true;
+          else if (value === "no") justificationValue = false;
+          else justificationValue = null; // For inherit
+          onChange({ ...field, request_justification: justificationValue });
+        }}
+        disabled={readOnly}
+      >
+        <SelectTrigger id={`justification-request-${field.name || 'new'}`} className="h-8 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="inherit" className="text-xs">Inherit from Scheme</SelectItem>
+          <SelectItem value="yes" className="text-xs">Yes</SelectItem>
+          <SelectItem value="no" className="text-xs">No</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+  // --- END NEW ---
+
+  // --- NEW: Bounding Boxes Switch ---
+  const renderBoundingBoxesSwitch = () => (
+    <div className="flex items-center space-x-2 pt-3 mt-3 border-t border-border/50">
+      <Switch
+        id={`bounding-boxes-${field.name || 'new'}`}
+        checked={field.request_bounding_boxes === true}
+        onCheckedChange={(checked) => onChange({ ...field, request_bounding_boxes: checked })}
+        disabled={readOnly}
+      />
+      <Label htmlFor={`bounding-boxes-${field.name || 'new'}`} className="text-xs font-normal cursor-pointer">
+        Request Bounding Boxes
+      </Label>
+      <TooltipProvider delayDuration={100}>
+        <Tooltip>
+          <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-auto text-muted-foreground cursor-help" /></TooltipTrigger>
+          <TooltipContent side="bottom" align="start"><p className="text-xs max-w-xs">If scheme has image analysis enabled, request bounding box coordinates for this field.</p></TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  );
+  // --- END NEW ---
+
+  // --- NEW: Use Enum for Labels Switch ---
+  const renderUseEnumSwitch = () => (
+    <div className="flex items-center space-x-2 pt-3 mt-3 border-t border-border/50">
+      <Switch
+        id={`use-enum-${field.name || 'new'}`}
+        checked={field.use_enum_for_labels === true}
+        onCheckedChange={(checked) => onChange({ ...field, use_enum_for_labels: checked })}
+        disabled={readOnly || !(field.type === "List[str]" && field.config.is_set_of_labels === true && field.config.labels && field.config.labels.length > 0)}
+      />
+      <Label htmlFor={`use-enum-${field.name || 'new'}`} className={cn(
+          "text-xs font-normal cursor-pointer",
+          (!(field.type === "List[str]" && field.config.is_set_of_labels === true && field.config.labels && field.config.labels.length > 0)) && "opacity-50 cursor-not-allowed"
+      )}>
+        Strictly Use Predefined Labels (Enum)
+      </Label>
+      <TooltipProvider delayDuration={100}>
+        <Tooltip>
+          <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-auto text-muted-foreground cursor-help" /></TooltipTrigger>
+          <TooltipContent side="bottom" align="start"><p className="text-xs max-w-xs">If checked, the LLM will be forced to choose from the predefined labels only. Requires 'Use predefined labels' to be active and labels to be set.</p></TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  );
+  // --- END NEW ---
+
   switch (field.type) {
     case "int":
       return (
@@ -130,6 +210,8 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
             </div>
           </div>
           {renderTimeAxisHintSwitch()}
+          {renderJustificationSelect()}
+          {renderBoundingBoxesSwitch()}
         </div>
       );
 
@@ -161,9 +243,12 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
                 className="w-full min-h-[100px] p-2 border rounded"
                 readOnly={readOnly}
               />
+              {renderUseEnumSwitch()}
             </div>
           ) : null}
           {renderTimeAxisHintSwitch()}
+          {renderJustificationSelect()}
+          {renderBoundingBoxesSwitch()}
         </div>
       );
 
@@ -216,13 +301,21 @@ export function SchemaFieldInput({ field, onChange, onRemove, readOnly = false }
             Add Key
           </Button>
           {renderTimeAxisHintSwitch()}
+          {renderJustificationSelect()}
+          {renderBoundingBoxesSwitch()}
         </div>
       );
 
     default:
       // For 'str' type, only show the time axis hint switch
       if (field.type === 'str') {
-        return renderTimeAxisHintSwitch();
+        return (
+          <div className="space-y-3">
+            {renderTimeAxisHintSwitch()}
+            {renderJustificationSelect()}
+            {renderBoundingBoxesSwitch()}
+          </div>
+        );
       }
       return null;
   }

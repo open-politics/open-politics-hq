@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen, Eye, Search, XCircle, Repeat } from 'lucide-react';
+import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen, Eye, Search, XCircle, Repeat, HelpCircle } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -28,6 +28,8 @@ import { FormattedClassificationResult } from '@/lib/classification/types';
 import { SchemePreview } from '@/components/collection/workspaces/classifications/schemaCreation/SchemePreview';
 import { transformApiToFormData } from '@/lib/classification/service';
 import ClassificationSchemeEditor from './ClassificationSchemeEditor';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { Switch } from "@/components/ui/switch";
 
 // --- Sub-components ---
 
@@ -606,7 +608,14 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
 interface ClassificationRunnerDockProps {
   allDataSources: DataSourceRead[];
   allSchemes: ClassificationSchemeRead[];
-  onCreateJob: (dataSourceIds: number[], schemeIds: number[], name?: string, description?: string) => Promise<void>;
+  onCreateJob: (
+    dataSourceIds: number[], 
+    schemeIds: number[], 
+    name?: string, 
+    description?: string,
+    thinking_budget_override?: number | null,
+    enable_image_analysis_override?: boolean
+  ) => Promise<void>;
   onLoadJob: (jobId: number, jobName: string, jobDescription?: string) => void;
   activeJobId: number | null;
   isCreatingJob: boolean;
@@ -636,6 +645,12 @@ export default function ClassificationRunnerDock({
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
   const [previewScheme, setPreviewScheme] = useState<ClassificationSchemeRead | null>(null);
   const { toast } = useToast();
+
+  // --- NEW: State for Advanced Job Settings --- 
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [enableThinking, setEnableThinking] = useState<boolean>(false);
+  const [enableImageAnalysisOverride, setEnableImageAnalysisOverride] = useState<boolean | undefined>(undefined);
+  // --- END NEW --- 
 
   // Auto-load logic refs (similar to old dock)
   const initialLoadAttemptedRef = useRef(false);
@@ -710,10 +725,28 @@ export default function ClassificationRunnerDock({
       });
       return;
     }
-    await onCreateJob(selectedDataSourceIds, selectedSchemeIds, newJobName || undefined, newJobDescription || undefined);
+
+    // --- NEW: Prepare Job Params with Overrides --- 
+    const budgetValueForParam = enableThinking ? 1024 : 0; // Calculate from local state
+    const jobParams = {
+        datasourceIds: selectedDataSourceIds,
+        schemeIds: selectedSchemeIds,
+        name: newJobName || undefined,
+        description: newJobDescription || undefined,
+        thinking_budget_override: budgetValueForParam, // Pass the calculated budget
+        enable_image_analysis_override: enableImageAnalysisOverride
+    };
+    // --- END NEW --- 
+
+    // Pass the constructed jobParams to onCreateJob
+    await onCreateJob(jobParams.datasourceIds, jobParams.schemeIds, jobParams.name, jobParams.description, jobParams.thinking_budget_override, jobParams.enable_image_analysis_override);
+
     // Optionally clear inputs after starting
     setNewJobName('');
     setNewJobDescription('');
+    // Optionally clear advanced settings overrides
+    setEnableThinking(false);
+    setEnableImageAnalysisOverride(undefined);
     // Decide whether to clear selections
     // setSelectedDataSourceIds([]);
     // setSelectedSchemeIds([]);
@@ -887,6 +920,58 @@ export default function ClassificationRunnerDock({
             </div>
           </div>
 
+          {/* --- NEW: Advanced Settings Collapsible --- */}
+          <Collapsible open={showAdvancedSettings} onOpenChange={setShowAdvancedSettings} className="mt-2 border-t pt-3">
+            <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-xs w-full justify-start text-muted-foreground hover:text-foreground">
+                    {showAdvancedSettings ? <ChevronUp className="h-3.5 w-3.5 mr-1" /> : <ChevronDown className="h-3.5 w-3.5 mr-1" />}
+                    Advanced Job Settings (Overrides)
+                </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3 pl-4 space-y-4">
+                {/* Thinking Budget Override - REPLACED with Switch */}
+                <div className="flex items-center space-x-3">
+                    <Switch 
+                        id="enable-thinking-switch"
+                        checked={enableThinking}
+                        onCheckedChange={setEnableThinking}
+                        className="data-[state=checked]:bg-green-600"
+                    />
+                    <Label htmlFor="enable-thinking-switch" className="text-xs font-medium flex items-center cursor-pointer">
+                        Enable Thinking for Explanations
+                        <TooltipProvider delayDuration={100}>
+                           <Tooltip>
+                              <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1.5 cursor-help" /></TooltipTrigger>
+                              <TooltipContent><p className="text-xs max-w-xs">Turns on the model's reasoning process to generate justifications (if requested by the scheme). Uses a default budget (e.g., 1024 tokens). Turning off explicitly disables thinking (budget 0).</p></TooltipContent>
+                           </Tooltip>
+                        </TooltipProvider>
+                    </Label>
+                </div>
+                {/* Image Analysis Override */}
+                <div className="flex items-center space-x-3">
+                    <Switch 
+                        id="image-analysis-override-switch"
+                        checked={enableImageAnalysisOverride === true} // Checked only if explicitly true
+                        onCheckedChange={(checked) => setEnableImageAnalysisOverride(checked ? true : (enableImageAnalysisOverride === undefined ? false : undefined))} // Cycle true -> false -> undefined
+                        className="data-[state=checked]:bg-blue-600"
+                    />
+                    <Label htmlFor="image-analysis-override-switch" className="text-xs font-medium flex items-center cursor-pointer">
+                        Enable Image Analysis
+                        <TooltipProvider delayDuration={100}>
+                           <Tooltip>
+                              <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1 cursor-help" /></TooltipTrigger>
+                              <TooltipContent><p className="text-xs max-w-xs">Override whether image analysis (e.g., for bounding boxes) is enabled. Click to cycle: On / Off / Inherit from scheme.</p></TooltipContent>
+                           </Tooltip>
+                        </TooltipProvider>
+                    </Label>
+                    <Badge variant={enableImageAnalysisOverride === true ? "default" : enableImageAnalysisOverride === false ? "destructive" : "outline"} className="ml-auto text-xs">
+                        {enableImageAnalysisOverride === true ? "On" : enableImageAnalysisOverride === false ? "Off" : "Inherit"}
+                    </Badge>
+                </div>
+            </CollapsibleContent>
+          </Collapsible>
+          {/* --- END NEW --- */}
+
           {/* Row 3: Document and Scheme Selection */}
            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
                 <div className="flex flex-col overflow-hidden">
@@ -899,18 +984,6 @@ export default function ClassificationRunnerDock({
                   />
                 </div>
                 <div className="flex flex-col overflow-hidden">
-                  {/* Add "Create Scheme" button here */}
-                  <div className="flex justify-between items-center mb-1">
-                     <h4 className="text-sm font-medium">Select Schemes</h4>
-                     <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleOpenSchemeEditor('create')}
-                        className="h-7 px-2 text-xs"
-                     >
-                        <Plus className="h-3.5 w-3.5 mr-1"/> Create New
-                     </Button>
-                  </div>
                   {/* TODO: Replace with card-based selector */}
                   <SchemeSelectorForRun
                       allSchemes={allSchemes}
@@ -919,6 +992,14 @@ export default function ClassificationRunnerDock({
                       onSelectAll={handleSelectAllSchemes}
                       onPreviewScheme={handlePreviewSchemeClick} // Keep preview
                   />
+                     <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOpenSchemeEditor('create')}
+                        className="h-7 px-2 text-xs"
+                     >
+                        <Plus className="h-3.5 w-3.5 mr-1"/> Create New
+                     </Button>
                 </div>
            </div>
         </div>

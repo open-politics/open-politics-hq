@@ -1,4 +1,5 @@
 from app.core.config import settings
+import os
 
 # Import OPOL for centralized instance
 try:
@@ -14,10 +15,30 @@ if OPOL:
 # Available AI providers and models
 available_providers = [
     {
+        "name": "Gemini",
+        "models": [
+            "gemini-2.5-flash-preview-04-17",
+            "gemini-1.5-flash-latest",
+        ],
+    },
+    {
         "name": "Google",
-        "models": ["gemini-2.0-flash"],
+        "models": [
+            "gemini-2.0-flash",
+        ],
+    },
+    {
+        "name": "Ollama",
+        "models": [
+            "llama3.2:latest",
+            os.environ.get("LOCAL_LLM_MODEL", "llama3.2:latest")
+        ]
     }
 ]
+
+# Filter out Ollama provider if LOCAL_LLM is not set to True
+if os.environ.get("LOCAL_LLM") != "True":
+    available_providers = [p for p in available_providers if p["name"] != "Ollama"]
 
 
 def get_fastclass(
@@ -53,6 +74,3 @@ def get_fastclass(
 
     return opol.classification(model_name=model_name, llm_api_key=api_key)
 
-
-# Create a default fastclass instance
-fastclass = get_fastclass()

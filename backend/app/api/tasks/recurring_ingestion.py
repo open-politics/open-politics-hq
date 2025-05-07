@@ -120,6 +120,12 @@ def process_recurring_ingest(self, recurring_task_id: int):
                     if not final_text_content:
                         raise ValueError("Scraping yielded empty text content after cleaning.")
 
+                    # Extract top_image and images
+                    top_image = scraped_data.get('top_image')
+                    images = scraped_data.get('images')
+
+                    logger.info(f"[RecurringIngest] Scraped data for {url} PRE-SAVE - Title: '{scraped_data.get('title')}', TopImage: '{top_image}', Images: {images}")
+
                     # Parse Timestamp
                     final_event_timestamp: Optional[datetime] = None
                     scraped_publication_date = scraped_data.get('publication_date')
@@ -149,11 +155,14 @@ def process_recurring_ingest(self, recurring_task_id: int):
                         "text_content": final_text_content,
                         "source_metadata": source_metadata_extra,
                         "event_timestamp": final_event_timestamp,
-                        "url_hash": url_hash
+                        "url_hash": url_hash,
+                        "top_image": top_image,
+                        "images": images
                     }
                     record_create_obj = DataRecordCreate(**record_to_create_dict)
                     db_record = DataRecord.model_validate(record_create_obj)
 
+                    logger.info(f"[RecurringIngest] DataRecord object PRE-ADD for {url}: {db_record.model_dump_json(indent=2)}")
                     # Add and flush within the loop
                     session.add(db_record)
                     session.flush()

@@ -7,10 +7,11 @@ allowing the application to switch between different implementations without
 changing the core business logic.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union, BinaryIO, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional, Union, BinaryIO, Protocol, runtime_checkable, Type
 from fastapi import UploadFile
 from datetime import datetime
 from app.models import DataSourceType
+from pydantic import BaseModel
 
 
 @runtime_checkable
@@ -19,7 +20,7 @@ class StorageProvider(Protocol):
     Abstract interface for storage providers (S3, MinIO, etc).
     """
     async def upload_file(self, file: UploadFile, object_name: str) -> None:
-        """Uploads a file to the storage.
+        """Uploads a file to the storage
         Args:
             file: The file-like object to upload.
             object_name: The desired name/path for the object in storage.
@@ -118,22 +119,35 @@ class SearchProvider(Protocol):
         pass
 
 
-@runtime_checkable
-class ClassificationProvider(Protocol):
+class ClassificationProvider(ABC):
     """
-    Abstract interface for text classification providers.
+    Abstract Base Class for classification providers.
     """
-    def classify(self, text: str, model_spec: Any, instructions: str | None) -> dict[str, Any]:
+
+    @abstractmethod
+    def classify(self,
+                 text: str,
+                 model_class: Type[BaseModel],
+                 instructions: Optional[str] = None,
+                 api_key: Optional[str] = None,
+                 provider_config: Optional[Dict[str, Any]] = None
+                ) -> Dict[str, Any]:
         """
-        Classify text according to a given model specification.
-        
+        Classify the given text according to the model_class structure and instructions.
+
         Args:
-            text: The text to classify
-            model_spec: Dictionary specifying the model format (fields, types, etc.)
-            instructions: Optional instructions to guide the classification
-            
+            text: The text content to classify.
+            model_class: The Pydantic model defining the desired output structure.
+            instructions: Optional instructions for the LLM (e.g., system prompt, task description).
+            api_key: Optional API key for the provider.
+            provider_config: Optional dictionary for provider-specific settings (e.g., thinking_budget).
+
         Returns:
-            Classification results
+            A dictionary representing the structured classification result.
+
+        Raises:
+            ValueError: If essential arguments are missing (e.g., API key when required).
+            RuntimeError: If the classification process fails.
         """
         pass
 

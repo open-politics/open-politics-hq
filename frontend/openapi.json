@@ -8034,7 +8034,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-05-05",
+              "default": "2025-05-07",
               "title": "Timeframe To"
             }
           }
@@ -8446,6 +8446,44 @@
               }
             ],
             "title": "Is Time Axis Hint"
+          },
+          "request_justification": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Justification",
+            "description": "Request justification for this field. True enables, False disables, None inherits from scheme's global setting."
+          },
+          "request_bounding_boxes": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Bounding Boxes",
+            "description": "Request bounding boxes for this field if global image analysis is enabled and the field's value could be derived from an image region.",
+            "default": false
+          },
+          "use_enum_for_labels": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Enum For Labels",
+            "description": "For LIST_STR with predefined labels, generate a strict enum in the Pydantic model for the LLM.",
+            "default": false
           }
         },
         "type": "object",
@@ -8780,6 +8818,44 @@
             ],
             "title": "Validation Rules"
           },
+          "default_thinking_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Thinking Budget",
+            "description": "Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking."
+          },
+          "request_justifications_globally": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Justifications Globally",
+            "description": "If true, justification fields will be added for all applicable fields unless overridden at the field level.",
+            "default": false
+          },
+          "enable_image_analysis_globally": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Image Analysis Globally",
+            "description": "If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.",
+            "default": false
+          },
           "fields": {
             "items": {
               "$ref": "#/components/schemas/ClassificationFieldCreate"
@@ -8828,6 +8904,44 @@
               }
             ],
             "title": "Validation Rules"
+          },
+          "default_thinking_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Thinking Budget",
+            "description": "Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking."
+          },
+          "request_justifications_globally": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Justifications Globally",
+            "description": "If true, justification fields will be added for all applicable fields unless overridden at the field level.",
+            "default": false
+          },
+          "enable_image_analysis_globally": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Image Analysis Globally",
+            "description": "If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.",
+            "default": false
           },
           "id": {
             "type": "integer",
@@ -8941,6 +9055,44 @@
             ],
             "title": "Validation Rules"
           },
+          "default_thinking_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Thinking Budget",
+            "description": "Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking."
+          },
+          "request_justifications_globally": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Justifications Globally",
+            "description": "If true, justification fields will be added for all applicable fields unless overridden at the field level.",
+            "default": false
+          },
+          "enable_image_analysis_globally": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Image Analysis Globally",
+            "description": "If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.",
+            "default": false
+          },
           "fields": {
             "anyOf": [
               {
@@ -9049,6 +9201,31 @@
               }
             ],
             "title": "Event Timestamp"
+          },
+          "top_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Image"
+          },
+          "images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Images"
           },
           "id": {
             "type": "integer",
@@ -11064,6 +11241,18 @@
               }
             ],
             "title": "Icon"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt",
+            "description": "System-level prompt applied to all classifications in this workspace."
           }
         },
         "type": "object",
@@ -11100,6 +11289,17 @@
             ],
             "title": "Icon"
           },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
           "id": {
             "type": "integer",
             "title": "Id"
@@ -11122,6 +11322,7 @@
         "type": "object",
         "required": [
           "name",
+          "system_prompt",
           "id",
           "created_at",
           "updated_at",
@@ -11163,6 +11364,17 @@
               }
             ],
             "title": "Icon"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
           }
         },
         "type": "object",

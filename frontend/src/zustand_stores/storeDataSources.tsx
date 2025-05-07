@@ -475,7 +475,12 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
         limit: 2000, // TODO: Consider pagination if needed
       });
 
+      console.log('[storeDataSources] Raw API Response for records:', response);
+
       const adaptedRecords: DataRecord[] = response.map(adaptDataRecordReadToDataRecord);
+
+      console.log('[storeDataSources] Adapted Records:', adaptedRecords);
+
       set({ selectedDataSourceRecords: adaptedRecords, isLoadingRecords: false });
 
     } catch (err: any) {

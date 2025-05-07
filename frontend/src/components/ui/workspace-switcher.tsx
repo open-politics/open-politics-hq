@@ -45,12 +45,13 @@ export function WorkspaceSwitcher() {
   }, [workspaces.length, fetchWorkspaces])
 
   // Handle create and switch
-  const handleCreateWorkspace = async (name: string, description: string, icon: string) => {
+  const handleCreateWorkspace = async (name: string, description: string, icon: string, systemPrompt: string) => {
     try {
       await createWorkspace({
         name,
         description,
         icon,
+        system_prompt: systemPrompt,
       });
       // The createWorkspace function in the store already sets the new workspace as active
       setIsCreateDialogOpen(false);
@@ -138,7 +139,7 @@ export function WorkspaceSwitcher() {
         open={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
         isCreating={true} // Add a prop to indicate we're creating a new workspace
-        onCreateWorkspace={handleCreateWorkspace} // Pass the create function
+        onCreateWorkspace={handleCreateWorkspace} // Pass the create function (now has correct signature)
       />
     </SidebarMenu>
   )

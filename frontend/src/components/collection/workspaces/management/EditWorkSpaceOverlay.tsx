@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useWorkspaceStore } from "@/zustand_stores/storeWorkspace";
 import { IconPickerDialog } from "@/components/collection/workspaces/utilities/icons/IconPickerOverlay";
 import { IconRenderer } from "@/components/collection/workspaces/utilities/icons/icon-picker";
@@ -14,8 +15,9 @@ interface EditWorkSpaceOverlayProps {
   defaultDescription?: string | undefined;
   defaultSources?: string[] | undefined;
   defaultIcon?: string | undefined;
+  defaultSystemPrompt?: string | undefined;
   isCreating?: boolean;
-  onCreateWorkspace?: (name: string, description: string, icon: string) => Promise<void>;
+  onCreateWorkspace?: (name: string, description: string, icon: string, systemPrompt: string) => Promise<void>;
 }
 
 /**
@@ -30,6 +32,7 @@ export default function EditWorkSpaceOverlay({
   defaultDescription,
   defaultSources,
   defaultIcon,
+  defaultSystemPrompt,
   isCreating = false,
   onCreateWorkspace,
 }: EditWorkSpaceOverlayProps) {
@@ -37,6 +40,7 @@ export default function EditWorkSpaceOverlay({
   const [description, setDescription] = useState(defaultDescription || "");
   const [sources, setSources] = useState(defaultSources?.join(", ") || "");
   const [icon, setIcon] = useState(defaultIcon || "Boxes");
+  const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt || "");
   const [errorMessage, setErrorMessage] = useState("");
 
   const { updateWorkspace } = useWorkspaceStore();
@@ -46,7 +50,8 @@ export default function EditWorkSpaceOverlay({
     setDescription(defaultDescription || "");
     setSources(defaultSources?.join(", ") || "");
     setIcon(defaultIcon || "Boxes");
-  }, [defaultName, defaultDescription, defaultSources, defaultIcon]);
+    setSystemPrompt(defaultSystemPrompt || "");
+  }, [defaultName, defaultDescription, defaultSources, defaultIcon, defaultSystemPrompt]);
 
   const handleSave = async () => {
     setErrorMessage("");
@@ -61,13 +66,15 @@ export default function EditWorkSpaceOverlay({
         await onCreateWorkspace(
           name,
           description,
-          icon
+          icon,
+          systemPrompt
         );
       } else if (workspaceId) {
         await updateWorkspace(workspaceId, {
           name,
           description,
           icon,
+          system_prompt: systemPrompt,
         });
       }
       onClose();
@@ -130,6 +137,18 @@ export default function EditWorkSpaceOverlay({
               className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-xl shadow-inner"
               placeholder="http://example.com, http://another.com"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm text-secondary-300 mb-1">Workspace System Prompt (Optional)</label>
+            <Textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-xl shadow-inner text-sm font-mono"
+              placeholder="Enter general instructions for AI classifications within this workspace..."
+              rows={4}
+            />
+            <p className="text-xs text-muted-foreground mt-1">This prompt will be combined with scheme-specific instructions.</p>
           </div>
 
           <div>

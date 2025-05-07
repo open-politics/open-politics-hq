@@ -18,6 +18,8 @@ import { Switch } from "@/components/ui/switch"
 import { SCHEMA_EXAMPLES } from "@/lib/schema-examples"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import { ClassificationSchemeCreate } from "@/client/models"
+import { HelpCircle } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface Field {
   name: string
@@ -31,6 +33,9 @@ interface Field {
     dict_keys?: DictKeyDefinition[]
     is_time_axis_hint?: boolean
   }
+  request_justification?: boolean | null
+  request_bounding_boxes?: boolean
+  use_enum_for_labels?: boolean
 }
 
 interface SchemeFormProps {
@@ -58,7 +63,10 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
       labels: [],
       dict_keys: [],
       is_time_axis_hint: false
-    }
+    },
+    request_justification: null,
+    request_bounding_boxes: false,
+    use_enum_for_labels: false
   })
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -78,7 +86,10 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
           labels: field.config.labels ? [...field.config.labels] : [],
           dict_keys: field.config.dict_keys ? [...field.config.dict_keys] : [],
           is_time_axis_hint: field.config.is_time_axis_hint
-        }
+        },
+        request_justification: field.request_justification,
+        request_bounding_boxes: field.request_bounding_boxes,
+        use_enum_for_labels: field.use_enum_for_labels
       }));
       setFields(convertedFields);
     }
@@ -92,8 +103,7 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
   const addField = () => {
     console.log("Adding field:", currentField);
     
-    // Create a new field object with the current field values
-    const newField = {
+    const newFieldToAdd: Field = {
       name: currentField.name,
       type: currentField.type,
       description: currentField.description,
@@ -101,22 +111,25 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
         scale_min: currentField.config.scale_min,
         scale_max: currentField.config.scale_max,
         is_set_of_labels: currentField.config.is_set_of_labels,
-        labels: [...(currentField.config.labels || [])],
+        labels: currentField.config.labels ? [...currentField.config.labels] : [],
         dict_keys: currentField.config.dict_keys ? [...currentField.config.dict_keys] : [],
         is_time_axis_hint: currentField.config.is_time_axis_hint
-      }
+      },
+      request_justification: currentField.request_justification,
+      request_bounding_boxes: currentField.request_bounding_boxes,
+      use_enum_for_labels: currentField.use_enum_for_labels
     };
     
-    console.log("New field to add:", newField);
+    console.log("New field to add:", newFieldToAdd);
     
     // Update both the local fields state and the formData
-    setFields([...fields, newField]);
-    setFormData({
-      ...formData,
-      fields: [...formData.fields, newField]
-    });
+    setFields(prevFields => [...prevFields, newFieldToAdd]);
+    setFormData(prevFormData => ({
+      ...prevFormData,
+      fields: [...prevFormData.fields, newFieldToAdd]
+    }));
     
-    // Reset the current field
+    // Reset the current field *after* it has been used
     setCurrentField({
       name: '',
       description: '',
@@ -128,7 +141,10 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
         labels: [],
         dict_keys: [],
         is_time_axis_hint: false
-      }
+      },
+      request_justification: null,
+      request_bounding_boxes: false,
+      use_enum_for_labels: false
     });
     
     // Reset editing state
@@ -171,6 +187,9 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
         dict_keys: fieldData.config.dict_keys ? [...fieldData.config.dict_keys] : [],
         is_time_axis_hint: fieldData.config.is_time_axis_hint
       },
+      request_justification: fieldData.request_justification,
+      request_bounding_boxes: fieldData.request_bounding_boxes,
+      use_enum_for_labels: fieldData.use_enum_for_labels
     });
   }
 
@@ -314,7 +333,10 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
                           labels: field.config?.labels ? [...field.config.labels] : [],
                           dict_keys: field.config?.dict_keys ? [...field.config.dict_keys] : [],
                           is_time_axis_hint: field.config?.is_time_axis_hint === true
-                        }
+                        },
+                        request_justification: field.request_justification,
+                        request_bounding_boxes: field.request_bounding_boxes,
+                        use_enum_for_labels: field.use_enum_for_labels
                       };
                       
                       // Special handling for List[str] fields
@@ -526,6 +548,73 @@ export function SchemeForm({ formData, setFormData, showTutorial = false, readOn
           )}
         </div>
       )}
+
+      {/* Scheme-level Advanced Settings */}
+      <div className="space-y-3 pt-4 border-t">
+        <h4 className="text-sm font-medium text-muted-foreground">Advanced Scheme Settings</h4>
+        {/* Request Justifications Globally */}
+        <div className="flex items-center space-x-3">
+          <Switch
+            id="request-justifications-globally"
+            checked={formData.request_justifications_globally === true}
+            onCheckedChange={(checked) => setFormData({ ...formData, request_justifications_globally: checked })}
+            disabled={readOnly}
+          />
+          <Label htmlFor="request-justifications-globally" className="text-xs font-normal cursor-pointer flex items-center">
+            Request Justifications Globally
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1.5 cursor-help" /></TooltipTrigger>
+                <TooltipContent><p className="text-xs max-w-xs">If enabled, justification will be requested for all applicable fields by default (can be overridden per field).</p></TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </Label>
+        </div>
+        {/* Default Thinking Budget */}
+        <div>
+          <Label htmlFor="default-thinking-budget" className="text-xs font-normal flex items-center mb-1">
+            Default Thinking Budget (Optional)
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1.5 cursor-help" /></TooltipTrigger>
+                <TooltipContent><p className="text-xs max-w-xs">Set a default thinking token budget (0-24576) for fields requesting justification. 0 disables thinking unless overridden. Leave blank for model default.</p></TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </Label>
+          <Input
+            id="default-thinking-budget"
+            type="number"
+            placeholder="Model default (e.g., 1024)"
+            value={formData.default_thinking_budget ?? ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFormData({ ...formData, default_thinking_budget: value === '' ? null : parseInt(value, 10) });
+            }}
+            readOnly={readOnly}
+            min="0"
+            max="24576"
+            className="h-8 text-sm w-48"
+          />
+        </div>
+        {/* Enable Image Analysis Globally */}
+        <div className="flex items-center space-x-3">
+          <Switch
+            id="enable-image-analysis-globally"
+            checked={formData.enable_image_analysis_globally === true}
+            onCheckedChange={(checked) => setFormData({ ...formData, enable_image_analysis_globally: checked })}
+            disabled={readOnly}
+          />
+          <Label htmlFor="enable-image-analysis-globally" className="text-xs font-normal cursor-pointer flex items-center">
+            Enable Image Analysis Capabilities
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1.5 cursor-help" /></TooltipTrigger>
+                <TooltipContent><p className="text-xs max-w-xs">Indicates this scheme might involve image input. Allows fields to request bounding boxes.</p></TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </Label>
+        </div>
+      </div>
     </form>
   )
 }
@@ -545,5 +634,8 @@ export const transformFormDataToApi = (formData: SchemeFormData): Classification
     is_time_axis_hint: field.config.is_time_axis_hint
   })),
   model_instructions: formData.model_instructions,
-  validation_rules: formData.validation_rules
+  validation_rules: formData.validation_rules,
+  default_thinking_budget: formData.default_thinking_budget,
+  request_justifications_globally: formData.request_justifications_globally,
+  enable_image_analysis_globally: formData.enable_image_analysis_globally
 });
