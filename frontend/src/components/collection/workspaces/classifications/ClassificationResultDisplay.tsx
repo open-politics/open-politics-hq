@@ -40,6 +40,8 @@ interface ClassificationResultDisplayProps {
   selectedFieldKeys?: string[] | null;
   /** Optional: Maximum number of fields to show when not compact and specific fields aren't selected. */
   maxFieldsToShow?: number;
+  /** Optional: A specific value within a field (e.g., a List[str] item) to highlight */
+  highlightValue?: string | null;
 }
 
 interface SingleClassificationResultProps {
@@ -50,6 +52,7 @@ interface SingleClassificationResultProps {
   renderContext?: 'dialog' | 'table' | 'default';
   selectedFieldKeys?: string[] | null;
   maxFieldsToShow?: number;
+  highlightValue?: string | null;
 }
 
 interface ConsolidatedSchemesViewProps {
@@ -61,6 +64,7 @@ interface ConsolidatedSchemesViewProps {
   renderContext?: 'dialog' | 'table' | 'default';
   selectedFieldKeys?: string[] | null;
   maxFieldsToShow?: number;
+  highlightValue?: string | null;
 }
 
 // Add missing EnhancedClassificationResultRead type if not globally defined
@@ -82,7 +86,8 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
     targetFieldKey = null,
     renderContext = 'default',
     selectedFieldKeys = null,
-    maxFieldsToShow = 10
+    maxFieldsToShow = 10,
+    highlightValue = null
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -137,9 +142,10 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
    * Handles different field types (int, str, List[str], List[Dict[str, any]]).
    * @param rawValueObject - The entire 'value' object from the ClassificationResultRead.
    * @param field - The SchemeField definition for the field being formatted.
+   * @param highlightValue - The specific value within a field to highlight
    * @returns A React node representing the formatted value.
    */
-  const formatFieldValue = (rawValueObject: any, field: SchemeField): React.ReactNode => {
+  const formatFieldValue = (rawValueObject: any, field: SchemeField, highlightValue: string | null): React.ReactNode => {
       // --- REMOVED Check for 'classification_output' wrapper ---
       let valueForField: any;
 
@@ -193,7 +199,13 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                   return (
                       <div className="flex flex-wrap gap-1">
                           {valueForField.map((item, i) => (
-                              <Badge key={i} variant="secondary">{String(item)}</Badge>
+                              <Badge 
+                                key={i} 
+                                variant="secondary" 
+                                className={cn(highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background")}
+                              >
+                                  {String(item)}
+                              </Badge>
                           ))}
                       </div>
                   );
@@ -202,7 +214,14 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
               else if (typeof valueForField === 'string') {
                   // If we expected a list but got a string, render the string as a single badge
                   console.warn(`formatFieldValue: Expected List[str] for field '${field.name}', but received a string. Rendering as single item.`);
-                  return <Badge variant="secondary">{String(valueForField)}</Badge>;
+                  return (
+                    <Badge 
+                      variant="secondary"
+                      className={cn(highlightValue === String(valueForField) && "ring-2 ring-offset-2 ring-primary ring-offset-background")}
+                    >
+                        {String(valueForField)}
+                    </Badge>
+                  );
               }
               // --- END MODIFICATION ---
               // Error display if the value is not an array or string
@@ -388,7 +407,7 @@ const SingleClassificationResult: React.FC<SingleClassificationResultProps> = ({
                               )}
                               {/* --- END ADDED --- */}
                             </div>
-                            <div className="inline-block">{formatFieldValue(result.value, schemeField)}</div>
+                            <div className="inline-block">{formatFieldValue(result.value, schemeField, highlightValue)}</div>
                           </div>
   
                           {/* --- Justification (Removed direct display) --- */}
@@ -443,7 +462,8 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({
     useTabs = false,
     renderContext = 'default',
     selectedFieldKeys = null,
-    maxFieldsToShow
+    maxFieldsToShow = 10,
+    highlightValue = null
 }) => {
   // --- MODIFIED: Force useTabs to false if context is dialog ---
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
@@ -472,6 +492,7 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({
                   renderContext={renderContext}
                   selectedFieldKeys={selectedFieldKeys}
                   maxFieldsToShow={maxFieldsToShow}
+                  highlightValue={highlightValue}
                 />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this scheme</div>
@@ -501,6 +522,7 @@ const ConsolidatedSchemesView: React.FC<ConsolidatedSchemesViewProps> = ({
             renderContext={renderContext}
             selectedFieldKeys={selectedFieldKeys}
             maxFieldsToShow={maxFieldsToShow}
+            highlightValue={highlightValue}
           />
         );
       })}
@@ -521,7 +543,8 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
     useTabs = false,
     renderContext = 'default',
     selectedFieldKeys = null,
-    maxFieldsToShow
+    maxFieldsToShow,
+    highlightValue = null
 }) => {
     
   /**
@@ -565,6 +588,7 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
           renderContext={renderContext}
           selectedFieldKeys={selectedFieldKeys}
           maxFieldsToShow={maxFieldsToShow}
+          highlightValue={highlightValue}
         />
       );
     }
@@ -581,6 +605,7 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
         renderContext={renderContext}
         selectedFieldKeys={selectedFieldKeys}
         maxFieldsToShow={maxFieldsToShow}
+        highlightValue={highlightValue}
       />
     );
   }
@@ -599,6 +624,7 @@ const ClassificationResultDisplay: React.FC<ClassificationResultDisplayProps> = 
           renderContext={renderContext}
           selectedFieldKeys={selectedFieldKeys}
           maxFieldsToShow={maxFieldsToShow}
+          highlightValue={highlightValue}
         />
       );
     }

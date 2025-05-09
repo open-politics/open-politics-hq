@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon } from 'lucide-react';
 import {
   ClassificationSchemeRead,
   DataSourceRead,
@@ -22,6 +22,7 @@ import {
 } from '@/client/models';
 import { FormattedClassificationResult, ClassificationScheme } from '@/lib/classification/types';
 import ClassificationResultsChart from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
+import ClassificationResultsPieChart from '@/components/collection/workspaces/classifications/ClassificationResultsPieChart';
 import { format } from 'date-fns';
 import { getTargetFieldDefinition, ResultFilters, getTargetKeysForScheme, ResultFilter } from './ClassificationResultFilters';
 import { checkFilterMatch, formatDisplayValue, extractLocationString } from '@/lib/classification/utils';
@@ -70,6 +71,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { ClassificationResultStatus } from '@/lib/classification/types';
+import { DocumentResults } from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
 
 // Filter Logic Type defined earlier
 export type FilterLogicMode = 'and' | 'or';
@@ -99,6 +101,7 @@ export default function ClassificationRunner({
   const [activeFilters, setActiveFilters] = useState<ResultFilter[]>([]);
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [selectedDataRecordId, setSelectedDataRecordId] = useState<number | null>(null);
+  const [selectedMapPointForDialog, setSelectedMapPointForDialog] = useState<MapPoint | null>(null);
   const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
   const [filteredGeocodedPoints, setFilteredGeocodedPoints] = useState<MapPoint[]>([]);
   const [isLoadingGeocoding, setIsLoadingGeocoding] = useState(false);
@@ -516,13 +519,15 @@ export default function ClassificationRunner({
 
   const handleTableRowClick = (result: FormattedClassificationResult) => {
     setSelectedDataRecordId(result.datarecord_id);
+    setSelectedMapPointForDialog(null);
     setIsResultDialogOpen(true);
   };
 
   const handleMapPointClick = (point: MapPoint) => {
     console.log("Map point clicked in parent:", point);
     if (point.documentIds && point.documentIds.length > 0) {
-      setSelectedDataRecordId(point.documentIds[0]);
+      setSelectedDataRecordId(null);
+      setSelectedMapPointForDialog(point);
       setIsResultDialogOpen(true);
     } else {
       console.warn("Map point clicked, but no associated document IDs found.");
@@ -600,8 +605,9 @@ export default function ClassificationRunner({
 
     return (
        <Tabs defaultValue="table" className="w-full">
-         <TabsList className="grid w-full grid-cols-3 mb-2 border border-background! sticky top-0 z-10 bg-background/80 backdrop-blur">
+         <TabsList className="grid w-full grid-cols-4 mb-2 border border-background! sticky top-0 z-10 bg-background/80 backdrop-blur">
            <TabsTrigger value="chart"><BarChart3 className="h-4 w-4 mr-2" />Chart</TabsTrigger>
+           <TabsTrigger value="pie"><PieChartIcon className="h-4 w-4 mr-2" />Pie</TabsTrigger>
            <TabsTrigger value="table"><TableIcon className="h-4 w-4 mr-2" />Table</TabsTrigger>
            <TabsTrigger value="map"><MapPin className="h-4 w-4 mr-2" />Map</TabsTrigger>
          </TabsList>
@@ -701,6 +707,17 @@ export default function ClassificationRunner({
              />
            </div>
          </TabsContent>
+         <TabsContent value="pie">
+            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                <ClassificationResultsPieChart
+                    results={filteredResults}
+                    schemes={runSchemes}
+                    dataSources={runDataSources}
+                    selectedDataSourceIds={selectedDataSourceIdsForChart}
+                    dataRecords={currentRunDataRecords}
+                />
+            </div>
+         </TabsContent>
          <TabsContent value="table">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
              <ClassificationResultsTable
@@ -740,6 +757,7 @@ export default function ClassificationRunner({
                       dataSources={allDataSources}
                       results={currentRunResults}
                       schemes={allSchemes}
+                      dataRecords={currentRunDataRecords}
                       labelConfig={currentMapLabelConfig}
                       onPointClick={handleMapPointClick}
                   />
@@ -752,6 +770,16 @@ export default function ClassificationRunner({
          </TabsContent>
        </Tabs>
     );
+  };
+
+  // --- DIALOG LOGIC CHANGE ---
+  // Determine if the dialog should be open based on either selection type
+  const isDetailsDialogOpen = isResultDialogOpen && (selectedDataRecordId !== null || selectedMapPointForDialog !== null);
+
+  const closeDetailsDialog = () => {
+    setIsResultDialogOpen(false);
+    setSelectedDataRecordId(null);
+    setSelectedMapPointForDialog(null);
   };
 
   let recurringTaskInfoElement: React.ReactNode = null;
@@ -981,55 +1009,49 @@ export default function ClassificationRunner({
             </div>
           </div>
 
-        <Dialog open={isResultDialogOpen} onOpenChange={setIsResultDialogOpen}>
+        <Dialog open={isDetailsDialogOpen} onOpenChange={(open) => !open && closeDetailsDialog()}> 
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle>Result Details</DialogTitle>
               <DialogDescription>
-                Detailed view of classification results for the selected data record.
+                {selectedMapPointForDialog 
+                  ? `Showing documents and results for location: ${selectedMapPointForDialog.locationString}`
+                  : `Detailed view of classification results for the selected data record.`
+                }
               </DialogDescription>
             </DialogHeader>
             <ScrollArea className="py-4 max-h-[70vh]">
-              {selectedDataRecordId !== null && (() => {
-                   const dataRecord = currentRunDataRecords.find(dr => dr.id === selectedDataRecordId);
-                   const allResultsForRecord = filteredResults.filter(r => r.datarecord_id === selectedDataRecordId);
-                   const validResultsForRecord = allResultsForRecord.filter(r => runSchemes.some(s => s.id === r.scheme_id));
-                   const schemesForValidResults = runSchemes.filter(s => validResultsForRecord.some(r => r.scheme_id === s.id));
-
-                   if (!dataRecord) return <p>Data Record details not found.</p>;
-                    if (validResultsForRecord.length === 0) {
-                        return <p className="text-muted-foreground italic">No results found for this record matching the schemes and filters used in this job run.</p>;
-                    }
-
-                   const recordSource = runDataSources.find(ds => ds.id === dataRecord.datasource_id);
-
-                   return (
-                     <div className="space-y-4">
-                       <div className="p-3 rounded-md bg-muted/40 border border-border space-y-1 mb-4">
-                          <h3 className="font-semibold text-lg">{dataRecord.title || 'Untitled Data Record'}</h3>
-                          <p className="text-sm text-muted-foreground">
-                             Record ID: {dataRecord.id}
-                             {recordSource?.name && (
-                               <span className="ml-2"> | Source: {recordSource.name}</span>
-                             )}
-                          </p>
-                          {dataRecord.event_timestamp && <p className="text-xs text-muted-foreground">Event Date: {format(new Date(dataRecord.event_timestamp), 'PPP p')}</p>}
-                       </div>
-
-                       <h4 className="text-md font-medium text-muted-foreground border-b pb-1 mb-3">Classification Results:</h4>
-                       <ClassificationResultDisplay
-                           result={validResultsForRecord}
-                           scheme={schemesForValidResults}
-                           useTabs={schemesForValidResults.length > 1}
-                           renderContext="dialog"
-                           compact={false}
-                       />
-                     </div>
-                   );
-               })()}
+                {/* --- RENDER DocumentResults --- */} 
+                {(selectedDataRecordId !== null || selectedMapPointForDialog !== null) && (
+                    <DocumentResults 
+                      // Construct the point to pass based on which state is active
+                      selectedPoint={selectedMapPointForDialog ?? (
+                        // Create a dummy structure if only data record ID is known?
+                        // Or refactor DocumentResults to accept ID array directly?
+                        // For now, assume DocumentResults needs a point structure.
+                        // We need to simulate a GroupedDataPoint or ChartDataPoint if only ID is known.
+                        // Let's ensure DocumentResults can handle MapPoint first.
+                        // If a table row was clicked (selectedDataRecordId set), we still need 
+                        // to pass *something* to DocumentResults. Let's pass a MapPoint-like structure 
+                        // containing just that one document ID.
+                        selectedDataRecordId !== null 
+                        ? { 
+                            id: `record-${selectedDataRecordId}`, 
+                            locationString: 'N/A', // Indicate it's not from a map point
+                            coordinates: { latitude: 0, longitude: 0 }, 
+                            documentIds: [selectedDataRecordId]
+                          } as MapPoint // Treat single record selection as a point with one doc
+                        : { id: 'invalid', locationString: 'invalid', coordinates: { latitude: 0, longitude: 0 }, documentIds: [] } as MapPoint // Should not happen if dialog is open
+                      )}
+                      results={filteredResults} // Pass filtered results
+                      schemes={runSchemes} // Pass schemes used in the run
+                      dataSources={runDataSources} // Pass sources used in the run
+                      dataRecords={currentRunDataRecords} // Pass all records for lookup
+                    />
+                )} 
             </ScrollArea>
             <DialogFooter>
-                <Button variant="outline" onClick={() => setIsResultDialogOpen(false)}>Close</Button>
+                <Button variant="outline" onClick={closeDetailsDialog}>Close</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

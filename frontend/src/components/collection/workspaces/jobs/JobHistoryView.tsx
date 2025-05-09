@@ -57,7 +57,7 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
 
   // 1. Select the jobs object (more stable reference)
   const jobsObject = useClassificationJobsStore((state) => state.classificationJobs);
-  const { favoriteRuns } = useFavoriteRunsStore();
+  const { favoriteRuns, addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
 
   // 2. Derive the array using useMemo
   const allJobs = useMemo(() => Object.values(jobsObject || {}), [jobsObject]);
@@ -92,6 +92,27 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
   const handleRefresh = () => {
     if (activeWorkspace?.id) {
       fetchClassificationJobs(activeWorkspace.id);
+    }
+  };
+
+  const handleToggleFavorite = (job: ClassificationJobRead) => {
+    if (!activeWorkspace?.id) return;
+
+    const jobIsFavorite = isFavorite(job.id);
+
+    if (jobIsFavorite) {
+      removeFavoriteRun(job.id);
+    } else {
+      const favoriteRun: FavoriteRun = {
+        id: job.id,
+        name: job.name || `Job ${job.id}`,
+        timestamp: format(new Date(), 'PPp'), // Timestamp of favoriting
+        documentCount: job.target_datasource_ids?.length ?? 0,
+        schemeCount: job.target_scheme_ids?.length ?? 0,
+        workspaceId: activeWorkspace.id,
+        description: job.description || undefined,
+      };
+      addFavoriteRun(favoriteRun);
     }
   };
 
@@ -253,6 +274,7 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
                 <TableHead>Targets</TableHead>
                 <TableHead>Trigger</TableHead>
                 <TableHead>Last Updated</TableHead>
+                <TableHead className="text-center">Favorite</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -316,6 +338,28 @@ export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
                         <TooltipContent>
                           <p>Created: {format(new Date(job.created_at), 'PPp')}</p>
                           <p>Updated: {format(new Date(job.updated_at), 'PPp')}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <TooltipProvider delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleToggleFavorite(job)}
+                            className="h-7 w-7"
+                          >
+                            <Star className={cn(
+                              "h-4 w-4",
+                              isFavorite(job.id) ? "fill-yellow-400 text-yellow-500" : "text-muted-foreground"
+                            )} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{isFavorite(job.id) ? "Unmark as favorite" : "Mark as favorite"}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>

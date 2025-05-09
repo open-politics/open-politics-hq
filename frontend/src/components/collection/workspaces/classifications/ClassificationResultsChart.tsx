@@ -5,7 +5,7 @@ import {
   CartesianGrid,
   XAxis,
   YAxis,
-  Tooltip,
+  Tooltip as RechartsTooltip, // <-- ALIAS RECHARTS TOOLTIP
   ResponsiveContainer,
   Legend,
   TooltipProps,
@@ -21,9 +21,10 @@ import {
   Label,
   LabelList,
   LineProps,
+  Brush, // <-- Import Brush
 } from 'recharts'; // Ensure types are handled carefully
 import { format, startOfWeek, startOfMonth, startOfQuarter, startOfYear, getISOWeek, getQuarter } from 'date-fns'; // Import date-fns functions
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { ClassificationResultRead, ClassificationSchemeRead, EnhancedClassificationResultRead, DataSourceRead, DataRecordRead as DataRecord, ClassificationFieldCreate as ClientClassificationField, DictKeyDefinition as ClientDictKeyDefinition, FieldType, DataRecordRead } from '@/client';
@@ -63,6 +64,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { format as formatDate } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
+import { MapPoint } from './ClassificationResultsMap'; // <-- ADD IMPORT
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"; // <-- ADD IMPORT FOR TOOLTIP
 
 // Define gradient colors for bars
 const gradientColors = [
@@ -126,7 +129,8 @@ const CustomizedDot: React.FC<CustomizedDotProps> = (props) => {
   if (!cx || !cy || typeof cx !== 'number' || typeof cy !== 'number' || isNaN(cx) || isNaN(cy)) {
       return null;
   }
-  return <Dot cx={cx} cy={cy} r={5} fill={stroke} stroke="#fff" strokeWidth={1} />;
+  // Reduce radius from 5 to 3
+  return <Dot cx={cx} cy={cy} r={2} fill={stroke} stroke="#fff" strokeWidth={1} />;
 };
 
 interface Scheme {
@@ -447,16 +451,17 @@ const processLineChartData = (
           if (fieldType === 'int' && fieldValue !== null && fieldValue !== undefined) {
             const numericValue = Number(fieldValue);
             if (!isNaN(numericValue)) {
-              targetStats.count++;
-              targetStats.sum += numericValue;
+              targetStats.count = (targetStats.count || 0) + 1; // Initialize if undefined
+              targetStats.sum = (targetStats.sum || 0) + numericValue; // Initialize if undefined
               targetStats.avg = targetStats.sum / targetStats.count;
               if (targetStats.min === undefined || numericValue < targetStats.min) targetStats.min = numericValue;
               if (targetStats.max === undefined || numericValue > targetStats.max) targetStats.max = numericValue;
             }
           }
 
+          // Category counting remains the same for both aggregated and per-source
           if (fieldValue !== null && fieldValue !== undefined) {
-            const displayValue = formatDisplayValue(fieldValue, scheme);
+            const displayValue = formatDisplayValue(fieldValue, scheme); // Use existing scheme, not adaptedScheme
             const categoryKey = String(displayValue ?? 'N/A');
             targetStats.categories[categoryKey] = (targetStats.categories[categoryKey] || 0) + 1;
           }
@@ -465,7 +470,7 @@ const processLineChartData = (
     });
 
     const chartData = Object.values(groupedData).sort((a, b) => a.timestamp - b.timestamp);
-    console.log("[Chart] Final Processed Line Chart Data (Aggregate=", aggregateSources, "):", JSON.stringify(chartData, null, 2)); // Log processed data structure
+    // console.log("[Chart] Final Processed Line Chart Data (Aggregate=", aggregateSources, "):", JSON.stringify(chartData, null, 2)); // Log processed data structure
     return chartData;
 };
 
@@ -620,6 +625,77 @@ const ClassificationResultsChart: React.FC<Props> = ({
 
   // --- State for custom series colors ---
   const [customSeriesColors, setCustomSeriesColors] = useState<Record<string, string>>({});
+
+  // --- NEW: Custom Legend Renderer ---
+  const renderCustomChartLegend = (props: any) => {
+    const { payload } = props;
+    const maxLegendLabelLength = 35; // Adjusted length for potentially longer series names
+
+    if (!payload || payload.length === 0) {
+      return null;
+    }
+
+    // Filter out legend items that are for 'min' or 'max' (range) areas if stats are shown
+    // This avoids duplicate entries if we only want to show the 'avg' line in the legend.
+    const filteredPayload = payload.filter((entry: any) => {
+      if (showStatistics && !aggregateSources) {
+        // When stats are on and not aggregated, only show the main 'avg' line entry
+        // Assuming 'avg' lines do not contain '(min)' or '(range)' in their name.
+        return !entry.value.includes('(min)') && !entry.value.includes('(range)');
+      }
+      return true; // Otherwise, show all entries
+    });
+
+
+    return (
+      <ScrollArea className="max-h-24 overflow-y-auto mt-2">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-3 gap-y-1.5 text-xs text-muted-foreground pb-2 px-2">
+          {filteredPayload.map((entry: any, index: number) => {
+            const { value, color } = entry; // 'value' here is the name of the series
+            const truncatedValue = value.length > maxLegendLabelLength
+              ? `${value.substring(0, maxLegendLabelLength)}…`
+              : value;
+            const isCurrentlyHovered = hoveredLegendKey === value; // Use the full 'value' for hover state
+            const itemOpacity = hoveredLegendKey && !isCurrentlyHovered ? 0.3 : 1;
+
+            return (
+              <TooltipProvider key={`legend-item-${index}`} delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div
+                      className="flex items-center cursor-pointer overflow-hidden transition-opacity duration-200"
+                      style={{ opacity: itemOpacity }}
+                      onMouseEnter={() => {
+                        // When hovering over a legend item, set its full name (value) as hoveredLegendKey
+                        setHoveredLegendKey(value);
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredLegendKey(null);
+                      }}
+                      onClick={() => {
+                        // Optional: implement click functionality, e.g., toggle series visibility
+                        // This would require managing selected series in state
+                        console.log("Legend item clicked:", value);
+                      }}
+                    >
+                      <span style={{ backgroundColor: color, width: '10px', height: '10px', borderRadius: '2px', marginRight: '6px', flexShrink: 0 }} />
+                      <span className="truncate" title={value}>{truncatedValue}</span>
+                    </div>
+                  </TooltipTrigger>
+                  {value.length > maxLegendLabelLength && (
+                    <TooltipContent side="top" className="max-w-sm">
+                      <p>{value}</p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
+            );
+          })}
+        </div>
+      </ScrollArea>
+    );
+  };
+  // --- END NEW ---
 
   // Update groupingFieldKey when groupingSchemeId changes
   useEffect(() => {
@@ -1192,7 +1268,7 @@ const ClassificationResultsChart: React.FC<Props> = ({
           allowDataOverflow={true}
           width={60}
         />
-        <Tooltip
+        <RechartsTooltip // <-- USE ALIASED TOOLTIP
           active={(isChartHovered || isTooltipHovered) && hoveredLegendKey === null}
           cursor={{ fill: 'transparent' }}
           wrapperStyle={{ zIndex: 100, pointerEvents: 'auto' }}
@@ -1215,8 +1291,9 @@ const ClassificationResultsChart: React.FC<Props> = ({
           isAnimationActive={false}
         />
         <Legend
-          onMouseEnter={(e: any) => setHoveredLegendKey(e.value)} // Use e.value which is the legend item's name
-          onMouseLeave={() => setHoveredLegendKey(null)}
+          content={renderCustomChartLegend}
+          // Pass necessary props to content if needed, e.g., hoveredLegendKey, setHoveredLegendKey
+          // The payload for the legend items is automatically passed by Recharts
         />
         <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(128, 128, 128, 0.3)" />
 
@@ -1231,22 +1308,71 @@ const ClassificationResultsChart: React.FC<Props> = ({
               const seriesNameInLegend = `${baseLegendName} (all sources)`;
               const isCurrentlyHovered = hoveredLegendKey === seriesNameInLegend;
               const seriesOpacityAgg = hoveredLegendKey && !isCurrentlyHovered ? 0.2 : 1;
+              const areaFillOpacityAgg = hoveredLegendKey && !isCurrentlyHovered ? 0.05 : 0.15; // Opacity for aggregated area
 
               const hasSeriesDataAgg = (displayData as ChartDataPoint[]).some(p => p && p[schemeFieldKey]?.[targetKeyAgg]?.avg !== undefined && !isNaN(Number(p[schemeFieldKey]?.[targetKeyAgg]?.avg)));
               if (!hasSeriesDataAgg) return null;
               
+              if (showStatistics) { // Check if statistics should be shown for aggregated view
+                const hasStatsAgg = (displayData as ChartDataPoint[]).some(p => { 
+                  if (!p) return false;
+                  const sd = p[schemeFieldKey]?.[targetKeyAgg]; 
+                  return sd && typeof sd.min === 'number' && typeof sd.max === 'number' && typeof sd.avg === 'number'; 
+                });
+
+                if (hasStatsAgg) {
+                  return (
+                    <React.Fragment key={`stats-${schemeFieldKey}-agg`}>
+                      <Area 
+                        type="monotone" 
+                        dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyAgg]?.min ?? null : null} 
+                        stroke="none" 
+                        fillOpacity={0} // Min area not directly filled
+                        name={`${seriesNameInLegend} (min)`} 
+                        isAnimationActive={false} 
+                        legendType="none" 
+                        connectNulls={true} 
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyAgg]?.max ?? null : null} 
+                        stroke="none" 
+                        fillOpacity={areaFillOpacityAgg} 
+                        fill={baseColor} 
+                        name={`${seriesNameInLegend} (range)`} 
+                        isAnimationActive={false} 
+                        legendType="none" 
+                        connectNulls={true} 
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyAgg]?.avg ?? null : null} 
+                        stroke={baseColor} 
+                        strokeOpacity={seriesOpacityAgg} 
+                        strokeWidth={2} 
+                        dot={false} 
+                        name={seriesNameInLegend} 
+                        isAnimationActive={false} 
+                        connectNulls={true} 
+                      />
+                    </React.Fragment>
+                  );
+                }
+              }
+              // Fallback to render just the line if showStatistics is false or no stats data
               return (
                 <Line 
-                  key={`${schemeFieldKey}-agg`} 
+                  key={`${schemeFieldKey}-agg-line`} 
                   dataKey={(p: ChartDataPoint) => p ? p[schemeFieldKey]?.[targetKeyAgg]?.avg ?? null : null} 
-                  name={seriesNameInLegend} // This name is used by the legend
+                  name={seriesNameInLegend} 
                   stroke={baseColor} 
+                  strokeOpacity={seriesOpacityAgg} 
                   strokeWidth={2} 
-                  strokeOpacity={seriesOpacityAgg}
                   dot={renderDot} 
                   activeDot={{ r: 6 }} 
                   isAnimationActive={false} 
                   connectNulls={true} 
+                  id={`line-${schemeFieldKey}-agg`} // Keep id if used elsewhere
                 />
               );
             } else {
@@ -1273,7 +1399,8 @@ const ClassificationResultsChart: React.FC<Props> = ({
                     return sd && typeof sd.min === 'number' && typeof sd.max === 'number' && typeof sd.avg === 'number'; 
                   });
                   
-                  if (hasStats) {
+                  // *** ADD CHECK HERE: Only render stats if the specific key is selected for plotting ***
+                  if (hasStats && selectedPlotKeys.includes(schemeFieldKey)) {
                     return (
                       <React.Fragment key={`stats-${schemeFieldKey}-${dsId}`}>
                         <Area 
@@ -1312,8 +1439,10 @@ const ClassificationResultsChart: React.FC<Props> = ({
                       </React.Fragment>
                     );
                   }
+                  // If stats are enabled but this key isn't plotted OR no stats exist, fall through to render just the line below.
                 }
                 
+                // Render the line if stats are off OR if stats are on but this key wasn't selected OR if no stats data existed
                 return (
                   <Line 
                     key={`line-${schemeFieldKey}-${dsId}`} 
@@ -1337,6 +1466,20 @@ const ClassificationResultsChart: React.FC<Props> = ({
         {/* ReferenceDot for selected point */}
         {!isGrouped && selectedPoint && 'dateString' in selectedPoint && (
           <ReferenceDot x={selectedPoint.dateString} y={0} ifOverflow="extendDomain" r={5} fill="red" stroke="white" isFront={true} />
+        )}
+        
+        {/* Add Brush for zooming - Render only when not grouped */ 
+        !isGrouped && (
+          <Brush 
+            dataKey="dateString" // Key matching XAxis dataKey
+            height={30} 
+            stroke={colorPalette[0]} // Use a color from your palette for outline/travellers
+            fill="rgba(128, 128, 128, 0.1)" // Subtle fill for the background
+            travellerWidth={10} // Slightly smaller traveller handles
+            // You can set startIndex/endIndex for default view if needed
+            // startIndex={Math.max(0, (displayData as ChartData).length - 50)} // Example: show last 50 points initially
+            // endIndex={(displayData as ChartData).length - 1}
+          />
         )}
       </ComposedChart>
     );
@@ -1375,13 +1518,11 @@ const ClassificationResultsChart: React.FC<Props> = ({
           </UiLabel>
         </div>
 
-        {/* Statistics Toggle (only when not grouped AND not aggregated) */}
-        {!isGrouped && !aggregateSources && (
+        {/* Statistics Toggle (only when not grouped) */}
           <div className="flex items-center gap-2">
             <Switch checked={showStatistics} onCheckedChange={setShowStatistics} id="stats-switch" />
             <UiLabel htmlFor="stats-switch" className="cursor-pointer">Show statistics (min/avg/max)</UiLabel>
           </div>
-        )}
 
         {/* Date Range Picker (only for time series) */}
         {!isGrouped && dateExtents.min && dateExtents.max && (
@@ -1470,7 +1611,7 @@ const ClassificationResultsChart: React.FC<Props> = ({
             </PopoverTrigger>
             <PopoverContent className="w-80 p-0" align="start">
               <div className="p-2 font-semibold text-sm border-b">Configure Plotted Data</div>
-              <ScrollArea className="max-h-[400px]">
+              <ScrollArea className="max-h-[400px] overflow-y-auto">
                 <div className="p-3 space-y-3">
                   {schemes.map((scheme) => {
                     const schemeIsSelected = selectedSchemaIds.includes(scheme.id);
@@ -1735,7 +1876,7 @@ const ClassificationResultsChart: React.FC<Props> = ({
                                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(128, 128, 128, 0.3)" />
                                <XAxis dataKey="valueString" fontSize={10} interval="preserveStartEnd"/>
                                <YAxis fontSize={10} domain={[0, maxGroupCount]} allowDataOverflow={true}/>
-                               <Tooltip
+                               <RechartsTooltip // <-- USE ALIASED TOOLTIP
                                    active={(isChartHovered || isTooltipHovered) && hoveredLegendKey === null}
                                    cursor={{ fill: 'transparent' }}
                                    wrapperStyle={{ zIndex: 100, pointerEvents: 'auto' }}
@@ -1747,7 +1888,7 @@ const ClassificationResultsChart: React.FC<Props> = ({
                                       schemes={schemes} 
                                       dataSources={dataSources} 
                                       results={results} 
-                                      showStatistics={false} 
+                                      showStatistics={false}
                                       dataRecordsMap={dataRecordsMap} 
                                       // For aggregated chart, use global setIsTooltipHovered
                                       setIsTooltipHovered={setIsTooltipHovered} 
@@ -1842,7 +1983,7 @@ const ClassificationResultsChart: React.FC<Props> = ({
                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(128, 128, 128, 0.3)" />
                                    <XAxis dataKey="valueString" fontSize={10} interval="preserveStartEnd"/>
                                    <YAxis fontSize={10} domain={[0, yDomainMax]} allowDataOverflow={true}/>
-                                   <Tooltip
+                                   <RechartsTooltip // <-- USE ALIASED TOOLTIP
                                      active={(hoveredSubChartId === dsId || hoveredSubChartTooltipOwnerId === dsId) && hoveredLegendKey === null}
                                      cursor={{ fill: 'transparent' }}
                                      wrapperStyle={{ zIndex: 100, pointerEvents: 'auto' }}
@@ -1937,8 +2078,8 @@ const ClassificationResultsChart: React.FC<Props> = ({
                   dataSources={dataSources}
                   dataRecords={dataRecords}
                   onDataRecordSelect={onDataRecordSelect}
-                  // Pass aggregation state if needed by DocumentResults, but it shouldn't need it
-                  // aggregateSources={aggregateSources}
+                  // Pass the value key for highlighting if it's a grouped point
+                  highlightValue={isGrouped && selectedPoint && 'valueKey' in selectedPoint ? selectedPoint.valueKey : null}
                 />
               </div>
             ) : (
@@ -2109,6 +2250,9 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
                 // Find scheme_field keys (like 'SchemeA_FieldB') that have appropriate data
                 .filter(([key, targetMap]) => 
                   key.includes('_') && 
+                  // --- ADD CHECK: Ensure the key is in selectedPlotKeys ---
+                  selectedPlotKeys.includes(key) && 
+                  // --- END ADD CHECK ---
                   typeof targetMap === 'object' && 
                   targetMap !== null && 
                   // Handle both aggregated and non-aggregated cases
@@ -2395,53 +2539,65 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({
 };
 
 // Component to render document results
-const DocumentResults: React.FC<{
-  selectedPoint: ChartDataPoint | GroupedDataPoint;
+export const DocumentResults: React.FC<{ 
+  selectedPoint: ChartDataPoint | GroupedDataPoint | MapPoint; // <-- ADD MapPoint
   results: FormattedClassificationResult[];
   schemes: ClassificationSchemeRead[];
   dataSources?: DataSourceRead[];
   dataRecords?: DataRecordRead[];
   onDataRecordSelect?: (datarecordId: number) => void;
-}> = ({ selectedPoint, results, schemes, dataSources, dataRecords, onDataRecordSelect }) => {
+  highlightValue?: string | null; // Add prop
+}> = ({ selectedPoint, results, schemes, dataSources, dataRecords, onDataRecordSelect, highlightValue }) => {
   console.log("[DialogContent] DocumentResults rendering. Selected Point:", selectedPoint);
 
   // Helper to get results for a specific doc ID relevant to the selected point/group
   const getRelevantResultsForRecord = (recordId: number): FormattedClassificationResult[] => {
-    if ('dateString' in selectedPoint) {
-      // Logic for line chart (by date) - unchanged
+    // --- MODIFIED: Check if selectedPoint is a MapPoint --- 
+    if ('locationString' in selectedPoint) { // Heuristic check for MapPoint
+      // For map point, show all results for the record matching any scheme in the run
+      return results.filter(r => 
+        r.datarecord_id === recordId && 
+        schemes.some(s => s.id === r.scheme_id)
+      );
+    } else if ('dateString' in selectedPoint) { // Logic for line chart (ChartDataPoint)
       return results.filter(r =>
         r.datarecord_id === recordId &&
         schemes.some(as => as.id === r.scheme_id) // Show all relevant schemes for the date
       );
-    } else if ('valueString' in selectedPoint) {
-      // Logic for bar chart (grouped by value)
+    } else if ('valueString' in selectedPoint) { // Logic for bar chart (GroupedDataPoint)
       const pointData = selectedPoint as GroupedDataPoint;
       const relevantSchemeRead = schemes.find(s => s.name === pointData.schemeName);
       if (!relevantSchemeRead) return [];
 
-      // --- MODIFIED ---
-      // Simply find all results for the document ID that match the grouping scheme ID.
-      // We trust that this document was part of the group already.
+      // Filter results matching the document AND the specific grouping scheme
       const allResultsForDocAndScheme = results.filter(r =>
         r.datarecord_id === recordId &&
         r.scheme_id === relevantSchemeRead.id
       );
-      // --- END MODIFICATION ---
-
-      return allResultsForDocAndScheme; // Return all results for this doc+scheme
+      return allResultsForDocAndScheme;
     }
-    return [];
+    return []; // Should not happen if selectedPoint is valid
   };
 
   // Determine the document IDs to display based on the point type
   let docIdsToShow: number[] = [];
   let contextTitle: React.ReactNode = null;
 
-  if ('dateString' in selectedPoint) {
+  // --- MODIFIED: Check if selectedPoint is a MapPoint --- 
+  if ('locationString' in selectedPoint) { // Heuristic check for MapPoint
+    const pointData = selectedPoint as MapPoint;
+    docIdsToShow = pointData.documentIds || [];
+    contextTitle = (
+      <div className="mb-4 p-2 bg-muted/20 rounded text-sm">
+        <p>Location: <span className="font-medium text-primary">{pointData.locationString}</span></p>
+        <p className="text-xs text-muted-foreground">({docIdsToShow.length} documents at this location)</p>
+      </div>
+    );
+  } else if ('dateString' in selectedPoint) { // Existing logic for ChartDataPoint
     const pointData = selectedPoint as ChartDataPoint;
     docIdsToShow = pointData.documents || [];
     contextTitle = <p className="mb-4 text-sm text-muted-foreground">Results for date: <span className='font-medium text-foreground'>{pointData.dateString}</span></p>;
-  } else if ('valueString' in selectedPoint) {
+  } else if ('valueString' in selectedPoint) { // Existing logic for GroupedDataPoint
     const pointData = selectedPoint as GroupedDataPoint;
     // Aggregate docs from all sources for the dialog
     docIdsToShow = Array.from(pointData.sourceDocuments.values()).flat();
@@ -2509,6 +2665,7 @@ const DocumentResults: React.FC<{
               useTabs={false}
               compact={false}
               renderContext="table"
+              highlightValue={highlightValue} // Pass prop down
             />
           </div>
         );

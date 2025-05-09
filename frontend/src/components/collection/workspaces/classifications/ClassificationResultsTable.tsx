@@ -317,12 +317,14 @@ export function ClassificationResultsTable({
           </Button>
         ),
         cell: ({ row }) => (
-          <div 
-            className="font-medium max-w-[250px] truncate" 
-            title={row.original.title || 'No Title'}
-          >
-            {row.original.title || <span className="italic text-muted-foreground">No Title</span>}
-          </div>
+          <DocumentLink documentId={row.original.id}>
+            <div 
+              className="font-medium max-w-[250px] truncate hover:underline cursor-pointer"
+              title={row.original.title || 'No Title'}
+            >
+              {row.original.title || <span className="italic text-muted-foreground">No Title</span>}
+            </div>
+          </DocumentLink>
         ),
         size: 250,
       },

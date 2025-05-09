@@ -25,6 +25,7 @@ export interface MapPoint {
 interface LocationMapProps {
   points: MapPoint[];
   dataSources?: DataSourceRead[]; // Accept DataSources instead of DataRecords
+  dataRecords?: DataRecordRead[]; // ADDED: dataRecords prop
   results: FormattedClassificationResult[];
   schemes: ClassificationSchemeRead[];
   onPointClick?: (point: MapPoint) => void; // Optional click handler
@@ -58,7 +59,12 @@ const getFormattedValueForPopup = (resultValue: any, scheme: ClassificationSchem
     // Use the utility function
     const display = formatDisplayValue(resultValue, scheme);
     // Convert complex types to string for popup
-    if (typeof display === 'object' && display !== null) return JSON.stringify(display);
+    if (typeof display === 'object' && display !== null) {
+        // If display is a ReactNode or complex object, stringify it carefully.
+        // Using ClassificationService.safeStringify might be better than simple JSON.stringify
+        // as it's designed to handle various complex data types from classifications.
+        return ClassificationService.safeStringify(display);
+    }
     return String(display ?? 'N/A');
 };
 
@@ -123,7 +129,7 @@ const getNestedValue = (obj: any, path: string): any => {
     );
 };
 
-const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, results, schemes, onPointClick, labelConfig }) => {
+const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, dataRecords, results, schemes, onPointClick, labelConfig }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
@@ -236,22 +242,23 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, results,
             JSON.parse(feature.properties.documentIds) : [];
 
           // Create popup HTML - REMOVE previous inline styles
-          let popupHtml = `<div>`; // No style needed here now
+          let popupHtml = `<div style="max-height: 200px; overflow-y: auto; padding-right: 5px;">`; // Added scrollable container
           popupHtml += `<strong>${locationString}</strong>`;
           popupHtml += `<br/><span>${docCount} document${docCount !== 1 ? 's' : ''}</span>`;
 
           // Add document previews with first classification result
-          const docsToShow = docIds
-            .map(id => dataSources?.find(d => d.id === id))
-            .filter((doc): doc is DataSourceRead => !!doc) // Type guard
-            .slice(0, 4); 
+          const docsToDisplay = docIds
+            .map(id => dataRecords?.find(dr => dr.id === id)) // Use dataRecords prop
+            .filter((doc): doc is DataRecordRead => !!doc); // Type guard for DataRecordRead
 
-          if (docsToShow.length > 0) {
+          if (docsToDisplay.length > 0) {
             popupHtml += `<hr style="margin: 4px 0;"/>`; // Simple separator
-            docsToShow.forEach(doc => {
-              popupHtml += `<div>`;
-              // Use source_metadata or ID for title
-              popupHtml += `<em>${String(doc.source_metadata?.filename || `Record ${doc.id}`)}</em>`; 
+            docsToDisplay.forEach(doc => { // Iterate over all found documents
+              popupHtml += `<div style="margin-bottom: 3px;">`; // Add some margin
+              // Use DataRecord's title or ID
+              const docTitle = doc.title || `Record ${doc.id}`;
+              // Use DocumentLink styling by creating an anchor tag that looks like it
+              popupHtml += `<a href="#" data-docid="${doc.id}" class="document-link-map-popup" style="text-decoration: underline; cursor: pointer;">${docTitle}</a>`;
 
               // Find the first classification result for this document
               const firstResult = results.find(r => r.datarecord_id === doc.id);
@@ -259,15 +266,13 @@ const LocationMap: React.FC<LocationMapProps> = ({ points, dataSources, results,
                 const scheme = schemes.find(s => s.id === firstResult.scheme_id);
                 if (scheme) {
                   const formattedValue = getFormattedValueForPopup(firstResult.value, scheme);
-                  popupHtml += `<br/><small>${scheme.name}: ${formattedValue}</small>`;
+                  popupHtml += `<br/><small style="color: #555;">${scheme.name}: ${formattedValue}</small>`; // Slightly dimmer color for classification
                 }
               }
               popupHtml += `</div>`;
             });
 
-            if (docIds.length > docsToShow.length) {
-              popupHtml += `<div style="font-style: italic; font-size: 0.9em; margin-top: 4px;">...and ${docIds.length - docsToShow.length} more</div>`; // Keep structural styles
-            }
+            // Removed the "...and X more" message as all are listed now (within scroll)
           }
 
           popupHtml += `</div>`;

@@ -67,6 +67,7 @@ const dotsConfig: { [key: string]: DotConfig[] } = {
     { color: 'var(--dot-color-4)', width: '20vw', height: '20vw' },
   ],
   '/desks/home/workspaces/classification-runner': [
+    // if theme = dark, then use var(--dot-color-1), else use a blue color
     { color: 'var(--dot-color-1)', width: '45vw', height: '40vw', position: 'topLeft' },
     { color: 'var(--dot-color-2)', width: '30vw', height: '35vw', position: 'bottomRight' },
     { color: 'var(--dot-color-3)', width: '75vw', height: '20vh', position: 'center' },
