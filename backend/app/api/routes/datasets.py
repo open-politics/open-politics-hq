@@ -188,6 +188,7 @@ async def export_dataset(
     dataset_id: int,
     include_content: bool = Query(False, description="Include full text content of data records"),
     include_results: bool = Query(False, description="Include associated classification results"),
+    include_source_files: bool = Query(True, description="Include original source files (PDFs, CSVs, etc.)"),
     service: DatasetServiceDep,
 ) -> Any:
     """
@@ -200,7 +201,8 @@ async def export_dataset(
             workspace_id=workspace_id,
             dataset_id=dataset_id,
             include_record_content=include_content,
-            include_results=include_results
+            include_results=include_results,
+            include_source_files=include_source_files
         )
 
         # Create a temporary file for the ZIP

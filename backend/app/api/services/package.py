@@ -552,9 +552,9 @@ class PackageImporter:
                     content_hash=record_data.get("content_hash")
                 )
                 self.session.add(new_record)
+                self.session.flush()
                 self._register_imported_entity("record", record_data["entity_uuid"], new_record)
 
-        self.session.commit()
         return new_ds
 
     async def import_scheme_package(
@@ -631,7 +631,7 @@ class PackageImporter:
                         )
                         self.session.add(result)
 
-        self.session.commit()
+        self.session.flush()
         return new_scheme
 
     async def import_job_package(
@@ -712,7 +712,7 @@ class PackageImporter:
                         )
                         self.session.add(result)
 
-        self.session.commit()
+        self.session.flush()
         return new_job
 
     async def import_dataset_package(
@@ -864,5 +864,5 @@ class PackageImporter:
         new_dataset.source_job_ids = list(job_id_map.values())
         new_dataset.datarecord_ids = list(record_id_map.values())
 
-        self.session.commit()
+        self.session.flush()
         return new_dataset 

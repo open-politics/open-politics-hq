@@ -14,7 +14,8 @@ from app.models import (
     ShareableLinkStats,
     ResourceType,
     PermissionLevel,
-    Message
+    Message,
+    DatasetPackageSummary
 )
 from app.api.services.shareable import ShareableService
 from pydantic import BaseModel
@@ -280,3 +281,37 @@ async def export_resources_batch(
         logger.error(f"Batch export failed for {request_data.resource_type}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export resources batch: {str(e)}")
 # --- End New Route ---
+
+# --- NEW ENDPOINT: View Dataset Package Summary ---
+@router.get("/view_dataset_package_summary/{token}", response_model=DatasetPackageSummary)
+async def view_dataset_package_summary(
+    token: str,
+    service: ShareableServiceDep,
+    current_user: OptionalUser # Allow anonymous access if link permits
+):
+    """
+    Get a summary of a shared dataset package using its token.
+    Does not trigger a full download or import of the package data.
+    """
+    user_id = current_user.id if current_user else None
+    logger.info(f"Route: User '{user_id if user_id else 'Anonymous'}' requesting summary for dataset package token: {token[:6]}...")
+    try:
+        summary = await service.get_dataset_package_summary_from_token(
+            requesting_user_id=user_id,
+            token=token
+        )
+        return summary
+    except ValueError as ve:
+        logger.warning(f"Route: Validation error getting dataset package summary for token {token[:6]}...: {ve}")
+        # ValueError from service could mean token invalid, wrong type, or issue fetching/processing package data
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except RuntimeError as re:
+        logger.error(f"Route: Runtime error getting dataset package summary for token {token[:6]}...: {re}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(re))
+    except HTTPException as he:
+        # Re-raise other known HTTP exceptions (e.g., from access_shared_resource if token is 404/403)
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Unexpected error getting dataset package summary for token {token[:6]}...: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while generating package summary.")
+# --- END NEW ENDPOINT ---

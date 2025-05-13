@@ -17,16 +17,23 @@ from app.models import (
     ClassificationResult,
     DataSourceTransferRequest,
     DataSourceTransferResponse,
-    Message
+    Message,
+    DatasetRead
 )
 # Deps: Remove SessionDep if not needed, keep CurrentUser
-from app.api.deps import SessionDep, CurrentUser, ClassificationProviderDep, ClassificationServiceDep
+from app.api.deps import SessionDep, CurrentUser, ClassificationProviderDep, ClassificationServiceDep, DatasetServiceDep
 # Service: Import class directly for DI
 from app.api.services.classification import ClassificationService
 # Task import removed, service handles triggering
 from app.api.tasks.classification import process_classification_job
 from app.api.services.service_utils import validate_workspace_access
 from sqlmodel import select, func
+
+# ADDED Pydantic model for the request body
+from pydantic import BaseModel
+class CreateDatasetFromJobRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -407,4 +414,46 @@ def retry_failed_job_classifications(
         # Handle unexpected errors during task queuing
         logger.exception(f"Route: Unexpected error triggering retry for job {job_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error triggering retry")
+# --- END NEW ENDPOINT ---
+
+# --- NEW ENDPOINT: Create Dataset from Job Run ---
+@router.post("/{job_id}/create_dataset", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
+def create_dataset_from_job_endpoint(
+    *,    
+    current_user: CurrentUser,
+    workspace_id: int,
+    job_id: int,
+    request_data: CreateDatasetFromJobRequest, # Use the new Pydantic model for body
+    dataset_service: DatasetServiceDep # Inject DatasetService
+):
+    """
+    Create a new Dataset from a completed ClassificationJob run.
+    The dataset will encapsulate the job's inputs (records, schemes) and outputs (results implicitly via records).
+    """
+    logger.info(f"Route: Request to create dataset from job {job_id} in workspace {workspace_id}")
+    try:
+        new_dataset = dataset_service.create_dataset_from_job_run(
+            job_id=job_id,
+            user_id=current_user.id,
+            workspace_id=workspace_id,
+            dataset_name=request_data.name,
+            dataset_description=request_data.description
+        )
+        # The service method create_dataset_from_job_run internally calls create_dataset,
+        # which handles the commit. So, no explicit commit here.
+        return DatasetRead.model_validate(new_dataset) # Ensure response is DatasetRead
+        
+    except ValueError as ve:
+        logger.error(f"Route: Validation error creating dataset from job {job_id}: {ve}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except RuntimeError as re:
+        logger.error(f"Route: Runtime error creating dataset from job {job_id}: {re}", exc_info=True)
+        # This might catch errors from within create_dataset if not ValueErrors
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(re))
+    except HTTPException as he:
+        # Re-raise HTTP exceptions (e.g., from validate_workspace_access in service)
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Unexpected error creating dataset from job {job_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 # --- END NEW ENDPOINT --- 

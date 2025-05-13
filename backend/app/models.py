@@ -1095,5 +1095,32 @@ class DataSourceTransferResponse(BaseModel):
     new_datasource_ids: Optional[List[int]] = Field(default=None, description="IDs of the newly created DataSources in the target workspace (if copied)")
     errors: Optional[Dict[int, str]] = Field(default=None, description="Dictionary of DataSource IDs that failed and the reason")
 
+# --- ADDED FOR DATASET PACKAGE SUMMARY VIEW ---
+class DatasetPackageFileManifestItem(BaseModel):
+    filename: str
+    original_datasource_uuid: Optional[str] = None
+    original_datasource_id: Optional[int] = None
+    type: Optional[str] = None # e.g., PDF, CSV
+    linked_datarecord_uuid: Optional[str] = None
+
+class DatasetPackageEntitySummary(BaseModel):
+    entity_uuid: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None # Added description
+    # Add other common fields if desired, e.g., description
+
+class DatasetPackageSummary(BaseModel):
+    package_metadata: Dict[str, Any] # from PackageMetadata.to_dict()
+    dataset_details: DatasetPackageEntitySummary
+    record_count: int = 0
+    classification_results_count: int = 0 # Total results across all records
+    included_schemes: List[DatasetPackageEntitySummary] = []
+    included_jobs: List[DatasetPackageEntitySummary] = []
+    # Unique datasources that the records in the dataset belong to
+    # This might be different from datasources explicitly listed as "source_datasources" if that concept were added
+    linked_datasources_summary: List[DatasetPackageEntitySummary] = [] 
+    source_files_manifest: List[DatasetPackageFileManifestItem] = []
+# --- END ADDED ---
+
 
 

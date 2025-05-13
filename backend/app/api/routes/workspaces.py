@@ -15,12 +15,18 @@ from app.models import (
     DataSourceTransferRequest,
     DataSourceTransferResponse
 )
-from app.api.deps import IngestionServiceDep
+from app.api.deps import IngestionServiceDep, WorkspaceServiceDep
 from app.api.services.ingestion import IngestionService
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces")
+
+# --- Request Model for Import from Token ---
+class ImportWorkspaceFromTokenRequest(BaseModel):
+    share_token: str
+    new_workspace_name: Optional[str] = None
 
 # Workspace Routes
 
@@ -213,3 +219,34 @@ async def transfer_datasources_endpoint(
     except Exception as e:
         logger.exception(f"Unexpected error in /transfer/datasources endpoint: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal error occurred during the transfer.")
+
+@router.post("/import_from_token", response_model=WorkspaceRead)
+async def import_workspace_from_token_endpoint(
+    *,    
+    request_data: ImportWorkspaceFromTokenRequest,
+    current_user: CurrentUser,
+    workspace_service: WorkspaceServiceDep
+):
+    """
+    Import a complete workspace using a share token.
+    This creates a new workspace for the current user with the content of the shared workspace.
+    """
+    logger.info(f"Route: User {current_user.id} attempting to import workspace from token {request_data.share_token[:6]}...")
+    try:
+        imported_workspace = await workspace_service.import_workspace_from_token(
+            importing_user_id=current_user.id,
+            share_token=request_data.share_token,
+            new_workspace_name=request_data.new_workspace_name
+        )
+        return imported_workspace
+    except ValueError as ve:
+        logger.warning(f"Route: Validation error importing workspace from token: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except RuntimeError as re:
+        logger.error(f"Route: Runtime error importing workspace from token: {re}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(re))
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Unexpected error importing workspace from token: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during workspace import from token.")

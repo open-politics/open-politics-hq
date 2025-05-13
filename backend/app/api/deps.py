@@ -1,6 +1,6 @@
 """Dependencies for FastAPI routes."""
 from collections.abc import Generator
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Union
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -136,26 +136,40 @@ from app.api.services.workspace import WorkspaceService
 # First define the classification service dependency since others depend on it
 def get_classification_service(
     session: SessionDep,
-    provider: ClassificationProviderDep
+    storage_provider: StorageProviderDep
 ) -> ClassificationService:
     """Dependency provider for ClassificationService."""
-    return ClassificationService(session=session, classification_provider=provider)
+    return ClassificationService(session=session, storage_provider=storage_provider)
 
 ClassificationServiceDep = Annotated[ClassificationService, Depends(get_classification_service)]
 
 def get_ingestion_service(
     session: SessionDep,
-    storage: StorageProviderDep,
-    scraper: ScrapingProviderDep
+    storage_provider: StorageProviderDep,
+    scraping_provider: ScrapingProviderDep,
+    classification_provider: ClassificationProviderDep
 ) -> IngestionService:
     """Dependency provider for IngestionService."""
-    return IngestionService(session=session, storage_provider=storage, scraping_provider=scraper)
+    return IngestionService(
+        session=session,
+        storage_provider=storage_provider,
+        scraping_provider=scraping_provider,
+        classification_provider=classification_provider
+    )
 
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 
-def get_workspace_service(session: SessionDep) -> WorkspaceService:
+def get_workspace_service(
+    session: SessionDep, 
+    storage_provider: StorageProviderDep, 
+    shareable_service: ShareableServiceDep
+) -> WorkspaceService:
     """Dependency provider for WorkspaceService."""
-    return WorkspaceService(session=session)
+    return WorkspaceService(
+        session=session, 
+        storage_provider=storage_provider, 
+        shareable_service=shareable_service
+    )
 
 WorkspaceServiceDep = Annotated[WorkspaceService, Depends(get_workspace_service)]
 
@@ -163,15 +177,16 @@ def get_dataset_service(
     session: SessionDep,
     classification_service: ClassificationServiceDep,
     ingestion_service: IngestionServiceDep,
-    storage_provider: StorageProviderDep,
+    storage_provider: StorageProviderDep
 ) -> DatasetService:
     """Dependency provider for DatasetService."""
+    source_instance_id = settings.INSTANCE_ID if settings.INSTANCE_ID else "default_instance"
     return DatasetService(
         session=session,
         classification_service=classification_service,
         ingestion_service=ingestion_service,
         storage_provider=storage_provider,
-        source_instance_id=settings.INSTANCE_ID
+        source_instance_id=source_instance_id
     )
 
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
@@ -181,7 +196,8 @@ def get_shareable_service(
     ingestion_service: IngestionServiceDep,
     classification_service: ClassificationServiceDep,
     workspace_service: WorkspaceServiceDep,
-    dataset_service: DatasetServiceDep
+    dataset_service: DatasetServiceDep,
+    storage_provider: StorageProviderDep
 ) -> ShareableService:
     """Dependency provider for ShareableService."""
     return ShareableService(
@@ -189,7 +205,8 @@ def get_shareable_service(
         ingestion_service=ingestion_service,
         classification_service=classification_service,
         workspace_service=workspace_service,
-        dataset_service=dataset_service
+        dataset_service=dataset_service,
+        storage_provider=storage_provider
     )
 
 ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
