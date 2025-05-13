@@ -1087,7 +1087,7 @@ class DataSourceTransferRequest(BaseModel):
     source_workspace_id: int = Field(..., description="ID of the workspace to transfer from")
     target_workspace_id: int = Field(..., description="ID of the workspace to transfer to")
     datasource_ids: List[int] = Field(..., description="List of DataSource IDs to transfer")
-    copy: bool = Field(default=True, description="If true, copy the datasources; if false, move them")
+    copy_datasources: bool = Field(default=True, description="If true, copy the datasources; if false, move them")
 
 class DataSourceTransferResponse(BaseModel):
     success: bool

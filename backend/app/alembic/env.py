@@ -4,6 +4,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 from alembic.operations import ops
+from sqlmodel import SQLModel
 
 
 # this is the Alembic Config object, which provides
@@ -14,19 +15,22 @@ config = context.config
 # This line sets up loggers basically.
 fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-# target_metadata = None
-
-from app.models import SQLModel  # noqa
+# Import all models from the single models.py file
+from app.models import *  # This imports all models
 
 # --- ADD THIS SECTION ---
 from sqlalchemy_celery_beat.models import ModelBase as CeleryBeatModelBase # Import the base
 
 # Combine your app's metadata with the Celery Beat metadata
 target_metadata = [SQLModel.metadata, CeleryBeatModelBase.metadata]
+
+# Debug prints
+print("=== SQLModel Tables ===")
+for table in SQLModel.metadata.tables:
+    print(f"Found table: {table}")
+print("=== Celery Beat Tables ===")
+for table in CeleryBeatModelBase.metadata.tables:
+    print(f"Found table: {table}")
 # --- END OF ADDED SECTION ---
 
 # other values from the config, defined by the needs of env.py,

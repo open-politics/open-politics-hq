@@ -28,12 +28,13 @@ def init_db(session: Session) -> None:
 
     assert storage_provider is not None, "Storage provider not initialized"
 
+    SQLModel.metadata.create_all(engine)
+
     if os.environ.get("WIPE_DB") == "True":
         logger.info("Wiping DB")
         # Wipe DB table "alembic_version"
         session.exec(text("DROP TABLE IF EXISTS alembic_version"))
         SQLModel.metadata.drop_all(engine)
-        SQLModel.metadata.create_all(engine)
         logger.info("DB wiped")
 
         # from app.core.engine import engine
