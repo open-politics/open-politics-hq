@@ -168,7 +168,7 @@ const DocumentDetailViewCsv: React.FC<DocumentDetailViewCsvProps> = ({
            </div>
 
            <div className="border rounded-md overflow-auto relative w-full flex-grow"> {/* Removed max-h */}
-             <Table className="text-xs min-w-max"> {/* Use min-w-max for wide tables */}
+             <Table className="text-xs min-w-max">{/* Use min-w-max for wide tables */}
                <TableHeader className="sticky top-0 bg-muted z-10">
                  <TableRow>
                    <TableHead className="w-[80px] px-2 py-2 font-semibold sticky left-0 bg-muted z-10 border-r shadow-sm">Row</TableHead>

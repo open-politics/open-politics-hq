@@ -10,11 +10,13 @@ import {
     Message,
     DataRecordRead as ClientDataRecordRead,
     DataRecordUpdate as ClientDataRecordUpdate,
+    ResourceType,
 } from '@/client/models';
 import { DatarecordsService } from '@/client/services';
 import { DataSource, DataSourceType, DataSourceStatus, DataRecord } from '@/lib/classification/types';
 import { adaptDataSourceReadToDataSource, adaptDataRecordReadToDataRecord } from '@/lib/classification/adapters';
 import { toast } from 'sonner';
+import { useShareableStore, BatchImportSummary, SingleImportSuccess, BatchReport, BatchImportSuccessItem, BatchImportFailedItem } from './storeShareables';
 
 // TODO: Update imports when client is regenerated
 
@@ -42,6 +44,11 @@ interface DataSourceState {
   fetchDataRecordsForSource: (dataSourceId: number) => Promise<void>;
   clearSelectedDataSourceRecords: () => void;
   updateDataRecord: (recordId: number, updateData: ClientDataRecordUpdate) => Promise<DataRecord | null>;
+
+  // New actions for import/export
+  exportDataSource: (dataSourceId: number) => Promise<void>;
+  exportMultipleDataSources: (dataSourceIds: number[]) => Promise<void>;
+  importDataSource: (workspaceId: number, file: File) => Promise<DataSource | null>;
 }
 
 export const useDataSourceStore = create<DataSourceState>((set, get) => ({
@@ -67,7 +74,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       const adaptedDataSources = clientDataSources.map(adaptDataSourceReadToDataSource);
       // Ensure polling starts for all pending sources from the response
       adaptedDataSources.forEach(ds => {
-          if (ds.status === 'pending') {
+          if (ds.status === 'pending' || ds.status === 'processing') {
              get().startPollingDataSourceStatus(ds.id);
           }
       });
@@ -126,7 +133,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
 
       // Start polling for all newly created pending sources
       createdAdaptedSources.forEach(adaptedDataSource => {
-        if (adaptedDataSource.status === 'pending') {
+        if (adaptedDataSource.status === 'pending' || adaptedDataSource.status === 'processing') {
             get().startPollingDataSourceStatus(adaptedDataSource.id);
         }
       });
@@ -283,7 +290,6 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
         // Update store if status changed
         set((state: DataSourceState): Partial<DataSourceState> => {
           const index = state.dataSources.findIndex(ds => ds.id === dataSourceId);
-          let updated = false;
           if (index !== -1) {
             // --- CORRECTED: Update the entire record --- 
             const currentDataSource = state.dataSources[index];
@@ -293,14 +299,16 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
             // For simplicity, we can check status and count, or rely on object reference change
             if (currentDataSource.status !== adaptedDataSource.status || currentDataSource.data_record_count !== adaptedDataSource.data_record_count) {
                  console.log(`DataSource ${dataSourceId} updated. Status: ${adaptedDataSource.status}, Count: ${adaptedDataSource.data_record_count}`);
-                 // Replace the old object with the new adapted one
-                 state.dataSources[index] = adaptedDataSource;
-                 updated = true;
+                 // Replace the old object with the new adapted one by creating a new array
+                 const newDataSources = state.dataSources.map(ds =>
+                    ds.id === dataSourceId ? adaptedDataSource : ds
+                 );
 
                  // Stop polling if it reached a terminal state
                  if (adaptedDataSource.status === 'complete' || adaptedDataSource.status === 'failed') {
                      get().stopPollingDataSourceStatus(dataSourceId);
                  }
+                 return { dataSources: newDataSources }; // Return the new array for state update
             }
             // --- END CORRECTION ---
           } else {
@@ -308,7 +316,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
              get().stopPollingDataSourceStatus(dataSourceId); // Stop polling if not found
           }
           // Only return the updated portion if something changed
-          return updated ? { dataSources: state.dataSources } : {}; // Return partial state
+          return {}; // Return empty object if no changes to trigger update
         });
 
       } catch (error) {
@@ -549,4 +557,140 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     }
   },
   // --- END ADDED ---
+
+  // --- IMPORT/EXPORT ACTIONS --- 
+  exportDataSource: async (dataSourceId: number) => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace selected for export.");
+      return;
+    }
+    set({ isLoading: true, error: null });
+    try {
+      await useShareableStore.getState().exportResource('data_source' as ResourceType, dataSourceId);
+      set({ isLoading: false });
+      toast.success("DataSource export initiated.");
+    } catch (err) {
+      console.error("Export DataSource error:", err);
+      const message = err instanceof Error ? err.message : 'Failed to export DataSource';
+      set({ error: message, isLoading: false });
+      toast.error(message);
+    }
+  },
+
+  exportMultipleDataSources: async (dataSourceIds: number[]) => {
+    const { activeWorkspace } = useWorkspaceStore.getState();
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace selected for batch export.");
+      return;
+    }
+    if (!dataSourceIds || dataSourceIds.length === 0) {
+      toast.info("No DataSources selected for export.");
+      return;
+    }
+    set({ isLoading: true, error: null });
+    try {
+      await useShareableStore.getState().exportResourcesBatch('data_source' as ResourceType, dataSourceIds);
+      set({ isLoading: false });
+      toast.success("Batch DataSource export initiated.");
+    } catch (err) {
+      console.error("Batch export DataSources error:", err);
+      const message = err instanceof Error ? err.message : 'Failed to batch export DataSources';
+      set({ error: message, isLoading: false });
+      toast.error(message);
+    }
+  },
+
+  importDataSource: async (workspaceId: number, file: File): Promise<DataSource | null> => {
+    set({ isLoading: true, error: null });
+    let firstSuccessfullyImportedDataSource: DataSource | null = null;
+
+    try {
+      const result = await useShareableStore.getState().importResource(file, workspaceId);
+
+      if (!result) {
+        throw new Error("Import operation returned no result.");
+      }
+
+      // Check if it's a batch import result by looking for the nested 'batch_summary' key
+      if ('batch_summary' in result && result.batch_summary) {
+        const batchResult = result as BatchImportSummary; // Type assertion
+        toast.info(batchResult.message || "Batch import processing started.");
+        let successfulDSCount = 0;
+
+        // Iterate over successful_imports from the nested batch_summary
+        for (const item of batchResult.batch_summary.successful_imports) {
+          // Check resource_type directly (it's an enum member, not a string to be converted by valueOf)
+          if (item.resource_type === 'data_source' && item.imported_resource_id) {
+            try {
+              const newDsClient = await DatasourcesService.getDatasource({ workspaceId, datasourceId: item.imported_resource_id });
+              const newDsAdapted = adaptDataSourceReadToDataSource(newDsClient);
+              set(state => ({
+                dataSources: [newDsAdapted, ...state.dataSources],
+                // isLoading: false, // Keep true if processing more, but this simplifies for now
+              }));
+              toast.success(`DataSource '${item.imported_resource_name || newDsAdapted.name}' imported successfully from batch.`);
+              get().startPollingDataSourceStatus(newDsAdapted.id);
+              if (!firstSuccessfullyImportedDataSource) {
+                firstSuccessfullyImportedDataSource = newDsAdapted;
+              }
+              successfulDSCount++;
+            } catch (fetchErr) {
+              console.error(`Error fetching details for imported DataSource ID ${item.imported_resource_id} from batch:`, fetchErr);
+              toast.error(`Failed to fetch details for imported DataSource '${item.imported_resource_name || 'Unknown'}' from batch.`);
+            }
+          }
+        }
+
+        // Iterate over failed_imports from the nested batch_summary
+        for (const item of batchResult.batch_summary.failed_imports) {
+          toast.error(`Failed to import '${item.filename}' from batch: ${item.error}`);
+        }
+        
+        if (successfulDSCount === 0 && batchResult.batch_summary.failed_imports.length > 0){
+            // No successes but some failures
+             throw new Error("All items in the batch failed to import as DataSources.")
+        } else if (successfulDSCount === 0 && batchResult.batch_summary.successful_imports.length === 0) {
+            // No successes and no failures probably means no data sources were in the batch
+            // or none of the successful items were DataSources.
+            throw new Error("No DataSources found or successfully imported from the batch.")
+        }
+        // If at least one DS was successful, we return the first one (or null if loop didn't run for DS)
+        set({ isLoading: false }); // Ensure loading is false at the end of batch processing
+        return firstSuccessfullyImportedDataSource;
+
+      } else if ('resource_type' in result && result.resource_type === 'data_source') {
+        // Handle single import success
+        const singleResult = result as SingleImportSuccess; // Type assertion
+        const importedId = singleResult.imported_resource_id || singleResult.id; 
+        const importedName = singleResult.imported_resource_name || singleResult.name || "Imported DataSource";
+
+        if (importedId) {
+          const newDsClient = await DatasourcesService.getDatasource({ workspaceId, datasourceId: importedId as number});
+          const newDsAdapted = adaptDataSourceReadToDataSource(newDsClient);
+          set(state => ({
+            dataSources: [newDsAdapted, ...state.dataSources],
+            isLoading: false,
+          }));
+          toast.success(`DataSource '${newDsAdapted.name}' imported successfully.`);
+          get().startPollingDataSourceStatus(newDsAdapted.id);
+          return newDsAdapted;
+        } else {
+          throw new Error("Single import success response did not contain a valid DataSource ID.");
+        }
+      } else {
+        // If result is not null, but not a recognized batch or single DS success
+        console.warn("Unrecognized import result structure:", result);
+        throw new Error("Imported resource was not a valid DataSource or ID missing.");
+      }
+
+    } catch (err) {
+      console.error("Import DataSource error:", err);
+      const message = err instanceof Error ? err.message : 'Failed to import DataSource';
+      set({ error: message, isLoading: false });
+      toast.error(message);
+      return null;
+    }
+  },
+
 })); 

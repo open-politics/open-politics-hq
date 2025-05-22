@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import useAuth from "@/hooks/useAuth";
 import { Separator } from "@/components/ui/separator";
-import { Search, Plus, FileText, Upload, LinkIcon, ArrowUpDown, Loader2, CheckCircle, XCircle, AlertCircle, Trash2, Eye, FileSpreadsheet, List, Type, File, Download, Link, MoreHorizontal, Settings, RefreshCw } from "lucide-react"
+import { Search, Plus, FileText, Upload, LinkIcon, ArrowUpDown, Loader2, CheckCircle, XCircle, AlertCircle, Trash2, Eye, FileSpreadsheet, List, Type, File, Download, Link as LinkIconLucide, MoreHorizontal, Settings, RefreshCw, Share2 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { format, formatDistanceToNow } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -85,6 +85,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { useShareableStore } from '@/zustand_stores/storeShareables';
 
 const renderOrigin = (datasource: DataSource) => {
   const details = datasource.origin_details;
@@ -244,6 +245,10 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
     updateDataSourceUrls,
     refetchDataSource,
     updateDataSource,
+    exportDataSource,
+    exportMultipleDataSources,
+    importDataSource,
+    isLoading: isLoadingDsStoreAction,
   } = useDataSourceStore();
 
   const { activeWorkspace } = useWorkspaceStore();
@@ -259,7 +264,7 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
   const [selectedDataSourceId, setSelectedDataSourceId] = useState<number | null>(null);
   const [editingUrlsDataSource, setEditingUrlsDataSource] = useState<DataSource | null>(null);
   const [editingMetadataDataSource, setEditingMetadataDataSource] = useState<DataSource | null>(null);
-  const [isExporting, setIsExporting] = useState(false); // Added state for export loading
+  const [isExporting, setIsExporting] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
@@ -273,6 +278,9 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
   const fetchingRef = useRef(false);
   const currentWorkspaceIdRef = useRef<number | null | undefined>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [sharingDataSourceId, setSharingDataSourceId] = useState<number | null>(null);
+  const { createLink: createShareLink } = useShareableStore();
 
   const handleDataSourceSelect = useCallback((dataSource: DataSource) => {
     setSelectedDataSourceId(dataSource.id);
@@ -377,200 +385,90 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
       setSelectedTypes(prev => prev.size === AVAILABLE_TYPES.length ? new Set() : new Set(AVAILABLE_TYPES));
   }, []);
 
-  const handleExport = async (dataSourceId: number, dataSourceName: string) => {
-    if (!activeWorkspace?.id) {
-        toast.error("No active workspace selected.");
-        return;
-    }
-    toast.info(`Exporting ${dataSourceName}...`);
-    setIsExporting(true); // Set loading state
-    try {
-        // Construct the formData object as expected by the client
-        const formData: Body_shareables_export_resource = {
-            resource_id: dataSourceId,
-            resource_type: 'data_source', // Use string literal as ResourceType is just a type
-        };
-
-        const responseData = await ShareablesService.exportResource({
-            formData: formData // Pass the structured formData
-        });
-
-        // Check if the responseData is a Blob (expected for successful file download)
-        // The client might return 'any' or 'unknown', so we cast to Blob first
-        if (responseData instanceof Blob) {
-            const filename = `datasource_${dataSourceId}_export.json`;
-            saveAs(responseData, filename); // Pass the Blob directly
-            toast.success(`${dataSourceName} exported successfully.`);
-        } else {
-             // This case might indicate an error returned as JSON, or another unexpected format
-             console.error("Export failed: Unexpected response format", responseData);
-             try {
-                 // Try to parse as JSON, assuming error detail might be here
-                 // Need to handle cases where responseData might not have .text()
-                 let errorDetail = 'Unknown error';
-                 if (typeof responseData === 'string') {
-                     errorDetail = JSON.parse(responseData).detail || errorDetail;
-                 } else if (typeof (responseData as any)?.text === 'function') {
-                     errorDetail = JSON.parse(await (responseData as any).text()).detail || errorDetail;
-                 }
-                 toast.error(`Export failed: ${errorDetail}`);
-             } catch (parseError) {
-                 // If parsing fails, it's truly an unexpected format
-                 console.error("Failed to parse error response:", parseError);
-                 toast.error("Export failed: Could not process the server response.");
-             }
-        }
-    } catch (err: any) {
-        // This catches network errors, 4xx/5xx status codes from OpenAPI client, etc.
-        console.error("Error exporting data source:", err);
-        let errorMsg = "Failed to export data source";
-         if (err.body?.detail) {
-            // Handle potential JSON error response from APIError
-            errorMsg = typeof err.body.detail === 'string' ? `Export Failed: ${err.body.detail}` : `Export Failed: ${JSON.stringify(err.body.detail)}`;
-        } else if (err.message) {
-             // Handle generic error messages
-            errorMsg = `Export Failed: ${err.message}`;
-        }
-        toast.error(errorMsg);
-    } finally {
-        setIsExporting(false); // Unset loading state
-    }
-  };
-
-
-  // --- Handler for Batch Export ---
-  const handleExportSelected = async () => {
-    if (selectedDataSourceIds.length === 0) {
-        toast.warning("No data sources selected for export.");
-        return;
-    }
-    if (!activeWorkspace?.id) {
-        toast.error("No active workspace selected.");
-        return;
-    }
-
-    toast.info(`Exporting ${selectedDataSourceIds.length} selected data source(s)...`);
+  const handleExport = useCallback(async (dataSourceId: number, dataSourceName?: string) => {
     setIsExporting(true);
-
     try {
-        const requestPayload: ExportBatchRequest = {
-            resource_type: 'data_source',
-            resource_ids: selectedDataSourceIds,
-        };
-
-        // Call the service method
-        const responseData: any = await ShareablesService.exportResourcesBatch({
-            requestBody: requestPayload
-        });
-
-        // --- REVISED CHECK ---
-        // Prioritize Blob and ArrayBuffer. If it's neither, it's an unexpected format.
-        if (responseData instanceof Blob || responseData instanceof ArrayBuffer) {
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `datasources_export_batch_${timestamp}.zip`;
-
-            let blobToSave: Blob;
-            if (responseData instanceof Blob) {
-                blobToSave = responseData;
-            } else { // Must be ArrayBuffer
-                blobToSave = new Blob([responseData], { type: 'application/zip' });
-            }
-
-            saveAs(blobToSave, filename);
-            toast.success(`${selectedDataSourceIds.length} data source(s) exported successfully.`);
-
-        } else {
-            // The response was NOT binary data as expected. Log the actual received format.
-            const responseType = typeof responseData;
-            let rawResponsePreview = responseData;
-            // Avoid logging huge strings/objects
-            if (typeof rawResponsePreview === 'string' && rawResponsePreview.length > 200) {
-                rawResponsePreview = rawResponsePreview.substring(0, 200) + "...";
-            } else if (typeof rawResponsePreview === 'object') {
-                 rawResponsePreview = JSON.stringify(rawResponsePreview)?.substring(0, 200) + "...";
-            }
-
-            console.error(`Batch export failed: Expected Blob or ArrayBuffer, but received type '${responseType}'. Response preview:`, rawResponsePreview);
-
-            // Attempt to parse potential error details *only if* it looks like JSON
-            let errorDetail = 'Unexpected response format from server (expected binary zip file).';
-             try {
-                 if (typeof responseData === 'string' && responseData.trim().startsWith('{')) {
-                     errorDetail = JSON.parse(responseData).detail || errorDetail;
-                 } else if (typeof responseData === 'object' && responseData !== null && (responseData as any).detail) {
-                     errorDetail = typeof (responseData as any).detail === 'string' ? (responseData as any).detail : JSON.stringify((responseData as any).detail);
-                 }
-             } catch (parseError) {
-                 console.warn("Could not parse the unexpected response as JSON error details.", parseError);
-             }
-            toast.error(`Batch export failed: ${errorDetail}`);
-        }
-        // --- END REVISED CHECK ---
-
-    } catch (err: any) {
-        console.error("Error exporting selected data sources:", err);
-        let errorMsg = "Failed to export selected data sources";
-        if (err.body?.detail) {
-            errorMsg = typeof err.body.detail === 'string' ? `Batch Export Failed: ${err.body.detail}` : `Batch Export Failed: ${JSON.stringify(err.body.detail)}`;
-        } else if (err.message) {
-            errorMsg = `Batch Export Failed: ${err.message}`;
-        }
-        toast.error(errorMsg);
+      await exportDataSource(dataSourceId);
+    } catch (error) {
+      console.error(`Error exporting data source ${dataSourceName || dataSourceId} from DocumentManager:`, error);
     } finally {
-        setIsExporting(false);
+      setIsExporting(false);
     }
-  };
-  // --- End Batch Export Handler ---
+  }, [exportDataSource]);
 
+  const handleShare = useCallback(async (dataSourceId: number) => {
+    if (!activeWorkspace?.id) {
+      toast.error('No active workspace selected for sharing.');
+      return;
+    }
+    const dataSourceToShare = dataSources.find(ds => ds.id === dataSourceId);
+    const dataSourceName = dataSourceToShare?.name || `DataSource ${dataSourceId}`;
 
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
+    toast.promise(createShareLink({
+      resource_type: 'data_source' as ClientResourceType,
+      resource_id: dataSourceId,
+      name: `Share link for DataSource: ${dataSourceName}`,
+      description: `A shareable link to access DataSource ${dataSourceName} (ID: ${dataSourceId}) from workspace ${activeWorkspace.name}`,
+    }), {
+      loading: `Generating share link for ${dataSourceName}...`,
+      success: (newLink) => {
+        if (newLink && newLink.share_url) {
+          navigator.clipboard.writeText(newLink.share_url)
+            .then(() => toast.success(`Share link for ${dataSourceName} copied to clipboard!`))
+            .catch(() => toast.success(`Share link for ${dataSourceName}: ${newLink.share_url}`)); // Fallback if clipboard fails
+          return `Share link created: ${newLink.share_url}`;
+        } else {
+          throw new Error("Failed to generate a valid share link.");
+        }
+      },
+      error: (err) => {
+        console.error("Failed to create share link:", err);
+        return `Failed to create share link for ${dataSourceName}.`;
+      }
+    });
+  }, [activeWorkspace, createShareLink, dataSources]);
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportDataSourceFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
-        return;
+      toast.error("No file selected for import.");
+      return;
     }
     if (!activeWorkspace?.id) {
-        toast.error("No active workspace selected for import.");
+        toast.error("No active workspace. Cannot import data source.");
         return;
     }
-    // Accept .json for single import, could add .zip later for batch
-    if (!file.name.toLowerCase().endsWith('.json')) {
-        toast.error("Invalid file type. Please select a JSON file exported from this application.");
-        if (fileInputRef.current) {
-             fileInputRef.current.value = "";
+    toast.promise(importDataSource(activeWorkspace.id, file), {
+      loading: 'Importing data source...',
+      success: (importedDataSource) => {
+        if (importedDataSource && importedDataSource.id) {
+          // Automatically select and view the newly imported data source
+          handleDataSourceSelect(importedDataSource as DataSource);
+          return `Data source '${importedDataSource.name || importedDataSource.id}' imported successfully.`;
         }
-        return;
+        return 'Data source import initiated.';
+      },
+      error: (err) => {
+        const message = err instanceof Error ? err.message : 'Failed to import data source.';
+        console.error("Error importing data source file:", err);
+        return message;
+      },
+    });
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
+  };
 
-    toast.info(`Importing ${file.name}...`);
-    const formData = new FormData();
-    formData.append('file', file);
-
+  const handleExportSelectedDataSources = async () => {
+    if (selectedDataSourceIds.length === 0) {
+      toast.info("No data sources selected for export.");
+      return;
+    }
     try {
-        // NOTE: The current importResource endpoint only handles SINGLE JSON files.
-        // Batch import from ZIP would require a separate backend endpoint and frontend logic.
-        await ShareablesService.importResource({
-            workspaceId: activeWorkspace.id,
-            formData: { file }
-        });
-        toast.success(`${file.name} imported successfully.`);
-        fetchDataSources();
-    } catch (err: any) {
-        console.error("Error importing data source:", err);
-         let errorMsg = "Failed to import data source";
-         if (err.body?.detail) {
-            errorMsg = typeof err.body.detail === 'string' ? `Import Failed: ${err.body.detail}` : `Import Failed: ${JSON.stringify(err.body.detail)}`;
-        } else if (err.message) {
-            errorMsg = `Import Failed: ${err.message}`;
-        }
-        toast.error(errorMsg);
-    } finally {
-         if (fileInputRef.current) {
-             fileInputRef.current.value = "";
-         }
+      await exportMultipleDataSources(selectedDataSourceIds);
+    } catch (error) {
+      console.error("Error exporting multiple data sources:", error);
     }
   };
 
@@ -752,18 +650,20 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>Actions</DropdownMenuLabel>
                 <DropdownMenuItem
-                  onClick={(e) => {e.stopPropagation(); handleExport(dataSource.id, dataSource.name || `DataSource ${dataSource.id}`)}}
-                  disabled={isExporting} // Disable during export
+                  onClick={(e) => {e.stopPropagation(); handleExport(dataSource.id, dataSource.name)}}
+                  disabled={isExporting || isLoadingDsStoreAction}
                 >
-                  <Download className="mr-2 h-4 w-4" />
-                  Export
+                  <Download className="mr-2 h-4 w-4" /> Export
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={(e) => {e.stopPropagation(); handleShare(dataSource.id)}}>
+                  <Share2 className="mr-2 h-4 w-4" /> Share
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={(e) => {e.stopPropagation(); handleDataSourceSelect(dataSource)}}>
                   <Eye className="mr-2 h-4 w-4" /> View Details
                 </DropdownMenuItem>
                 {dataSource.type === 'url_list' && (
                   <DropdownMenuItem onClick={(e) => {e.stopPropagation(); handleEditUrls(dataSource)}}>
-                    <Link className="mr-2 h-4 w-4" /> Edit URLs
+                    <LinkIconLucide className="mr-2 h-4 w-4" /> Edit URLs
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem onClick={(e) => {e.stopPropagation(); handleEditMetadata(dataSource)}}>
@@ -778,7 +678,7 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
                 <DropdownMenuItem
                   onClick={(e) => {e.stopPropagation(); handleDeleteClick(dataSource)}}
                   className="text-red-600"
-                  disabled={isDeleting} // Disable during delete
+                  disabled={isDeleting}
                 >
                   <Trash2 className="mr-2 h-4 w-4" /> Delete
                 </DropdownMenuItem>
@@ -789,8 +689,7 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
         size: 80,
         minSize: 80,
       },
-    ], [handleDataSourceSelect, handleDeleteClick, isDeleting, handleExport, handleEditUrls, handleEditMetadata, handleRefetch, isExporting] // Added isExporting dependency
-  );
+    ], [handleDataSourceSelect, handleDeleteClick, isDeleting, handleExport, handleEditUrls, handleEditMetadata, handleRefetch, isExporting, handleShare, isLoadingDsStoreAction]);
 
   const table = useReactTable({
     data: filteredDataSources,
@@ -847,34 +746,35 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
                        <span className="sm:hidden">Upload</span>
                      </Button>
                      <Button variant="outline" onClick={() => openCreateDocument('scrape')} className="h-9 flex items-center">
-                       <LinkIcon className="h-4 w-4 mr-1 sm:mr-2" />
+                       <LinkIconLucide className="h-4 w-4 mr-1 sm:mr-2" />
                        <span className="hidden sm:inline">Add URLs</span>
                        <span className="sm:hidden">URLs</span>
                      </Button>
                    </div>
                    <div className="flex items-center space-x-2">
-                     {/* <Button onClick={handleImportClick} variant="outline">
-                         <Upload className="mr-2 h-4 w-4" /> Import
-                     </Button>
-                     <input
-                         type="file"
-                         ref={fileInputRef}
-                         onChange={handleFileChange}
-                         style={{ display: 'none' }}
-                         accept=".json"
-                     />
-                     <Button
-                         variant="outline"
-                         disabled={selectedDataSourceIds.length === 0 || isExporting} // Disable if nothing selected or already exporting
-                         onClick={handleExportSelected} // Use the new batch handler
+                     <Button 
+                       variant="outline" 
+                       size="sm" 
+                       onClick={() => fileInputRef.current?.click()} 
+                       disabled={isLoadingDsStoreAction}
                      >
-                         {isExporting ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                         ) : (
-                            <Download className="mr-2 h-4 w-4" />
-                         )}
-                          Export Selected ({selectedDataSourceIds.length})
-                     </Button> */}
+                       <Upload className="mr-2 h-4 w-4" /> {isLoadingDsStoreAction ? 'Importing...' : 'Import'}
+                     </Button>
+                     <input 
+                       type="file" 
+                       ref={fileInputRef} 
+                       onChange={handleImportDataSourceFile}
+                       className="hidden" 
+                       accept=".zip,.json"
+                     />
+                     <Button 
+                       variant="outline" 
+                       size="sm" 
+                       onClick={handleExportSelectedDataSources}
+                       disabled={selectedDataSourceIds.length === 0 || isLoadingDsStoreAction}
+                     >
+                       <Download className="mr-2 h-4 w-4" /> Export Selected ({selectedDataSourceIds.length})
+                     </Button>
                    </div>
                  </div>
                </div>
@@ -1051,6 +951,7 @@ export default function DocumentManager({ onLoadIntoRunner, onDataSourceSelect }
                          schemes={schemes}
                          selectedDataSourceId={selectedDataSourceId}
                          onLoadIntoRunner={onLoadIntoRunner}
+                         highlightRecordIdOnOpen={null}
                        />
                      </div>
                    </ResizablePanel>

@@ -1095,7 +1095,7 @@ class DataSourceTransferResponse(BaseModel):
     new_datasource_ids: Optional[List[int]] = Field(default=None, description="IDs of the newly created DataSources in the target workspace (if copied)")
     errors: Optional[Dict[int, str]] = Field(default=None, description="Dictionary of DataSource IDs that failed and the reason")
 
-# --- ADDED FOR DATASET PACKAGE SUMMARY VIEW ---
+#  DATASET PACKAGE SUMMARY VIEW ---
 class DatasetPackageFileManifestItem(BaseModel):
     filename: str
     original_datasource_uuid: Optional[str] = None

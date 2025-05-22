@@ -2,26 +2,37 @@
 
 import { ColumnDef } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
-import { Pencil, Trash } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { ArrowUpDown, MoreHorizontal, Pencil, Trash, Download, Share2 } from 'lucide-react';
+import { WorkspaceRead } from '@/client/models'; // Using WorkspaceRead from client for consistency
 
-export type Workspace = {
-  id: number;
-  name: string;
-  description?: string;
-  sources?: string[];
-  icon?: string;
-  created_at: string;
-  updated_at: string;
+// Re-defining Workspace type here based on WorkspaceRead to ensure properties match client model
+// This is because the table might display a subset or formatted version.
+// For actions, we'll often need the full ID.
+export type WorkspaceRowData = Pick<WorkspaceRead, 'id' | 'name' | 'description' | 'icon' | 'created_at' | 'updated_at'> & {
+  // Add any client-side specific formatted fields if necessary, e.g., sources as string
+  sources_display?: string; 
 };
+
 
 // Define props for the columns function
 interface ColumnProps {
-  onEdit: (workspace: Workspace) => void;
-  onDelete: (workspace: Workspace) => void;
+  onEdit: (workspace: WorkspaceRowData) => void;
+  onDelete: (workspace: WorkspaceRowData) => void;
+  onExport: (workspaceId: number) => void;
+  onShare: (workspaceId: number) => void;
+  // Add onSelect when workspaces can be selected for import/export to specific ws
 }
 
 // Export a function that generates the columns
-export const columns = ({ onEdit, onDelete }: ColumnProps): ColumnDef<Workspace>[] => [
+export const columns = ({ onEdit, onDelete, onExport, onShare }: ColumnProps): ColumnDef<WorkspaceRowData>[] => [
   {
     accessorKey: 'name',
     header: 'Name',
@@ -29,21 +40,46 @@ export const columns = ({ onEdit, onDelete }: ColumnProps): ColumnDef<Workspace>
   {
     accessorKey: 'description',
     header: 'Description',
+    cell: ({ row }) => {
+        const description = row.original.description;
+        return <div className="truncate w-64" title={description || ''}>{description || '-'}</div>;
+    }
   },
-  {
-    accessorKey: 'sources',
-    header: 'Sources',
-    cell: ({ row }) => row.original.sources?.join(', ') || '',
-  },
+  // If 'sources_display' is prepared in WorkspacesPage, it can be used directly
+  // Otherwise, if 'sources' (assuming it was part of WorkspaceRead and processed into WorkspaceRowData)
+  // {
+  //   accessorKey: 'sources_display',
+  //   header: 'Sources',
+  // },
   {
     accessorKey: 'created_at',
-    header: 'Created At',
+    header: ({ column }) => {
+        return (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Created At
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        )
+      },
     cell: ({ row }) =>
       new Date(row.original.created_at).toLocaleString(),
   },
   {
     accessorKey: 'updated_at',
-    header: 'Updated At',
+    header: ({ column }) => {
+        return (
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Updated At
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        )
+      },
     cell: ({ row }) =>
       new Date(row.original.updated_at).toLocaleString(),
   },
@@ -54,29 +90,30 @@ export const columns = ({ onEdit, onDelete }: ColumnProps): ColumnDef<Workspace>
       const workspace = row.original;
 
       return (
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation(); // Prevent row click event
-              onEdit(workspace); // Use the passed-in onEdit directly
-            }}
-          >
-            <Pencil className="h-4 w-4" />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <span className="sr-only">Open menu</span>
+              <MoreHorizontal className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-red-500 hover:text-red-700"
-            onClick={(e) => {
-              e.stopPropagation(); // Prevent row click event
-              onDelete(workspace); // Use the passed-in onDelete directly
-            }}
-          >
-            <Trash className="h-4 w-4" />
-          </Button>
-        </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => onEdit(workspace)}>
+              <Pencil className="mr-2 h-4 w-4" /> Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onExport(workspace.id)}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onShare(workspace.id)}>
+              <Share2 className="mr-2 h-4 w-4" /> Share
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onDelete(workspace)} className="text-red-600 focus:text-red-700 focus:bg-red-50">
+              <Trash className="mr-2 h-4 w-4" /> Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       );
     },
   },

@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 """Dependencies for FastAPI routes."""
 from collections.abc import Generator
-from typing import Annotated, Any, Optional, Union
+from typing import Annotated, Any, Optional, Union, TYPE_CHECKING
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import ValidationError
@@ -27,30 +29,38 @@ from app.api.services.providers.classification import OpolClassificationProvider
 from app.api.services.providers.geospatial import OpolGeospatialProvider, get_geospatial_provider
 from app.api.services.providers.search import OpolSearchProvider, get_search_provider
 
+# --- Service Class Imports (for TYPE_CHECKING hints and direct use in getters) ---
+# No longer just for TYPE_CHECKING in Annotated, getters will import them directly.
+from app.api.services.classification import ClassificationService
+from app.api.services.ingestion import IngestionService
+from app.api.services.workspace import WorkspaceService
+from app.api.services.shareable import ShareableService
+from app.api.services.dataset import DatasetService
+
 # Create global provider instances
-storage_provider = get_storage_provider()
-scraping_provider = get_scraping_provider()
-classification_provider = get_classification_provider()
-geospatial_provider = get_geospatial_provider()
-search_provider = get_search_provider()
+storage_provider_instance = get_storage_provider()
+scraping_provider_instance = get_scraping_provider()
+classification_provider_instance = get_classification_provider()
+geospatial_provider_instance = get_geospatial_provider()
+search_provider_instance = get_search_provider()
 
 # Simple dependency functions that return the global instances
 def get_storage_provider_dep() -> StorageProvider:
-    return storage_provider
+    return storage_provider_instance
 
 def get_scraping_provider_dep() -> ScrapingProvider:
-    return scraping_provider
+    return scraping_provider_instance
 
 def get_classification_provider_dep() -> ClassificationProvider:
-    return classification_provider
+    return classification_provider_instance
 
 def get_geospatial_provider_dep() -> GeospatialProvider:
-    return geospatial_provider
+    return geospatial_provider_instance
 
 def get_search_provider_dep() -> SearchProvider:
-    return search_provider
+    return search_provider_instance
 
-# Define annotated types for easy injection
+# Define annotated types for easy injection of providers
 StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dep)]
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dep)]
 ClassificationProviderDep = Annotated[ClassificationProvider, Depends(get_classification_provider_dep)]
@@ -61,7 +71,7 @@ SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dep)]
 
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/login/access-token",
-    auto_error=False  # Don't auto-raise errors for unauthenticated requests
+    auto_error=False
 )
 
 def get_db() -> Generator[Session, None, None]:
@@ -72,14 +82,12 @@ SessionDep = Annotated[Session, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 def get_current_user(session: SessionDep, token: TokenDep) -> User:
-    """Get the authenticated user or raise an exception if not authenticated."""
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
     try:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
@@ -98,10 +106,8 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
     return user
 
 def get_current_user_optional(session: SessionDep, token: TokenDep) -> Optional[User]:
-    """Get the authenticated user or return None if not authenticated."""
     if not token:
         return None
-    
     try:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
@@ -124,91 +130,140 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
         )
     return current_user
 
-# --- Service Imports ---
-from app.api.services.ingestion import IngestionService
-from app.api.services.shareable import ShareableService
-from app.api.services.dataset import DatasetService
-from app.api.services.classification import ClassificationService
-from app.api.services.workspace import WorkspaceService
+# --- Service Getter Functions (Refactored for Request-Scoped Cache and Setter Injection) ---
 
-# --- Service Dependencies ---
-
-# First define the classification service dependency since others depend on it
 def get_classification_service(
+    request: Request,
     session: SessionDep,
-    storage_provider: StorageProviderDep
+    classification_provider: ClassificationProviderDep
 ) -> ClassificationService:
-    """Dependency provider for ClassificationService."""
-    return ClassificationService(session=session, storage_provider=storage_provider)
-
-ClassificationServiceDep = Annotated[ClassificationService, Depends(get_classification_service)]
+    service_name = "classification_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+    
+    instance = ClassificationService(session=session, classification_provider=classification_provider)
+    setattr(request.state, service_name, instance)
+    return instance
 
 def get_ingestion_service(
+    request: Request,
     session: SessionDep,
     storage_provider: StorageProviderDep,
-    scraping_provider: ScrapingProviderDep,
-    classification_provider: ClassificationProviderDep
+    scraping_provider: ScrapingProviderDep
 ) -> IngestionService:
-    """Dependency provider for IngestionService."""
-    return IngestionService(
+    service_name = "ingestion_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+    
+    # IngestionService __init__ does not have circular deps that need setters
+    instance = IngestionService(
         session=session,
         storage_provider=storage_provider,
         scraping_provider=scraping_provider,
-        classification_provider=classification_provider
     )
-
-IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
-
-def get_workspace_service(
-    session: SessionDep, 
-    storage_provider: StorageProviderDep, 
-    shareable_service: ShareableServiceDep
-) -> WorkspaceService:
-    """Dependency provider for WorkspaceService."""
-    return WorkspaceService(
-        session=session, 
-        storage_provider=storage_provider, 
-        shareable_service=shareable_service
-    )
-
-WorkspaceServiceDep = Annotated[WorkspaceService, Depends(get_workspace_service)]
+    setattr(request.state, service_name, instance)
+    return instance
 
 def get_dataset_service(
+    request: Request,
     session: SessionDep,
-    classification_service: ClassificationServiceDep,
-    ingestion_service: IngestionServiceDep,
     storage_provider: StorageProviderDep
 ) -> DatasetService:
-    """Dependency provider for DatasetService."""
+    service_name = "dataset_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+
+    # Resolve dependencies for DatasetService constructor
+    classification_service_instance = get_classification_service(
+        request=request, session=session, classification_provider=get_classification_provider_dep()
+    )
+    ingestion_service_instance = get_ingestion_service(
+        request=request, session=session, storage_provider=storage_provider, scraping_provider=get_scraping_provider_dep()
+    )
+    
     source_instance_id = settings.INSTANCE_ID if settings.INSTANCE_ID else "default_instance"
-    return DatasetService(
+    instance = DatasetService(
         session=session,
-        classification_service=classification_service,
-        ingestion_service=ingestion_service,
+        classification_service=classification_service_instance,
+        ingestion_service=ingestion_service_instance,
         storage_provider=storage_provider,
         source_instance_id=source_instance_id
     )
+    setattr(request.state, service_name, instance)
+    return instance
 
-DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
-
-def get_shareable_service(
+def get_workspace_service(
+    request: Request,
     session: SessionDep,
-    ingestion_service: IngestionServiceDep,
-    classification_service: ClassificationServiceDep,
-    workspace_service: WorkspaceServiceDep,
-    dataset_service: DatasetServiceDep,
     storage_provider: StorageProviderDep
-) -> ShareableService:
-    """Dependency provider for ShareableService."""
-    return ShareableService(
+) -> WorkspaceService:
+    service_name = "workspace_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+
+    instance = WorkspaceService(
         session=session,
-        ingestion_service=ingestion_service,
-        classification_service=classification_service,
-        workspace_service=workspace_service,
-        dataset_service=dataset_service,
         storage_provider=storage_provider
     )
+    setattr(request.state, service_name, instance) # Store before fetching circular dep
 
+    # Setter injection
+    shareable_service_instance = get_shareable_service(
+        request=request,
+        session=session,
+        storage_provider=storage_provider
+    )
+    instance.shareable_service = shareable_service_instance
+    return instance
+
+def get_shareable_service(
+    request: Request,
+    session: SessionDep,
+    storage_provider: StorageProviderDep
+) -> ShareableService:
+    service_name = "shareable_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+
+    # Resolve direct __init__ dependencies for ShareableService
+    ingestion_service_instance = get_ingestion_service(
+        request=request, session=session, storage_provider=storage_provider, scraping_provider=get_scraping_provider_dep()
+    )
+    classification_service_instance = get_classification_service(
+        request=request, session=session, classification_provider=get_classification_provider_dep()
+    )
+
+    instance = ShareableService(
+        session=session,
+        ingestion_service=ingestion_service_instance,
+        classification_service=classification_service_instance,
+        storage_provider=storage_provider
+    )
+    setattr(request.state, service_name, instance) # Store before fetching circular deps
+
+    # Setter injections
+    workspace_service_instance = get_workspace_service(
+        request=request,
+        session=session,
+        storage_provider=storage_provider
+    )
+    dataset_service_instance = get_dataset_service(
+        request=request,
+        session=session,
+        storage_provider=storage_provider
+    )
+    instance.workspace_service = workspace_service_instance
+    instance.dataset_service = dataset_service_instance
+    return instance
+
+# --- ...ServiceDep Aliases for Services (Defined AFTER getter functions) ---
+# These use the actual service CLASSES for the first argument of Annotated.
+# FastAPI uses these for type hinting in route signatures.
+
+ClassificationServiceDep = Annotated[ClassificationService, Depends(get_classification_service)]
+IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
+WorkspaceServiceDep = Annotated[WorkspaceService, Depends(get_workspace_service)]
 ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
+DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 
 

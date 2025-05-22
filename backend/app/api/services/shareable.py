@@ -11,6 +11,8 @@ import uuid
 import zipfile # Added for zip file creation
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+import shutil
+import asyncio
 
 from fastapi import Depends, HTTPException, UploadFile, status
 from sqlmodel import Session, select, func, col
@@ -20,11 +22,12 @@ if TYPE_CHECKING:
     from app.api.services.classification import ClassificationService
     from app.api.services.ingestion import IngestionService
     from app.api.services.workspace import WorkspaceService
+    from app.api.services.dataset import DatasetService
 
 # Import base types for dependencies
 from app.api.services.classification import ClassificationService
 from app.api.services.ingestion import IngestionService
-from app.api.services.workspace import WorkspaceService
+# from app.api.services.workspace import WorkspaceService # Removed this line
 from app.api.services.dataset import DatasetService # Assuming this exists
 
 from app.api.services.service_utils import validate_workspace_access
@@ -40,6 +43,7 @@ from app.models import (
     Workspace,
     ClassificationJob,
     Dataset,
+    DataSourceType,
     # ADDED DataPackage for type hinting if necessary, though not directly used in models.py
     # from app.api.services.package import DataPackage # This import is better placed in service files
 )
@@ -51,6 +55,8 @@ from app.api.services.package import PackageBuilder, DataPackage
 from app.api.services.package import PackageImporter, PackageMetadata
 # ADDED Models for DatasetPackageSummary
 from app.models import DatasetPackageSummary, DatasetPackageEntitySummary, DatasetPackageFileManifestItem, User
+# ADD THIS LINE:
+from app.api.tasks.ingestion import process_datasource 
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +64,16 @@ class ShareableService:
     """
     Service for managing shareable links to resources.
     """
+    _workspace_service: Optional['WorkspaceService'] = None
+    _dataset_service: Optional['DatasetService'] = None
 
     def __init__(
         self,
         session: Session, # Use base Session type
         ingestion_service: IngestionService, # Use base IngestionService type
         classification_service: ClassificationService, # Use base ClassificationService type
-        workspace_service: WorkspaceService, # Use base WorkspaceService type
-        dataset_service: DatasetService, # Assign dataset_service
+        # workspace_service: 'WorkspaceService', # REMOVED
+        # dataset_service: 'DatasetService', # REMOVED
         storage_provider: StorageProvider, # ADDED
         # source_instance_id: Optional[str] = None # Optional for now, can be fetched from settings
     ):
@@ -73,12 +81,32 @@ class ShareableService:
         self.session = session
         self.ingestion_service = ingestion_service
         self.classification_service = classification_service
-        self.workspace_service = workspace_service
-        self.dataset_service = dataset_service
+        # self.workspace_service is now a property
+        # self.dataset_service is now a property
         self.storage_provider = storage_provider # ADDED
         self.source_instance_id = settings.INSTANCE_ID if settings.INSTANCE_ID else "default_instance" # ADDED
         self.token_length = 24  # Length of the token for shareable links
         logger.info(f"ShareableService initialized with source_instance_id: {self.source_instance_id}")
+
+    @property
+    def workspace_service(self) -> 'WorkspaceService':
+        if self._workspace_service is None:
+            raise RuntimeError("WorkspaceService not set in ShareableService. Check DI setup.")
+        return self._workspace_service
+
+    @workspace_service.setter
+    def workspace_service(self, service: 'WorkspaceService'):
+        self._workspace_service = service
+
+    @property
+    def dataset_service(self) -> 'DatasetService':
+        if self._dataset_service is None:
+            raise RuntimeError("DatasetService not set in ShareableService. Check DI setup.")
+        return self._dataset_service
+
+    @dataset_service.setter
+    def dataset_service(self, service: 'DatasetService'):
+        self._dataset_service = service
     
     def _generate_token(self) -> str:
         """Generate a unique token for a shareable link."""
@@ -567,142 +595,174 @@ class ShareableService:
         self,
         user_id: int,
         resource_type: ResourceType,
-        resource_id: int
-    ) -> Tuple[Union[DataPackage, Dict[str, Any]], str]:
+        resource_id: int,
+        # New parameter to indicate if the caller expects a direct DataPackage or a path to its zip.
+        # For batch exports, this should always be True.
+        # For single 'export_resource' endpoint, it might be False if it handles zipping itself.
+        # However, to simplify, we'll aim to always produce a zip from this method.
+        create_zip_package: bool = True 
+    ) -> Tuple[Optional[DataPackage], str]: # Returns (Optional[DataPackage object], path_to_zip_file)
         """
-        Generates the export data (as DataPackage or Dict) and a suggested filename for a single resource.
-        Assumes ownership has already been validated by the caller (_validate_resource_ownership).
+        Fetches the resource data and prepares it for export, optionally creating a zip package.
+        Always returns a path to a temporary zip file containing the packaged resource.
+        The DataPackage object itself is also returned but might be None if only path is needed by caller.
         """
-        # Fetch the resource first to pass to PackageBuilder
-        resource = self._get_resource_by_type(
-            resource_type=resource_type,
-            resource_id=resource_id,
-            user_id=user_id # Pass user_id for ownership context in underlying service calls
-        )
-        if not resource:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{resource_type.value} with ID {resource_id} not found or not accessible by user {user_id}")
-
-        builder = PackageBuilder(
-            session=self.session,
-            storage_provider=self.storage_provider,
-            source_instance_id=self.source_instance_id
-        )
-        
+        logger.info(f"_get_export_data_for_resource called for {resource_type.value} ID {resource_id}, create_zip_package={create_zip_package}")
         package: Optional[DataPackage] = None
-        filename_suffix = "json" # Default suffix
+        export_filename_base = f"{resource_type.value}_{resource_id}"
 
+        # Generate PackageMetadata (common to all resource types)
+        entity_uuid_str = None
+        source_entity_name = "Unknown"
+
+        # Fetch the actual entity to get its UUID and name if possible
+        # This part needs to be robust and handle potential None returns from DB
+        # Example for DataSource, extend for other types
         if resource_type == ResourceType.DATA_SOURCE:
-            assert isinstance(resource, DataSource), "Resource is not a DataSource"
-            package = await builder.build_datasource_package(resource, include_records=True, include_results=False) # Shareable link export: records=True, results=False (can be configured)
-            filename_suffix = "zip" # DataSources can have files
+            datasource = self.session.get(DataSource, resource_id)
+            if datasource:
+                entity_uuid_str = str(datasource.entity_uuid)
+                source_entity_name = datasource.name
+            else:
+                logger.error(f"Datasource with ID {resource_id} not found during export preparation.")
+                raise ValueError(f"Datasource {resource_id} not found.")
         elif resource_type == ResourceType.SCHEMA:
-            assert isinstance(resource, ClassificationScheme), "Resource is not a ClassificationScheme"
-            package = await builder.build_scheme_package(resource, include_results=False) # Shareable link export: results=False
-            # filename_suffix remains json
+            scheme = self.session.get(ClassificationScheme, resource_id)
+            if scheme:
+                entity_uuid_str = str(scheme.entity_uuid)
+                source_entity_name = scheme.name
+            else:
+                logger.error(f"ClassificationScheme with ID {resource_id} not found.")
+                raise ValueError(f"ClassificationScheme {resource_id} not found.")
         elif resource_type == ResourceType.CLASSIFICATION_JOB:
-            assert isinstance(resource, ClassificationJob), "Resource is not a ClassificationJob"
-            package = await builder.build_job_package(resource, include_results=True) # Shareable link export: results=True
-            # filename_suffix remains json
+            job = self.session.get(ClassificationJob, resource_id)
+            if job:
+                entity_uuid_str = str(job.entity_uuid)
+                source_entity_name = job.name
+            else:
+                logger.error(f"ClassificationJob with ID {resource_id} not found.")
+                raise ValueError(f"ClassificationJob {resource_id} not found.")
         elif resource_type == ResourceType.DATASET:
-            assert isinstance(resource, Dataset), "Resource is not a Dataset"
-            # For datasets, assume comprehensive export by default for sharing
-            package = await builder.build_dataset_package(resource, include_record_content=True, include_results=True)
-            filename_suffix = "zip" # Datasets can have files
+            dataset = self.session.get(Dataset, resource_id)
+            if dataset:
+                entity_uuid_str = str(dataset.entity_uuid)
+                source_entity_name = dataset.name
+            else:
+                logger.error(f"Dataset with ID {resource_id} not found.")
+                raise ValueError(f"Dataset {resource_id} not found.")
         elif resource_type == ResourceType.WORKSPACE:
-            # This is a larger refactor for full workspace packaging
-            assert isinstance(resource, Workspace), "Resource is not a Workspace"
-            # Workspace export now returns a DataPackage
-            package = await self.workspace_service.export_workspace(
-                workspace_id=resource_id,
-                user_id=user_id,
-                include_datasources=True, 
-                include_schemes=True,
-                include_jobs=True,
-                include_datasets=True, # Default to true for a comprehensive workspace package
-                include_records_for_datasources=True,
-                include_results_for_jobs=True
-            )
-            filename_suffix = "zip" # Workspace package will now be a zip
+            workspace = self.session.get(Workspace, resource_id)
+            if workspace:
+                # Workspaces might not have a direct entity_uuid in the same way, 
+                # but we need some unique identifier. Using ID for now if no UUID.
+                entity_uuid_str = f"workspace_export_{workspace.id}" # Placeholder, consider adding UUID to Workspace if not present
+                source_entity_name = workspace.name
+            else:
+                logger.error(f"Workspace with ID {resource_id} not found.")
+                raise ValueError(f"Workspace {resource_id} not found.")
         else:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported resource type for export: {resource_type}")
+            raise NotImplementedError(f"Export for resource type {resource_type} is not implemented.")
 
-        # Construct filename
-        # Ensure resource_name_slug is derived from package.metadata.description or similar if resource.name is not directly on package
-        # For now, this relies on 'resource' object being the original DB model, which is correct here.
-        resource_name_slug = getattr(resource, 'name', resource_type.value).lower().replace(' ', '_')
-        filename = f"{resource_name_slug}_{resource_id}.{filename_suffix}"
+        if not entity_uuid_str:
+            entity_uuid_str = str(uuid.uuid4()) # Fallback if no entity_uuid found
+            logger.warning(f"Using fallback UUID for {resource_type.value} ID {resource_id} during export.")
 
-        if package: # Should always be a package now for supported types
-            logger.debug(f"Prepared DataPackage for {resource_type.value} {resource_id}. Files included: {bool(package.files)}. Suggested filename: {filename}")
-            return package, filename
-        # ELIF EXPORT_DICT IS NOW OBSOLETE AS WORKSPACE EXPORT RETURNS DATAPACKAGE
-        # elif export_dict: 
-        #     logger.debug(f"Prepared Dict export for {resource_type.value} {resource_id}.")
-        #     return export_dict, filename 
+        package_metadata = PackageMetadata(
+            package_type=resource_type,
+            source_entity_uuid=entity_uuid_str, # This should be the UUID of the exported entity
+            source_instance_id=self.source_instance_id,
+            created_by=str(user_id) # Or fetch user email/name
+        )
+
+        # Build the package content using PackageBuilder
+        builder = PackageBuilder(self.session, self.storage_provider, self.source_instance_id)
+        
+        # Based on resource_type, call the appropriate builder method
+        if resource_type == ResourceType.DATA_SOURCE:
+            ds = self.session.get(DataSource, resource_id)
+            if not ds: raise ValueError(f"DataSource {resource_id} not found for building package.")
+            package = await builder.build_datasource_package(ds, include_records=True) # Defaulting to include_records=True for now
+            export_filename_base = f"datasource_{ds.name.replace(' ', '_')}_{resource_id}"
+        elif resource_type == ResourceType.SCHEMA:
+            cs = self.session.get(ClassificationScheme, resource_id)
+            if not cs: raise ValueError(f"Scheme {resource_id} not found for building package.")
+            package = await builder.build_scheme_package(cs)
+            export_filename_base = f"scheme_{cs.name.replace(' ', '_')}_{resource_id}"
+        elif resource_type == ResourceType.CLASSIFICATION_JOB:
+            cj = self.session.get(ClassificationJob, resource_id)
+            if not cj: raise ValueError(f"Job {resource_id} not found for building package.")
+            package = await builder.build_job_package(cj, include_results=True) # Defaulting to include_results=True
+            export_filename_base = f"job_{cj.name.replace(' ', '_')}_{resource_id}"
+        elif resource_type == ResourceType.DATASET:
+            d = self.session.get(Dataset, resource_id)
+            if not d: raise ValueError(f"Dataset {resource_id} not found for building package.")
+            # include_record_content, include_results, include_source_files can be parameterized later
+            package = await builder.build_dataset_package(d, include_record_content=True, include_results=True, include_source_files=True)
+            export_filename_base = f"dataset_{d.name.replace(' ', '_')}_{resource_id}"
+        elif resource_type == ResourceType.WORKSPACE:
+            # Workspace export is more complex, involves multiple sub-packages.
+            # The WorkspaceService.export_workspace method already returns a DataPackage.
+            if not self.workspace_service:
+                raise ValueError("WorkspaceService is not available for workspace export.")
+            package = await self.workspace_service.export_workspace(workspace_id=resource_id, user_id=user_id)
+            export_filename_base = f"workspace_{package.metadata.source_entity_uuid or resource_id}" # Use UUID if available
         else:
-            # This should not be reached if logic is correct
-            logger.error(f"_get_export_data_for_resource failed to produce a DataPackage for {resource_type.value} {resource_id}")
-            raise ValueError(f"Could not generate export data for {resource_type.value} {resource_id}")
+            raise NotImplementedError(f"Package building for {resource_type} not implemented.")
+
+        if not package:
+            raise ValueError(f"Failed to build package for {resource_type.value} ID {resource_id}.")
+
+        # Override package metadata with the one we created with user_id and source_instance_id
+        package.metadata = package_metadata
+
+        # Always create a zip package for this method as per new design
+        temp_zip_file_path, _ = self._create_temp_file(prefix=f"{export_filename_base}_", suffix=".zip")
+        try:
+            package.to_zip(temp_zip_file_path)
+            logger.info(f"Successfully created individual zip package at {temp_zip_file_path} for {resource_type.value} ID {resource_id}")
+            # The DataPackage object might be useful for some callers, but the path is primary for zipping operations
+            return package, temp_zip_file_path 
+        except Exception as e_zip:
+            logger.error(f"Failed to zip package for {resource_type.value} ID {resource_id} at {temp_zip_file_path}: {e_zip}", exc_info=True)
+            # Clean up the failed zip attempt if it exists
+            self._cleanup_temp_file(temp_zip_file_path)
+            raise # Re-raise the zipping error
 
     async def export_resource(
         self,
         user_id: int,
         resource_type: ResourceType,
         resource_id: int
-    ) -> Tuple[str, str]:
-        """
-        Export a single resource to a file (JSON or ZIP based on content).
-        Returns the file path and suggested filename.
-        """
-        # Validate resource ownership first
-        self._validate_resource_ownership(
-            resource_type=resource_type,
-            resource_id=resource_id,
-            user_id=user_id
-        )
+    ) -> Tuple[str, str]: # Returns (filepath, filename)
+        """Exports a single resource as a downloadable package (ZIP)."""
+        logger.info(f"Exporting single resource: {resource_type.value} ID {resource_id} for user {user_id}")
         
-        temp_path: Optional[str] = None # Initialize to avoid reference before assignment in finally
+        # Validate ownership
+        await asyncio.to_thread(self._validate_resource_ownership, resource_type, resource_id, user_id)
+
         try:
-            export_content, suggested_filename = await self._get_export_data_for_resource(
+            # _get_export_data_for_resource now always returns a DataPackage and a path to its zip
+            _package_object, temp_zip_file_path = await self._get_export_data_for_resource(
                 user_id=user_id,
                 resource_type=resource_type,
-                resource_id=resource_id
+                resource_id=resource_id,
+                create_zip_package=True # Explicitly true, though it's the default now
             )
             
-            # Determine suffix for temp file based on actual content type
-            actual_suffix = ".zip" if isinstance(export_content, DataPackage) and export_content.files else ".json"
-            temp_path, _ = self._create_temp_file(f"export_{resource_type.value}_{resource_id}_", suffix=actual_suffix)
-
-            if isinstance(export_content, DataPackage):
-                package = export_content
-                if package.files: # Package has associated files, create a ZIP
-                    logger.info(f"Exporting {resource_type.value} {resource_id} as ZIP to {temp_path}")
-                    package.to_zip(temp_path)
-                else: # No files in package, create a JSON (metadata + content)
-                    logger.info(f"Exporting {resource_type.value} {resource_id} as JSON (no files in package) to {temp_path}")
-                    package_json_content = {
-                        "metadata": package.metadata.to_dict(),
-                        "content": package.content
-                    }
-                    with open(temp_path, 'w') as f:
-                        json.dump(package_json_content, f, indent=2)
-            elif isinstance(export_content, dict): # For Workspace (currently returns Dict)
-                logger.info(f"Exporting {resource_type.value} {resource_id} as JSON (dict) to {temp_path}")
-                with open(temp_path, 'w') as f:
-                    json.dump(export_content, f, indent=2)
-            else:
-                # Should not happen based on _get_export_data_for_resource logic
-                raise TypeError(f"Unexpected export content type: {type(export_content)}")
+            # The suggested filename for download comes from the basename of the created zip file path
+            suggested_filename = os.path.basename(temp_zip_file_path)
             
-            return temp_path, suggested_filename
-        
-        except HTTPException as he:
-            if temp_path: self._cleanup_temp_file(temp_path)
-            raise he
+            logger.info(f"Single resource export ready. File: {temp_zip_file_path}, Suggested download name: {suggested_filename}")
+            return temp_zip_file_path, suggested_filename
         except Exception as e:
-            if temp_path: self._cleanup_temp_file(temp_path)
-            logger.error(f"Error exporting {resource_type.value} {resource_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export {resource_type.value}: {str(e)}")
+            logger.error(f"Error during single resource export ({resource_type.value} ID {resource_id}): {e}", exc_info=True)
+            # Ensure no temp file is left if _get_export_data_for_resource partially succeeded then failed
+            # Note: _get_export_data_for_resource should handle its own temp file cleanup on its errors.
+            # Here, we are catching errors from the call to _get_export_data_for_resource itself or ownership validation.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to export {resource_type.value}: {str(e)}"
+            )
 
     async def export_resources_batch(
         self,
@@ -738,222 +798,345 @@ class ShareableService:
         suggested_batch_zip_filename = f"export_batch_{resource_type.value}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.zip"
 
         logger.info(f"Starting batch export for {len(resource_ids)} resources of type {resource_type.value} to {batch_zip_temp_path}")
-        failed_exports = {}
-        temp_files_to_clean = [batch_zip_temp_path] # Keep track of all temp files
+        failed_exports: Dict[int, str] = {}
+        temp_files_to_clean = [] # Initialize empty, will not include batch_zip_temp_path initially
 
         try:
             with zipfile.ZipFile(batch_zip_temp_path, 'w', zipfile.ZIP_DEFLATED) as zf_batch:
+                exported_files_count = 0
                 for res_id in resource_ids:
-                    individual_temp_package_zip_path: Optional[str] = None
+                    temp_package_path: Optional[str] = None # Ensure it's defined for finally block
                     try:
-                        logger.debug(f"Exporting {resource_type.value}:{res_id} for batch...")
+                        # _get_export_data_for_resource should return the path to the created individual package ZIP
+                        # and the package data itself (which might be None if only path is relevant)
+                        # For now, assuming it correctly creates a zip and returns its path.
+                        # The previous logic for handling non-zipped DataPackage content directly in batch seems complex.
+                        # It's simpler if _get_export_data_for_resource *always* produces a zip for batch export items.
+                        # Let's assume _get_export_data_for_resource is modified or already behaves this way:
+                        # It creates a temporary zip file for the individual resource and returns its path.
                         
-                        export_content, individual_filename = await self._get_export_data_for_resource(
+                        # This call should result in a temporary zip file being created for the resource.
+                        # The second element of the tuple is the path to this temporary zip file.
+                        _, temp_package_path = await self._get_export_data_for_resource(
                             user_id=user_id,
                             resource_type=resource_type,
                             resource_id=res_id
                         )
 
-                        if isinstance(export_content, DataPackage):
-                            package = export_content
-                            if package.files: # Package has files, create an individual ZIP for it
-                                # Create a temp file for this individual package's ZIP
-                                individual_temp_package_zip_path, _ = self._create_temp_file(prefix=f"pkg_{res_id}_", suffix=".zip")
-                                temp_files_to_clean.append(individual_temp_package_zip_path)
-                                
-                                package.to_zip(individual_temp_package_zip_path)
-                                # Add this individual ZIP to the main batch ZIP
-                                zf_batch.write(individual_temp_package_zip_path, arcname=individual_filename) # individual_filename should be like 'datasource_X.zip'
-                                logger.debug(f"Added individual ZIP {individual_filename} to batch archive.")
-                            else: # No files in package, write its JSON content to batch ZIP
-                                package_json_content = {
-                                    "metadata": package.metadata.to_dict(),
-                                    "content": package.content
-                                }
-                                zf_batch.writestr(individual_filename, json.dumps(package_json_content, indent=2))
-                                logger.debug(f"Added individual JSON {individual_filename} (from DataPackage) to batch archive.")
-                        elif isinstance(export_content, dict): # Workspace export (Dict)
-                            zf_batch.writestr(individual_filename, json.dumps(export_content, indent=2))
-                            logger.debug(f"Added individual JSON {individual_filename} (from Dict) to batch archive.")
-                        else:
-                            # Should not happen
-                            raise TypeError(f"Unexpected export content type for {res_id}: {type(export_content)}")
-
-                    except Exception as item_error:
-                        logger.error(f"Failed to export item {resource_type.value}:{res_id} within batch: {item_error}", exc_info=True)
-                        failed_exports[res_id] = str(item_error)
+                        if temp_package_path and os.path.exists(temp_package_path) and os.path.getsize(temp_package_path) > 0:
+                            archive_name = os.path.basename(temp_package_path) # e.g., datasource_123.zip
+                            zf_batch.write(temp_package_path, arcname=archive_name)
+                            exported_files_count += 1
+                            logger.info(f"Successfully added {archive_name} to batch zip {os.path.basename(batch_zip_temp_path)}.")
+                        elif temp_package_path: # Path was returned but file is missing or empty
+                            logger.error(f"Skipping resource ID {res_id} of type {resource_type.value} for batch export: individual package file '{temp_package_path}' is missing or empty.")
+                            failed_exports[res_id] = f"Individual package file '{os.path.basename(temp_package_path)}' was missing or empty."
+                        else: # No path was returned, implies error in _get_export_data_for_resource
+                            logger.error(f"Skipping resource ID {res_id} of type {resource_type.value} for batch export: failed to generate individual package.")
+                            failed_exports[res_id] = "Failed to generate individual package (no path returned)."
+                    
+                    except Exception as e_inner:
+                        logger.error(f"Error exporting resource ID {res_id} of type {resource_type.value} for batch: {e_inner}", exc_info=True)
+                        failed_exports[res_id] = str(e_inner)
                     finally:
-                        if individual_temp_package_zip_path: # Clean up temp zip for individual package if created
-                            self._cleanup_temp_file(individual_temp_package_zip_path)
-                            # Remove from general cleanup list as it's handled here
-                            if individual_temp_package_zip_path in temp_files_to_clean:
-                                temp_files_to_clean.remove(individual_temp_package_zip_path)
+                        if temp_package_path and os.path.exists(temp_package_path):
+                            self._cleanup_temp_file(temp_package_path)
             
-            if failed_exports:
-                 raise HTTPException(
-                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                     detail=f"Failed to export some resources within the batch: {failed_exports}"
-                 )
+            if not exported_files_count and resource_ids: # If there were items to export but none succeeded
+                self._cleanup_temp_file(batch_zip_temp_path) 
+                error_summary = "; ".join([f"ID {k}: {v}" for k,v in failed_exports.items()])
+                raise ValueError(f"Batch export failed for all {len(resource_ids)} resources. Errors: {error_summary}")
+            elif failed_exports:
+                logger.warning(f"Batch export completed with some failures. Successful: {exported_files_count}, Failed: {len(failed_exports)}. Failures: {failed_exports}")
 
-            logger.info(f"Batch export successful. Main ZIP file created at {batch_zip_temp_path}")
+            logger.info(f"Batch export of {exported_files_count} items successful. Main ZIP file: {batch_zip_temp_path}")
             return batch_zip_temp_path, suggested_batch_zip_filename
 
         except HTTPException as he:
-            # Batch zip path is already in temp_files_to_clean
-            raise he # Re-raise to be caught by the outermost finally
+            # If an exception occurs before successful return, ensure the main batch_zip_temp_path is cleaned up.
+            self._cleanup_temp_file(batch_zip_temp_path)
+            raise he
         except Exception as e:
-            # Batch zip path is already in temp_files_to_clean
+            # If an exception occurs before successful return, ensure the main batch_zip_temp_path is cleaned up.
+            self._cleanup_temp_file(batch_zip_temp_path)
             logger.error(f"Error during batch export zip creation for {resource_type.value}: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create batch export archive: {str(e)}")
         finally:
-            # Cleanup all temp files created during this operation that weren't cleaned mid-process
+            # Cleanup only intermediate temp files. The main batch_zip_temp_path is handled by BackgroundTasks in the route.
             for temp_file_path in temp_files_to_clean:
                  self._cleanup_temp_file(temp_file_path)
 
     async def import_resource(
         self,
         user_id: int,
-        workspace_id: int, # Target workspace_id for non-workspace imports
+        workspace_id: int,
         file: UploadFile
     ) -> Dict[str, Any]:
-        """
-        Import a resource from an uploaded file (JSON or ZIP package).
-        If importing a Workspace package, workspace_id is ignored as a new workspace is created.
-        For other resource types, they are imported into the specified workspace_id.
-        Returns information about the imported resource.
-        """
-        # For non-workspace imports, validate target workspace access
-        # For workspace imports, a new one is created, so user must be valid, but workspace_id is N/A for target here.
-        # The new WorkspaceService.import_workspace will handle creating a workspace for the user_id.
-
-        temp_upload_filepath, _ = self._create_temp_file(f"import_{uuid.uuid4()}_", suffix=os.path.splitext(file.filename)[1] if file.filename else ".tmp")
-        imported_resource_details: Optional[Any] = None
-        imported_resource_id: Optional[int] = None
-        resource_type_imported: Optional[ResourceType] = None
-        message: str = ""
-        is_workspace_package_import = False
-
+        validate_workspace_access(self.session, workspace_id, user_id)
+        package_importer = PackageImporter(session=self.session, storage_provider=self.storage_provider, target_workspace_id=workspace_id, target_user_id=user_id)
+        
+        outer_temp_upload_filepath = None
+        temp_extraction_dir = None # Initialize here
+        is_batch_attempt = False # Initialize here
+        successful_imports = [] # Initialize here
+        failed_imports = [] # Initialize here
+        
         try:
-            with open(temp_upload_filepath, "wb") as temp_file_writer:
-                content = await file.read()
-                temp_file_writer.write(content)
+            # Save the uploaded file to a temporary path first
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_outer_file:
+                outer_temp_upload_filepath = tmp_outer_file.name
+                shutil.copyfileobj(file.file, tmp_outer_file)
 
-            package_to_import: Optional[DataPackage] = None
-
-            if file.filename and file.filename.lower().endswith(".zip"):
-                logger.info(f"Attempting to import ZIP package: {file.filename}")
-                # Try to load as a generic DataPackage first to inspect metadata
-                # This does not yet load all files from within the zip into memory for all nested packages.
-                # DataPackage.from_zip just parses manifest.json and lists files.
-                main_package_from_zip = DataPackage.from_zip(temp_upload_filepath)
+            if file.filename.lower().endswith(".zip"):
+                logger.info(f"Processing uploaded ZIP package: {file.filename}")
                 
-                if main_package_from_zip.metadata.package_type == "workspace": # or ResourceType.WORKSPACE.value
-                    logger.info(f"ZIP package identified as a Workspace package. Importing into a new workspace for user {user_id}.")
-                    # WorkspaceService.import_workspace handles the full import from the ZIP filepath
-                    imported_resource_details = await self.workspace_service.import_workspace(
-                        user_id=user_id,
-                        filepath=temp_upload_filepath 
-                    )
-                    resource_type_imported = ResourceType.WORKSPACE # Explicitly set
-                    is_workspace_package_import = True
-                    if imported_resource_details:
-                        message = f"Successfully imported Workspace from ZIP package into new workspace ID {imported_resource_details.id}."
-                else:
-                    # It's a ZIP for another resource type (e.g., Dataset with files, DataSource with files)
-                    logger.info(f"ZIP package identified as {main_package_from_zip.metadata.package_type.value}. Importing into workspace {workspace_id}.")
-                    validate_workspace_access(self.session, workspace_id, user_id) # Validate for non-workspace imports
-                    package_to_import = main_package_from_zip # Use the loaded package
-                    resource_type_imported = package_to_import.metadata.package_type
+                # successful_imports = [] # Moved initialization up
+                # failed_imports = [] # Moved initialization up
+                # is_batch_attempt = False # Moved initialization up
+
+                try: # Attempt to load as a single DataPackage first (corresponds to 'except KeyError' at line ~903)
+                    main_package_from_zip = DataPackage.from_zip(outer_temp_upload_filepath)
+                    logger.info(f"Successfully parsed {file.filename} as a single resource package.")
+                    
+                    package_type = main_package_from_zip.metadata.package_type
+                    logger.info(f"Preparing to import single ZIP package. Type: {package_type}, Source UUID: {main_package_from_zip.metadata.source_entity_uuid}")
+                    
+                    imported_resource_id = None
+                    imported_resource_name = "N/A"
+
+                    if package_type == ResourceType.DATA_SOURCE:
+                        imported_ds = await package_importer.import_datasource_package(package=main_package_from_zip)
+                        imported_resource_id = imported_ds.id
+                        imported_resource_name = imported_ds.name
+                        # ADD THIS BLOCK: Enqueue Celery task for processing
+                        if imported_ds.type in [DataSourceType.CSV, DataSourceType.PDF, DataSourceType.URL_LIST]:
+                            process_datasource.delay(imported_ds.id)
+                            logger.info(f"Enqueued process_datasource task for imported single ZIP DataSource ID: {imported_ds.id}, Type: {imported_ds.type.value}")
+                    elif package_type == ResourceType.SCHEMA:
+                        imported_scheme = await package_importer.import_scheme_package(package=main_package_from_zip)
+                        imported_resource_id = imported_scheme.id
+                        imported_resource_name = imported_scheme.name
+                    elif package_type == ResourceType.CLASSIFICATION_JOB:
+                        imported_job = await package_importer.import_job_package(package=main_package_from_zip)
+                        imported_resource_id = imported_job.id
+                        imported_resource_name = imported_job.name
+                    elif package_type == ResourceType.DATASET:
+                        imported_dataset = await package_importer.import_dataset_package(package=main_package_from_zip)
+                        imported_resource_id = imported_dataset.id
+                        imported_resource_name = imported_dataset.name
+                    else: # This else belongs to the if/elif chain for package_type
+                        logger.error(f"Unsupported package type for single import: {package_type}")
+                        raise ValueError(f"Importing single package type '{package_type.value if package_type else 'unknown'}' is not supported here.")
+
+                    self.session.commit()
+                    logger.info(f"Successfully imported single package {package_type.value} '{imported_resource_name}' (ID: {imported_resource_id}) into workspace {workspace_id}")
+                    return {
+                        "message": f"{package_type.value} '{imported_resource_name}' imported successfully.",
+                        "resource_type": package_type.value,
+                        "imported_resource_id": imported_resource_id,
+                        "imported_resource_name": imported_resource_name,
+                        "workspace_id": workspace_id
+                    }
+
+                except KeyError as e: # This 'except' corresponds to the 'try' at line ~861
+                    if "manifest.json" not in str(e):
+                        logger.error(f"Unexpected KeyError during initial ZIP processing for {file.filename}: {e}", exc_info=True)
+                        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error processing ZIP file content: {str(e)}")
+
+                    logger.info(f"Root manifest.json not found in {file.filename}. Checking for inner ZIP packages (batch import attempt).")
+                    is_batch_attempt = True
+                    temp_extraction_dir = tempfile.mkdtemp(prefix="batch_import_")
+                    inner_zip_members = [] # Define here for broader scope in case of error before assignment
+
+                    try: # This 'try' is for the batch processing logic (corresponds to 'except Exception' at line ~993 and 'finally' at line ~1008)
+                        with zipfile.ZipFile(outer_temp_upload_filepath, 'r') as zf_outer:
+                            inner_zip_members = [m for m in zf_outer.infolist() if not m.is_dir() and m.filename.lower().endswith(".zip")]
+
+                            if not inner_zip_members:
+                                logger.warning(f"{file.filename} had no root manifest and no inner .zip files. It's not a valid single package or recognized batch.")
+                                raise ValueError(
+                                    "The provided ZIP file does not appear to be a single valid resource package (missing root 'manifest.json') "
+                                    "and does not contain inner .zip packages for batch import."
+                                )
+
+                            for member_info in inner_zip_members:
+                                inner_zip_filename = os.path.basename(member_info.filename)
+                                inner_temp_zip_path = os.path.join(temp_extraction_dir, inner_zip_filename)
+                                
+                                try: # This 'try' is for processing one inner package (corresponds to 'except Exception' at line ~970 and 'finally' at line ~978)
+                                    with zf_outer.open(member_info) as source, open(inner_temp_zip_path, "wb") as target:
+                                        shutil.copyfileobj(source, target)
+                                    
+                                    logger.info(f"Processing inner package: {inner_zip_filename}")
+                                    inner_package = DataPackage.from_zip(inner_temp_zip_path)
+                                    inner_package_type = inner_package.metadata.package_type
+                                    
+                                    imported_id, imported_name = None, "N/A" # Initialize here
+                                    imported_item = None
+
+                                    if inner_package_type == ResourceType.DATA_SOURCE:
+                                        logger.info(f"Attempting to import DataSource package: {inner_zip_filename}")
+                                        imported_item = await package_importer.import_datasource_package(package=inner_package)
+                                        logger.info(f"Importer returned: {imported_item} (type: {type(imported_item)}) for {inner_zip_filename}")
+
+                                        if imported_item:
+                                            logger.info(f"Checking imported_item attributes. Has ID: {hasattr(imported_item, 'id')}, Has Name: {hasattr(imported_item, 'name')}, Has Type: {hasattr(imported_item, 'type')}")
+                                            if hasattr(imported_item, 'type') and imported_item.type in [DataSourceType.CSV, DataSourceType.PDF, DataSourceType.URL_LIST]:
+                                                process_datasource.delay(imported_item.id)
+                                                logger.info(f"Enqueued process_datasource task for imported inner ZIP DataSource ID: {imported_item.id}, Type: {imported_item.type.value}")
+                                            elif not hasattr(imported_item, 'type'):
+                                                logger.error(f"CRITICAL: imported_item for {inner_zip_filename} (ID: {getattr(imported_item, 'id', 'N/A')}) is missing 'type' attribute!")
+                                        else:
+                                            logger.warning(f"Importer returned None for {inner_zip_filename}, cannot enqueue Celery task.")
+
+                                    elif inner_package_type == ResourceType.SCHEMA:
+                                        imported_item = await package_importer.import_scheme_package(package=inner_package)
+                                    elif inner_package_type == ResourceType.CLASSIFICATION_JOB:
+                                        imported_item = await package_importer.import_job_package(package=inner_package)
+                                    elif inner_package_type == ResourceType.DATASET:
+                                        imported_item = await package_importer.import_dataset_package(package=inner_package)
+                                    else:
+                                        raise ValueError(f"Unsupported package type '{inner_package_type.value if inner_package_type else 'unknown'}' found in inner ZIP {inner_zip_filename}.")
+                                    
+                                    if imported_item:
+                                        logger.info(f"Post-import, imported_item: {imported_item}, ID: {getattr(imported_item[0], 'id', 'N/A') if imported_item else 'N/A'}, Name: {getattr(imported_item[0], 'name', 'N/A') if imported_item else 'N/A'}")
+                                        imported_id, imported_name = imported_item[0].id, imported_item[0].name
+                                    else:
+                                        raise ValueError(f"Importer returned None for package {inner_zip_filename} of type {inner_package_type.value if inner_package_type else 'Unknown'}")
+
+                                    self.session.commit()
+                                    successful_imports.append({
+                                        "filename": inner_zip_filename,
+                                        "resource_type": inner_package_type.value,
+                                        "imported_resource_id": imported_id,
+                                        "imported_resource_name": imported_name,
+                                        "status": "success"
+                                    })
+                                    logger.info(f"Successfully imported inner package {inner_zip_filename} as {inner_package_type.value} ID {imported_id}")
+
+                                except Exception as inner_e: # This 'except' corresponds to the 'try' at line ~930
+                                    self.session.rollback()
+                                    logger.error(f"Failed to import inner package {inner_zip_filename}: {inner_e}", exc_info=True)
+                                    failed_imports.append({
+                                        "filename": inner_zip_filename,
+                                        "status": "failed",
+                                        "error": str(inner_e)
+                                    })
+                                finally: # This 'finally' corresponds to the 'try' at line ~930
+                                    if os.path.exists(inner_temp_zip_path):
+                                        os.remove(inner_temp_zip_path)
+                        
+                        # This return is for the batch processing path, after the loop
+                        return { # Correctly indented for the batch try block
+                            "message": "Batch import process completed.",
+                            "batch_summary": {
+                                "total_files_processed": len(inner_zip_members),
+                                "successful_imports": successful_imports,
+                                "failed_imports": failed_imports
+                            },
+                            "workspace_id": workspace_id
+                        }
+
+                    except Exception as batch_processing_error: # This 'except' corresponds to the 'try' at line ~915
+                        logger.error(f"Error during batch ZIP processing of {file.filename}: {batch_processing_error}", exc_info=True)
+                        # If it was a batch attempt that failed partway, return partial results
+                        if successful_imports or failed_imports: # Check if any processing happened
+                            return {
+                                "message": "Batch import process encountered an error.",
+                                "batch_summary": {
+                                    "total_files_processed": len(inner_zip_members),
+                                    "successful_imports": successful_imports,
+                                    "failed_imports": failed_imports + [{"filename": "overall_batch_process", "status": "failed", "error": str(batch_processing_error)}],
+                                },
+                                "workspace_id": workspace_id
+                            }
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid or corrupted ZIP package for batch import: {str(batch_processing_error)}")
+                    finally: # This 'finally' corresponds to the 'try' at line ~915
+                        if temp_extraction_dir and os.path.exists(temp_extraction_dir):
+                             shutil.rmtree(temp_extraction_dir)
+                             logger.info(f"Cleaned up batch import temporary extraction directory: {temp_extraction_dir}")
             
-            elif file.filename and file.filename.lower().endswith(".json"):
-                logger.info(f"Attempting to import JSON file: {file.filename}. Importing into workspace {workspace_id}.")
-                validate_workspace_access(self.session, workspace_id, user_id) # Validate for non-workspace imports
-                with open(temp_upload_filepath, 'r') as f_json:
-                    parsed_json = json.load(f_json)
+            elif file.filename.lower().endswith(".json"):
+                file_content = await file.read()
+                parsed_json_content = json.loads(file_content.decode('utf-8'))
+                logger.info(f"Successfully parsed JSON file: {file.filename}")
+
+                metadata_dict = parsed_json_content.get("metadata")
+                content_dict = parsed_json_content.get("content")
+                if not metadata_dict or not content_dict:
+                    raise ValueError("JSON package is missing 'metadata' or 'content' top-level keys.")
+                metadata_obj = PackageMetadata.from_dict(metadata_dict)
+                package_to_import = DataPackage(metadata=metadata_obj, content=content_dict, files=None)
+                package_type = metadata_obj.package_type
+                logger.info(f"Preparing to import from JSON package. Type: {package_type}, Source UUID: {metadata_obj.source_entity_uuid}")
                 
-                if "metadata" in parsed_json and "content" in parsed_json and "package_type" in parsed_json.get("metadata", {}):
-                    logger.debug("JSON identified as DataPackage manifest (file-less package).")
-                    metadata = PackageMetadata.from_dict(parsed_json["metadata"])
-                    content_data = parsed_json["content"]
-                    package_to_import = DataPackage(metadata=metadata, content=content_data, files={})
-                    resource_type_imported = package_to_import.metadata.package_type
-                    # Cannot be a workspace package if it's a single JSON manifest without files
-                    if resource_type_imported == ResourceType.WORKSPACE:
-                        raise ValueError("Workspace packages must be in ZIP format. Standalone JSON is not supported for workspace import.")
+                imported_resource_id = None
+                imported_resource_name = "N/A"
+
+                if package_type == ResourceType.DATA_SOURCE:
+                    imported_ds = await package_importer.import_datasource_package(package=package_to_import)
+                    imported_resource_id = imported_ds.id
+                    imported_resource_name = imported_ds.name
+                    # ADD THIS BLOCK: Enqueue Celery task for processing
+                    if imported_ds.type in [DataSourceType.CSV, DataSourceType.PDF, DataSourceType.URL_LIST]:
+                        process_datasource.delay(imported_ds.id)
+                        logger.info(f"Enqueued process_datasource task for imported JSON DataSource ID: {imported_ds.id}, Type: {imported_ds.type.value}")
+                elif package_type == ResourceType.SCHEMA:
+                    imported_scheme = await package_importer.import_scheme_package(package=package_to_import)
+                    imported_resource_id = imported_scheme.id
+                    imported_resource_name = imported_scheme.name
+                elif package_type == ResourceType.CLASSIFICATION_JOB:
+                    imported_job = await package_importer.import_job_package(package=package_to_import)
+                    imported_resource_id = imported_job.id
+                    imported_resource_name = imported_job.name
+                elif package_type == ResourceType.DATASET:
+                    imported_dataset = await package_importer.import_dataset_package(package=package_to_import)
+                    imported_resource_id = imported_dataset.id
+                    imported_resource_name = imported_dataset.name
                 else:
-                    raise ValueError("Invalid JSON structure. Not a recognized DataPackage manifest. For Workspace import, use a ZIP package.")
-            else:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only .zip packages or .json manifests are allowed.")
+                    logger.error(f"Unsupported package type for JSON import: {package_type}")
+                    raise ValueError(f"Importing JSON package type '{package_type.value if package_type else 'unknown'}' is not supported.")
 
-            # Perform import for non-workspace packages using PackageImporter
-            if package_to_import and not is_workspace_package_import:
-                importer = PackageImporter(
-                    session=self.session,
-                    storage_provider=self.storage_provider,
-                    target_workspace_id=workspace_id, # Target existing workspace
-                    target_user_id=user_id
-                )
-                if resource_type_imported == ResourceType.DATA_SOURCE:
-                    imported_resource_details = await importer.import_datasource_package(package_to_import)
-                elif resource_type_imported == ResourceType.SCHEMA:
-                    imported_resource_details = await importer.import_scheme_package(package_to_import)
-                elif resource_type_imported == ResourceType.CLASSIFICATION_JOB:
-                    imported_resource_details = await importer.import_job_package(package_to_import)
-                elif resource_type_imported == ResourceType.DATASET:
-                    imported_resource_details = await importer.import_dataset_package(package_to_import)
-                else:
-                    # This case should ideally be caught by earlier checks if package_type was unexpected
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Import not supported for this package type: {resource_type_imported.value if resource_type_imported else 'unknown'}")
-                
-                if imported_resource_details:
-                    message = f"Successfully imported {resource_type_imported.value} from package into workspace {workspace_id}."
-            
-            # If it was not a non-workspace package import, and not a workspace package import, then something is wrong.
-            elif not is_workspace_package_import and not package_to_import:
-                 raise ValueError("Could not determine import strategy or resource type after file processing.")
-
-            # Assign common variables for response construction if details exist
-            if imported_resource_details:
-                imported_resource_id = getattr(imported_resource_details, 'id', None)
-
-            # Commit transaction: 
-            # - WorkspaceService.import_workspace handles its own commit for the new workspace and its contents.
-            # - For other types, PackageImporter uses flush, so we commit here.
-            if not is_workspace_package_import and imported_resource_details: # Only commit if PackageImporter was used
                 self.session.commit()
-                logger.info(f"Committed import for {resource_type_imported.value} ID {imported_resource_id} into workspace {workspace_id}")
-            elif is_workspace_package_import and imported_resource_details:
-                logger.info(f"Workspace import for new workspace ID {imported_resource_id} handled its own commit.")
-            
-            # Refresh the main imported object if it's a DB model and we have a session
-            if imported_resource_details and hasattr(imported_resource_details, '__table__'): # Check if SQLModel object
-                try:
-                    self.session.refresh(imported_resource_details)
-                except Exception as refresh_err:
-                    logger.warning(f"Could not refresh imported object {imported_resource_id}: {refresh_err}")
+                logger.info(f"Successfully imported JSON package {package_type.value} '{imported_resource_name}' (ID: {imported_resource_id}) into workspace {workspace_id}")
+                return {
+                    "message": f"{package_type.value} '{imported_resource_name}' imported successfully from JSON.",
+                    "resource_type": package_type.value,
+                    "imported_resource_id": imported_resource_id,
+                    "imported_resource_name": imported_resource_name,
+                    "workspace_id": workspace_id
+                }
+            else:
+                logger.error(f"Service layer received unexpected file type: {file.filename}")
+                raise ValueError("Unsupported file type passed to service. Only .json or .zip files are accepted.")
 
-            return {
-                "message": message,
-                "resource_type": resource_type_imported.value if resource_type_imported else "unknown",
-                "imported_resource_id": imported_resource_id,
-                "imported_entity_uuid": getattr(imported_resource_details, 'entity_uuid', None)
-            }
-
-        except HTTPException as he:
-            self.session.rollback() # Rollback on known HTTP errors
-            raise he
-        except ValueError as e:
-            self.session.rollback() # Rollback on validation errors
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Import validation failed: {str(e)}")
-        except Exception as e:
-            self.session.rollback() # Rollback on any other errors
-            logger.exception(f"Error importing resource from file {file.filename if file.filename else 'unknown'}: {e}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error importing resource: {str(e)}")
-        finally:
-            # WorkspaceService.import_workspace cleans up its own filepath.
-            # For other imports, the temp_upload_filepath was used by DataPackage.from_zip or direct read.
-            if not is_workspace_package_import: # Only clean up if not passed to workspace_service
-                 self._cleanup_temp_file(temp_upload_filepath)
+        except ValueError as ve: # Corresponds to the outermost try block
+            self.session.rollback()
+            logger.warning(f"ValueError during import resource for user {user_id}, workspace {workspace_id}: {ve}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+        except HTTPException as he: # Corresponds to the outermost try block
+            self.session.rollback()
+            raise he # Re-raise if it's already an HTTPException
+        except Exception as e: # Corresponds to the outermost try block
+            self.session.rollback()
+            logger.exception(f"General error importing resource from file {file.filename}: {e}")
+            # Return batch summary if available, even on general error
+            if is_batch_attempt and (successful_imports or failed_imports): # Check if batch attempt was made and had some results
+                 return {
+                    "message": "Batch import process resulted in a general error.",
+                    "batch_summary": {
+                        "total_files_processed": len(inner_zip_members) if 'inner_zip_members' in locals() and inner_zip_members is not None else 0,
+                        "successful_imports": successful_imports,
+                        "failed_imports": failed_imports + [{"filename": "overall_batch_process", "status": "failed", "error": str(e)}],
+                    },
+                    "workspace_id": workspace_id
+                }
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error during import: {str(e)}")
+        finally: # Corresponds to the outermost try block
+            if outer_temp_upload_filepath and os.path.exists(outer_temp_upload_filepath):
+                os.remove(outer_temp_upload_filepath)
+                logger.info(f"Cleaned up main temporary import file: {outer_temp_upload_filepath}")
+            # temp_extraction_dir is cleaned up within its own try/finally if batch attempt was made
     
     async def get_dataset_package_summary_from_token(
         self,

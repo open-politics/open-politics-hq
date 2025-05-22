@@ -7,6 +7,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 import os
+import asyncio
 
 # Import base service types
 from app.api.services.classification import ClassificationService
@@ -108,7 +109,7 @@ class DatasetService:
 
         if not dataset:
             return None
-            
+
         return dataset
 
     def list_datasets(self, user_id: int, workspace_id: int, skip: int = 0, limit: int = 100) -> Tuple[List[Dataset], int]:
@@ -328,9 +329,11 @@ class DatasetService:
                                     logger.debug(f"Fetching source file {storage_path} for dataset package (DataSource ID: {datasource.id}, Record ID: {record_obj.id}).")
                                     file_object = await self.storage_provider.get_file(storage_path)
                                     if file_object and hasattr(file_object, 'read'):
-                                        file_data = await file_object.read()
+                                        # Run the synchronous read operation in a separate thread
+                                        file_data = await asyncio.to_thread(file_object.read) 
                                         if hasattr(file_object, 'close'):
-                                            file_object.close()
+                                            # Run the synchronous close operation in a separate thread
+                                            await asyncio.to_thread(file_object.close)
                                     else:
                                         logger.warning(f"Storage provider returned invalid file object for {storage_path}. Skipping.")
                                         continue
@@ -379,7 +382,7 @@ class DatasetService:
             source_entity_uuid=dataset.entity_uuid,
             source_instance_id=self.source_instance_id,
             description=f"Dataset: {dataset.name}",
-            created_by=str(user_id), 
+            created_by=str(user_id),
             created_at=datetime.now(timezone.utc)
         )
         return DataPackage(metadata, content, builder.files)
@@ -409,8 +412,8 @@ class DatasetService:
         try:
             imported_dataset = await importer.import_dataset_package(
                 package=package,
-                conflict_strategy=conflict_resolution_strategy
-            )
+                                conflict_strategy=conflict_resolution_strategy
+                            )
             
             self.session.commit()
             self.session.refresh(imported_dataset) 

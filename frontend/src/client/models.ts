@@ -279,6 +279,13 @@ export type ClassificationSchemeUpdate = {
 
 
 
+export type CreateDatasetFromJobRequest = {
+	name?: string | null;
+	description?: string | null;
+};
+
+
+
 export type CsvRowData = {
 	row_data: Record<string, string | null>;
 	row_number: number;
@@ -360,7 +367,7 @@ export type DataSourceTransferRequest = {
 	/**
 	 * If true, copy the datasources; if false, move them
 	 */
-	copy?: boolean;
+	copy_datasources?: boolean;
 };
 
 
@@ -412,6 +419,37 @@ export type DatasetCreate = {
 	datarecord_ids?: Array<number> | null;
 	source_job_ids?: Array<number> | null;
 	source_scheme_ids?: Array<number> | null;
+};
+
+
+
+export type DatasetPackageEntitySummary = {
+	entity_uuid?: string | null;
+	name?: string | null;
+	description?: string | null;
+};
+
+
+
+export type DatasetPackageFileManifestItem = {
+	filename: string;
+	original_datasource_uuid?: string | null;
+	original_datasource_id?: number | null;
+	type?: string | null;
+	linked_datarecord_uuid?: string | null;
+};
+
+
+
+export type DatasetPackageSummary = {
+	package_metadata: Record<string, unknown>;
+	dataset_details: DatasetPackageEntitySummary;
+	record_count?: number;
+	classification_results_count?: number;
+	included_schemes?: Array<DatasetPackageEntitySummary>;
+	included_jobs?: Array<DatasetPackageEntitySummary>;
+	linked_datasources_summary?: Array<DatasetPackageEntitySummary>;
+	source_files_manifest?: Array<DatasetPackageFileManifestItem>;
 };
 
 
@@ -505,6 +543,13 @@ export type FileUploadResponse = {
 
 export type HTTPValidationError = {
 	detail?: Array<ValidationError>;
+};
+
+
+
+export type ImportWorkspaceFromTokenRequest = {
+	share_token: string;
+	new_workspace_name?: string | null;
 };
 
 

@@ -1,7 +1,7 @@
 /* frontend/src/components/collection/workspaces/jobs/JobHistoryView.tsx */
 'use client';
 
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   useClassificationJobsStore,
   useClassificationJobsActions,
@@ -9,7 +9,7 @@ import {
   useClassificationJobsError
 } from '@/zustand_stores/storeClassificationJobs';
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
-import { ClassificationJobRead, ClassificationJobStatus } from '@/client';
+import { ClassificationJobRead, ResourceType, ClassificationJobStatus as ClassificationJobStatusType } from '@/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -21,21 +21,25 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertCircle, ExternalLink, RefreshCw, Filter, Star } from 'lucide-react';
+import { Loader2, AlertCircle, ExternalLink, RefreshCw, Filter, Star, Upload, Download, Trash2, Eye, Share2, Plus } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFavoriteRunsStore, FavoriteRun } from '@/zustand_stores/storeFavoriteRuns';
 import { cn } from "@/lib/utils";
+import { toast } from 'sonner';
+import { classificationJobColumns, ClassificationJobRowData } from '../classifications/tables/jobs/columns';
+import { DataTable } from '@/components/collection/workspaces/tables/data-table';
+import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
+import { useShareableStore } from '@/zustand_stores/storeShareables';
 
 interface JobHistoryViewProps {
-  // Function to trigger loading a job's results into the runner view
   onLoadJob: (jobId: number | null) => void;
 }
 
-const formatJobStatus = (status: ClassificationJobStatus | string | null | undefined) => {
+const formatJobStatus = (status: ClassificationJobStatusType | string | null | undefined) => {
     if (!status) return <Badge variant="outline">Unknown</Badge>;
-    const statusLower = status.toLowerCase();
+    const statusLower = typeof status === 'string' ? status.toLowerCase() : status;
     switch (statusLower) {
         case 'completed':
             return <Badge variant="default" className="bg-green-600 hover:bg-green-700">Completed</Badge>;
@@ -47,6 +51,8 @@ const formatJobStatus = (status: ClassificationJobStatus | string | null | undef
             return <Badge variant="secondary" className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Running</Badge>;
         case 'pending':
             return <Badge variant="secondary" className="flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Pending</Badge>;
+        case 'cancelled':
+            return <Badge variant="destructive" className="bg-amber-500 hover:bg-amber-600 text-white">Cancelled</Badge>;
         default:
             return <Badge variant="outline" className="capitalize">{status}</Badge>;
     }
@@ -54,320 +60,276 @@ const formatJobStatus = (status: ClassificationJobStatus | string | null | undef
 
 export default function JobHistoryView({ onLoadJob }: JobHistoryViewProps) {
   const { activeWorkspace } = useWorkspaceStore();
-
-  // 1. Select the jobs object (more stable reference)
   const jobsObject = useClassificationJobsStore((state) => state.classificationJobs);
-  const { favoriteRuns, addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
-
-  // 2. Derive the array using useMemo
-  const allJobs = useMemo(() => Object.values(jobsObject || {}), [jobsObject]);
-
-  // Now allJobs should be correctly typed and stable
+  const allJobs = useMemo(() => Object.values(jobsObject || {}).sort((a,b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [jobsObject]);
   const isLoading = useIsClassificationJobsLoading();
   const error = useClassificationJobsError();
-  const { fetchClassificationJobs } = useClassificationJobsActions();
+  const { 
+    fetchClassificationJobs, 
+    deleteClassificationJob, 
+    exportClassificationJob, 
+    exportMultipleClassificationJobs, 
+    importClassificationJob 
+  } = useClassificationJobsActions();
+  const { createLink } = useShareableStore();
 
-  const [statusFilter, setStatusFilter] = useState<string>('all'); // 'all', 'active', 'completed', 'failed', etc.
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
   const prevWorkspaceIdRef = useRef<number | null | undefined>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const currentWorkspaceId = activeWorkspace?.id;
-    // Fetch jobs if workspace ID is present
     if (currentWorkspaceId) {
       fetchClassificationJobs(currentWorkspaceId);
     }
-
-    // Reset filter ONLY if workspace ID has changed
     if (currentWorkspaceId !== prevWorkspaceIdRef.current) {
-        setStatusFilter('all');
-        setShowFavoritesOnly(false);
+      setStatusFilter('all');
+      setShowFavoritesOnly(false);
+      setRowSelection({});
     }
-
-    // Update the ref AFTER the check
     prevWorkspaceIdRef.current = currentWorkspaceId;
-
   }, [activeWorkspace?.id, fetchClassificationJobs]);
 
   const handleRefresh = () => {
     if (activeWorkspace?.id) {
       fetchClassificationJobs(activeWorkspace.id);
+      toast.info('Refreshing job history...');
     }
   };
 
-  const handleToggleFavorite = (job: ClassificationJobRead) => {
-    if (!activeWorkspace?.id) return;
+  const handleViewResults = useCallback((job: ClassificationJobRowData) => {
+    onLoadJob(job.id);
+    toast.info(`Loading results for job: ${job.name || job.id}`);
+  }, [onLoadJob]);
 
-    const jobIsFavorite = isFavorite(job.id);
-
-    if (jobIsFavorite) {
-      removeFavoriteRun(job.id);
-    } else {
-      const favoriteRun: FavoriteRun = {
-        id: job.id,
-        name: job.name || `Job ${job.id}`,
-        timestamp: format(new Date(), 'PPp'), // Timestamp of favoriting
-        documentCount: job.target_datasource_ids?.length ?? 0,
-        schemeCount: job.target_scheme_ids?.length ?? 0,
-        workspaceId: activeWorkspace.id,
-        description: job.description || undefined,
-      };
-      addFavoriteRun(favoriteRun);
+  const handleExportJob = useCallback(async (jobId: number) => {
+    if (!activeWorkspace?.id) {
+      toast.error('No active workspace selected.');
+      return;
     }
-  };
+    await exportClassificationJob(jobId);
+  }, [activeWorkspace?.id, exportClassificationJob]);
 
-  const parseFavoriteTimestamp = (ts: string): number => {
-    try {
-      const date = new Date(ts.replace(' at ', ' '));
-      if (!isNaN(date.getTime())) return date.getTime();
-    } catch (e) { /* ignore */ }
-    try {
-      const date = new Date(ts);
-      if (!isNaN(date.getTime())) return date.getTime();
-    } catch (e) { /* ignore */ }
-    return 0;
-  };
+  const handleShareJob = useCallback(async (jobId: number) => {
+    if (!activeWorkspace?.id) {
+      toast.error('No active workspace selected for sharing.');
+      return;
+    }
+    const jobToShare = allJobs.find(j => j.id === jobId);
+    const jobName = jobToShare?.name || `Job ${jobId}`;
 
-  const currentWorkspaceFavoriteRuns = useMemo(() => {
+    toast.promise(createLink({
+      resource_type: 'classification_job' as ResourceType,
+      resource_id: jobId,
+      name: `Share link for Classification Job: ${jobName}`,
+      description: `A shareable link to access Classification Job ${jobName} (ID: ${jobId}) from workspace ${activeWorkspace.name}`,
+      // permission_level: 'read_only', // Default in backend schema
+      // is_public: true, // Default false
+      // requires_login: true, // Default true
+    }), {
+      loading: `Generating share link for ${jobName}...`,
+      success: (newLink) => {
+        if (newLink && newLink.share_url) {
+          navigator.clipboard.writeText(newLink.share_url)
+            .then(() => toast.success(`Share link for ${jobName} copied to clipboard!`))
+            .catch(() => toast.success(`Share link for ${jobName}: ${newLink.share_url}`));
+          return `Share link created: ${newLink.share_url}`;
+        } else {
+          throw new Error("Failed to generate a valid share link.");
+        }
+      },
+      error: (err) => {
+        console.error("Failed to create share link:", err);
+        return `Failed to create share link for ${jobName}.`;
+      }
+    });
+  }, [activeWorkspace, createLink, allJobs]);
+
+  const handleDeleteJob = useCallback(async (job: ClassificationJobRowData) => {
+    if (!activeWorkspace?.id) {
+      toast.error('No active workspace selected.');
+      return;
+    }
+    toast.promise(deleteClassificationJob(activeWorkspace.id, job.id), {
+      loading: `Deleting job: ${job.name || job.id}...`,
+      success: () => {
+        setRowSelection({}); 
+        return `Job '${job.name || job.id}' deleted successfully.`;
+      },
+      error: `Failed to delete job: ${job.name || job.id}.`,
+    });
+  }, [activeWorkspace?.id, deleteClassificationJob]);
+
+  const columns: ColumnDef<ClassificationJobRowData>[] = useMemo(() => 
+    classificationJobColumns({
+      onViewResults: handleViewResults,
+      onExport: handleExportJob,
+      onShare: handleShareJob,
+      onDelete: handleDeleteJob,
+    }), 
+  [handleViewResults, handleExportJob, handleShareJob, handleDeleteJob]);
+
+  const { favoriteRuns } = useFavoriteRunsStore();
+  const currentWorkspaceFavoriteRunIds = useMemo(() => {
     if (!activeWorkspace?.id) return [];
     return favoriteRuns
       .filter(fav => Number(fav.workspaceId) === activeWorkspace.id)
-      .sort((a, b) => parseFavoriteTimestamp(b.timestamp) - parseFavoriteTimestamp(a.timestamp));
+      .map(fav => fav.id);
   }, [favoriteRuns, activeWorkspace?.id]);
-
-  const currentWorkspaceFavoriteRunIds = useMemo(() => {
-    return currentWorkspaceFavoriteRuns.map(fav => fav.id);
-  }, [currentWorkspaceFavoriteRuns]);
-
-  const latestThreeFavoritesForDisplay = useMemo(() => {
-    return currentWorkspaceFavoriteRuns.slice(0, 3);
-  }, [currentWorkspaceFavoriteRuns]);
 
   const filteredJobs = useMemo(() => {
     let processedJobs = [...allJobs];
-
-    // 1. Filter by favorites if the toggle is active
     if (showFavoritesOnly) {
       processedJobs = processedJobs.filter(job => currentWorkspaceFavoriteRunIds.includes(job.id));
     }
-
-    // 2. Apply status filter
-    if (statusFilter === 'all') {
-      // No status filter needed
-    } else if (statusFilter === 'active') {
-      processedJobs = processedJobs.filter(job => job.status === 'running' || job.status === 'pending');
-    } else if (statusFilter === 'completed') {
-      processedJobs = processedJobs.filter(job => job.status === 'completed' || job.status === 'completed_with_errors');
-    } else if (statusFilter === 'failed') {
-      processedJobs = processedJobs.filter(job => job.status === 'failed');
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'active') {
+        processedJobs = processedJobs.filter(job => 
+          job.status === 'running' || 
+          job.status === 'pending'
+        );
+      } else {
+        processedJobs = processedJobs.filter(job => job.status === statusFilter || job.status?.toString() === statusFilter);
+      }
     }
-    // No 'else' needed as statusFilter must be one of the above or 'all' based on SelectItems
-
-    // 3. Sort
-    return processedJobs.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    return processedJobs;
   }, [allJobs, statusFilter, showFavoritesOnly, currentWorkspaceFavoriteRunIds]);
 
-  const getEmptyStateMessage = () => {
-    if (isLoading && allJobs.length === 0) return ""; // Loading message will show
-    if (error) return ""; // Error message will show
+  const selectedJobIds = useMemo(() => {
+    const selectedIndices = Object.keys(rowSelection).map(Number);
+    return filteredJobs
+      .filter((_, index) => selectedIndices.includes(index))
+      .map(job => job.id)
+      .filter((id): id is number => typeof id === 'number');
+  }, [rowSelection, filteredJobs]);
 
-    if (filteredJobs.length > 0) return ""; // Not empty
-
-    if (showFavoritesOnly) {
-      if (statusFilter === 'all') return "No favorite jobs found for this workspace.";
-      return `No favorite jobs found matching status: ${statusFilter}.`;
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      toast.error("No file selected for import.");
+      return;
     }
-    // Not showing favorites only
-    if (statusFilter === 'all') return "No classification jobs found for this workspace.";
-    return `No jobs found matching status: ${statusFilter}.`;
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace. Cannot import job.");
+      return;
+    }
+    toast.promise(importClassificationJob(file), {
+      loading: 'Importing job...',
+      success: (importedJob) => {
+        if (importedJob) return `Job '${importedJob.name || importedJob.id}' imported successfully.`;
+        return 'Job import initiated.';
+      },
+      error: 'Failed to import job.',
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
-  const emptyStateMessage = getEmptyStateMessage();
 
+  const handleExportSelectedJobs = async () => {
+    if (selectedJobIds.length === 0) {
+      toast.info("No jobs selected for export.");
+      return;
+    }
+    if (!activeWorkspace?.id) {
+      toast.error("No active workspace. Cannot export jobs.");
+      return;
+    }
+    await exportMultipleClassificationJobs(selectedJobIds);
+  };
+
+  if (!activeWorkspace) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Classification Job History</CardTitle>
+          <CardDescription>Select a workspace to view job history.</CardDescription>
+        </CardHeader>
+        <CardContent className="text-center text-muted-foreground">
+          <p>Please select or create a workspace.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  
   return (
     <Card>
       <CardHeader>
-        <div className="flex justify-between items-start mb-2">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2">
           <div>
-             <CardTitle>Classification Job History</CardTitle>
-             <CardDescription>
-               View past and currently running classification jobs for this workspace.
-             </CardDescription>
+            <CardTitle>Classification Job History</CardTitle>
+            <CardDescription>
+              View, manage, and import/export classification jobs for this workspace.
+            </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-             <Button
-                variant={showFavoritesOnly ? "secondary" : "outline"}
-                size="sm"
-                onClick={() => setShowFavoritesOnly(prev => !prev)}
-                className="h-8"
-                title={showFavoritesOnly ? "Show All Jobs" : "Show Only Favorite Jobs"}
-             >
-                <Star className={cn("mr-1 h-3 w-3", showFavoritesOnly && "fill-yellow-400 text-yellow-400")}/> Favorites
-             </Button>
-             <Select value={statusFilter} onValueChange={(value) => {
-                setStatusFilter(value);
-             }}>
-                <SelectTrigger className="w-[180px] h-8 text-xs">
-                    <Filter className="h-3 w-3 mr-1 text-muted-foreground"/>
-                    <SelectValue placeholder="Filter by status" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="active">Active (Running/Pending)</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="failed">Failed</SelectItem>
-                </SelectContent>
-             </Select>
-             <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isLoading} className="h-8">
-               <RefreshCw className={`mr-1 h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} /> Refresh
-             </Button>
-           </div>
-         </div>
-         {latestThreeFavoritesForDisplay.length > 0 && (
-            <div className="mb-3 flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-muted-foreground font-medium">Latest Favorites:</span>
-                {latestThreeFavoritesForDisplay.map(fav => (
-                    <TooltipProvider key={fav.id} delayDuration={100}>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Badge
-                                    variant="outline"
-                                    onClick={() => onLoadJob(fav.id)}
-                                    className="cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                                >
-                                    <Star className="h-2.5 w-2.5 mr-1 fill-yellow-500 text-yellow-500" />
-                                    {fav.name || `Job ${fav.id}`}
-                                </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                <p>Load Job: {fav.name || `Job ${fav.id}`}</p>
-                                {fav.description && <p className="text-xs text-muted-foreground max-w-xs truncate">{fav.description}</p>}
-                                <p className="text-xs text-muted-foreground">Favorited: {fav.timestamp}</p>
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
-                ))}
-            </div>
-         )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} className="h-8">
+              <Upload className="mr-1 h-3.5 w-3.5" /> Import Job
+            </Button>
+            <input type="file" ref={fileInputRef} onChange={handleImportFile} className="hidden" accept=".json,.zip" />
+            <Button variant="outline" size="sm" onClick={handleExportSelectedJobs} disabled={selectedJobIds.length === 0} className="h-8">
+              <Download className="mr-1 h-3.5 w-3.5" /> Export Selected ({selectedJobIds.length})
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isLoading} className="h-8">
+              <RefreshCw className={`mr-1 h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} /> Refresh
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant={showFavoritesOnly ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => setShowFavoritesOnly(prev => !prev)}
+            className="h-8"
+            title={showFavoritesOnly ? "Show All Jobs" : "Show Only Favorite Jobs"}
+          >
+            <Star className={cn("mr-1 h-3 w-3", showFavoritesOnly && "fill-yellow-400 text-yellow-400")}/> Favorites
+          </Button>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-auto sm:w-[180px] h-8 text-xs">
+              <Filter className="h-3 w-3 mr-1 text-muted-foreground"/>
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="running">Running</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="completed_with_errors">Completed with Errors</SelectItem>
+              <SelectItem value="failed">Failed</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent>
-        {isLoading && allJobs.length === 0 ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">Loading job history...</span>
+        {isLoading && filteredJobs.length === 0 && (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <span className="ml-2">Loading job history...</span>
           </div>
-        ) : error ? (
-          <div className="flex items-center justify-center py-8 text-destructive">
-            <AlertCircle className="h-5 w-5 mr-2" />
-            <span>Error loading job history: {error}</span>
+        )}
+        {error && (
+          <div className="flex flex-col items-center justify-center py-10 text-destructive">
+            <AlertCircle className="h-8 w-8 mb-2" />
+            <span className="font-medium">Error loading job history</span>
+            <p className="text-sm">{error}</p>
           </div>
-        ) : !isLoading && filteredJobs.length === 0 ? (
-           <div className="text-center py-8 text-muted-foreground">
-               {emptyStateMessage}
+        )}
+        {!isLoading && !error && (
+          <DataTable 
+            columns={columns} 
+            data={filteredJobs} 
+            rowSelection={rowSelection} 
+            onRowSelectionChange={setRowSelection}
+          />
+        )}
+        {!isLoading && !error && filteredJobs.length === 0 && (
+           <div className="text-center py-10 text-muted-foreground">
+             <p>No classification jobs found matching your criteria.</p>
            </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Actions</TableHead>
-                <TableHead>Job Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Targets</TableHead>
-                <TableHead>Trigger</TableHead>
-                <TableHead>Last Updated</TableHead>
-                <TableHead className="text-center">Favorite</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredJobs.map((job) => (
-                <TableRow key={job.id}>
-                  <TableCell>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onLoadJob(job.id)}
-                      disabled={!job.status || ['pending', 'running'].includes(job.status)}
-                      className="h-7 text-xs"
-                    >
-                      <ExternalLink className="h-3 w-3 mr-1" />
-                      Load Results
-                    </Button>
-                  </TableCell>
-                  <TableCell className="font-medium">
-                     <TooltipProvider delayDuration={100}>
-                       <Tooltip>
-                         <TooltipTrigger className="cursor-default text-left">
-                            <span className="truncate max-w-[200px] inline-block">{job.name || `Job ${job.id}`}</span>
-                         </TooltipTrigger>
-                         <TooltipContent>
-                            <p>Name: {job.name || `Job ${job.id}`}</p>
-                            {job.description && <p>Desc: {job.description}</p>}
-                            <p>ID: {job.id}</p>
-                         </TooltipContent>
-                       </Tooltip>
-                     </TooltipProvider>
-                  </TableCell>
-                  <TableCell>
-                    <TooltipProvider delayDuration={100}>
-                       <Tooltip>
-                         <TooltipTrigger>
-                            {formatJobStatus(job.status)}
-                         </TooltipTrigger>
-                         <TooltipContent>
-                             {job.error_message ? <p className="text-xs max-w-xs">{job.error_message}</p> : <p>Status: {job.status}</p>}
-                         </TooltipContent>
-                       </Tooltip>
-                     </TooltipProvider>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {job.target_datasource_ids?.length ?? 0} Source(s)<br/>
-                    {job.target_scheme_ids?.length ?? 0} Scheme(s)
-                  </TableCell>
-                   <TableCell className="text-xs text-muted-foreground">
-                    {job.configuration?.recurring_task_id ? (
-                       `Task ID: ${job.configuration.recurring_task_id}`
-                    ) : (
-                       'Manual'
-                    )}
-                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger>
-                          {formatDistanceToNow(new Date(job.updated_at), { addSuffix: true })}
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Created: {format(new Date(job.created_at), 'PPp')}</p>
-                          <p>Updated: {format(new Date(job.updated_at), 'PPp')}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleToggleFavorite(job)}
-                            className="h-7 w-7"
-                          >
-                            <Star className={cn(
-                              "h-4 w-4",
-                              isFavorite(job.id) ? "fill-yellow-400 text-yellow-500" : "text-muted-foreground"
-                            )} />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{isFavorite(job.id) ? "Unmark as favorite" : "Mark as favorite"}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
         )}
       </CardContent>
     </Card>

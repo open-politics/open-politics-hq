@@ -10,15 +10,17 @@ import zipfile
 import tempfile
 import os
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 import uuid
 from pathlib import Path
 from sqlalchemy import select
 from sqlmodel import Session
 from fastapi import UploadFile
+import asyncio
 
 from app.models import (
     DataSource,
+    DataSourceType,
     DataRecord,
     ClassificationScheme,
     ClassificationJob,
@@ -97,18 +99,89 @@ class DataPackage:
         self.files = files or {}
 
     def to_zip(self, output_path: str) -> None:
-        """Write package to a ZIP file."""
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Write manifest
-            manifest = {
-                "metadata": self.metadata.to_dict(),
-                "content": self.content
-            }
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        """Serializes the package to a ZIP file."""
+        # Ensure files directory exists for packaging if self.files is not None
+        if self.files:
+            files_dir = os.path.join(os.path.dirname(output_path), "temp_package_files")
+            os.makedirs(files_dir, exist_ok=True)
 
-            # Write files
-            for filename, content in self.files.items():
-                zf.writestr(f"files/{filename}", content)
+        try:
+            with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # Serialize metadata and content to manifest.json
+                manifest_content = {
+                    "metadata": self.metadata.to_dict(),
+                    "content": self.content,
+                    # "files_manifest": [fname for fname in self.files.keys()] if self.files else [] # Optional: if you want a quick list of files in manifest
+                }
+                
+                def default_serializer(o):
+                    if isinstance(o, (datetime, date)):
+                        return o.isoformat()
+                    # Add other custom serializers here if needed
+                    # e.g., if o is a Pydantic model: return o.model_dump()
+                    # For UUIDs, if they are not directly serializable:
+                    if hasattr(o, 'hex'): # A way to check for UUID-like objects
+                        return str(o)
+                    logger.warning(f"Serializing an unexpected type to string in manifest: {type(o)}")
+                    return str(o) # Fallback, but be cautious
+
+                try:
+                    manifest_str = json.dumps(manifest_content, indent=2, default=default_serializer)
+                    if not manifest_str:
+                        logger.error(f"MANIFEST_EMPTY_ERROR: manifest_str was empty after json.dumps for {output_path}. Manifest content: {str(manifest_content)[:500]}")
+                        # Potentially raise an error here or handle it to prevent an empty manifest
+                        raise ValueError("Generated manifest string is empty.")
+                    zf.writestr("manifest.json", manifest_str)
+                except TypeError as e:
+                    logger.error(f"MANIFEST_SERIALIZATION_ERROR: Failed to serialize manifest for zip {output_path}: {e}")
+                    logger.error(f"Problematic manifest_content keys: {list(manifest_content.keys())}")
+                    # Log snippets of potentially problematic parts
+                    if 'metadata' in manifest_content:
+                         logger.error(f"Metadata snippet: {str(manifest_content['metadata'])[:200]}")
+                    if 'content' in manifest_content:
+                         logger.error(f"Content snippet: {str(manifest_content['content'])[:200]}")
+                    raise # Re-raise the error to prevent creating a corrupt zip
+
+                # Add files if any
+                if self.files:
+                    for filename, content_bytes in self.files.items():
+                        # Sanitize filename for ZIP archive (e.g., remove leading slashes, ../)
+                        # For now, assuming filenames are simple and relative.
+                        # Ensure filename is just the name, not a path that could break out.
+                        safe_filename = os.path.basename(filename)
+                        file_path_in_zip = f"files/{safe_filename}"
+                        
+                        # Write to a temporary local file first before adding to zip
+                        # This is generally safer with large files or if content_bytes is a stream
+                        temp_file_local_path = os.path.join(files_dir, safe_filename)
+                        with open(temp_file_local_path, 'wb') as f_temp:
+                            f_temp.write(content_bytes)
+                        
+                        zf.write(temp_file_local_path, arcname=file_path_in_zip)
+                        logger.debug(f"Added file {safe_filename} to zip as {file_path_in_zip}")
+            
+            logger.info(f"Successfully created package zip: {output_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to create package zip {output_path}: {e}", exc_info=True)
+            # If an error occurs, try to remove the partially created zip file
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                    logger.info(f"Cleaned up partially created zip: {output_path}")
+                except OSError as oe:
+                    logger.error(f"Error cleaning up partially created zip {output_path}: {oe}")
+            raise # Re-raise the original exception
+        finally:
+            # Clean up temporary files directory
+            if self.files and os.path.exists(files_dir):
+                try:
+                    for f_name in os.listdir(files_dir):
+                        os.remove(os.path.join(files_dir, f_name))
+                    os.rmdir(files_dir)
+                    logger.debug(f"Cleaned up temporary files directory: {files_dir}")
+                except OSError as oe:
+                    logger.error(f"Error cleaning up temporary files directory {files_dir}: {oe}")
 
     @classmethod
     def from_zip(cls, zip_path: str) -> "DataPackage":
@@ -159,7 +232,12 @@ class PackageBuilder:
     async def _fetch_file_content(self, object_name: str) -> bytes:
         """Fetch file content from storage."""
         file_obj = await self.storage_provider.get_file(object_name)
-        return await file_obj.read()
+        # Run the synchronous read operation in a separate thread
+        content = await asyncio.to_thread(file_obj.read)
+        if hasattr(file_obj, 'close'):
+            # Run the synchronous close operation in a separate thread
+            await asyncio.to_thread(file_obj.close)
+        return content
 
     def _add_file(self, filename: str, content: bytes) -> None:
         """Add a file to the package."""
@@ -521,8 +599,23 @@ class PackageImporter:
             if filename not in package.files:
                 raise ValueError(f"Missing file: {filename}")
             
+            # This stores the file and gets the *new* storage path
             storage_path = await self._store_file(filename, package.files[filename])
+            
+            # Update the current_origin_details with the new storage_path
             ds_data["origin_details"]["storage_path"] = storage_path
+            ds_data["origin_details"]["filename"] = filename
+
+        # Convert string type to DataSourceType enum
+        try:
+            data_source_type_enum = DataSourceType(ds_data["type"])
+        except ValueError:
+            # Handle cases where the type string is not a valid DataSourceType
+            # You might want to log this, raise an error, or default to a specific type
+            logger.error(f"Invalid DataSourceType string '{ds_data['type']}' found in package for {source_uuid}. Defaulting or erroring.")
+            # Example: raise ValueError(f"Invalid DataSourceType string: {ds_data['type']}")
+            # For now, let's re-raise to make it explicit if an invalid type is encountered
+            raise ValueError(f"Invalid DataSourceType string encountered during import: {ds_data['type']}")
 
         # Create new DataSource
         new_ds = DataSource(
@@ -530,13 +623,13 @@ class PackageImporter:
             user_id=self.user_id,
             imported_from_uuid=source_uuid,
             name=ds_data["name"],
-            type=ds_data["type"],
+            type=data_source_type_enum,
             description=ds_data.get("description"),
             origin_details=ds_data["origin_details"],
             source_metadata=ds_data["source_metadata"]
         )
         self.session.add(new_ds)
-        self.session.flush()
+        self.session.flush() # Flush to get ID for records
         self._register_imported_entity("datasource", source_uuid, new_ds)
 
         # Import records if present
@@ -552,9 +645,10 @@ class PackageImporter:
                     content_hash=record_data.get("content_hash")
                 )
                 self.session.add(new_record)
-                self.session.flush()
+                self.session.flush() # Flush to get ID for record registration
                 self._register_imported_entity("record", record_data["entity_uuid"], new_record)
-
+        
+        # self.session.commit() # Commit should happen in the calling service (ShareableService)
         return new_ds
 
     async def import_scheme_package(

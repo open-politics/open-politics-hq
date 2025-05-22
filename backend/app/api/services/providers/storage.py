@@ -5,8 +5,9 @@ import logging
 import io
 import os
 import asyncio
-from typing import List, Optional, BinaryIO, Protocol, Any
+from typing import List, Optional, BinaryIO, Protocol, Any, Union
 from os import fstat
+from tempfile import SpooledTemporaryFile
 
 from fastapi import HTTPException, UploadFile, status
 from minio import Minio
@@ -59,42 +60,70 @@ class MinioStorageProvider(StorageProvider):
             logging.error(f"Unexpected error ensuring bucket exists: {e}")
             # Optionally raise
 
-    def _get_file_size(self, file: UploadFile) -> int:
-        """Helper to get file size safely."""
-        try:
-            current_pos = file.file.tell()
-            file.file.seek(0, 2)
-            size = file.file.tell()
-            file.file.seek(current_pos)
-            if size >= 0: return size
-        except Exception as e:
-            logging.warning(f"Could not get file size using seek/tell: {e}")
-        try:
-            return fstat(file.file.fileno()).st_size
-        except Exception as e:
-            logging.error(f"Error getting file size via fileno(): {e}")
+    def _get_file_size(self, file: Union[UploadFile, bytes, BinaryIO]) -> int:
+        """Attempt to get file size, return -1 if not possible."""
+        if isinstance(file, bytes):
+            return len(file)
+        if hasattr(file, 'file') and hasattr(file.file, 'fileno'): # Check for UploadFile structure
+            try:
+                return os.fstat(file.file.fileno()).st_size
+            except Exception as e:
+                logging.error(f"Error getting file size via fileno(): {e}")
+        if hasattr(file, 'seek') and hasattr(file, 'tell'): # Check for file-like object
+            try:
+                original_pos = file.tell()
+                file.seek(0, os.SEEK_END)
+                size = file.tell()
+                file.seek(original_pos)
+                return size
+            except Exception as e:
+                logging.warning(f"Could not get file size using seek/tell: {e}")
+        
+            logging.error(f"Could not determine file size for type: {type(file)}")
+            # Raising an error here is better than returning -1 if size is crucial for MinIO part_size
             raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not determine file size")
 
     # --- Implementation of StorageProvider Interface --- 
 
-    async def upload_file(self, file: UploadFile, object_name: str):
-        try:
+    async def upload_file(self, file: Union[UploadFile, bytes, BinaryIO], object_name: str) -> str:
+        file_to_upload: BinaryIO
+        file_size_bytes: int
+
+        if isinstance(file, bytes):
+            file_to_upload = io.BytesIO(file)
+            file_size_bytes = len(file)
+            logging.info(f"Uploading raw bytes. Object name: {object_name}, Size: {file_size_bytes} bytes")
+        elif hasattr(file, 'file') and isinstance(file.file, SpooledTemporaryFile): # FastAPI UploadFile
+            # For UploadFile, file.file is the SpooledTemporaryFile
+            file.file.seek(0) # Ensure reading from the beginning
+            file_to_upload = file.file
+            file_size_bytes = self._get_file_size(file) # Use original UploadFile for size
+            logging.info(f"Uploading SpooledTemporaryFile (from UploadFile). Object name: {object_name}, Size: {file_size_bytes} bytes")
+        elif hasattr(file, 'seek') and hasattr(file, 'tell'): # General file-like object
+            file.seek(0)
+            file_to_upload = file
             file_size_bytes = self._get_file_size(file)
-            def _upload_sync():
-                self.client.put_object(
+            logging.info(f"Uploading generic file-like object. Object name: {object_name}, Size: {file_size_bytes} bytes")
+        else:
+            logging.error(f"Unsupported file type for upload: {type(file)}")
+            raise FileStorageError(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type for upload.")
+
+        try:
+            # Use a part size of at least 5MB, default for MinIO client if size is unknown or too small
+            part_size = max(5 * 1024 * 1024, file_size_bytes if file_size_bytes > 0 else (10 * 1024 * 1024))
+            
+            self.client.put_object(
                     bucket_name=self.bucket_name,
                     object_name=object_name,
-                    data=file.file,
-                    length=file_size_bytes,
-                    content_type=file.content_type
-                )
-            await asyncio.to_thread(_upload_sync)
-            logging.info(f"File '{file.filename}' uploaded as '{object_name}' successfully.")
-        except S3Error as e:
-            logging.error(f"Error uploading file: {e}")
-            raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to upload file.")
+                data=file_to_upload, # Pass the BytesIO or SpooledTemporaryFile
+                length=file_size_bytes, # Pass the determined size
+                part_size=part_size, # Adjust as needed, > 5MB for S3 compatibility for multipart
+                content_type='application/octet-stream' # Generic content type
+            )
+            logging.info(f"Successfully uploaded to {self.bucket_name}/{object_name}")
+            return object_name
         except Exception as e:
-            logging.error(f"Unexpected error during file upload: {e}")
+            logging.exception(f"Error uploading file to MinIO: {e}")
             raise FileStorageError(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unexpected error during file upload.")
 
     async def get_file(self, object_name: str) -> Any:

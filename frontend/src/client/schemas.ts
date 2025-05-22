@@ -794,6 +794,27 @@ export const $ClassificationSchemeUpdate = {
 	},
 } as const;
 
+export const $CreateDatasetFromJobRequest = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $CsvRowData = {
 	properties: {
 		row_data: {
@@ -1043,7 +1064,7 @@ export const $DataSourceTransferRequest = {
 },
 	isRequired: true,
 },
-		copy: {
+		copy_datasources: {
 	type: 'boolean',
 	description: `If true, copy the datasources; if false, move them`,
 	default: true,
@@ -1223,6 +1244,129 @@ export const $DatasetCreate = {
 }, {
 	type: 'null',
 }],
+},
+	},
+} as const;
+
+export const $DatasetPackageEntitySummary = {
+	properties: {
+		entity_uuid: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $DatasetPackageFileManifestItem = {
+	properties: {
+		filename: {
+	type: 'string',
+	isRequired: true,
+},
+		original_datasource_uuid: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		original_datasource_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		type: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		linked_datarecord_uuid: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $DatasetPackageSummary = {
+	properties: {
+		package_metadata: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		dataset_details: {
+	type: 'DatasetPackageEntitySummary',
+	isRequired: true,
+},
+		record_count: {
+	type: 'number',
+	default: 0,
+},
+		classification_results_count: {
+	type: 'number',
+	default: 0,
+},
+		included_schemes: {
+	type: 'array',
+	contains: {
+		type: 'DatasetPackageEntitySummary',
+	},
+	default: [],
+},
+		included_jobs: {
+	type: 'array',
+	contains: {
+		type: 'DatasetPackageEntitySummary',
+	},
+	default: [],
+},
+		linked_datasources_summary: {
+	type: 'array',
+	contains: {
+		type: 'DatasetPackageEntitySummary',
+	},
+	default: [],
+},
+		source_files_manifest: {
+	type: 'array',
+	contains: {
+		type: 'DatasetPackageFileManifestItem',
+	},
+	default: [],
 },
 	},
 } as const;
@@ -1516,6 +1660,23 @@ export const $HTTPValidationError = {
 	contains: {
 		type: 'ValidationError',
 	},
+},
+	},
+} as const;
+
+export const $ImportWorkspaceFromTokenRequest = {
+	properties: {
+		share_token: {
+	type: 'string',
+	isRequired: true,
+},
+		new_workspace_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;

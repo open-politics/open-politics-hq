@@ -234,8 +234,8 @@ async def import_resource(
     Import a resource from a file into a specific workspace.
     Transaction managed by SessionDep within the service dependency.
     """
-    if not file.filename or not file.filename.lower().endswith(".json"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only JSON files are supported")
+    if not file.filename or not (file.filename.lower().endswith(".json") or file.filename.lower().endswith(".zip")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only JSON or ZIP files are supported for this endpoint.")
 
     try:
         result = await service.import_resource(
@@ -255,7 +255,20 @@ async def import_resource(
 
 
 # --- New Batch Export Route ---
-@router.post("/export-batch", response_class=FileResponse)
+@router.post(
+    "/export-batch",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "description": "Successful batch export, returns a ZIP archive.",
+            "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
+        },
+        400: {"description": "Bad Request (e.g., no resource IDs)"},
+        403: {"description": "Forbidden (e.g., permission denied for one or more resources)"},
+        422: {"description": "Validation Error"},
+        500: {"description": "Internal Server Error"},
+    },
+)
 async def export_resources_batch(
     request_data: ExportBatchRequest,
     current_user: CurrentUser,

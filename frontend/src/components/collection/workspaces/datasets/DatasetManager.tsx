@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PlusCircle, Edit, Trash2, Eye, Search, XCircle, Loader2, Download, Upload } from 'lucide-react';
-import { DatasetRead } from '@/client';
-import { useDatasetStore } from '@/zustand_stores/storeDatasets';
-import { useToast } from "@/components/ui/use-toast"
+import { PlusCircle, Edit, Trash2, Eye, Search, XCircle, Loader2, Download, Upload, Share2 } from 'lucide-react';
+import { DatasetRead, ResourceType } from '@/client';
+import { useDatasetStore, ExportOptions, ImportOptions } from '@/zustand_stores/storeDatasets';
+import { useShareableStore } from '@/zustand_stores/storeShareables';
+import { toast } from 'sonner';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
@@ -18,21 +19,14 @@ import DatasetCreateDialog from './DatasetCreateDialog';
 interface ExportDialogState {
     open: boolean;
     datasetsToExport: DatasetRead[];
-    options: {
-        includeRecordContent: boolean;
-        includeResults: boolean;
-        includeSourceFiles: boolean;
-    };
+    options: ExportOptions;
 }
 
 interface ImportDialogState {
     open: boolean;
     mode: 'file' | 'token';
-    options: {
-        includeContent: boolean;
-        includeResults: boolean;
-        conflictStrategy: 'skip' | 'update' | 'replace';
-    };
+    tokenInput?: string;
+    options: ImportOptions;
 }
 
 const DatasetManager: React.FC = () => {
@@ -48,7 +42,7 @@ const DatasetManager: React.FC = () => {
         deleteDataset
     } = useDatasetStore();
 
-    const { toast } = useToast();
+    const { createLink: createShareLink } = useShareableStore();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -69,9 +63,8 @@ const DatasetManager: React.FC = () => {
     const [importDialog, setImportDialog] = useState<ImportDialogState>({
         open: false,
         mode: 'file',
+        tokenInput: '',
         options: {
-            includeContent: true,
-            includeResults: true,
             conflictStrategy: 'skip'
         }
     });
@@ -88,7 +81,7 @@ const DatasetManager: React.FC = () => {
 
     const filteredDatasets = datasets.filter(dataset =>
         dataset.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        dataset.description?.toLowerCase().includes(searchTerm.toLowerCase())
+        (dataset.description && dataset.description.toLowerCase().includes(searchTerm.toLowerCase()))
     );
 
     const handleDeleteClick = (dataset: DatasetRead) => {
@@ -107,16 +100,20 @@ const DatasetManager: React.FC = () => {
             });
             setDatasetToDelete(null);
         } catch (error) {
-            console.error("Error during delete:", error);
+            console.error("Error during delete from component:", error);
         } finally {
             setIsDeleting(false);
         }
     };
 
-    const handleExportClick = (datasets: DatasetRead[]) => {
+    const handleExportClick = (datasetsToExport: DatasetRead[]) => {
+        if (datasetsToExport.length === 0) {
+            toast.info("No datasets selected to export.");
+            return;
+        }
         setExportDialog({
             open: true,
-            datasetsToExport: datasets,
+            datasetsToExport,
             options: {
                 includeRecordContent: false,
                 includeResults: true,
@@ -125,24 +122,29 @@ const DatasetManager: React.FC = () => {
         });
     };
 
-    const handleImportClick = (mode: 'file' | 'token') => {
+    const handleImportButtonClick = (mode: 'file' | 'token') => {
+        if (mode === 'file') {
+            fileInputRef.current?.click();
+        } else {
         setImportDialog({
             open: true,
             mode,
-            options: {
-                includeContent: true,
-                includeResults: true,
-                conflictStrategy: 'skip'
-            }
+                tokenInput: '',
+                options: { conflictStrategy: 'skip' }
         });
+        }
     };
 
     const confirmExport = async () => {
         const { datasetsToExport, options } = exportDialog;
+        try {
         if (datasetsToExport.length === 1) {
             await exportDataset(datasetsToExport[0].id, options);
-        } else {
+            } else if (datasetsToExport.length > 1) {
             await exportMultipleDatasets(datasetsToExport.map(d => d.id), options);
+            }
+        } catch (error) {
+            console.error("Export error from component:", error);
         }
         setExportDialog(prev => ({ ...prev, open: false }));
     };
@@ -152,20 +154,32 @@ const DatasetManager: React.FC = () => {
         if (!file) return;
 
         try {
-            await importDataset(file);
-            setImportDialog(prev => ({ ...prev, open: false }));
+            await importDataset(file, importDialog.options.conflictStrategy);
         } catch (error) {
-            console.error("Import failed:", error);
+            console.error("Import failed from component:", error);
         }
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+        setImportDialog(prev => ({ ...prev, open: false }));
     };
 
-    const handleTokenImport = async (token: string) => {
-        try {
-            await importFromToken(token, importDialog.options);
-            setImportDialog(prev => ({ ...prev, open: false }));
-        } catch (error) {
-            console.error("Token import failed:", error);
+    const confirmTokenImport = async () => {
+        if (!importDialog.tokenInput) {
+            toast.error("Please enter a share token.");
+            return;
         }
+        try {
+            await importFromToken(importDialog.tokenInput, importDialog.options);
+            setImportDialog(prev => ({ ...prev, open: false, tokenInput: '' }));
+        } catch (error) {
+            console.error("Token import failed from component:", error);
+        }
+    };
+    
+    const handleShareDataset = (datasetId: number, datasetName: string) => {
+        console.log(`Sharing dataset: ${datasetName} (ID: ${datasetId})`);
+        toast.info(`Share functionality for "${datasetName}" coming soon!`);
     };
 
     const handleSelectAll = (checked: boolean | 'indeterminate') => {
@@ -209,24 +223,24 @@ const DatasetManager: React.FC = () => {
                             className="pl-8 h-9"
                         />
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => handleImportClick('file')}>
+                    <Button size="sm" variant="outline" onClick={() => handleImportButtonClick('file')} disabled={isLoading}>
                         <Upload className="h-4 w-4 mr-2" />
                         Import File
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleImportClick('token')}>
+                    <Button size="sm" variant="outline" onClick={() => handleImportButtonClick('token')} disabled={isLoading}>
                         <Upload className="h-4 w-4 mr-2" />
-                        Import from Token
+                        Import Token
                     </Button>
                     <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleExportClick(Array.from(selectedDatasetIds).map(id => datasets.find(d => d.id === id)!).filter(Boolean))}
-                        disabled={numSelected === 0}
+                        onClick={() => handleExportClick(Array.from(selectedDatasetIds).map(id => datasets.find(d => d.id === id)!).filter((d): d is DatasetRead => !!d))}
+                        disabled={numSelected === 0 || isLoading}
                     >
                         <Download className="h-4 w-4 mr-2" />
                         Export Selected ({numSelected})
                     </Button>
-                    <Button size="sm" onClick={() => setIsCreateDialogOpen(true)}>
+                    <Button size="sm" onClick={() => setIsCreateDialogOpen(true)} disabled={isLoading}>
                         <PlusCircle className="h-4 w-4 mr-2" />
                         Create Dataset
                     </Button>
@@ -240,7 +254,7 @@ const DatasetManager: React.FC = () => {
                 </div>
             )}
 
-            {error && !isLoading && (
+            {error && (
                 <div className="flex-grow flex flex-col items-center justify-center p-4 border border-destructive/50 bg-destructive/10 rounded-lg">
                     <XCircle className="h-10 w-10 text-destructive mb-2"/>
                     <p className="text-destructive font-medium">Error loading datasets</p>
@@ -296,14 +310,14 @@ const DatasetManager: React.FC = () => {
                                             </TableCell>
                                             <TableCell className="text-right pr-4">
                                                 <div className="flex justify-end gap-1">
-                                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleExportClick([dataset])} title="Export">
+                                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleExportClick([dataset])} title="Export Dataset" disabled={isLoading}>
                                                         <Download className="h-4 w-4" />
                                                     </Button>
-                                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {}} title="Edit">
-                                                        <Edit className="h-4 w-4" />
+                                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleShareDataset(dataset.id, dataset.name)} title="Share Dataset" disabled={isLoading}>
+                                                        <Share2 className="h-4 w-4" />
                                                     </Button>
                                                     <AlertDialogTrigger asChild>
-                                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClick(dataset)} title="Delete">
+                                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClick(dataset)} title="Delete Dataset" disabled={isDeleting || isLoading}>
                                                             <Trash2 className="h-4 w-4" />
                                                         </Button>
                                                     </AlertDialogTrigger>
@@ -324,7 +338,6 @@ const DatasetManager: React.FC = () => {
                 </div>
             )}
 
-            {/* Export Dialog */}
             <Dialog open={exportDialog.open} onOpenChange={(open) => setExportDialog(prev => ({ ...prev, open }))}>
                 <DialogContent>
                     <DialogHeader>
@@ -370,92 +383,77 @@ const DatasetManager: React.FC = () => {
                                 }))}
                             />
                             <label htmlFor="includeFiles" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Include source files
+                                Include source files (if applicable)
                             </label>
                         </div>
                     </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setExportDialog(prev => ({ ...prev, open: false }))}>
-                            Cancel
-                        </Button>
-                        <Button onClick={confirmExport}>
-                            <Download className="h-4 w-4 mr-2" />
+                        <Button variant="outline" onClick={() => setExportDialog(prev => ({ ...prev, open: false }))} disabled={isLoading}>Cancel</Button>
+                        <Button onClick={confirmExport} disabled={isLoading}>
+                            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4"/>}
                             Export
                         </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
 
-            {/* Import Dialog */}
             <Dialog open={importDialog.open} onOpenChange={(open) => setImportDialog(prev => ({ ...prev, open }))}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Import Dataset</DialogTitle>
-                        <DialogDescription>
-                            {importDialog.mode === 'file' ? 
-                                "Import a dataset from a file." :
-                                "Import a dataset using a share token."
-                            }
-                        </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4 py-4">
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="importContent"
-                                checked={importDialog.options.includeContent}
-                                onCheckedChange={(checked) => setImportDialog(prev => ({
-                                    ...prev,
-                                    options: { ...prev.options, includeContent: !!checked }
-                                }))}
-                            />
-                            <label htmlFor="importContent" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Include content
-                            </label>
+                    {importDialog.mode === 'file' && (
+                        <div className="py-4">
+                            <p className="text-sm text-muted-foreground mb-2">Select a previously exported dataset file (.zip).</p>
+                            <Button onClick={() => fileInputRef.current?.click()} className="w-full" disabled={isLoading}>
+                                <Upload className="mr-2 h-4 w-4" /> Choose File to Import
+                            </Button>
+                            <p className="text-xs text-muted-foreground mt-2">Conflict strategy for imported items:</p>
+                            <select 
+                                value={importDialog.options.conflictStrategy}
+                                onChange={(e) => setImportDialog(prev => ({...prev, options: {...prev.options, conflictStrategy: e.target.value as 'skip' | 'update' | 'replace'}}))}
+                                className="w-full mt-1 p-2 border rounded-md text-sm"
+                                disabled={isLoading}
+                            >
+                                <option value="skip">Skip duplicates</option>
+                                <option value="update">Update existing</option>
+                                <option value="replace">Replace existing</option>
+                            </select>
                         </div>
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="importResults"
-                                checked={importDialog.options.includeResults}
-                                onCheckedChange={(checked) => setImportDialog(prev => ({
-                                    ...prev,
-                                    options: { ...prev.options, includeResults: !!checked }
-                                }))}
+                    )}
+                    {importDialog.mode === 'token' && (
+                        <div className="space-y-4 py-4">
+                            <Input 
+                                placeholder="Enter share token..." 
+                                value={importDialog.tokenInput}
+                                onChange={(e) => setImportDialog(prev => ({...prev, tokenInput: e.target.value}))}
+                                disabled={isLoading}
                             />
-                            <label htmlFor="importResults" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                Include results
-                            </label>
-                        </div>
-                        {importDialog.mode === 'token' && (
-                            <div className="space-y-2">
-                                <label htmlFor="token" className="text-sm font-medium leading-none">Share Token</label>
-                                <Input
-                                    id="token"
-                                    placeholder="Enter share token..."
-                                    onChange={(e) => {}}
-                                />
+                            <p className="text-xs text-muted-foreground mt-2">Conflict strategy for imported items:</p>
+                             <select 
+                                value={importDialog.options.conflictStrategy}
+                                onChange={(e) => setImportDialog(prev => ({...prev, options: {...prev.options, conflictStrategy: e.target.value as 'skip' | 'update' | 'replace'}}))}
+                                className="w-full mt-1 p-2 border rounded-md text-sm"
+                                disabled={isLoading}
+                            >
+                                <option value="skip">Skip duplicates</option>
+                                <option value="update">Update existing</option>
+                                <option value="replace">Replace existing</option>
+                            </select>
                             </div>
                         )}
-                    </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setImportDialog(prev => ({ ...prev, open: false }))}>
-                            Cancel
-                        </Button>
-                        {importDialog.mode === 'file' ? (
-                            <Button onClick={() => fileInputRef.current?.click()}>
-                                <Upload className="h-4 w-4 mr-2" />
-                                Choose File
-                            </Button>
-                        ) : (
-                            <Button onClick={() => {}}>
-                                <Upload className="h-4 w-4 mr-2" />
-                                Import
+                        <Button variant="outline" onClick={() => setImportDialog(prev => ({ ...prev, open: false }))} disabled={isLoading}>Cancel</Button>
+                        {importDialog.mode === 'token' && (
+                            <Button onClick={confirmTokenImport} disabled={isLoading || !importDialog.tokenInput}>
+                                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4"/>}
+                                Import from Token
                             </Button>
                         )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
 
-            {/* Delete Confirmation Dialog */}
             <AlertDialog open={!!datasetToDelete} onOpenChange={(open) => !open && setDatasetToDelete(null)}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
@@ -466,10 +464,10 @@ const DatasetManager: React.FC = () => {
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel onClick={() => setDatasetToDelete(null)} disabled={isDeleting}>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel onClick={() => setDatasetToDelete(null)} disabled={isDeleting || isLoading}>Cancel</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={confirmDelete}
-                            disabled={isDeleting}
+                            disabled={isDeleting || isLoading}
                             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                         >
                             {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4"/>}
@@ -479,31 +477,20 @@ const DatasetManager: React.FC = () => {
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Add DatasetCreateDialog */}
             <DatasetCreateDialog
                 open={isCreateDialogOpen}
                 onOpenChange={setIsCreateDialogOpen}
-                onSuccess={() => {
-                    toast.success("Dataset created successfully");
-                    fetchDatasets();
-                }}
             />
 
             <input
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileImport}
-                accept=".zip"
+                accept=".zip,.json"
                 style={{ display: 'none' }}
             />
         </div>
     );
 };
 
-const DatasetManagerWrapper = () => (
-    <AlertDialog>
-        <DatasetManager />
-    </AlertDialog>
-);
-
-export default DatasetManagerWrapper; 
+export default DatasetManager; 

@@ -1744,7 +1744,71 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response"
+            "description": "Successful batch export, returns a ZIP archive.",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request (e.g., no resource IDs)"
+          },
+          "403": {
+            "description": "Forbidden (e.g., permission denied for one or more resources)"
+          },
+          "422": {
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/shareables/shareables/view_dataset_package_summary/{token}": {
+      "get": {
+        "tags": [
+          "shareables",
+          "shareables"
+        ],
+        "summary": "View Dataset Package Summary",
+        "description": "Get a summary of a shared dataset package using its token.\nDoes not trigger a full download or import of the package data.",
+        "operationId": "view_dataset_package_summary",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetPackageSummary"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -1756,12 +1820,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/search_histories/create": {
@@ -2549,6 +2608,53 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/import_from_token": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Import Workspace From Token Endpoint",
+        "description": "Import a complete workspace using a share token.\nThis creates a new workspace for the current user with the content of the shared workspace.",
+        "operationId": "import_workspace_from_token_endpoint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportWorkspaceFromTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -4054,6 +4160,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/create_dataset": {
+      "post": {
+        "tags": [
+          "classification-jobs",
+          "ClassificationJobs"
+        ],
+        "summary": "Create Dataset From Job Endpoint",
+        "description": "Create a new Dataset from a completed ClassificationJob run.\nThe dataset will encapsulate the job's inputs (records, schemes) and outputs (results implicitly via records).",
+        "operationId": "create_dataset_from_job_endpoint",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDatasetFromJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetRead"
                 }
               }
             }
@@ -6145,6 +6319,18 @@
               "title": "Include Results"
             },
             "description": "Include associated classification results"
+          },
+          {
+            "name": "include_source_files",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include original source files (PDFs, CSVs, etc.)",
+              "default": true,
+              "title": "Include Source Files"
+            },
+            "description": "Include original source files (PDFs, CSVs, etc.)"
           }
         ],
         "responses": {
@@ -8034,7 +8220,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-05-07",
+              "default": "2025-05-21",
               "title": "Timeframe To"
             }
           }
@@ -9111,6 +9297,34 @@
         "type": "object",
         "title": "ClassificationSchemeUpdate"
       },
+      "CreateDatasetFromJobRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "title": "CreateDatasetFromJobRequest"
+      },
       "CsvRowData": {
         "properties": {
           "row_data": {
@@ -9425,9 +9639,9 @@
             "title": "Datasource Ids",
             "description": "List of DataSource IDs to transfer"
           },
-          "copy": {
+          "copy_datasources": {
             "type": "boolean",
-            "title": "Copy",
+            "title": "Copy Datasources",
             "description": "If true, copy the datasources; if false, move them",
             "default": true
           }
@@ -9665,6 +9879,162 @@
           "name"
         ],
         "title": "DatasetCreate"
+      },
+      "DatasetPackageEntitySummary": {
+        "properties": {
+          "entity_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Uuid"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "title": "DatasetPackageEntitySummary"
+      },
+      "DatasetPackageFileManifestItem": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "original_datasource_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Datasource Uuid"
+          },
+          "original_datasource_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Datasource Id"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "linked_datarecord_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Datarecord Uuid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename"
+        ],
+        "title": "DatasetPackageFileManifestItem"
+      },
+      "DatasetPackageSummary": {
+        "properties": {
+          "package_metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Package Metadata"
+          },
+          "dataset_details": {
+            "$ref": "#/components/schemas/DatasetPackageEntitySummary"
+          },
+          "record_count": {
+            "type": "integer",
+            "title": "Record Count",
+            "default": 0
+          },
+          "classification_results_count": {
+            "type": "integer",
+            "title": "Classification Results Count",
+            "default": 0
+          },
+          "included_schemes": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetPackageEntitySummary"
+            },
+            "type": "array",
+            "title": "Included Schemes",
+            "default": []
+          },
+          "included_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetPackageEntitySummary"
+            },
+            "type": "array",
+            "title": "Included Jobs",
+            "default": []
+          },
+          "linked_datasources_summary": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetPackageEntitySummary"
+            },
+            "type": "array",
+            "title": "Linked Datasources Summary",
+            "default": []
+          },
+          "source_files_manifest": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetPackageFileManifestItem"
+            },
+            "type": "array",
+            "title": "Source Files Manifest",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "package_metadata",
+          "dataset_details"
+        ],
+        "title": "DatasetPackageSummary"
       },
       "DatasetRead": {
         "properties": {
@@ -10035,6 +10405,30 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImportWorkspaceFromTokenRequest": {
+        "properties": {
+          "share_token": {
+            "type": "string",
+            "title": "Share Token"
+          },
+          "new_workspace_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Workspace Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "share_token"
+        ],
+        "title": "ImportWorkspaceFromTokenRequest"
       },
       "ItemCreate": {
         "properties": {

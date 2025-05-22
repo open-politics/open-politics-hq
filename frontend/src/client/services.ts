@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_export_resource,Body_shareables_import_resource,ExportBatchRequest,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,DataRecordUpdate,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_export_resource,Body_shareables_import_resource,DatasetPackageSummary,ExportBatchRequest,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,ImportWorkspaceFromTokenRequest,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,CreateDatasetFromJobRequest,DatasetRead,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,DataRecordUpdate,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
 
 export type AppData = {
         
@@ -182,6 +182,10 @@ ExportResourcesBatch: {
                     requestBody: ExportBatchRequest
                     
                 };
+ViewDatasetPackageSummary: {
+                    token: string
+                    
+                };
     }
 
 export type SearchHistoryData = {
@@ -260,6 +264,10 @@ DeleteWorkspace: {
                 };
 TransferDatasourcesEndpoint: {
                     requestBody: DataSourceTransferRequest
+                    
+                };
+ImportWorkspaceFromTokenEndpoint: {
+                    requestBody: ImportWorkspaceFromTokenRequest
                     
                 };
     }
@@ -579,6 +587,18 @@ RetryFailedJobClassifications1: {
 workspaceId: number
                     
                 };
+CreateDatasetFromJobEndpoint: {
+                    jobId: number
+requestBody: CreateDatasetFromJobRequest
+workspaceId: number
+                    
+                };
+CreateDatasetFromJobEndpoint1: {
+                    jobId: number
+requestBody: CreateDatasetFromJobRequest
+workspaceId: number
+                    
+                };
     }
 
 export type DatasourcesData = {
@@ -837,6 +857,10 @@ includeContent?: boolean
  * Include associated classification results
  */
 includeResults?: boolean
+/**
+ * Include original source files (PDFs, CSVs, etc.)
+ */
+includeSourceFiles?: boolean
 workspaceId: number
                     
                 };
@@ -2085,18 +2109,45 @@ formData,
 	/**
 	 * Export Resources Batch
 	 * Export multiple resources of the same type to a ZIP archive.
-	 * @returns any Successful Response
+	 * @returns binary Successful batch export, returns a ZIP archive.
 	 * @throws ApiError
 	 */
-	public static exportResourcesBatch(data: ShareablesData['ExportResourcesBatch']): CancelablePromise<any> {
+	public static exportResourcesBatch(data: ShareablesData['ExportResourcesBatch']): CancelablePromise<Blob | File> {
 		const {
 requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
 			url: '/api/v1/shareables/shareables/export-batch',
+            responseType: 'blob',
 			body: requestBody,
 			mediaType: 'application/json',
+			errors: {
+				400: `Bad Request (e.g., no resource IDs)`,
+				403: `Forbidden (e.g., permission denied for one or more resources)`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * View Dataset Package Summary
+	 * Get a summary of a shared dataset package using its token.
+ * Does not trigger a full download or import of the package data.
+	 * @returns DatasetPackageSummary Successful Response
+	 * @throws ApiError
+	 */
+	public static viewDatasetPackageSummary(data: ShareablesData['ViewDatasetPackageSummary']): CancelablePromise<DatasetPackageSummary> {
+		const {
+token,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/shareables/view_dataset_package_summary/{token}',
+			path: {
+				token
+			},
 			errors: {
 				422: `Validation Error`,
 			},
@@ -2554,6 +2605,28 @@ requestBody,
 				404: `One or more workspaces/datasources not found`,
 				422: `Validation Error`,
 				500: `Internal server error during transfer`,
+			},
+		});
+	}
+
+	/**
+	 * Import Workspace From Token Endpoint
+	 * Import a complete workspace using a share token.
+ * This creates a new workspace for the current user with the content of the shared workspace.
+	 * @returns WorkspaceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static importWorkspaceFromTokenEndpoint(data: WorkspacesData['ImportWorkspaceFromTokenEndpoint']): CancelablePromise<WorkspaceRead> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/import_from_token',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
 			},
 		});
 	}
@@ -3704,6 +3777,60 @@ jobId,
 		});
 	}
 
+	/**
+	 * Create Dataset From Job Endpoint
+	 * Create a new Dataset from a completed ClassificationJob run.
+ * The dataset will encapsulate the job's inputs (records, schemes) and outputs (results implicitly via records).
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createDatasetFromJobEndpoint(data: ClassificationJobsData['CreateDatasetFromJobEndpoint']): CancelablePromise<DatasetRead> {
+		const {
+workspaceId,
+jobId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/create_dataset',
+			path: {
+				workspace_id: workspaceId, job_id: jobId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Dataset From Job Endpoint
+	 * Create a new Dataset from a completed ClassificationJob run.
+ * The dataset will encapsulate the job's inputs (records, schemes) and outputs (results implicitly via records).
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createDatasetFromJobEndpoint1(data: ClassificationJobsData['CreateDatasetFromJobEndpoint1']): CancelablePromise<DatasetRead> {
+		const {
+workspaceId,
+jobId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/create_dataset',
+			path: {
+				workspace_id: workspaceId, job_id: jobId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
 }
 
 export class DatasourcesService {
@@ -4714,6 +4841,7 @@ workspaceId,
 datasetId,
 includeContent = false,
 includeResults = false,
+includeSourceFiles = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
@@ -4722,7 +4850,7 @@ includeResults = false,
 				workspace_id: workspaceId, dataset_id: datasetId
 			},
 			query: {
-				include_content: includeContent, include_results: includeResults
+				include_content: includeContent, include_results: includeResults, include_source_files: includeSourceFiles
 			},
 			errors: {
 				422: `Validation Error`,
@@ -5476,7 +5604,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-05-07',
+timeframeTo = '2025-05-21',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

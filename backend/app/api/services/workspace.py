@@ -5,7 +5,7 @@ This module contains the business logic for workspace operations,
 abstracting the underlying implementation details from the API layer.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, timezone
 import json # Added for export/import
 import uuid
@@ -31,8 +31,10 @@ from app.api.services.providers.base import StorageProvider
 from app.core.config import settings
 # ADDED imports for Package related classes
 from app.api.services.package import PackageBuilder, PackageMetadata, DataPackage, PackageImporter
-# ADDED ShareableService for import_from_token
-from app.api.services.shareable import ShareableService
+
+# Moved ShareableService import under TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.api.services.shareable import ShareableService
 
 # Removed SessionDep import
 # Import the new utility function
@@ -47,6 +49,8 @@ class WorkspaceService:
     """
     Service for handling workspace operations.
     """
+    _shareable_service: Optional['ShareableService'] = None
+
     def __init__(self, session: Session, storage_provider: Optional[StorageProvider] = None, source_instance_id: Optional[str] = None):
         """Initialize with a database session dependency and optional storage provider for exports."""
         self.session = session
@@ -56,6 +60,17 @@ class WorkspaceService:
             logger.info(f"WorkspaceService initialized with StorageProvider. Source Instance ID: {self.source_instance_id}")
         else:
             logger.info("WorkspaceService initialized WITHOUT StorageProvider (export functionality might be limited).")
+
+    @property
+    def shareable_service(self) -> 'ShareableService':
+        if self._shareable_service is None:
+            raise RuntimeError("ShareableService not set in WorkspaceService. Check DI setup.")
+        return self._shareable_service
+
+    @shareable_service.setter
+    def shareable_service(self, service: 'ShareableService'):
+        self._shareable_service = service
+        logger.info("ShareableService has been set in WorkspaceService.")
 
     def create_workspace(
         self,
@@ -205,7 +220,7 @@ class WorkspaceService:
 
         # 1. Create metadata for the main Workspace package
         package_metadata = PackageMetadata(
-            package_type=ResourceType.WORKSPACE.value, # Using string literal, ensure ResourceType.WORKSPACE.value if it exists
+            package_type=ResourceType.WORKSPACE, # Pass the enum member directly
             source_entity_uuid=str(workspace.id), # Workspace might not have entity_uuid yet, using id as placeholder
             source_instance_id=self.source_instance_id,
             description=f"Export of Workspace: {workspace.name} (ID: {workspace.id})",
@@ -216,12 +231,12 @@ class WorkspaceService:
         workspace_package_content: Dict[str, Any] = {
             "workspace_details": {
                 "id": workspace.id, # Keep original ID for reference
-                "name": workspace.name,
-                "description": workspace.description,
-                "icon": workspace.icon,
-                "system_prompt": workspace.system_prompt,
-                "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
-                "updated_at": workspace.updated_at.isoformat() if workspace.updated_at else None,
+            "name": workspace.name,
+            "description": workspace.description,
+            "icon": workspace.icon,
+            "system_prompt": workspace.system_prompt,
+            "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
+            "updated_at": workspace.updated_at.isoformat() if workspace.updated_at else None,
                 "user_id_ownership": workspace.user_id_ownership
             },
             "datasources_content": [],

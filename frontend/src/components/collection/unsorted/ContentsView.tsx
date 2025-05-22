@@ -617,7 +617,7 @@ export function ContentsView({
       
       <div className="border rounded-lg bg-card mb-4 overflow-hidden">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'search' | 'filters' | 'actions')} className="w-full">
-          <div className="flex items-center justify-between px-4 py-2 bg-muted/10 border-b">
+          <div className="flex items-center justify-between px-4 py-2 bg-muted/10">
             <TabsList className="bg-transparent">
               <TabsTrigger value="search" className="data-[state=active]:bg-background">
                 <Search className="h-4 w-4 mr-2" />
@@ -1031,7 +1031,7 @@ export function ContentsView({
                   </div>
                 </div>
                 
-                <div className="mt-4 pt-4 border-t">
+                <div className="mt-4 pt-4">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-sm font-medium">Selected Items ({selectedContents.length})</h4>
                     <Button 

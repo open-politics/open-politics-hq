@@ -7,8 +7,22 @@ import {
     DatasetCreate,
     DatasetUpdate,
     DatasetsOut,
-    Message,
+    ResourceType,
+    // Message, // Message is not used directly here, can be removed if not needed for other parts
 } from '@/client/models';
+import { useShareableStore } from './storeShareables';
+
+// Utility for file download (can be moved to a shared utils file later)
+const triggerDownload = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
 
 interface DatasetState {
     datasets: DatasetRead[];
@@ -23,20 +37,23 @@ interface DatasetState {
     exportDataset: (datasetId: number, options: ExportOptions) => Promise<void>;
     exportMultipleDatasets: (datasetIds: number[], options: ExportOptions) => Promise<void>;
     // Import Operations
-    importDataset: (file: File) => Promise<DatasetRead | null>;
-    importFromToken: (token: string, options: ImportOptions) => Promise<DatasetRead | null>;
+    importDataset: (file: File, conflictStrategy?: 'skip' | 'update' | 'replace') => Promise<DatasetRead | null>;
+    importFromToken: (token: string, options?: ImportOptions) => Promise<DatasetRead | null>;
 }
 
-interface ExportOptions {
+export interface ExportOptions { // Exported for use in components
     includeRecordContent?: boolean;
     includeResults?: boolean;
     includeSourceFiles?: boolean;
 }
 
-interface ImportOptions {
-    includeContent?: boolean;
+export interface ImportOptions { // Exported for use in components
+    includeContent?: boolean; // Corresponds to includeRecordContent on backend for dataset export
     includeResults?: boolean;
-    conflictStrategy?: 'skip' | 'update' | 'replace';
+    conflictStrategy?: 'skip' | 'update' | 'replace'; // This is for importDataset
+    workspaceId?: number; // Added for importFromToken to specify target workspace
+    // For importDatasetFromToken, the backend API has include_content, include_results, conflict_strategy.
+    // The client has includeContent, includeResults, conflictStrategy for importDatasetFromToken as well.
 }
 
 export const useDatasetStore = create<DatasetState>((set, get) => ({
@@ -56,7 +73,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
             const response: DatasetsOut = await DatasetsService.listDatasets({
                 workspaceId: activeWorkspace.id,
                 skip: 0,
-                limit: 200
+                limit: 1000 // Increased limit, consider pagination for UI
             });
             
             if (!response || !response.data) {
@@ -64,16 +81,16 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
             }
             
             set({ datasets: response.data, isLoading: false });
-        } catch (err: any) {
-            console.error("Error fetching datasets:", err);
-            let errorMsg = "Failed to fetch datasets";
-            if (err.body?.detail) {
-                errorMsg = typeof err.body.detail === 'string' 
-                    ? err.body.detail 
-                    : JSON.stringify(err.body.detail);
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to fetch datasets";
+            if ((err as any).body?.detail) {
+                const detail = (err as any).body.detail;
+                set({ error: typeof detail === 'string' ? detail : JSON.stringify(detail), isLoading: false, datasets: [] });
+            } else {
+                set({ error: errorMsg, isLoading: false, datasets: [] });
             }
-            set({ error: errorMsg, isLoading: false, datasets: [] });
             toast.error(errorMsg);
+            console.error("Error fetching datasets:", err);
         }
     },
 
@@ -92,17 +109,19 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
             });
 
             set(state => ({
-                datasets: [dataset, ...state.datasets],
+                datasets: [dataset, ...state.datasets].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()), // Keep sorted by date
                 isLoading: false
             }));
 
-            toast.success("Dataset created successfully");
+            toast.success(`Dataset "${dataset.name}" created successfully`);
             return dataset;
-        } catch (err: any) {
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to create dataset";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
             console.error("Error creating dataset:", err);
-            const errorMsg = err.body?.detail || "Failed to create dataset";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
             return null;
         }
     },
@@ -123,17 +142,19 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
             });
 
             set(state => ({
-                datasets: state.datasets.map(ds => ds.id === datasetId ? updated : ds),
+                datasets: state.datasets.map(ds => ds.id === datasetId ? updated : ds).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
                 isLoading: false
             }));
 
-            toast.success("Dataset updated successfully");
+            toast.success(`Dataset "${updated.name}" updated successfully`);
             return updated;
-        } catch (err: any) {
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to update dataset";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
             console.error("Error updating dataset:", err);
-            const errorMsg = err.body?.detail || "Failed to update dataset";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
             return null;
         }
     },
@@ -158,11 +179,13 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
             }));
 
             toast.success("Dataset deleted successfully");
-        } catch (err: any) {
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to delete dataset";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
             console.error("Error deleting dataset:", err);
-            const errorMsg = err.body?.detail || "Failed to delete dataset";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
         }
     },
 
@@ -179,112 +202,137 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
                 workspaceId: activeWorkspace.id,
                 datasetId: datasetId,
                 includeContent: options.includeRecordContent,
-                includeResults: options.includeResults
+                includeResults: options.includeResults,
+                includeSourceFiles: options.includeSourceFiles
             });
 
-            // Handle file download from response
-            const blob = new Blob([response], { type: 'application/zip' });
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `dataset_${datasetId}_export.zip`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(url);
-
+            if (response instanceof Blob) {
+                triggerDownload(response, `dataset_${datasetId}_export.zip`);
+            } else {
+                // This case should ideally not happen if the server respects OpenAPI `produces: application/zip` or similar
+                // and the client is generated correctly to expect a Blob.
+                console.error("Export dataset response is not a Blob:", response);
+                toast.error("Export failed: Unexpected response format.");
+                throw new Error("Export response was not a Blob as expected.");
+            }
+            
             set({ isLoading: false });
-            toast.success("Dataset exported successfully");
-        } catch (err: any) {
+            toast.success("Dataset export initiated.");
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to export dataset";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
             console.error("Error exporting dataset:", err);
-            const errorMsg = err.body?.detail || "Failed to export dataset";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
         }
     },
 
     exportMultipleDatasets: async (datasetIds: number[], options: ExportOptions): Promise<void> => {
-        // Implementation will depend on whether backend supports bulk export
-        // For now, export one by one
+        const { activeWorkspace } = useWorkspaceStore.getState();
+        if (!activeWorkspace?.id) {
+            toast.error("No active workspace selected");
+            return;
+        }
+        if (!datasetIds || datasetIds.length === 0) {
+            toast.info("No datasets selected for export.");
+            return;
+        }
+
         set({ isLoading: true, error: null });
         try {
-            for (const id of datasetIds) {
-                await get().exportDataset(id, options);
-            }
-            toast.success(`Exported ${datasetIds.length} datasets successfully`);
-        } catch (err: any) {
-            console.error("Error during bulk export:", err);
-            const errorMsg = err.body?.detail || "Failed to export some datasets";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
-        } finally {
+            // The DatasetsService does not have a batch export. 
+            // We will use the ShareableStore for this.
+            // This assumes useShareableStore can batch export datasets.
+            // The ShareableService backend supports batch export by resource type.
+            const { exportResourcesBatch } = useShareableStore.getState();
+            await exportResourcesBatch('dataset' as ResourceType, datasetIds);
+            // Note: The `options` (includeRecordContent etc.) are not directly passed to exportResourcesBatch
+            // as the generic batch exporter in ShareableService might use default export settings for each resource type.
+            // If fine-grained control per item in a batch is needed, the backend ShareableService.export_resources_batch
+            // would need to accept such options, or we loop and call individual exports here (less efficient).
+
             set({ isLoading: false });
+            toast.success("Batch dataset export initiated.");
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to batch export datasets";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
+            console.error("Error batch exporting datasets:", err);
         }
     },
 
-    importDataset: async (file: File): Promise<DatasetRead | null> => {
+    importDataset: async (file: File, conflictStrategy: 'skip' | 'update' | 'replace' = 'skip'): Promise<DatasetRead | null> => {
         const { activeWorkspace } = useWorkspaceStore.getState();
         if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+            toast.error("No active workspace selected for import.");
             return null;
         }
-
         set({ isLoading: true, error: null });
         try {
-            // Create the correct request body format
-            const formData: { file: File } = { file };
-
-            const imported = await DatasetsService.importDataset({
+            const importedDataset = await DatasetsService.importDataset({
                 workspaceId: activeWorkspace.id,
-                formData,
-                conflictStrategy: 'skip'
+                formData: { file },
+                conflictStrategy: conflictStrategy,
             });
-
+            
             set(state => ({
-                datasets: [imported, ...state.datasets],
+                datasets: [importedDataset, ...state.datasets].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
                 isLoading: false
             }));
-
-            toast.success("Dataset imported successfully");
-            return imported;
-        } catch (err: any) {
+            toast.success(`Dataset "${importedDataset.name}" imported successfully.`);
+            return importedDataset;
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to import dataset";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
             console.error("Error importing dataset:", err);
-            const errorMsg = err.body?.detail || "Failed to import dataset";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
             return null;
         }
     },
 
-    importFromToken: async (token: string, options: ImportOptions): Promise<DatasetRead | null> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+    importFromToken: async (token: string, options?: ImportOptions): Promise<DatasetRead | null> => {
+        const targetWorkspaceId = options?.workspaceId || useWorkspaceStore.getState().activeWorkspace?.id;
+
+        if (!targetWorkspaceId) {
+            toast.error("Target workspace ID must be specified for importing dataset from token.");
+            set({ isLoading: false, error: "Target workspace ID missing for token import" });
             return null;
         }
 
         set({ isLoading: true, error: null });
         try {
-            const imported = await DatasetsService.importDatasetFromToken({
-                workspaceId: activeWorkspace.id,
+            const dataset = await DatasetsService.importDatasetFromToken({
+                workspaceId: targetWorkspaceId, // Use the determined workspaceId
                 shareToken: token,
-                includeContent: options.includeContent,
-                includeResults: options.includeResults,
-                conflictStrategy: options.conflictStrategy
+                includeContent: options?.includeContent,
+                includeResults: options?.includeResults,
+                conflictStrategy: options?.conflictStrategy
             });
 
-            set(state => ({
-                datasets: [imported, ...state.datasets],
-                isLoading: false
-            }));
-
-            toast.success("Dataset imported successfully from token");
-            return imported;
-        } catch (err: any) {
+            const currentActiveWorkspaceId = useWorkspaceStore.getState().activeWorkspace?.id;
+            if (dataset.workspace_id === currentActiveWorkspaceId) {
+                set(state => ({
+                    datasets: [dataset, ...state.datasets].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+                    isLoading: false
+                }));
+                toast.success(`Dataset "${dataset.name}" imported successfully into the current workspace.`);
+            } else {
+                set({ isLoading: false }); // Still imported, but not to current active workspace visible list
+                toast.success(`Dataset "${dataset.name}" imported into workspace ID ${dataset.workspace_id}. Switch to that workspace to view it.`);
+            }
+            return dataset;
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Failed to import dataset from token";
+            const detail = (err as any).body?.detail;
+            const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
+            set({ error: finalMsg, isLoading: false });
+            toast.error(finalMsg);
             console.error("Error importing dataset from token:", err);
-            const errorMsg = err.body?.detail || "Failed to import dataset from token";
-            set({ error: errorMsg, isLoading: false });
-            toast.error(errorMsg);
             return null;
         }
     }

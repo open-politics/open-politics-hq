@@ -11,14 +11,15 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2 } from 'lucide-react';
 import {
   ClassificationSchemeRead,
   DataSourceRead,
   EnhancedClassificationResultRead,
   ClassificationJobRead,
   DataRecordRead,
-  ClassificationJobStatus
+  ClassificationJobStatus,
+  ResourceType,
 } from '@/client/models';
 import { FormattedClassificationResult, ClassificationScheme } from '@/lib/classification/types';
 import ClassificationResultsChart from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
@@ -29,7 +30,7 @@ import { checkFilterMatch, formatDisplayValue, extractLocationString } from '@/l
 import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useToast } from '@/components/ui/use-toast';
+import { toast as sonnerToast } from 'sonner';
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils";
 import DocumentDetailProvider from '../documents/DocumentDetailProvider';
@@ -54,6 +55,8 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useClassificationJobsStore, useClassificationJobsActions } from '@/zustand_stores/storeClassificationJobs';
+import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { ClassificationMapControls } from './ClassificationMapControls';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -72,6 +75,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { ClassificationResultStatus } from '@/lib/classification/types';
 import { DocumentResults } from '@/components/collection/workspaces/classifications/ClassificationResultsChart';
+import { toast } from 'sonner';
 
 // Filter Logic Type defined earlier
 export type FilterLogicMode = 'and' | 'or';
@@ -120,7 +124,6 @@ export default function ClassificationRunner({
   const [filterLogicMode, setFilterLogicMode] = useState<FilterLogicMode>('and');
   // --- END State Definition ---
 
-  const { toast } = useToast();
   const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
   const { getCache, setCache } = useGeocodingCacheStore();
   const { activeWorkspace } = useWorkspaceStore();
@@ -148,6 +151,7 @@ export default function ClassificationRunner({
     isClassifying: isClassifyingHook,
     activeJob: activeJobFromHook,
     loadJob,
+    updateJob: updateJobViaHook,
   } = useClassificationSystem();
   // --- End hook usage ---
 
@@ -531,11 +535,7 @@ export default function ClassificationRunner({
       setIsResultDialogOpen(true);
     } else {
       console.warn("Map point clicked, but no associated document IDs found.");
-      toast({
-        title: "No Documents Found",
-        description: "Could not find documents associated with this map point.",
-        variant: "destructive"
-      });
+      toast.error("No documents found for this map point.");
     }
   };
 
@@ -584,6 +584,57 @@ export default function ClassificationRunner({
           e.currentTarget.innerText = field === 'name' ? (activeJob?.name ?? 'Unnamed Job') : (activeJob?.description ?? 'Add a description...');
           e.currentTarget.blur();
       }
+  };
+
+  const handleUpdateJobDetails = async (field: 'name' | 'description', value: string) => {
+    if (!currentActiveJob || !activeWorkspace?.id) return;
+    let updateData: { name?: string; description?: string } = {};
+    if (field === 'name') updateData.name = value;
+    if (field === 'description') updateData.description = value;
+
+    try {
+      // Use the updateClassificationJob from useClassificationJobsActions (already available as classificationJobsActions)
+      // or directly use updateJobViaHook if preferred and it updates the main store state
+      const updated = await classificationJobsActions.updateClassificationJob(activeWorkspace.id, currentActiveJob.id, updateData);
+      if (updated) {
+        toast.success(`Job ${field} updated successfully.`);
+        if (field === 'name') setIsEditingName(false);
+        if (field === 'description') setIsEditingDescription(false);
+        // activeJob prop might need to be updated if parent relies on it directly
+        // or rely on activeJobFromHook to reflect the change if it polls/refreshes
+      } else {
+        sonnerToast.error(`Failed to update job ${field}.`);
+      }
+    } catch (error: any) {
+      console.error(`Error updating job ${field}:`, error);
+      const errorMsg = error.body?.detail || `Failed to update job ${field}.`;
+      sonnerToast.error(errorMsg);
+    }
+  };
+
+  const handleExportActiveJob = async () => {
+    if (!currentActiveJob) {
+      sonnerToast.error("No active job to export.");
+      return;
+    }
+    try {
+      await storeExportJob(currentActiveJob.id);
+      // Success toast is handled by the store method
+    } catch (error) {
+      // Error toast is handled by the store method
+      console.error(`Error exporting job ${currentActiveJob.name} from ClassificationRunner:`, error);
+    }
+  };
+
+  const handleShareActiveJob = () => {
+    if (!currentActiveJob) {
+      sonnerToast.error("No active job to share.");
+      return;
+    }
+    sonnerToast.info(`Share Job "${currentActiveJob.name}" (ID: ${currentActiveJob.id}): Dialog coming soon!`);
+    // Example for future dialog integration:
+    // createShareLink({ resource_type: ResourceType.CLASSIFICATION_JOB, resource_id: currentActiveJob.id, ... })
+    //  .then(...);
   };
 
   const renderResultsTabs = () => {
@@ -796,6 +847,21 @@ export default function ClassificationRunner({
       </div>
     );
   }
+
+  // Add Export and Share buttons to the CardHeader or a new actions bar
+  const renderJobActions = () => {
+    if (!currentActiveJob) return null;
+    return (
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={handleExportActiveJob} disabled={isActuallyClassifying || !currentActiveJob}>
+          <Download className="mr-2 h-4 w-4" /> Export Job
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleShareActiveJob} disabled={isActuallyClassifying || !currentActiveJob}>
+          <Share2 className="mr-2 h-4 w-4" /> Share Job
+        </Button>
+      </div>
+    );
+  };
 
   return (
     <DocumentDetailProvider>
