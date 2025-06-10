@@ -1,33 +1,651 @@
-export const $AppendRecordInput = {
-	description: `Input model for appending a record to a datasource.`,
+export const $AnnotationCreate = {
 	properties: {
-		content: {
-	type: 'string',
-	description: `The text content or URL to append`,
+		value: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
 	isRequired: true,
 },
-		content_type: {
-	type: 'Enum',
-	enum: ['text','url',],
-	isRequired: true,
+		status: {
+	type: 'ResultStatus',
+	default: 'success',
 },
-		title: {
+		event_timestamp: {
 	type: 'any-of',
-	description: `Optional title for the record (used for 'text' type)`,
 	contains: [{
 	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		region: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		links: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
+},
+		asset_id: {
+	type: 'number',
+	isRequired: true,
+},
+		schema_id: {
+	type: 'number',
+	isRequired: true,
+},
+		run_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $AnnotationRead = {
+	properties: {
+		value: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		status: {
+	type: 'ResultStatus',
+	default: 'success',
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		region: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		links: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		asset_id: {
+	type: 'number',
+	isRequired: true,
+},
+		schema_id: {
+	type: 'number',
+	isRequired: true,
+},
+		run_id: {
+	type: 'number',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		timestamp: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $AnnotationRunCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+		include_parent_context: {
+	type: 'boolean',
+	default: false,
+},
+		context_window: {
+	type: 'number',
+	default: 0,
+},
+		schema_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		target_asset_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		target_bundle_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AnnotationRunRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+		include_parent_context: {
+	type: 'boolean',
+	default: false,
+},
+		context_window: {
+	type: 'number',
+	default: 0,
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		status: {
+	type: 'RunStatus',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		started_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		completed_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $AnnotationRunUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		include_parent_context: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		context_window: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AnnotationRunsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'AnnotationRunRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $AnnotationSchemaCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		output_contract: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		instructions: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		version: {
+	type: 'string',
+	default: '1.0',
+},
+		field_specific_justification_configs: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+		type: 'FieldJustificationConfig',
+	},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AnnotationSchemaRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		output_contract: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		instructions: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		version: {
+	type: 'string',
+	default: '1.0',
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		field_specific_justification_configs: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+		type: 'FieldJustificationConfig',
+	},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AnnotationSchemaUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		output_contract: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		instructions: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		version: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		field_specific_justification_configs: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+		type: 'FieldJustificationConfig',
+	},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AnnotationSchemasOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'AnnotationSchemaRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $AnnotationUpdate = {
+	properties: {
+		value: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'ResultStatus',
 }, {
 	type: 'null',
 }],
 },
 		event_timestamp: {
 	type: 'any-of',
-	description: `Optional ISO 8601 timestamp for the event`,
 	contains: [{
 	type: 'string',
+	format: 'date-time',
 }, {
 	type: 'null',
 }],
+},
+		region: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		links: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AnnotationsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'AnnotationRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
 },
 	},
 } as const;
@@ -48,6 +666,396 @@ export const $ArticleResponse = {
 	},
 } as const;
 
+export const $AssetCreate = {
+	properties: {
+		title: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		kind: {
+	type: 'AssetKind',
+	isRequired: true,
+},
+		user_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		infospace_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		parent_asset_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		part_index: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		text_content: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		blob_path: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		cells: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		source_identifier: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AssetKind = {
+	type: 'Enum',
+	enum: ['pdf','web','image','video','audio','text','csv','csv_row','mbox','email','pdf_page','text_chunk','image_region','video_scene','audio_segment','article','file',],
+} as const;
+
+export const $AssetRead = {
+	properties: {
+		title: {
+	type: 'string',
+	isRequired: true,
+},
+		kind: {
+	type: 'AssetKind',
+	isRequired: true,
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		parent_asset_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		part_index: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		source_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		text_content: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		blob_path: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_identifier: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		content_hash: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		user_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		processing_status: {
+	type: 'ProcessingStatus',
+	default: 'ready',
+},
+		processing_error: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		is_container: {
+	type: 'boolean',
+	description: `True if this asset can have child assets.`,
+	isReadOnly: true,
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $AssetUpdate = {
+	properties: {
+		title: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		kind: {
+	type: 'any-of',
+	contains: [{
+	type: 'AssetKind',
+}, {
+	type: 'null',
+}],
+},
+		text_content: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		blob_path: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_identifier: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $AssetsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'AssetRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $Body_assets_add_files_to_bundle_background = {
+	properties: {
+		files: {
+	type: 'array',
+	contains: {
+	type: 'binary',
+	format: 'binary',
+},
+	isRequired: true,
+},
+		options: {
+	type: 'string',
+	default: '{}',
+},
+	},
+} as const;
+
+export const $Body_assets_create_assets_background_bulk = {
+	properties: {
+		files: {
+	type: 'array',
+	contains: {
+	type: 'binary',
+	format: 'binary',
+},
+	isRequired: true,
+},
+		options: {
+	type: 'string',
+	default: '{}',
+},
+	},
+} as const;
+
+export const $Body_assets_upload_file = {
+	properties: {
+		file: {
+	type: 'binary',
+	isRequired: true,
+	format: 'binary',
+},
+		title: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		process_immediately: {
+	type: 'boolean',
+	default: true,
+},
+	},
+} as const;
+
 export const $Body_datasets_import_dataset = {
 	properties: {
 		file: {
@@ -55,70 +1063,6 @@ export const $Body_datasets_import_dataset = {
 	description: `Dataset Package file (.zip)`,
 	isRequired: true,
 	format: 'binary',
-},
-	},
-} as const;
-
-export const $Body_datasources_create_datasource = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		type: {
-	type: 'DataSourceType',
-	isRequired: true,
-},
-		origin_details: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		files: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'binary',
-	format: 'binary',
-},
-}, {
-	type: 'null',
-}],
-},
-		skip_rows: {
-	type: 'any-of',
-	description: `Number of initial rows to skip (for CSV)`,
-	contains: [{
-	type: 'number',
-	minimum: 0,
-}, {
-	type: 'null',
-}],
-},
-		delimiter: {
-	type: 'any-of',
-	description: `Single character delimiter (for CSV)`,
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $Body_datasources_update_datasource_urls = {
-	properties: {
-		urls_input: {
-	type: 'array',
-	contains: {
-	type: 'string',
-},
-	isRequired: true,
 },
 	},
 } as const;
@@ -219,649 +1163,16 @@ export const $Body_utils_extract_pdf_text = {
 	},
 } as const;
 
-export const $ClassificationFieldCreate = {
+export const $BulkUrlIngestion = {
 	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'string',
-	isRequired: true,
-},
-		type: {
-	type: 'FieldType',
-	isRequired: true,
-},
-		scale_min: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		scale_max: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		is_set_of_labels: {
-	type: 'any-of',
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		labels: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'string',
-},
-}, {
-	type: 'null',
-}],
-},
-		dict_keys: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-		type: 'DictKeyDefinition',
-	},
-}, {
-	type: 'null',
-}],
-},
-		is_time_axis_hint: {
-	type: 'any-of',
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		request_justification: {
-	type: 'any-of',
-	description: `Request justification for this field. True enables, False disables, None inherits from scheme's global setting.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		request_bounding_boxes: {
-	type: 'any-of',
-	description: `Request bounding boxes for this field if global image analysis is enabled and the field's value could be derived from an image region.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		use_enum_for_labels: {
-	type: 'any-of',
-	description: `For LIST_STR with predefined labels, generate a strict enum in the Pydantic model for the LLM.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $ClassificationJobCreate = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		configuration: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $ClassificationJobRead = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		configuration: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		status: {
-	type: 'ClassificationJobStatus',
-	default: 'pending',
-},
-		error_message: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		workspace_id: {
-	type: 'number',
-	isRequired: true,
-},
-		user_id: {
-	type: 'number',
-	isRequired: true,
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		result_count: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		datarecord_count: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		target_scheme_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	isReadOnly: true,
-	isRequired: true,
-},
-		target_datasource_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	isReadOnly: true,
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $ClassificationJobStatus = {
-	type: 'Enum',
-	enum: ['pending','running','paused','completed','completed_with_errors','failed',],
-} as const;
-
-export const $ClassificationJobUpdate = {
-	properties: {
-		status: {
-	type: 'any-of',
-	contains: [{
-	type: 'ClassificationJobStatus',
-}, {
-	type: 'null',
-}],
-},
-		error_message: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		updated_at: {
-	type: 'string',
-	format: 'date-time',
-},
-	},
-} as const;
-
-export const $ClassificationJobsOut = {
-	properties: {
-		data: {
-	type: 'array',
-	contains: {
-		type: 'ClassificationJobRead',
-	},
-	isRequired: true,
-},
-		count: {
-	type: 'number',
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $ClassificationResultRead = {
-	properties: {
-		datarecord_id: {
-	type: 'number',
-	isRequired: true,
-},
-		scheme_id: {
-	type: 'number',
-	isRequired: true,
-},
-		job_id: {
-	type: 'number',
-	isRequired: true,
-},
-		value: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		timestamp: {
-	type: 'string',
-	format: 'date-time',
-},
-		status: {
-	type: 'ClassificationResultStatus',
-	default: 'success',
-},
-		error_message: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $ClassificationResultStatus = {
-	type: 'Enum',
-	enum: ['success','failed',],
-} as const;
-
-export const $ClassificationSchemeCreate = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'string',
-	isRequired: true,
-},
-		model_instructions: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		validation_rules: {
-	type: 'any-of',
-	contains: [{
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-		default_thinking_budget: {
-	type: 'any-of',
-	description: `Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.`,
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		request_justifications_globally: {
-	type: 'any-of',
-	description: `If true, justification fields will be added for all applicable fields unless overridden at the field level.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		enable_image_analysis_globally: {
-	type: 'any-of',
-	description: `If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		fields: {
-	type: 'array',
-	contains: {
-		type: 'ClassificationFieldCreate',
-	},
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $ClassificationSchemeRead = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'string',
-	isRequired: true,
-},
-		model_instructions: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		validation_rules: {
-	type: 'any-of',
-	contains: [{
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-		default_thinking_budget: {
-	type: 'any-of',
-	description: `Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.`,
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		request_justifications_globally: {
-	type: 'any-of',
-	description: `If true, justification fields will be added for all applicable fields unless overridden at the field level.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		enable_image_analysis_globally: {
-	type: 'any-of',
-	description: `If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		workspace_id: {
-	type: 'number',
-	isRequired: true,
-},
-		user_id: {
-	type: 'number',
-	isRequired: true,
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		fields: {
-	type: 'array',
-	contains: {
-		type: 'ClassificationFieldCreate',
-	},
-	isRequired: true,
-},
-		classification_count: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		job_count: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $ClassificationSchemeUpdate = {
-	properties: {
-		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		model_instructions: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		validation_rules: {
-	type: 'any-of',
-	contains: [{
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-		default_thinking_budget: {
-	type: 'any-of',
-	description: `Default thinking budget (e.g., 1024) to use if justifications are requested. 0 disables thinking.`,
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		request_justifications_globally: {
-	type: 'any-of',
-	description: `If true, justification fields will be added for all applicable fields unless overridden at the field level.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		enable_image_analysis_globally: {
-	type: 'any-of',
-	description: `If true, indicates that this scheme might involve image analysis, and fields can request bounding boxes.`,
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		fields: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-		type: 'ClassificationFieldCreate',
-	},
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $CreateDatasetFromJobRequest = {
-	properties: {
-		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $CsvRowData = {
-	properties: {
-		row_data: {
-	type: 'dictionary',
-	contains: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	isRequired: true,
-},
-		row_number: {
-	type: 'number',
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $CsvRowsOut = {
-	properties: {
-		data: {
-	type: 'array',
-	contains: {
-		type: 'CsvRowData',
-	},
-	isRequired: true,
-},
-		total_rows: {
-	type: 'number',
-	isRequired: true,
-},
-		columns: {
+		urls: {
 	type: 'array',
 	contains: {
 	type: 'string',
 },
 	isRequired: true,
 },
-	},
-} as const;
-
-export const $DataRecordRead = {
-	properties: {
-		title: {
+		base_title: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -869,238 +1180,60 @@ export const $DataRecordRead = {
 	type: 'null',
 }],
 },
-		text_content: {
-	type: 'string',
-	isRequired: true,
-},
-		source_metadata: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		event_timestamp: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-	format: 'date-time',
-}, {
-	type: 'null',
-}],
-},
-		top_image: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		images: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'string',
-},
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		datasource_id: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		content_hash: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $DataRecordUpdate = {
-	description: `Schema for updating specific fields of a DataRecord.`,
-	properties: {
-		title: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		event_timestamp: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-	format: 'date-time',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $DataSourceRead = {
-	properties: {
-		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		type: {
-	type: 'DataSourceType',
-	isRequired: true,
-},
-		origin_details: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		source_metadata: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		status: {
-	type: 'DataSourceStatus',
-	default: 'pending',
-},
-		error_message: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		workspace_id: {
-	type: 'number',
-	isRequired: true,
-},
-		user_id: {
-	type: 'number',
-	isRequired: true,
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		data_record_count: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $DataSourceStatus = {
-	type: 'Enum',
-	enum: ['pending','processing','complete','failed',],
-} as const;
-
-export const $DataSourceTransferRequest = {
-	properties: {
-		source_workspace_id: {
-	type: 'number',
-	description: `ID of the workspace to transfer from`,
-	isRequired: true,
-},
-		target_workspace_id: {
-	type: 'number',
-	description: `ID of the workspace to transfer to`,
-	isRequired: true,
-},
-		datasource_ids: {
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-	isRequired: true,
-},
-		copy_datasources: {
+		scrape_immediately: {
 	type: 'boolean',
-	description: `If true, copy the datasources; if false, move them`,
 	default: true,
 },
 	},
 } as const;
 
-export const $DataSourceTransferResponse = {
+export const $BundleCreate = {
 	properties: {
-		success: {
-	type: 'boolean',
-	isRequired: true,
-},
-		message: {
+		name: {
 	type: 'string',
 	isRequired: true,
 },
-		new_datasource_ids: {
+		description: {
 	type: 'any-of',
-	description: `IDs of the newly created DataSources in the target workspace (if copied)`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		tags: {
+	type: 'any-of',
 	contains: [{
 	type: 'array',
 	contains: {
-	type: 'number',
+	type: 'string',
 },
 }, {
 	type: 'null',
 }],
 },
-		errors: {
+		asset_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	default: [],
+},
+		purpose: {
 	type: 'any-of',
-	description: `Dictionary of DataSource IDs that failed and the reason`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bundle_metadata: {
+	type: 'any-of',
 	contains: [{
 	type: 'dictionary',
 	contains: {
-	type: 'string',
+	properties: {
+	},
 },
 }, {
 	type: 'null',
@@ -1109,12 +1242,85 @@ export const $DataSourceTransferResponse = {
 	},
 } as const;
 
-export const $DataSourceType = {
-	type: 'Enum',
-	enum: ['csv','pdf','bulk_pdf','url','url_list','text_block',],
+export const $BundleRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		tags: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'string',
+},
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		asset_count: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		purpose: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bundle_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
 } as const;
 
-export const $DataSourceUpdate = {
+export const $BundleUpdate = {
 	properties: {
 		name: {
 	type: 'any-of',
@@ -1132,39 +1338,18 @@ export const $DataSourceUpdate = {
 	type: 'null',
 }],
 },
-		origin_details: {
+		tags: {
 	type: 'any-of',
 	contains: [{
-	type: 'dictionary',
+	type: 'array',
 	contains: {
-	properties: {
-	},
+	type: 'string',
 },
 }, {
 	type: 'null',
 }],
 },
-		status: {
-	type: 'any-of',
-	contains: [{
-	type: 'DataSourceStatus',
-}, {
-	type: 'null',
-}],
-},
-		source_metadata: {
-	type: 'any-of',
-	contains: [{
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-		error_message: {
+		purpose: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1172,21 +1357,34 @@ export const $DataSourceUpdate = {
 	type: 'null',
 }],
 },
+		bundle_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
-export const $DataSourcesOut = {
+export const $CreatePackageFromRunRequest = {
 	properties: {
-		data: {
-	type: 'array',
-	contains: {
-		type: 'DataSourceRead',
-	},
+		name: {
+	type: 'string',
 	isRequired: true,
 },
-		count: {
-	type: 'number',
-	isRequired: true,
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -1205,45 +1403,12 @@ export const $DatasetCreate = {
 	type: 'null',
 }],
 },
-		custom_metadata: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		datarecord_ids: {
-	type: 'any-of',
-	contains: [{
+		asset_ids: {
 	type: 'array',
 	contains: {
 	type: 'number',
 },
-}, {
-	type: 'null',
-}],
-},
-		source_job_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
-},
-		source_scheme_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
+	default: [],
 },
 	},
 } as const;
@@ -1283,7 +1448,7 @@ export const $DatasetPackageFileManifestItem = {
 	type: 'string',
 	isRequired: true,
 },
-		original_datasource_uuid: {
+		original_collection_uuid: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1291,7 +1456,7 @@ export const $DatasetPackageFileManifestItem = {
 	type: 'null',
 }],
 },
-		original_datasource_id: {
+		original_collection_id: {
 	type: 'any-of',
 	contains: [{
 	type: 'number',
@@ -1307,7 +1472,7 @@ export const $DatasetPackageFileManifestItem = {
 	type: 'null',
 }],
 },
-		linked_datarecord_uuid: {
+		linked_asset_uuid: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1336,25 +1501,25 @@ export const $DatasetPackageSummary = {
 	type: 'number',
 	default: 0,
 },
-		classification_results_count: {
+		annotation_results_count: {
 	type: 'number',
 	default: 0,
 },
-		included_schemes: {
+		included_schemas: {
 	type: 'array',
 	contains: {
 		type: 'DatasetPackageEntitySummary',
 	},
 	default: [],
 },
-		included_jobs: {
+		included_runs: {
 	type: 'array',
 	contains: {
 		type: 'DatasetPackageEntitySummary',
 	},
 	default: [],
 },
-		linked_datasources_summary: {
+		linked_collections_summary: {
 	type: 'array',
 	contains: {
 		type: 'DatasetPackageEntitySummary',
@@ -1385,67 +1550,42 @@ export const $DatasetRead = {
 	type: 'null',
 }],
 },
-		custom_metadata: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
 		id: {
 	type: 'number',
 	isRequired: true,
 },
-		workspace_id: {
+		infospace_id: {
 	type: 'number',
 	isRequired: true,
 },
-		user_id: {
+		asset_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
 	type: 'number',
-	isRequired: true,
+},
+}, {
+	type: 'null',
+}],
 },
 		created_at: {
 	type: 'string',
 	isRequired: true,
 	format: 'date-time',
 },
+		entity_uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
 		updated_at: {
 	type: 'string',
 	isRequired: true,
 	format: 'date-time',
-},
-		datarecord_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
-},
-		source_job_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
-},
-		source_scheme_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
 },
 	},
 } as const;
@@ -1468,19 +1608,7 @@ export const $DatasetUpdate = {
 	type: 'null',
 }],
 },
-		custom_metadata: {
-	type: 'any-of',
-	contains: [{
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-		datarecord_ids: {
+		asset_ids: {
 	type: 'any-of',
 	contains: [{
 	type: 'array',
@@ -1490,32 +1618,6 @@ export const $DatasetUpdate = {
 }, {
 	type: 'null',
 }],
-},
-		source_job_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
-},
-		source_scheme_ids: {
-	type: 'any-of',
-	contains: [{
-	type: 'array',
-	contains: {
-	type: 'number',
-},
-}, {
-	type: 'null',
-}],
-},
-		updated_at: {
-	type: 'string',
-	format: 'date-time',
 },
 	},
 } as const;
@@ -1536,87 +1638,6 @@ export const $DatasetsOut = {
 	},
 } as const;
 
-export const $DictKeyDefinition = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		type: {
-	type: 'Enum',
-	enum: ['str','int','float','bool',],
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $EnhancedClassificationResultRead = {
-	description: `Adds a processed 'display_value' based on the raw 'value'.`,
-	properties: {
-		datarecord_id: {
-	type: 'number',
-	isRequired: true,
-},
-		scheme_id: {
-	type: 'number',
-	isRequired: true,
-},
-		job_id: {
-	type: 'number',
-	isRequired: true,
-},
-		value: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		timestamp: {
-	type: 'string',
-	format: 'date-time',
-},
-		status: {
-	type: 'ClassificationResultStatus',
-	default: 'success',
-},
-		error_message: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		display_value: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'string',
-}, {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'array',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
 export const $ExportBatchRequest = {
 	properties: {
 		resource_type: {
@@ -1633,9 +1654,21 @@ export const $ExportBatchRequest = {
 	},
 } as const;
 
-export const $FieldType = {
-	type: 'Enum',
-	enum: ['int','str','List[str]','List[Dict[str, any]]',],
+export const $FieldJustificationConfig = {
+	properties: {
+		enabled: {
+	type: 'boolean',
+	isRequired: true,
+},
+		custom_prompt: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
 } as const;
 
 export const $FileUploadResponse = {
@@ -1664,26 +1697,9 @@ export const $HTTPValidationError = {
 	},
 } as const;
 
-export const $ImportWorkspaceFromTokenRequest = {
+export const $InfospaceCreate = {
 	properties: {
-		share_token: {
-	type: 'string',
-	isRequired: true,
-},
-		new_workspace_name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $ItemCreate = {
-	properties: {
-		title: {
+		name: {
 	type: 'string',
 	isRequired: true,
 },
@@ -1695,16 +1711,80 @@ export const $ItemCreate = {
 	type: 'null',
 }],
 },
+		icon: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		vector_backend: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		embedding_model: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		embedding_dim: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		chunk_size: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		chunk_overlap: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		chunk_strategy: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
-export const $ItemOut = {
+export const $InfospaceRead = {
 	properties: {
-		title: {
+		name: {
 	type: 'string',
 	isRequired: true,
 },
 		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		icon: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1720,12 +1800,17 @@ export const $ItemOut = {
 	type: 'number',
 	isRequired: true,
 },
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
 	},
 } as const;
 
-export const $ItemUpdate = {
+export const $InfospaceUpdate = {
 	properties: {
-		title: {
+		name: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1741,15 +1826,71 @@ export const $ItemUpdate = {
 	type: 'null',
 }],
 },
+		vector_backend: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		embedding_model: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		embedding_dim: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		chunk_size: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		chunk_overlap: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		chunk_strategy: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		icon: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
-export const $ItemsOut = {
+export const $InfospacesOut = {
 	properties: {
 		data: {
 	type: 'array',
 	contains: {
-		type: 'ItemOut',
+		type: 'InfospaceRead',
 	},
 	isRequired: true,
 },
@@ -1794,9 +1935,106 @@ export const $NewPassword = {
 	},
 } as const;
 
+export const $PackageRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $Paginated = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $PermissionLevel = {
 	type: 'Enum',
 	enum: ['read_only','edit','full_access',],
+} as const;
+
+export const $ProcessingStatus = {
+	type: 'Enum',
+	enum: ['ready','pending','processing','failed',],
+} as const;
+
+export const $ProviderInfo = {
+	properties: {
+		provider_name: {
+	type: 'string',
+	isRequired: true,
+},
+		models: {
+	type: 'array',
+	contains: {
+		type: 'ProviderModel',
+	},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ProviderListResponse = {
+	properties: {
+		providers: {
+	type: 'array',
+	contains: {
+		type: 'ProviderInfo',
+	},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ProviderModel = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
 } as const;
 
 export const $QueryType = {
@@ -1808,13 +2046,9 @@ export const $QueryType = {
 	},
 } as const;
 
-export const $RecurringTaskCreate = {
+export const $ReprocessOptions = {
 	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
+		delimiter: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1822,35 +2056,7 @@ export const $RecurringTaskCreate = {
 	type: 'null',
 }],
 },
-		type: {
-	type: 'RecurringTaskType',
-	isRequired: true,
-},
-		schedule: {
-	type: 'string',
-	isRequired: true,
-},
-		configuration: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		status: {
-	type: 'RecurringTaskStatus',
-	default: 'paused',
-},
-	},
-} as const;
-
-export const $RecurringTaskRead = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
+		encoding: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -1858,73 +2064,7 @@ export const $RecurringTaskRead = {
 	type: 'null',
 }],
 },
-		type: {
-	type: 'RecurringTaskType',
-	isRequired: true,
-},
-		schedule: {
-	type: 'string',
-	isRequired: true,
-},
-		configuration: {
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-},
-		status: {
-	type: 'RecurringTaskStatus',
-	default: 'paused',
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		workspace_id: {
-	type: 'number',
-	isRequired: true,
-},
-		user_id: {
-	type: 'number',
-	isRequired: true,
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		last_run_at: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-	format: 'date-time',
-}, {
-	type: 'null',
-}],
-},
-		last_run_status: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		last_run_message: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		last_job_id: {
+		skip_rows: {
 	type: 'any-of',
 	contains: [{
 	type: 'number',
@@ -1932,80 +2072,21 @@ export const $RecurringTaskRead = {
 	type: 'null',
 }],
 },
-	},
-} as const;
-
-export const $RecurringTaskStatus = {
-	type: 'Enum',
-	enum: ['active','paused','error',],
-} as const;
-
-export const $RecurringTaskType = {
-	type: 'Enum',
-	enum: ['ingest','classify',],
-} as const;
-
-export const $RecurringTaskUpdate = {
-	properties: {
-		name: {
+		max_rows: {
 	type: 'any-of',
 	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		schedule: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		configuration: {
-	type: 'any-of',
-	contains: [{
-	type: 'dictionary',
-	contains: {
-	properties: {
-	},
-},
-}, {
-	type: 'null',
-}],
-},
-		status: {
-	type: 'any-of',
-	contains: [{
-	type: 'RecurringTaskStatus',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $RecurringTasksOut = {
-	properties: {
-		data: {
-	type: 'array',
-	contains: {
-		type: 'RecurringTaskRead',
-	},
-	isRequired: true,
-},
-		count: {
 	type: 'number',
-	isRequired: true,
+}, {
+	type: 'null',
+}],
+},
+		timeout: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -2026,7 +2107,17 @@ export const $Request = {
 
 export const $ResourceType = {
 	type: 'Enum',
-	enum: ['data_source','schema','workspace','classification_job','dataset',],
+	enum: ['bundle','asset','schema','infospace','run','package',],
+} as const;
+
+export const $ResultStatus = {
+	type: 'Enum',
+	enum: ['success','failed',],
+} as const;
+
+export const $RunStatus = {
+	type: 'Enum',
+	enum: ['pending','running','completed','failed','completed_with_errors',],
 } as const;
 
 export const $SearchHistoriesOut = {
@@ -2045,40 +2136,31 @@ export const $SearchHistoriesOut = {
 	},
 } as const;
 
-export const $SearchHistory = {
-	properties: {
-		query: {
-	type: 'string',
-	isRequired: true,
-},
-		timestamp: {
-	type: 'string',
-	format: 'date-time',
-},
-		id: {
-	type: 'any-of',
-	contains: [{
-	type: 'number',
-}, {
-	type: 'null',
-}],
-},
-		user_id: {
-	type: 'number',
-	isRequired: true,
-},
-	},
-} as const;
-
 export const $SearchHistoryCreate = {
 	properties: {
 		query: {
 	type: 'string',
 	isRequired: true,
 },
-		timestamp: {
-	type: 'string',
-	format: 'date-time',
+		filters: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		result_count: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -2089,9 +2171,25 @@ export const $SearchHistoryRead = {
 	type: 'string',
 	isRequired: true,
 },
-		timestamp: {
-	type: 'string',
-	format: 'date-time',
+		filters: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		result_count: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
 },
 		id: {
 	type: 'number',
@@ -2100,6 +2198,11 @@ export const $SearchHistoryRead = {
 		user_id: {
 	type: 'number',
 	isRequired: true,
+},
+		timestamp: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
 },
 	},
 } as const;
@@ -2110,25 +2213,8 @@ export const $SearchType = {
 } as const;
 
 export const $ShareableLinkCreate = {
-	description: `Schema for creating a new shareable link.`,
 	properties: {
-		resource_type: {
-	type: 'ResourceType',
-	isRequired: true,
-},
-		resource_id: {
-	type: 'number',
-	isRequired: true,
-},
 		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -2143,10 +2229,6 @@ export const $ShareableLinkCreate = {
 		is_public: {
 	type: 'boolean',
 	default: false,
-},
-		requires_login: {
-	type: 'boolean',
-	default: true,
 },
 		expiration_date: {
 	type: 'any-of',
@@ -2165,21 +2247,20 @@ export const $ShareableLinkCreate = {
 	type: 'null',
 }],
 },
+		resource_type: {
+	type: 'ResourceType',
+	isRequired: true,
+},
+		resource_id: {
+	type: 'number',
+	isRequired: true,
+},
 	},
 } as const;
 
 export const $ShareableLinkRead = {
-	description: `Schema for reading a shareable link.`,
 	properties: {
 		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -2194,10 +2275,6 @@ export const $ShareableLinkRead = {
 		is_public: {
 	type: 'boolean',
 	default: false,
-},
-		requires_login: {
-	type: 'boolean',
-	default: true,
 },
 		expiration_date: {
 	type: 'any-of',
@@ -2245,18 +2322,18 @@ export const $ShareableLinkRead = {
 	isRequired: true,
 	format: 'date-time',
 },
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		share_url: {
+		infospace_id: {
 	type: 'any-of',
 	contains: [{
-	type: 'string',
+	type: 'number',
 }, {
 	type: 'null',
 }],
+},
+		share_url: {
+	type: 'string',
+	isReadOnly: true,
+	isRequired: true,
 },
 	},
 } as const;
@@ -2308,17 +2385,8 @@ export const $ShareableLinkStats = {
 } as const;
 
 export const $ShareableLinkUpdate = {
-	description: `Schema for updating a shareable link.`,
 	properties: {
 		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -2335,14 +2403,6 @@ export const $ShareableLinkUpdate = {
 }],
 },
 		is_public: {
-	type: 'any-of',
-	contains: [{
-	type: 'boolean',
-}, {
-	type: 'null',
-}],
-},
-		requires_login: {
 	type: 'any-of',
 	contains: [{
 	type: 'boolean',
@@ -2402,14 +2462,6 @@ export const $UserCreate = {
 	type: 'string',
 	isRequired: true,
 },
-		is_active: {
-	type: 'boolean',
-	default: true,
-},
-		is_superuser: {
-	type: 'boolean',
-	default: false,
-},
 		full_name: {
 	type: 'any-of',
 	contains: [{
@@ -2417,6 +2469,10 @@ export const $UserCreate = {
 }, {
 	type: 'null',
 }],
+},
+		tier: {
+	type: 'UserTier',
+	default: 'tier_0',
 },
 		password: {
 	type: 'string',
@@ -2452,14 +2508,6 @@ export const $UserOut = {
 	type: 'string',
 	isRequired: true,
 },
-		is_active: {
-	type: 'boolean',
-	default: true,
-},
-		is_superuser: {
-	type: 'boolean',
-	default: false,
-},
 		full_name: {
 	type: 'any-of',
 	contains: [{
@@ -2467,17 +2515,30 @@ export const $UserOut = {
 }, {
 	type: 'null',
 }],
+},
+		tier: {
+	type: 'UserTier',
+	default: 'tier_0',
 },
 		id: {
 	type: 'number',
 	isRequired: true,
 },
+		is_active: {
+	type: 'boolean',
+	default: true,
+},
 	},
+} as const;
+
+export const $UserTier = {
+	type: 'Enum',
+	enum: ['tier_0','free','pro','tier_1','enterprise',],
 } as const;
 
 export const $UserUpdate = {
 	properties: {
-		email: {
+		full_name: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -2485,15 +2546,7 @@ export const $UserUpdate = {
 	type: 'null',
 }],
 },
-		is_active: {
-	type: 'boolean',
-	default: true,
-},
-		is_superuser: {
-	type: 'boolean',
-	default: false,
-},
-		full_name: {
+		email: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -2505,6 +2558,14 @@ export const $UserUpdate = {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		tier: {
+	type: 'any-of',
+	contains: [{
+	type: 'UserTier',
 }, {
 	type: 'null',
 }],
@@ -2535,6 +2596,22 @@ export const $UserUpdateMe = {
 
 export const $UsersOut = {
 	properties: {
+		email: {
+	type: 'string',
+	isRequired: true,
+},
+		full_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		tier: {
+	type: 'UserTier',
+	default: 'tier_0',
+},
 		data: {
 	type: 'array',
 	contains: {
@@ -2570,129 +2647,6 @@ export const $ValidationError = {
 		type: {
 	type: 'string',
 	isRequired: true,
-},
-	},
-} as const;
-
-export const $WorkspaceCreate = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		icon: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		system_prompt: {
-	type: 'any-of',
-	description: `System-level prompt applied to all classifications in this workspace.`,
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-	},
-} as const;
-
-export const $WorkspaceRead = {
-	properties: {
-		name: {
-	type: 'string',
-	isRequired: true,
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		icon: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		system_prompt: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-	isRequired: true,
-},
-		id: {
-	type: 'number',
-	isRequired: true,
-},
-		created_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
-},
-		user_id_ownership: {
-	type: 'number',
-	isRequired: true,
-},
-	},
-} as const;
-
-export const $WorkspaceUpdate = {
-	properties: {
-		name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		description: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		icon: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		system_prompt: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
 },
 	},
 } as const;

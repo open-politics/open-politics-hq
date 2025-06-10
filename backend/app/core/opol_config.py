@@ -17,8 +17,7 @@ available_providers = [
     {
         "name": "Gemini",
         "models": [
-            "gemini-2.5-flash-preview-04-17",
-            "gemini-1.5-flash-latest",
+            "gemini-2.5-flash-preview-05-20",
         ],
     },
     {
@@ -43,7 +42,7 @@ if os.environ.get("LOCAL_LLM") != "True":
 
 def get_fastclass(
     provider: str = "Google",
-    model_name: str = "gemini-2.0-flash",
+    model_name: str = "gemini-2.5-flash-preview-05-20",
     api_key: str | None = None,
 ):
     """

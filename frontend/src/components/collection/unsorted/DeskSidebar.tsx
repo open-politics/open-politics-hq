@@ -43,7 +43,7 @@ export function DeskSidebar() {
     <Sidebar 
       variant="inset" 
       className="w-64 flex-none h-full border-r bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
-    z>
+    >
       <SidebarHeader className="h-16 flex items-center px-4 border-b">
         <SidebarMenu>
           <SidebarMenuItem>
@@ -74,9 +74,11 @@ export function DeskSidebar() {
       <SidebarFooter className="border-t p-4">
         {user && (
           <NavUser user={{
-            name: user.username || 'User',
+            name: user.full_name || 'User',
             email: user.email || '',
             avatar: user.avatar || '',
+            is_superuser: user.is_superuser || false,
+            full_name: user.full_name || 'User'
           }} />
         )}
       </SidebarFooter>

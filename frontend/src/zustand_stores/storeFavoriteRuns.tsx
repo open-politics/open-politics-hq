@@ -7,7 +7,7 @@ export interface FavoriteRun {
   timestamp: string;
   documentCount: number;
   schemeCount: number;
-  workspaceId: string | number;
+  InfospaceId: string | number;
   description?: string;
 }
 
@@ -16,7 +16,7 @@ interface FavoriteRunsState {
   addFavoriteRun: (run: FavoriteRun) => void;
   removeFavoriteRun: (runId: number) => void;
   isFavorite: (runId: number) => boolean;
-  getFavoriteRunsByWorkspace: (workspaceId: string | number) => FavoriteRun[];
+  getFavoriteRunsByInfospace: (InfospaceId: string | number) => FavoriteRun[];
 }
 
 export const useFavoriteRunsStore = create<FavoriteRunsState>()(
@@ -46,10 +46,10 @@ export const useFavoriteRunsStore = create<FavoriteRunsState>()(
         return get().favoriteRuns.some(run => run.id === runId);
       },
       
-      getFavoriteRunsByWorkspace: (workspaceId: string | number) => {
+      getFavoriteRunsByInfospace: (InfospaceId: string | number) => {
         // Convert both to strings for comparison to handle both string and number types
-        const workspaceIdStr = String(workspaceId);
-        return get().favoriteRuns.filter(run => String(run.workspaceId) === workspaceIdStr);
+        const InfospaceIdStr = String(InfospaceId);
+        return get().favoriteRuns.filter(run => String(run.InfospaceId) === InfospaceIdStr);
       }
     }),
     {

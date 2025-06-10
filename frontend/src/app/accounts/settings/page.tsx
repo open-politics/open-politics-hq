@@ -130,8 +130,8 @@ export default function AccountSettingsPage() {
               </Link>
             </Button>
             <Button asChild variant="outline" className="w-full">
-              <Link href="/accounts/admin/workspaces">
-                Workspace Management
+              <Link href="/accounts/admin/Infospaces">
+                Infospace Management
               </Link>
             </Button>
           </CardContent>

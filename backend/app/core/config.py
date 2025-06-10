@@ -27,9 +27,9 @@ def parse_cors(v: Any) -> list[str] | str:
     raise ValueError(v)
 
 
-class Settings(BaseSettings):
+class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_ignore_empty=True, extra="ignore"
+        env_file=".env", env_ignore_empty=True, extra="ignore", case_sensitive=False
     )
     API_V1_STR: str = "/api/v1"
     API_V2_STR: str = "/api/v2"
@@ -55,10 +55,10 @@ class Settings(BaseSettings):
 
     BACKEND_CORS_ORIGINS: Annotated[
         list[AnyUrl] | str, BeforeValidator(parse_cors)
-    ] = []
+    ] = ["http://localhost:3000", "http://localhost:8000"]
 
-    PROJECT_NAME: str
-    SENTRY_DSN: HttpUrl | None = None
+    PROJECT_NAME: str = "OSINT Kernel"
+    SENTRY_DSN: Optional[HttpUrl] = None
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str
@@ -79,18 +79,20 @@ class Settings(BaseSettings):
 
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
-    SMTP_PORT: int = 587
-    SMTP_HOST: str | None = None
-    SMTP_USER: str | None = None
-    SMTP_PASSWORD: str | None = None
+    SMTP_PORT: Optional[int] = 587
+    SMTP_HOST: Optional[str] = None
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
     # TODO: update type to EmailStr when sqlmodel supports it
-    EMAILS_FROM_EMAIL: str | None = None
-    EMAILS_FROM_NAME: str | None = None
+    EMAILS_FROM_EMAIL: Optional[str] = None
+    EMAILS_FROM_NAME: Optional[str] = None
 
     @model_validator(mode="after")
     def _set_default_emails_from(self) -> Self:
-        if not self.EMAILS_FROM_NAME:
+        if self.emails_enabled and not self.EMAILS_FROM_NAME:
             self.EMAILS_FROM_NAME = self.PROJECT_NAME
+        if self.emails_enabled and not self.EMAILS_FROM_EMAIL:
+            raise ValueError("EMAILS_FROM_EMAIL must be set if SMTP is configured.")
         return self
 
     EMAIL_RESET_TOKEN_EXPIRE_HOURS: int = 48
@@ -98,7 +100,7 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[misc]
     @property
     def emails_enabled(self) -> bool:
-        return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
+        return bool(self.SMTP_HOST and self.SMTP_PORT and self.EMAILS_FROM_EMAIL)
 
     # TODO: update type to EmailStr when sqlmodel supports it
     EMAIL_TEST_USER: str = "test@example.com"
@@ -108,16 +110,63 @@ class Settings(BaseSettings):
     USERS_OPEN_REGISTRATION: bool = False
 
     # MinIO Configuration
-    MINIO_ENDPOINT: str = os.environ.get("MINIO_ENDPOINT", "minio:9000")
-    MINIO_HOST: str = os.environ.get("MINIO_HOST", "minio")
-    MINIO_PORT: str = os.environ.get("MINIO_PORT", "9000")
-    MINIO_ROOT_USER: str = os.environ.get("MINIO_ROOT_USER", "app_user")
-    MINIO_ROOT_PASSWORD: str = os.environ.get("MINIO_ROOT_PASSWORD", "app_user_password")
-    MINIO_BUCKET_NAME: str = os.environ.get("MINIO_BUCKET_NAME", "webapp-dev-user-documents")
-    MINIO_SECURE: str = os.environ.get("MINIO_SECURE", "False")
+    MINIO_ENDPOINT: Optional[str] = Field(default="localhost:9000", env="MINIO_ENDPOINT")
+    MINIO_ACCESS_KEY: Optional[str] = Field(default="minioadmin", env="MINIO_ACCESS_KEY")
+    MINIO_SECRET_KEY: Optional[str] = Field(default="minioadmin", env="MINIO_SECRET_KEY")
+    MINIO_BUCKET_NAME: str = Field(default="osint-kernel-bucket", env="MINIO_BUCKET_NAME")
+    MINIO_USE_SSL: bool = Field(default=False, env="MINIO_USE_SSL")
+    # S3 specific (examples)
+    S3_BUCKET_NAME: Optional[str] = Field(default=None, env="S3_BUCKET_NAME")
+    S3_ACCESS_KEY_ID: Optional[str] = Field(default=None, env="S3_ACCESS_KEY_ID")
+    S3_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, env="S3_SECRET_ACCESS_KEY")
+    S3_REGION: Optional[str] = Field(default=None, env="S3_REGION")
+    # Local FS specific (example)
+    LOCAL_STORAGE_BASE_PATH: str = Field(default="/tmp/osint_storage", env="LOCAL_STORAGE_BASE_PATH")
+    
+    # Temporary folder for file downloads
+    TEMP_FOLDER: str = Field(default="/tmp/osint_temp", env="TEMP_FOLDER")
 
     # Instance identifier for data transfer
-    INSTANCE_ID: str = Field(default_factory=lambda: str(uuid.uuid4()), env="INSTANCE_ID")
+    INSTANCE_ID: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
+    # === Provider Configurations ===
+
+    # --- Storage Provider ---
+    STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
+    # --- Classification Provider ---
+    CLASSIFICATION_PROVIDER_TYPE: Literal["gemini_native", "opol_google_via_fastclass", "opol_ollama_via_fastclass"] = Field(default="gemini_native", env="CLASSIFICATION_PROVIDER_TYPE")
+    # Default model name for the chosen CLASSIFICATION_PROVIDER_TYPE
+    DEFAULT_CLASSIFICATION_MODEL_NAME: str = Field(default="gemini-2.5-flash-preview-05-20", env="DEFAULT_CLASSIFICATION_MODEL_NAME")
+
+    # Credentials (ensure these environment variables are set for the chosen provider)
+    GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
+    OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    # OPOL specific config (if OPOL is used as an abstraction layer)
+    OPOL_MODE: Optional[Literal["remote", "local", "container"]] = Field(default="remote", env="OPOL_MODE")
+    OPOL_API_KEY: Optional[str] = Field(default=None, env="OPOL_API_KEY")
+    # Ollama specific (if OPOL uses it, or if you add a native Ollama provider)
+    OLLAMA_BASE_URL: Optional[str] = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
+    OLLAMA_DEFAULT_MODEL: Optional[str] = Field(default="llama3", env="OLLAMA_DEFAULT_MODEL")
+
+    # --- Scraping Provider ---
+    SCRAPING_PROVIDER_TYPE: Literal["opol", "custom_playwright"] = Field(default="opol", env="SCRAPING_PROVIDER_TYPE")
+    # --- Search Provider ---
+    SEARCH_PROVIDER_TYPE: Literal["opol_searxng", "elasticsearch", "tavily"] = Field(default="opol_searxng", env="SEARCH_PROVIDER_TYPE")
+
+    # --- Geospatial Provider ---
+    GEOSPATIAL_PROVIDER_TYPE: Literal["opol", "nominatim"] = Field(default="opol", env="GEOSPATIAL_PROVIDER_TYPE")
+    NOMINATIM_DOMAIN: Optional[str] = Field(default="nominatim.openstreetmap.org", env="NOMINATIM_DOMAIN")
+
+    # --- Celery / Redis ---
+    CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/0", env="CELERY_BROKER_URL")
+    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/0", env="CELERY_RESULT_BACKEND")
+
+    # Tavily API Key
+    TAVILY_API_KEY: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
+
+    # --- OPOL "FastClass" specific (from opol_config.py, better centralized here) ---
+    FASTCLASS_DEFAULT_PROVIDER: str = Field(default="Google", env="FASTCLASS_DEFAULT_PROVIDER")
+    FASTCLASS_DEFAULT_MODEL: str = Field(default="gemini-2.5-flash-preview-05-20", env="FASTCLASS_DEFAULT_MODEL")
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
@@ -134,14 +183,14 @@ class Settings(BaseSettings):
     def _enforce_non_default_secrets(self) -> Self:
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
-        self._check_default_secret(
-            "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
-        )
-        self._check_default_secret("MINIO_ROOT_PASSWORD", self.MINIO_ROOT_PASSWORD)
-        self._check_default_secret("MINIO_ROOT_USER", self.MINIO_ROOT_USER)
-
+        self._check_default_secret("FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD)
+        if self.STORAGE_PROVIDER_TYPE == "minio":
+            if not self.MINIO_ACCESS_KEY or not self.MINIO_SECRET_KEY:
+                raise ValueError("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set for MinIO storage.")
+            self._check_default_secret("MINIO_ACCESS_KEY", self.MINIO_ACCESS_KEY)
+            self._check_default_secret("MINIO_SECRET_KEY", self.MINIO_SECRET_KEY)
         return self
 
 
-settings = Settings()  # type: ignore
+settings = AppSettings()  # type: ignore
 

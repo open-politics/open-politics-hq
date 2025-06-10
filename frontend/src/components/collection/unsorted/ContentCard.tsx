@@ -21,7 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useBookMarkStore } from '@/zustand_stores/storeBookmark';
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { ClassificationWidget } from '@/components/classification/ClassificationWidget';
 import { ClassificationScheme, DataRecord } from '@/lib/classification/types';
 import { CoreContentModel } from '@/lib/content';
@@ -30,9 +30,9 @@ import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import { toast } from "@/components/ui/use-toast";
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { ClassificationService } from '@/lib/classification/service';
-import ClassificationResultDisplay from '@/components/collection/workspaces/classifications/ClassificationResultDisplay';
+import ClassificationResultDisplay from '@/components/collection/infospaces/classifications/ClassificationResultDisplay';
 import { ClassificationResultRead, ClassificationSchemeRead } from '@/client';
-import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
+import { useDataSourceStore } from '@/zustand_stores/storeAssets';
 
 export interface ContentCardProps extends CoreContentModel {
   id: string;
@@ -65,7 +65,7 @@ export function ContentCard({
 }: ContentCardProps) {
   const { addBookmark, removeBookmark, isOperationPending } = useBookMarkStore();
   const { dataSources } = useDataSourceStore();
-  const { activeWorkspace } = useWorkspaceStore();
+  const { activeInfospace } = useInfospaceStore();
   const classificationSettings = useClassificationSettingsStore();
   const { apiKeys, selectedProvider } = useApiKeysStore();
 
@@ -160,17 +160,17 @@ export function ContentCard({
     }
 
     try {
-      // Get the workspace ID
-      if (!activeWorkspace?.id) { // Changed uid to id
-        console.error("No active workspace");
-        toast({ title: "Error", description: "No active workspace", variant: "destructive" });
+      // Get the Infospace ID
+      if (!activeInfospace?.id) { // Changed uid to id
+        console.error("No active Infospace");
+        toast({ title: "Error", description: "No active Infospace", variant: "destructive" });
         return;
       }
 
-      const workspaceId = activeWorkspace.id; // Changed uid to id
+      const InfospaceId = activeInfospace.id; // Changed uid to id
 
       // Get the default scheme ID using the store's validation
-      const defaultSchemeId = classificationSettings.getDefaultSchemeId(workspaceId, schemes);
+      const defaultSchemeId = classificationSettings.getDefaultSchemeId(InfospaceId, schemes);
 
       if (!defaultSchemeId) {
         console.error("No default classification scheme available");
@@ -180,7 +180,7 @@ export function ContentCard({
 
       // Prepare job parameters according to ClassificationJobParams
       const jobParams /*: ClassificationJobParams */ = {
-        workspaceId: workspaceId,
+        InfospaceId: InfospaceId,
         name: `Single Classification: ${title || 'Item ' + dataRecordId} - ${new Date().toISOString()}`,
         // Pass schemeId as schemeIds array
         schemeIds: [defaultSchemeId],
@@ -226,7 +226,7 @@ export function ContentCard({
     dataSourceId,
     title,
     isClassifying,
-    activeWorkspace,
+    activeInfospace,
     classificationSettings,
     schemes,
     createJob,
@@ -237,9 +237,9 @@ export function ContentCard({
   const handleBookmark = async (event: React.MouseEvent) => {
     event.stopPropagation();
     const identifier = url;
-    if (!identifier || !activeWorkspace?.id) {
-      console.error("Cannot bookmark/unbookmark: Missing URL or Workspace ID");
-      toast({ title: "Error", description: "Cannot perform action: Missing URL or workspace context.", variant: "destructive" });
+    if (!identifier || !activeInfospace?.id) {
+      console.error("Cannot bookmark/unbookmark: Missing URL or Infospace ID");
+      toast({ title: "Error", description: "Cannot perform action: Missing URL or Infospace context.", variant: "destructive" });
       return;
     }
 
@@ -263,9 +263,9 @@ export function ContentCard({
     };
 
     if (isBookmarked) {
-      await removeBookmark(identifier, activeWorkspace.id);
+      await removeBookmark(identifier, activeInfospace.id);
     } else {
-      await addBookmark(itemData, activeWorkspace.id);
+      await addBookmark(itemData, activeInfospace.id);
     }
   };
 
@@ -300,13 +300,13 @@ export function ContentCard({
   // Update the useEffect to load the default scheme name
   useEffect(() => {
     const loadDefaultScheme = async () => {
-      if (!activeWorkspace?.id || schemes.length === 0) return; // Changed uid to id
+      if (!activeInfospace?.id || schemes.length === 0) return; // Changed uid to id
 
       try {
-        const workspaceId = activeWorkspace.id; // Changed uid to id
+        const InfospaceId = activeInfospace.id; // Changed uid to id
 
         // Get the default scheme ID using the hook instance
-        const defaultSchemeId = classificationSettings.getDefaultSchemeId(workspaceId, schemes);
+        const defaultSchemeId = classificationSettings.getDefaultSchemeId(InfospaceId, schemes);
         
         if (defaultSchemeId) {
           const defaultScheme = schemes.find(s => s.id === defaultSchemeId);
@@ -322,7 +322,7 @@ export function ContentCard({
     };
     
     loadDefaultScheme();
-  }, [activeWorkspace?.id, schemes, classificationSettings]);
+  }, [activeInfospace?.id, schemes, classificationSettings]);
 
   return (
     <Dialog open={isDialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -408,7 +408,7 @@ export function ContentCard({
                     </div>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>{isBookmarked ? "Remove from workspace" : "Import to workspace"}</p>
+                    <p>{isBookmarked ? "Remove from Infospace" : "Import to Infospace"}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>

@@ -4,7 +4,7 @@ import { create } from 'zustand';
 //   ClassificationSchemesService,
 //   ClassificationResultsService,
 // } from '@/client/services';
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 // Commented out unused models
 // import {
 //   ClassificationSchemeRead,
@@ -29,8 +29,8 @@ export const useSavedResultSetStore = create<SavedResultSetState>((set, get) => 
 
   fetchSavedResults: async () => {
     console.warn("DEPRECATED: fetchSavedResults is likely obsolete. Consider using Job history/export.");
-    // const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    // if (!activeWorkspace) return;
+    // const activeInfospace = useInfospaceStore.getState().activeInfospace;
+    // if (!activeInfospace) return;
     // try {
     //   // Assuming there's no direct method to fetch saved result sets
     //   const response: any[] = []; // Placeholder
@@ -44,14 +44,14 @@ export const useSavedResultSetStore = create<SavedResultSetState>((set, get) => 
 
   saveResultSet: async (name: string, jobId: number) => { // Updated runId to jobId
     console.warn("DEPRECATED: saveResultSet is likely obsolete. Consider using Job export features.");
-    // const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    // if (!activeWorkspace) return;
+    // const activeInfospace = useInfospaceStore.getState().activeInfospace;
+    // if (!activeInfospace) return;
     //
     // try {
     //   /*
     //   // This needs to use jobId and likely fetch results via listClassificationResults or getJobResults
     //   const results = await ClassificationResultsService.getJobResults({ // Needs correct service method
-    //     workspaceId: activeWorkspace.id, // Use id
+    //     InfospaceId: activeInfospace.id, // Use id
     //     jobId, // Use jobId
     //   });
     //
@@ -81,8 +81,8 @@ export const useSavedResultSetStore = create<SavedResultSetState>((set, get) => 
 
   loadResultSet: async (resultSetId: number) => {
      console.warn("DEPRECATED: loadResultSet is likely obsolete. Consider loading from Job history/import.");
-    // const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
-    // if (!activeWorkspace) return;
+    // const activeInfospace = useInfospaceStore.getState().activeInfospace;
+    // if (!activeInfospace) return;
     //
     // try {
     //   /*
@@ -91,7 +91,7 @@ export const useSavedResultSetStore = create<SavedResultSetState>((set, get) => 
     //
     //   // Update stores with the loaded data - Needs update for new stores
     //   // useDataSourceStore.getState().fetchDataSources();
-    //   // useClassificationJobsStore.getState().fetchClassificationJobs(activeWorkspace.id);
+    //   // useClassificationJobsStore.getState().fetchClassificationJobs(activeInfospace.id);
     //   // useClassificationSchemeStore? Or handled by useClassificationSystem hook?
     //
     //   // Set the active job based on the loaded set?

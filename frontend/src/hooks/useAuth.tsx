@@ -14,6 +14,7 @@ import { AxiosError } from 'axios';
 
 type User = UserOut & {
   avatar?: string;
+  is_superuser?: boolean;
 };
 
 const isLoggedIn = () => {

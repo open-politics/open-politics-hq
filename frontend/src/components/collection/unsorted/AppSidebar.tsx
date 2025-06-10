@@ -30,14 +30,15 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowLeftToLine,
-  ArrowRightToLine
+  ArrowRightToLine,
+  Database
 } from "lucide-react"
 
 import { NavMain } from "@/components/ui/nav-main"
 import { NavProjects } from "@/components/ui/nav-projects"
 import { Separator } from "@/components/ui/separator"
 import { NavUser } from "@/components/ui/nav-user"
-import WorkspaceSwitcher from "@/components/ui/workspace-switcher"
+import InfospaceSwitcher from "@/components/ui/infospace-switcher"
 import useAuth from "@/hooks/useAuth"
 import {
   Sidebar,
@@ -50,10 +51,10 @@ import {
 import HistoryList from "@/components/ui/SearchHistory"
 
 
-export const workspaceItems = [
+export const InfospaceItems = [
   {
-    title: "Workspace Manager",
-    url: "/desks/home/workspaces/workspace-manager",
+    title: "Infospace Manager",
+    url: "/desks/home/infospaces/Infospace-manager",
     icon: FolderCog,
   },
 ];
@@ -65,38 +66,44 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
   
   const navMain = React.useMemo(() => [
     {
-      title: "Overview",
+      title: "Home",
       url: "/desks/home",
       icon: Home,
       isActive: true,
     },
     {
-      title: "Globe",
+      title: "OPOL Globe",
       url: "/desks/home/globe",
       icon: Globe,
       isActive: true,
     },
     {
-    title: "Schemes",
-    url: "/desks/home/workspaces/classification-schemes",
+    title: "Classifiers",
+    url: "/desks/home/infospaces/classification-schemes",
       icon: Microscope,
       isActive: true,
     },
     {
-      title: "Documents",
-      url: "/desks/home/workspaces/document-manager",
+      title: "Assets",
+      url: "/desks/home/infospaces/asset-manager",
       icon: FileText,
       isActive: true,
     },
     {
-      title: "Analyser",
-      url: "/desks/home/workspaces/classification-runner",
+      title: "Analysis Runner",
+      url: "/desks/home/infospaces/classification-runner",
       icon: SquareTerminal,
       isActive: true,
     },
     {
-      title: "Workspace Config",
-      url: "/desks/home/workspaces",
+      title: "Datasets",
+      url: "/desks/home/infospaces/dataset-manager",
+      icon: Database,
+      isActive: false,
+    },
+    {
+      title: "Information Space Config",
+      url: "/desks/home/infospaces/infospace-manager",
       icon: FolderCog,
       isActive: true,
     }
@@ -108,7 +115,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
   return (
     <Sidebar collapsible="icon" variant="floating" {...props} className="pt-16">
       <SidebarHeader>
-        <WorkspaceSwitcher />
+        <InfospaceSwitcher />
       </SidebarHeader>
       <NavMain items={navMain} />
       {/* {user?.is_superuser && (

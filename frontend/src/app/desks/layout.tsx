@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/breadcrumb"
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
 import useAuth from "@/hooks/useAuth"
-import { useWorkspaceStore } from "@/zustand_stores/storeWorkspace"
+import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
 import { useClassificationSettingsStore } from "@/zustand_stores/storeClassificationSettings"
 import { Button } from "@/components/ui/button"
 import { BrainCircuit } from "lucide-react"
@@ -24,7 +24,7 @@ import { useRouter } from "next/navigation";
 
 export default function DesksLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();  
-  const activeWorkspace = useWorkspaceStore.getState().activeWorkspace;
+  const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const router = useRouter();
   if (typeof window === 'undefined' || isLoading) {
     return <LottiePlaceholder />

@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClassificationSchemeRead } from '@/client/models';
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { ContentCardProps } from './ContentCard';
 import { useClassificationSystem } from '@/hooks/useClassificationSystem';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
-import { useDataSourceStore } from '@/zustand_stores/storeDataSources';
+import { useDataSourceStore } from '@/zustand_stores/storeAssets';
 import { CoreContentModel } from '@/lib/content';
 
 interface ContentsViewProps {
@@ -81,21 +81,44 @@ interface ContentEvaluation {
 
 interface Content {
   id: string;
-  title: string | null;
-  text_content: string | null;
   url: string;
-  source: string | null;
-  insertion_date: string;
-  content_type?: string;
-  content_language?: string | null;
-  author?: string | null;
-  publication_date?: string | null;
-  top_image?: string | null;
-  evaluation?: ContentEvaluation | null;
-  entities?: any[];
-  tags?: string[];
+  title: string;
+  kind: string;
+  text_content?: string;
+  blob_path?: string;
+  source_identifier?: string;
+  source_metadata?: Record<string, any>;
   datasource_id?: number;
-  [key: string]: any; 
+  bundle_id?: number;
+  infospace_id?: number;
+  tags?: string[];
+  evaluation?: {
+    score?: number;
+    confidence?: number;
+    status?: string;
+    notes?: string;
+    created_at?: string;
+    updated_at?: string;
+    event_type?: string;
+    event_subtype?: string;
+    rhetoric?: string;
+    sociocultural_interest?: number;
+    global_political_impact?: number;
+    regional_political_impact?: number;
+    global_economic_impact?: number;
+    regional_economic_impact?: number;
+    keywords?: string[];
+    categories?: string[];
+  };
+  publication_date?: string;
+  insertion_date?: string;
+  created_at?: string;
+  updated_at?: string;
+  content_type?: string;
+  content_language?: string;
+  author?: string;
+  top_image?: string;
+  entities?: any[];
 }
 
 interface ContentFilter {
@@ -125,7 +148,7 @@ export function ContentsView({
   const [selectedEventType, setSelectedEventType] = useState(highlightedEventType || 'all');
   const [selectedContents, setSelectedContents] = useState<Content[]>([]);
   const [selectedSchemeId, setSelectedSchemeId] = useState<number | null>(null);
-  const { activeWorkspace } = useWorkspaceStore();
+  const { activeInfospace } = useInfospaceStore();
   
   // Use the consolidated classification system hook to load schemes once
   const {
@@ -167,11 +190,11 @@ export function ContentsView({
   }, [selectedContents.length]);
 
   useEffect(() => {
-    if (activeWorkspace?.id) {
+    if (activeInfospace?.id) {
       // Load schemes using the new hook
       loadSchemes();
     }
-  }, [activeWorkspace?.id, loadSchemes]);
+  }, [activeInfospace?.id, loadSchemes]);
 
   useEffect(() => {
     if (selectedContentId && selectedContentRef.current) {
@@ -250,18 +273,18 @@ export function ContentsView({
   };
 
   const handleBookmarkAll = async () => {
-    if (!activeWorkspace?.id) {
-      toast({ title: "Error", description: "No active workspace selected.", variant: "destructive" });
+    if (!activeInfospace?.id) {
+      toast({ title: "Error", description: "No active Infospace selected.", variant: "destructive" });
       return;
     }
-    const workspaceId = activeWorkspace.id;
+    const InfospaceId = activeInfospace.id;
     let addedCount = 0;
     for (const content of filteredAndSortedContents) { // Iterate over currently filtered/visible contents
       const identifier = content.url;
       if (identifier && findDataSourceByIdentifier(identifier, dataSources) === null) {
         // Item is not bookmarked, add it
-        if (workspaceId) {
-          await addBookmark(content as CoreContentModel, workspaceId);
+        if (InfospaceId) {
+          await addBookmark(content as CoreContentModel, InfospaceId);
           addedCount++;
         }
       }
@@ -274,19 +297,19 @@ export function ContentsView({
   };
 
   const handleUnbookmarkAll = async () => {
-     if (!activeWorkspace?.id) {
-      toast({ title: "Error", description: "No active workspace selected.", variant: "destructive" });
+     if (!activeInfospace?.id) {
+      toast({ title: "Error", description: "No active Infospace selected.", variant: "destructive" });
       return;
     }
-    const workspaceId = activeWorkspace.id;
+    const InfospaceId = activeInfospace.id;
     let removedCount = 0;
     for (const content of filteredAndSortedContents) { // Iterate over currently filtered/visible contents
        const identifier = content.url;
        if (identifier) {
          const dataSourceId = findDataSourceByIdentifier(identifier, dataSources);
          if (dataSourceId !== null) {
-           if (workspaceId) {
-             await removeBookmark(identifier, workspaceId);
+           if (InfospaceId) {
+             await removeBookmark(identifier, InfospaceId);
              removedCount++;
            }
          }
@@ -338,22 +361,22 @@ export function ContentsView({
       return;
     }
 
-    // Map selected contents to DataRecord IDs and group by DataSource ID
-    const recordsByDataSource: { [key: number]: number[] } = {};
+    // Map selected contents to Asset IDs and group by Infospace ID
+    const assetsByInfospace: { [key: number]: number[] } = {};
     let skippedCount = 0;
 
     selectedContents.forEach(content => {
-      const dataRecordId = parseInt(content.id);
-      const dataSourceId = content.datasource_id;
+      const assetId = parseInt(content.id);
+      const infospaceId = content.infospace_id;
 
-      if (!isNaN(dataRecordId) && dataRecordId > 0 && dataSourceId && dataSourceId > 0) {
-        if (!recordsByDataSource[dataSourceId]) {
-          recordsByDataSource[dataSourceId] = [];
+      if (!isNaN(assetId) && assetId > 0 && infospaceId && infospaceId > 0) {
+        if (!assetsByInfospace[infospaceId]) {
+          assetsByInfospace[infospaceId] = [];
         }
-        recordsByDataSource[dataSourceId].push(dataRecordId);
+        assetsByInfospace[infospaceId].push(assetId);
       } else {
         skippedCount++;
-        console.warn(`Skipping item for classification due to missing ID or DataSource ID:`, content);
+        console.warn(`Skipping item for classification due to missing ID or Infospace ID:`, content);
       }
     });
 
@@ -361,37 +384,37 @@ export function ContentsView({
       toast({ title: "Warning", description: `${skippedCount} selected items lack necessary IDs and were skipped.`, variant: "default" });
     }
 
-    const totalRecordsToClassify = Object.values(recordsByDataSource).reduce((sum, ids) => sum + ids.length, 0);
+    const totalAssetsToClassify = Object.values(assetsByInfospace).reduce((sum, ids) => sum + ids.length, 0);
 
-    if (totalRecordsToClassify === 0) {
+    if (totalAssetsToClassify === 0) {
       toast({ title: "Error", description: "No valid items selected for classification.", variant: "destructive" });
       return;
     }
 
-    const dataSourceIds = Object.keys(recordsByDataSource).map(Number);
-    const allDataRecordIds = Object.values(recordsByDataSource).flat();
+    const infospaceIds = Object.keys(assetsByInfospace).map(Number);
+    const allAssetIds = Object.values(assetsByInfospace).flat();
 
-    console.log(`Starting batch classification for ${totalRecordsToClassify} items across ${dataSourceIds.length} DataSources with scheme ID ${selectedSchemeId}`);
+    console.log(`Starting batch classification for ${totalAssetsToClassify} items across ${infospaceIds.length} Infospaces with scheme ID ${selectedSchemeId}`);
 
     try {
       // Generate a unique run name
       const runName = `Batch classification - ${new Date().toLocaleString()}`;
-      const workspaceId = activeWorkspace?.id;
+      const InfospaceId = activeInfospace?.id;
 
-      if (!workspaceId) {
-         toast({ title: "Error", description: "No active workspace found.", variant: "destructive" });
+      if (!InfospaceId) {
+         toast({ title: "Error", description: "No active Infospace found.", variant: "destructive" });
          return;
       }
 
       // Prepare job parameters
       const jobParams /*: ClassificationJobParams */ = {
-        workspaceId: workspaceId,
+        InfospaceId: InfospaceId,
         name: runName,
         schemeIds: [selectedSchemeId],
-        datasourceIds: dataSourceIds, // All involved DataSource IDs
+        datasourceIds: infospaceIds, // All involved Infospace IDs
         configuration: {
           // Target specific records across potentially multiple sources
-          target_datarecord_ids: allDataRecordIds
+          target_asset_ids: allAssetIds
         }
       };
 
@@ -403,7 +426,7 @@ export function ContentsView({
         console.log(`Batch classification job created with ID: ${newJob.id}`);
         toast({
           title: "Classification Job Created",
-          description: `Job "${runName}" (ID: ${newJob.id}) created for ${totalRecordsToClassify} items. It will start processing shortly.`,
+          description: `Job "${runName}" (ID: ${newJob.id}) created for ${totalAssetsToClassify} items. It will start processing shortly.`,
           variant: "default",
         });
         clearAllSelections();
@@ -480,7 +503,7 @@ export function ContentsView({
         entities: content.entities || [],
         tags: formattedTags,
         evaluation: formattedEvaluation,
-      }, activeWorkspace?.id || 0);
+      }, activeInfospace?.id || 0);
     }
     
     setSelectedContents([]);
@@ -593,7 +616,7 @@ export function ContentsView({
                 <div className="space-y-2">
                   <h4 className="font-medium">Content Management</h4>
                   <p className="text-sm">
-                    Browse, filter, and select content for classification or import to your workspace.
+                    Browse, filter, and select content for classification or import to your Infospace.
                   </p>
                   <ul className="text-xs space-y-1 mt-2">
                     <li className="flex items-center gap-1">
@@ -925,7 +948,7 @@ export function ContentsView({
                 <CheckSquare className="h-10 w-10 text-muted-foreground mb-3" />
                 <h3 className="text-base font-medium">No items selected</h3>
                 <p className="text-sm text-muted-foreground mt-1 max-w-md">
-                  Select items from the list below to classify or import them to your workspace.
+                  Select items from the list below to classify or import them to your Infospace.
                 </p>
                 <Button 
                   variant="outline" 
@@ -988,13 +1011,13 @@ export function ContentsView({
                   <div className="space-y-2">
                     <h3 className="text-sm font-medium flex items-center gap-2">
                       <FolderDown className="h-4 w-4" />
-                      <span>Workspace Import</span>
+                      <span>Infospace Import</span>
                     </h3>
                     <div className="p-3 border rounded-md bg-muted/5">
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm">Current workspace:</span>
-                          <Badge variant="outline">{activeWorkspace?.name || 'None'}</Badge>
+                          <span className="text-sm">Current Infospace:</span>
+                          <Badge variant="outline">{activeInfospace?.name || 'None'}</Badge>
                         </div>
                         
                         <div className="grid grid-cols-2 gap-2">

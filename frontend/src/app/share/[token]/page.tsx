@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation'; // Corrected import for App Router
 import { useShareableStore } from '@/zustand_stores/storeShareables';
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useDatasetStore } from '@/zustand_stores/storeDatasets';
 import { ShareableLinkRead, ResourceType } from '@/client';
 import { Button } from '@/components/ui/button';
@@ -28,10 +28,10 @@ export default function ShareTokenPage() {
     error: state.error,
   }));
 
-  const { importWorkspaceFromToken, setActiveWorkspace, fetchWorkspaces } = useWorkspaceStore((state) => ({
-    importWorkspaceFromToken: state.importWorkspaceFromToken,
-    setActiveWorkspace: state.setActiveWorkspace,
-    fetchWorkspaces: state.fetchWorkspaces,
+  const { importInfospaceFromToken, setActiveInfospace, fetchInfospaces } = useInfospaceStore((state) => ({
+    importInfospaceFromToken: state.importInfospaceFromToken,
+    setActiveInfospace: state.setActiveInfospace,
+    fetchInfospaces: state.fetchInfospaces,
   }));
 
   const { importFromToken: importDatasetFromToken, fetchDatasets } = useDatasetStore((state) => ({
@@ -42,13 +42,13 @@ export default function ShareTokenPage() {
   const [sharedResourceInfo, setSharedResourceInfo] = useState<any | null>(null);
   const [linkInfo, setLinkInfo] = useState<ShareableLinkRead | null>(null); // For future use if fetchLinkByToken is enhanced
   const [processing, setProcessing] = useState(false);
-  const [targetWorkspaceId, setTargetWorkspaceId] = useState<number | null>(null); // For dataset imports
+  const [targetInfospaceId, setTargetInfospaceId] = useState<number | null>(null); // For dataset imports
 
   useEffect(() => {
-    // Attempt to get active workspace ID for dataset imports
-    const activeWsId = useWorkspaceStore.getState().activeWorkspace?.id;
+    // Attempt to get active Infospace ID for dataset imports
+    const activeWsId = useInfospaceStore.getState().activeInfospace?.id;
     if (activeWsId) {
-      setTargetWorkspaceId(activeWsId);
+      setTargetInfospaceId(activeWsId);
     }
   }, []);
 
@@ -87,40 +87,40 @@ export default function ShareTokenPage() {
     // This is a simplified approach. A better way would be for accessSharedResource or a dedicated
     // endpoint to return the resource_type associated with the token.
 
-    // Attempt Workspace Import (example)
-    // This is a guess. We need a way to know if it *is* a workspace token.
-    toast.info("Attempting to import based on token (assuming Workspace for now)...");
+    // Attempt Infospace Import (example)
+    // This is a guess. We need a way to know if it *is* a Infospace token.
+    toast.info("Attempting to import based on token (assuming Infospace for now)...");
     try {
-      const newWorkspace = await importWorkspaceFromToken(token, `Shared Workspace (from token ${token.substring(0, 6)})`);
-      if (newWorkspace && newWorkspace.id) {
-        toast.success(`Workspace "${newWorkspace.name}" imported successfully!`);
-        await fetchWorkspaces(); // Refresh workspace list
-        setActiveWorkspace(newWorkspace.id); // Set as active
-        router.push(`/workspace/${newWorkspace.id}`); // Navigate to the new workspace
+      const newInfospace = await importInfospaceFromToken(token, `Shared Infospace (from token ${token.substring(0, 6)})`);
+      if (newInfospace && newInfospace.id) {
+        toast.success(`Infospace "${newInfospace.name}" imported successfully!`);
+        await fetchInfospaces(); // Refresh Infospace list
+        setActiveInfospace(newInfospace.id); // Set as active
+        router.push(`/Infospace/${newInfospace.id}`); // Navigate to the new Infospace
       } else {
-        // If workspace import fails, maybe it's a dataset or other resource type?
+        // If Infospace import fails, maybe it's a dataset or other resource type?
         // This is where knowing the resource_type from the token is critical.
-        toast.info("Workspace import failed or no workspace returned. Token might be for a different resource type.");
+        toast.info("Infospace import failed or no Infospace returned. Token might be for a different resource type.");
         // Fallback or try another type if applicable - this is very naive
-        // Consider trying dataset import if a target workspace is selected
-        if (targetWorkspaceId) {
-            toast.info(`Trying to import as Dataset into workspace ${targetWorkspaceId}...`);
+        // Consider trying dataset import if a target Infospace is selected
+        if (targetInfospaceId) {
+            toast.info(`Trying to import as Dataset into Infospace ${targetInfospaceId}...`);
             const importedDataset = await importDatasetFromToken(token, { 
-                workspaceId: targetWorkspaceId, 
+                InfospaceId: targetInfospaceId, 
                 includeContent: true, 
                 includeResults: true 
             });
             if (importedDataset && importedDataset.id) {
-                toast.success(`Dataset "${importedDataset.name}" imported successfully into workspace ${targetWorkspaceId}!`);
-                if (importedDataset.workspace_id === useWorkspaceStore.getState().activeWorkspace?.id) {
-                    await fetchDatasets(); // Refresh dataset list for the current active workspace
+                toast.success(`Dataset "${importedDataset.name}" imported successfully into Infospace ${targetInfospaceId}!`);
+                if (importedDataset.Infospace_id === useInfospaceStore.getState().activeInfospace?.id) {
+                    await fetchDatasets(); // Refresh dataset list for the current active Infospace
                 }
-                router.push(`/workspace/${importedDataset.workspace_id}/datasets/${importedDataset.id}`); // Navigate to the dataset in its workspace
+                router.push(`/Infospace/${importedDataset.Infospace_id}/datasets/${importedDataset.id}`); // Navigate to the dataset in its Infospace
             } else {
                  toast.error("Failed to import as Dataset. The share token might be invalid, expired, or for another resource type.");
             }
         } else {
-            toast.error("Workspace import failed and no target workspace for dataset import. Please try again or check the share link.");
+            toast.error("Infospace import failed and no target Infospace for dataset import. Please try again or check the share link.");
         }
       }
     } catch (err) {
@@ -168,7 +168,7 @@ export default function ShareTokenPage() {
           ) : (
             <p className="text-sm text-gray-600 mb-4">
               To access or import the shared content, please click the button below.
-              The system will attempt to determine the resource type and import it into your relevant workspace.
+              The system will attempt to determine the resource type and import it into your relevant Infospace.
             </p>
           )}
           

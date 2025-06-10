@@ -33,7 +33,7 @@ import {
 // TODO: Add a way to navigate to the actual resource if possible.
 // const getResourceUrl = (resourceType: ResourceType, resourceId: number): string | null => {
 //   switch (resourceType) {
-//     case 'workspace': return `/workspaces/${resourceId}`;
+//     case 'Infospace': return `/infospaces/${resourceId}`;
 //     case 'data_source': return `/data_sources/${resourceId}`; // Adjust paths as needed
 //     case 'classification_job': return `/jobs/${resourceId}`;
 //     case 'dataset': return `/datasets/${resourceId}`;
@@ -128,14 +128,14 @@ export default function ShareManagerView() {
             </Button>
         </div>
         <CardDescription>
-          Manage all active shareable links created across your workspaces and resources.
+          Manage all active shareable links created across your Infospaces and resources.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {links.length === 0 && !isLoading ? (
           <div className="text-center py-10 text-muted-foreground">
             <p>No shareable links found.</p>
-            <p className="text-sm mt-1">Create links from Workspaces, Data Sources, Datasets, or Job History views.</p>
+            <p className="text-sm mt-1">Create links from Infospaces, Data Sources, Datasets, or Job History views.</p>
           </div>
         ) : (
           <Table>

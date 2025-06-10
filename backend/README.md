@@ -45,23 +45,7 @@ If your Docker is not running in `localhost` (the URLs above wouldn't work) you 
 
 ### General workflow
 
-By default, the dependencies are managed with [Poetry](https://python-poetry.org/), go there and install it.
-
-From `./backend/` you can install all the dependencies with:
-
-```console
-$ poetry install
-```
-
-Then you can start a shell session with the new environment with:
-
-```console
-$ poetry shell
-```
-
-Make sure your editor is using the correct Python virtual environment.
-
-Modify or add SQLModel models for data and SQL tables in `./backend/app/models.py`, API endpoints in `./backend/app/api/`, service logic in `./backend/app/api/services/`, and background tasks in `./backend/app/tasks/`.
+The override.yml build the backend container with auto-build on, no more modifications needed for easy development.a
 
 ### Enabling Open User Registration
 

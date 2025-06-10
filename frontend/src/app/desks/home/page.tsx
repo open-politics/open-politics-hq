@@ -2,58 +2,21 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Folder, Globe, MessageSquare, Key, Brain, SquareTerminal, Microscope, FileText, FolderCog } from "lucide-react"
-import { workspaceItems } from "@/components/collection/unsorted/AppSidebar"
+import { InfospaceItems } from "@/components/collection/unsorted/AppSidebar"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { useApiKeysStore } from "@/zustand_stores/storeApiKeys"
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ClassificationService } from "@/client/services"
-import ProviderSelector from '@/components/collection/workspaces/management/ProviderSelector'
-
-interface Provider {
-  name: string;
-  models: string[];
-}
+import ProviderSelector from '@/components/collection/infospaces/management/ProviderSelector'
 
 export default function DesksPage() {
-  const { apiKeys, setApiKey, selectedProvider, selectedModel, setSelectedProvider, setSelectedModel, clearAllKeys } = useApiKeysStore();
+  const { apiKeys, setApiKey, selectedProvider, selectedModel } = useApiKeysStore();
   const [tempApiKey, setTempApiKey] = useState('');
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-
-  useEffect(() => {
-    const fetchProviders = async () => {
-      try {
-        const response = await ClassificationService.getProviders();
-        const providerList = response as Provider[];
-        setProviders(providerList);
-        
-        // Set default provider and model if none selected
-        if (!selectedProvider && providerList.length > 0) {
-          const defaultProvider = providerList[0];
-          setSelectedProvider(defaultProvider.name);
-          if (defaultProvider.models.length > 0) {
-            setSelectedModel(defaultProvider.models[0]);
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching providers:', error);
-      }
-    };
-
-    fetchProviders();
-  }, []);
-
-  useEffect(() => {
-    // Update available models when provider changes
-    const provider = providers.find(p => p.name === selectedProvider);
-    setAvailableModels(provider?.models || []);
-  }, [selectedProvider, providers]);
 
   const handleSaveApiKey = () => {
-    if (selectedProvider) {
+    if (selectedProvider && tempApiKey) {
       setApiKey(selectedProvider, tempApiKey);
       setTempApiKey('');  
     }
@@ -110,7 +73,7 @@ export default function DesksPage() {
           </div> */}
 
           <div className="relative transition-all duration-200 h-full">
-            <Link href="/desks/home/workspaces/classification-runner" className="h-full block">
+            <Link href="/desks/home/infospaces/annotation-runner" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-r from-[var(--tool-analyser-from)] to-[var(--tool-analyser-to)] rounded-lg"></div>
                 <CardHeader>
@@ -133,7 +96,7 @@ export default function DesksPage() {
         <h2 className="text-xl font-semibold mb-4">Stores</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="relative transition-all duration-200 h-full">
-            <Link href="/desks/home/workspaces/classification-schemes" className="h-full block">
+            <Link href="/desks/home/infospaces/classification-schemes" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-r from-[var(--store-schemes-from)] to-[var(--store-schemes-to)] rounded-lg"></div>
                 <CardHeader>
@@ -150,16 +113,16 @@ export default function DesksPage() {
           </div>
 
           <div className="relative transition-all duration-200 h-full">
-            <Link href="/desks/home/workspaces/document-manager" className="h-full block">
+            <Link href="/desks/home/infospaces/asset-manager" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-r from-[var(--store-documents-from)] to-[var(--store-documents-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <FileText className="w-5 h-5" />
-                    Documents
+                    Assets
                   </CardTitle>
                   <CardDescription>
-                    Manage your document collection
+                    Manage your collection of documents, articles, images, and more
                   </CardDescription>
                 </CardHeader>
               </Card>
@@ -168,9 +131,9 @@ export default function DesksPage() {
         </div>
       </div>
 
-      {/* Workspace & Settings Section */}
+      {/* Infospace & Settings Section */}
       <div>
-        <h2 className="text-xl font-semibold mb-4">Workspace & Settings</h2>
+        <h2 className="text-xl font-semibold mb-4">Infospace & Settings</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* AI Model Configuration Card */}
           <div className="relative transition-all duration-200 h-full">
@@ -186,7 +149,9 @@ export default function DesksPage() {
                 </CardDescription>
                 <div className="flex flex-col gap-2">
                   <span className="text-xs text-gray-500">
-                    <Link href="https://aistudio.google.com/apikey" className="text-blue-800 dark:text-blue-200">How to get an API key (Google)</Link>
+                    <Link href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-800 dark:text-blue-200">
+                      How to get an API key (Google)
+                    </Link>
                   </span>
                 </div>
               </CardHeader>
@@ -205,7 +170,7 @@ export default function DesksPage() {
                       />
                       <Button 
                         onClick={handleSaveApiKey}
-                        disabled={!selectedProvider}
+                        disabled={!selectedProvider || !tempApiKey}
                       >
                         Save
                       </Button>
@@ -225,23 +190,21 @@ export default function DesksPage() {
           </div>
 
           <div className="relative transition-all duration-200 h-full">
-            <Link href="/desks/home/workspaces/workspace-manager" className="h-full block">
+            <Link href="/desks/home/infospaces/Infospace-manager" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-[var(--settings-workspace-from)] to-[var(--settings-workspace-to)] rounded-lg"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--settings-Infospace-from)] to-[var(--settings-Infospace-to)] rounded-lg"></div>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <FolderCog className="w-5 h-5" />
-                    Workspace Manager
+                    Infospace Manager
                   </CardTitle>
                   <CardDescription>
-                    Manage your workspace settings and configurations
+                    Manage your Infospace settings and configurations
                   </CardDescription>
                 </CardHeader>
               </Card>
             </Link>
           </div>
-
-          
         </div>
       </div>
     </div>

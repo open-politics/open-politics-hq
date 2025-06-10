@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { DatasetsService } from '@/client/services';
 import {
     DatasetRead,
@@ -51,7 +51,7 @@ export interface ImportOptions { // Exported for use in components
     includeContent?: boolean; // Corresponds to includeRecordContent on backend for dataset export
     includeResults?: boolean;
     conflictStrategy?: 'skip' | 'update' | 'replace'; // This is for importDataset
-    workspaceId?: number; // Added for importFromToken to specify target workspace
+    InfospaceId?: number; // Added for importFromToken to specify target Infospace
     // For importDatasetFromToken, the backend API has include_content, include_results, conflict_strategy.
     // The client has includeContent, includeResults, conflictStrategy for importDatasetFromToken as well.
 }
@@ -62,16 +62,16 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     error: null,
 
     fetchDatasets: async () => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            set({ error: "No active workspace selected", isLoading: false });
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            set({ error: "No active Infospace selected", isLoading: false });
             return;
         }
 
         set({ isLoading: true, error: null });
         try {
             const response: DatasetsOut = await DatasetsService.listDatasets({
-                workspaceId: activeWorkspace.id,
+                InfospaceId: activeInfospace.id,
                 skip: 0,
                 limit: 1000 // Increased limit, consider pagination for UI
             });
@@ -95,16 +95,16 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     createDataset: async (datasetData: DatasetCreate): Promise<DatasetRead | null> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            toast.error("No active Infospace selected");
             return null;
         }
 
         set({ isLoading: true, error: null });
         try {
             const dataset = await DatasetsService.createDataset({
-                workspaceId: activeWorkspace.id,
+                InfospaceId: activeInfospace.id,
                 requestBody: datasetData
             });
 
@@ -127,16 +127,16 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     updateDataset: async (datasetId: number, updateData: DatasetUpdate): Promise<DatasetRead | null> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            toast.error("No active Infospace selected");
             return null;
         }
 
         set({ isLoading: true, error: null });
         try {
             const updated = await DatasetsService.updateDataset({
-                workspaceId: activeWorkspace.id,
+                InfospaceId: activeInfospace.id,
                 datasetId: datasetId,
                 requestBody: updateData
             });
@@ -160,16 +160,16 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     deleteDataset: async (datasetId: number): Promise<void> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            toast.error("No active Infospace selected");
             return;
         }
 
         set({ isLoading: true, error: null });
         try {
             await DatasetsService.deleteDataset({
-                workspaceId: activeWorkspace.id,
+                InfospaceId: activeInfospace.id,
                 datasetId: datasetId
             });
 
@@ -190,16 +190,16 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     exportDataset: async (datasetId: number, options: ExportOptions): Promise<void> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            toast.error("No active Infospace selected");
             return;
         }
 
         set({ isLoading: true, error: null });
         try {
             const response = await DatasetsService.exportDataset({
-                workspaceId: activeWorkspace.id,
+                InfospaceId: activeInfospace.id,
                 datasetId: datasetId,
                 includeContent: options.includeRecordContent,
                 includeResults: options.includeResults,
@@ -229,9 +229,9 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     exportMultipleDatasets: async (datasetIds: number[], options: ExportOptions): Promise<void> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected");
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            toast.error("No active Infospace selected");
             return;
         }
         if (!datasetIds || datasetIds.length === 0) {
@@ -265,15 +265,15 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     importDataset: async (file: File, conflictStrategy: 'skip' | 'update' | 'replace' = 'skip'): Promise<DatasetRead | null> => {
-        const { activeWorkspace } = useWorkspaceStore.getState();
-        if (!activeWorkspace?.id) {
-            toast.error("No active workspace selected for import.");
+        const { activeInfospace } = useInfospaceStore.getState();
+        if (!activeInfospace?.id) {
+            toast.error("No active Infospace selected for import.");
             return null;
         }
         set({ isLoading: true, error: null });
         try {
             const importedDataset = await DatasetsService.importDataset({
-                workspaceId: activeWorkspace.id,
+                InfospaceId: activeInfospace.id,
                 formData: { file },
                 conflictStrategy: conflictStrategy,
             });
@@ -296,34 +296,34 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
     },
 
     importFromToken: async (token: string, options?: ImportOptions): Promise<DatasetRead | null> => {
-        const targetWorkspaceId = options?.workspaceId || useWorkspaceStore.getState().activeWorkspace?.id;
+        const targetInfospaceId = options?.InfospaceId || useInfospaceStore.getState().activeInfospace?.id;
 
-        if (!targetWorkspaceId) {
-            toast.error("Target workspace ID must be specified for importing dataset from token.");
-            set({ isLoading: false, error: "Target workspace ID missing for token import" });
+        if (!targetInfospaceId) {
+            toast.error("Target Infospace ID must be specified for importing dataset from token.");
+            set({ isLoading: false, error: "Target Infospace ID missing for token import" });
             return null;
         }
 
         set({ isLoading: true, error: null });
         try {
             const dataset = await DatasetsService.importDatasetFromToken({
-                workspaceId: targetWorkspaceId, // Use the determined workspaceId
+                InfospaceId: targetInfospaceId, // Use the determined InfospaceId
                 shareToken: token,
                 includeContent: options?.includeContent,
                 includeResults: options?.includeResults,
                 conflictStrategy: options?.conflictStrategy
             });
 
-            const currentActiveWorkspaceId = useWorkspaceStore.getState().activeWorkspace?.id;
-            if (dataset.workspace_id === currentActiveWorkspaceId) {
+            const currentActiveInfospaceId = useInfospaceStore.getState().activeInfospace?.id;
+            if (dataset.Infospace_id === currentActiveInfospaceId) {
                 set(state => ({
                     datasets: [dataset, ...state.datasets].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
                     isLoading: false
                 }));
-                toast.success(`Dataset "${dataset.name}" imported successfully into the current workspace.`);
+                toast.success(`Dataset "${dataset.name}" imported successfully into the current Infospace.`);
             } else {
-                set({ isLoading: false }); // Still imported, but not to current active workspace visible list
-                toast.success(`Dataset "${dataset.name}" imported into workspace ID ${dataset.workspace_id}. Switch to that workspace to view it.`);
+                set({ isLoading: false }); // Still imported, but not to current active Infospace visible list
+                toast.success(`Dataset "${dataset.name}" imported into Infospace ID ${dataset.Infospace_id}. Switch to that Infospace to view it.`);
             }
             return dataset;
         } catch (err) {

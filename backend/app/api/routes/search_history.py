@@ -5,12 +5,13 @@ from sqlmodel import Session, select
 from sqlalchemy import func
 
 from app.api.deps import CurrentUser, SessionDep
-from app.models import SearchHistory, SearchHistoryCreate, SearchHistoriesOut
+from app.models import SearchHistory
+from app.schemas import SearchHistoryCreate, SearchHistoriesOut, SearchHistoryOut
 
 router = APIRouter()
 
 
-@router.post("/create", response_model=SearchHistory)
+@router.post("/create", response_model=SearchHistoryOut)
 def create_search_history(
     *, session: SessionDep, current_user: CurrentUser, search_history_in: SearchHistoryCreate
 ) -> Any:

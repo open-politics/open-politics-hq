@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 // import { useDocumentStore } from '@/zustand_stores/storeDocuments'; // Replaced with DataSource store
-import { useDataSourceStore } from '@/zustand_stores/storeDataSources'; // Import DataSource store
+import { useDataSourceStore } from '@/zustand_stores/storeAssets'; // Import DataSource store
 import { CoreContentModel } from '@/lib/content';
 import { DataSourceType } from '@/client/models'; // Import DataSourceType
 import { toast } from '@/components/ui/use-toast';
@@ -15,9 +15,9 @@ type BookmarkState = {
   // bookmarks: CoreContentModel[]; // Removed local bookmark list
   pendingOperations: { [identifier: string]: 'add' | 'remove' }; // Track pending ops by URL or another unique ID
   // Redefine addBookmark to create a DataSource
-  addBookmark: (item: CoreContentModel, workspaceId: number) => Promise<void>;
+  addBookmark: (item: CoreContentModel, InfospaceId: number) => Promise<void>;
   // Redefine removeBookmark to delete a DataSource
-  removeBookmark: (identifier: string, workspaceId: number) => Promise<void>; // Needs identifier (e.g., URL) and workspaceId
+  removeBookmark: (identifier: string, InfospaceId: number) => Promise<void>; // Needs identifier (e.g., URL) and InfospaceId
   // getBookmarks: () => CoreContentModel[]; // Removed - bookmarks are now DataSources
   isOperationPending: (identifier: string) => 'add' | 'remove' | false;
 };
@@ -48,7 +48,7 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
   // bookmarks: [], // Removed
   pendingOperations: {},
 
-  addBookmark: async (item, workspaceId) => {
+  addBookmark: async (item, InfospaceId) => {
     const identifier = item.url; // Use URL as the primary identifier for now
     if (!identifier) {
       console.error('Cannot add bookmark: Missing URL identifier.');
@@ -85,10 +85,10 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
       formData.append('origin_details', JSON.stringify(originDetails));
       // No file is uploaded in this case
 
-      // We need the workspaceId for the API call, but createDataSource in the store
-      // currently reads it from useWorkspaceStore.getState(). We might need to adjust
-      // createDataSource or ensure the active workspace is correctly set.
-      // Assuming createDataSource handles the workspace context internally for now.
+      // We need the InfospaceId for the API call, but createDataSource in the store
+      // currently reads it from useInfospaceStore.getState(). We might need to adjust
+      // createDataSource or ensure the active Infospace is correctly set.
+      // Assuming createDataSource handles the Infospace context internally for now.
       const newDataSource = await createDataSource(formData);
 
       if (newDataSource) {
@@ -112,7 +112,7 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
     }
   },
 
-  removeBookmark: async (identifier, workspaceId) => {
+  removeBookmark: async (identifier, InfospaceId) => {
     if (!identifier) {
       console.error('Cannot remove bookmark: Missing identifier.');
       return;
@@ -121,14 +121,14 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
     set((state) => ({ pendingOperations: { ...state.pendingOperations, [identifier]: 'remove' } }));
 
     try {
-      // Get DataSources for the current workspace to find the one to delete
+      // Get DataSources for the current Infospace to find the one to delete
       // This relies on useDataSourceStore having the current list
       const { dataSources, deleteDataSource } = useDataSourceStore.getState();
-      const { activeWorkspace } = useWorkspaceStore.getState();
+      const { activeInfospace } = useInfospaceStore.getState();
 
-      // Ensure we are operating within the correct workspace context
-      if (!activeWorkspace || activeWorkspace.id !== workspaceId) {
-        throw new Error('Workspace context mismatch or missing active workspace.');
+      // Ensure we are operating within the correct Infospace context
+      if (!activeInfospace || activeInfospace.id !== InfospaceId) {
+        throw new Error('Infospace context mismatch or missing active Infospace.');
       }
 
       const dataSourceIdToDelete = findDataSourceByIdentifier(identifier, dataSources);

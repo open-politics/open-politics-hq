@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from pydantic.networks import EmailStr
 import fitz
 from io import BytesIO
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from app.api.deps import get_current_active_superuser
-from app.models import Message
+from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
 from app.utils import generate_test_email, send_email
-from app.core.opol_config import opol 
+from app.core.opol_config import opol
+from app.core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/utils", tags=["Utilities"])
 
@@ -146,4 +150,29 @@ async def scrape_article(url: str):
             status_code=500,
             detail=f"Failed to scrape article: {str(e)}"
         )
+
+@router.get("/providers", response_model=ProviderListResponse, status_code=status.HTTP_200_OK)
+async def get_providers() -> ProviderListResponse:
+    """
+    Returns a hardcoded list of available classification providers and their models.
+    This is a temporary solution to bypass dynamic discovery issues.
+    """
+    logger.info("Route: Returning hardcoded classification providers.")
+    
+    hardcoded_providers: List[ProviderInfo] = [
+        ProviderInfo(
+            provider_name="gemini_native",
+            models=[
+                ProviderModel(name="gemini-2.5-flash", description="Google's most capable model."),
+            ]
+        ),
+        ProviderInfo(
+            provider_name="ollama",
+            models=[
+                ProviderModel(name="llama4.2", description="Meta's Llama 4.2 model."),
+            ]
+        )
+    ]
+    
+    return ProviderListResponse(providers=hardcoded_providers)
     

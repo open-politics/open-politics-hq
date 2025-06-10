@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { MapPoint } from '@/components/collection/workspaces/classifications/ClassificationResultsMap'; // Adjust path if needed
+import { MapPoint } from '@/components/collection/infospaces/classifications/ClassificationResultsMap'; // Adjust path if needed
 
 interface GeocodingCacheEntry {
   points: MapPoint[];
@@ -10,7 +10,7 @@ interface GeocodingCacheEntry {
 }
 
 interface GeocodingCacheState {
-  // Cache maps a unique key (e.g., 'workspaceId-runId' or 'workspaceId-resultsHash') to cached data
+  // Cache maps a unique key (e.g., 'InfospaceId-runId' or 'InfospaceId-resultsHash') to cached data
   cache: Record<string, GeocodingCacheEntry>;
   // Cache expiration time in milliseconds (e.g., 1 hour)
   cacheDuration: number;

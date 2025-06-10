@@ -22,7 +22,7 @@ interface RunHistoryState {
   isLoading: boolean;
   error: string | null;
   // Renamed to fetchJobHistory for clarity, but keep original name for compatibility if needed
-  fetchRunHistory: (workspaceId: number) => Promise<void>; 
+  fetchRunHistory: (InfospaceId: number) => Promise<void>; 
 }
 
 export const useRunHistoryStore = create<RunHistoryState>((set) => ({
@@ -31,12 +31,12 @@ export const useRunHistoryStore = create<RunHistoryState>((set) => ({
   error: null,
 
   // Renamed function internally for clarity, but exposed as fetchRunHistory
-  fetchRunHistory: async (workspaceId: number) => {
+  fetchRunHistory: async (InfospaceId: number) => {
     set({ isLoading: true, error: null });
     try {
       // Call the correct service method to fetch jobs - returns ClassificationJobsOut
       const response: ClassificationJobsOut = await ClassificationJobsService.listClassificationJobs({ 
-        workspaceId,
+        InfospaceId,
         limit: 1000 // Added a limit, adjust as needed
       });
       // Extract the jobs array from the 'data' property of the response object

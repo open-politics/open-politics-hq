@@ -4,20 +4,27 @@ from typing import List, Optional, Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query, status, Form, Body, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
+from sqlmodel import Session
 
+from app.api import deps
 from app.api.deps import CurrentUser, ShareableServiceDep, OptionalUser, SessionDep, get_shareable_service
 from app.models import (
     ShareableLink,
+    ResourceType,
+    PermissionLevel,
+    Infospace,
+)
+from app.schemas import (
     ShareableLinkCreate,
     ShareableLinkUpdate,
     ShareableLinkRead,
     ShareableLinkStats,
-    ResourceType,
-    PermissionLevel,
     Message,
-    DatasetPackageSummary
+    DatasetPackageSummary,
+    Paginated
 )
-from app.api.services.shareable import ShareableService
+
+from app.api.services.shareable_service import ShareableService
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -31,169 +38,129 @@ class ExportBatchRequest(BaseModel):
 # --- End Request Model ---
 
 
-@router.post("/", response_model=ShareableLinkRead, status_code=status.HTTP_201_CREATED)
+@router.post("/{infospace_id}/links", response_model=ShareableLinkRead)
 def create_shareable_link(
-    link_data: ShareableLinkCreate,
-    current_user: CurrentUser,
+    infospace_id: int,
+    link_in: ShareableLinkCreate,
     service: ShareableServiceDep,
-):
-    """
-    Create a new shareable link for a resource.
-    Transaction managed by SessionDep within the service dependency.
-    """
+    current_user: CurrentUser
+) -> ShareableLink:
+    """Create a new shareable link for a resource within an infospace."""
     try:
         link = service.create_link(
             user_id=current_user.id,
-            link_data=link_data,
+            link_data=link_in,
+            infospace_id=infospace_id
         )
-        return ShareableLinkRead.model_validate(link)
+        return link
     except ValueError as ve:
-        logger.error(f"Route: Error creating shareable link: {ve}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.exception(f"Route: Unexpected error creating shareable link: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(f"Error creating shareable link via service: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not create shareable link.")
 
 
-@router.get("/", response_model=List[ShareableLinkRead])
+@router.get("/{infospace_id}/links", response_model=Paginated)
 def get_shareable_links(
+    infospace_id: int,
     current_user: CurrentUser,
     service: ShareableServiceDep,
-    resource_type: Optional[ResourceType] = Query(None, description="Filter by resource type"),
-    resource_id: Optional[int] = Query(None, description="Filter by resource ID")
-):
-    """
-    Get all shareable links for the current user.
-    Can be filtered by resource_type and resource_id.
-    """
+    resource_type: Optional[ResourceType] = Query(None),
+    resource_id: Optional[int] = Query(None)
+) -> Paginated:
+    """Get shareable links for the current user, optionally filtered by resource and infospace."""
     links = service.get_links(
         user_id=current_user.id,
         resource_type=resource_type,
-        resource_id=resource_id
+        resource_id=resource_id,
+        infospace_id=infospace_id
     )
-    return [ShareableLinkRead.model_validate(link) for link in links]
+    return Paginated(data=[ShareableLinkRead.model_validate(link) for link in links], count=len(links))
 
 
-@router.get("/stats", response_model=ShareableLinkStats)
-def get_shareable_link_stats(
-    current_user: CurrentUser,
-    service: ShareableServiceDep,
-):
-    """
-    Get statistics about shareable links for the current user.
-    """
-    stats = service.get_link_stats(user_id=current_user.id)
-    return stats
-
-
-@router.get("/{link_id}", response_model=ShareableLinkRead)
-def get_shareable_link(
-    link_id: int,
-    current_user: CurrentUser,
-    service: ShareableServiceDep,
-):
-    """
-    Get a specific shareable link by ID.
-    """
-    link = service.get_link_by_id(link_id=link_id, user_id=current_user.id)
-
+@router.get("/links/{token}", response_model=ShareableLinkRead)
+def get_shareable_link_by_token(
+    token: str,
+    service: ShareableServiceDep
+) -> ShareableLink:
+    """Get a shareable link by token."""
+    link = service.get_link_by_token(token)
     if not link:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shareable link not found or not accessible")
+        raise HTTPException(status_code=404, detail="Shareable link not found")
+    return link
 
-    return ShareableLinkRead.model_validate(link)
 
-
-@router.put("/{link_id}", response_model=ShareableLinkRead)
+@router.put("/links/{link_id}", response_model=ShareableLinkRead)
 def update_shareable_link(
-    current_user: CurrentUser,
-    service: ShareableServiceDep,
     link_id: int,
-    update_data: ShareableLinkUpdate
-):
-    """
-    Update a shareable link by ID.
-    Transaction managed by SessionDep.
-    """
-    update_dict = update_data.model_dump(exclude_unset=True)
-    if not update_dict:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided.")
-
+    link_in: ShareableLinkUpdate,
+    current_user: CurrentUser,
+    service: ShareableServiceDep
+) -> ShareableLink:
+    """Update a shareable link by its ID (owner only)."""
     try:
         updated_link = service.update_link(
             link_id=link_id,
             user_id=current_user.id,
-            update_data=update_data,
+            update_data=link_in
         )
-
         if not updated_link:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shareable link not found or update failed")
-
-        return ShareableLinkRead.model_validate(updated_link)
+            raise HTTPException(status_code=404, detail="Shareable link not found or not owned by user.")
+        return updated_link
     except ValueError as ve:
-        logger.error(f"Route: Error updating shareable link {link_id}: {ve}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
-    except Exception as e:
-        logger.exception(f"Route: Unexpected error updating shareable link {link_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
-@router.delete("/{link_id}", response_model=Message, status_code=status.HTTP_200_OK)
+@router.delete("/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_shareable_link(
     link_id: int,
     current_user: CurrentUser,
-    service: ShareableServiceDep,
+    service: ShareableServiceDep
 ):
-    """
-    Delete a shareable link by ID.
-    Transaction managed by SessionDep.
-    """
-    try:
-        success = service.delete_link(
-            link_id=link_id,
-            user_id=current_user.id,
-        )
-
-        if not success:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shareable link not found or cannot be deleted")
-
-        return Message(message="Shareable link deleted successfully")
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.exception(f"Route: Unexpected error deleting shareable link {link_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+    """Delete a shareable link by its ID (owner only)."""
+    success = service.delete_link(link_id=link_id, user_id=current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Shareable link not found or not owned by user.")
+    return None
 
 
-@router.get("/access/{token}")
+@router.get("/access/{token}", response_model=Dict[str, Any])
 def access_shared_resource(
     token: str,
     service: ShareableServiceDep,
-    current_user: OptionalUser
-):
-    """
-    Access a shared resource using its token.
-    Can be accessed with or without authentication depending on the link settings.
-    Authentication errors are suppressed to allow access to public resources.
-    """
-    user_id = current_user.id if current_user else None
-
+    requesting_user: OptionalUser
+) -> Dict[str, Any]:
+    """Access the resource associated with a shareable link token."""
     try:
+        user_id_if_any = requesting_user.id if requesting_user else None
         resource_data = service.access_shared_resource(
             token=token,
-            requesting_user_id=user_id
+            requesting_user_id=user_id_if_any
         )
         return resource_data
-    except HTTPException as e:
-        raise e
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        logger.exception(f"Error accessing shared resource via token {token[:6]}...: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error accessing shared resource")
+        logger.error(f"Error accessing resource for token {token[:6]}...: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not access shared resource.")
 
 
-@router.post("/export", response_class=FileResponse)
+@router.get("/{infospace_id}/stats", response_model=ShareableLinkStats)
+def get_sharing_stats(
+    infospace_id: int,
+    current_user: CurrentUser,
+    service: ShareableServiceDep,
+):
+    """Get sharing statistics for the current user within a specific infospace."""
+    stats = service.get_link_stats(user_id=current_user.id, infospace_id=infospace_id)
+    return stats
+
+
+@router.post("/{infospace_id}/export", response_class=FileResponse)
 async def export_resource(
+    infospace_id: int,
     current_user: CurrentUser,
     background_tasks: BackgroundTasks,
     service: ShareableServiceDep,
@@ -201,20 +168,22 @@ async def export_resource(
     resource_id: int = Form(...),
 ):
     """
-    Export a resource to a file.
+    Export a resource from a specific infospace to a file.
     Returns a file download.
     """
     try:
         filepath, filename = await service.export_resource(
             user_id=current_user.id,
             resource_type=resource_type,
-            resource_id=resource_id
+            resource_id=resource_id,
+            infospace_id=infospace_id
         )
         background_tasks.add_task(service._cleanup_temp_file, filepath)
+        media_type = "application/zip" if filepath.endswith(".zip") else "application/json"
         return FileResponse(
             path=filepath,
             filename=filename,
-            media_type="application/json",
+            media_type=media_type,
         )
     except HTTPException as e:
         raise e
@@ -223,16 +192,15 @@ async def export_resource(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error exporting resource")
 
 
-@router.post("/import/{workspace_id}")
+@router.post("/import/{target_infospace_id}")
 async def import_resource(
-    workspace_id: int,
+    target_infospace_id: int,
     current_user: CurrentUser,
     service: ShareableServiceDep,
     file: UploadFile = File(...)
 ):
     """
-    Import a resource from a file into a specific workspace.
-    Transaction managed by SessionDep within the service dependency.
+    Import a resource from a file into a specific infospace.
     """
     if not file.filename or not (file.filename.lower().endswith(".json") or file.filename.lower().endswith(".zip")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only JSON or ZIP files are supported for this endpoint.")
@@ -240,7 +208,7 @@ async def import_resource(
     try:
         result = await service.import_resource(
             user_id=current_user.id,
-            workspace_id=workspace_id,
+            target_infospace_id=target_infospace_id,
             file=file
         )
         return result
@@ -256,7 +224,7 @@ async def import_resource(
 
 # --- New Batch Export Route ---
 @router.post(
-    "/export-batch",
+    "/{infospace_id}/export-batch",
     response_class=FileResponse,
     responses={
         200: {
@@ -270,6 +238,7 @@ async def import_resource(
     },
 )
 async def export_resources_batch(
+    infospace_id: int,
     request_data: ExportBatchRequest,
     current_user: CurrentUser,
     service: ShareableServiceDep,
@@ -279,8 +248,9 @@ async def export_resources_batch(
     try:
         temp_zip_path, zip_filename = await service.export_resources_batch(
             user_id=current_user.id,
-            resource_type=request_data.resource_type,
-            resource_ids=request_data.resource_ids
+            rt=request_data.resource_type,
+            r_ids=request_data.resource_ids,
+            inf_id=infospace_id
         )
         background_tasks.add_task(service._cleanup_temp_file, temp_zip_path)
         return FileResponse(

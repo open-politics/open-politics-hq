@@ -24,9 +24,9 @@ export default function AdminPage() {
               </div>
               <div
                 className="block p-4 border border-gray-300 rounded hover:bg-secondary/60 transition-all duration-300 cursor-pointer"
-                onClick={() => router.push('/accounts/admin/workspaces')}
+                onClick={() => router.push('/accounts/admin/Infospaces')}
               >
-                <CardTitle className="text-xl font-bold">Workspace Management</CardTitle>
+                <CardTitle className="text-xl font-bold">Infospace Management</CardTitle>
               </div>
             </div>
           </CardContent>

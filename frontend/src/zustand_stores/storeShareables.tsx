@@ -38,7 +38,7 @@ export interface SingleImportSuccess {
   resource_type: ResourceType; // Ensure this matches the backend key
   imported_resource_id: number;
   imported_resource_name: string;
-  workspace_id: number;
+  Infospace_id: number;
   // Allow other properties as the backend might return more.
   [key: string]: any;
 }
@@ -66,7 +66,7 @@ export interface BatchReport { // Represents the content of the 'batch_summary' 
 export interface BatchImportSummary { // This is the top-level response for a batch import
   message: string;
   batch_summary: BatchReport; // Nested structure matching backend
-  workspace_id: number;
+  Infospace_id: number;
 }
 
 interface ShareableState {
@@ -77,21 +77,20 @@ interface ShareableState {
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
 
-  createLink: (linkData: ShareableLinkCreate) => Promise<ShareableLinkRead | null>;
-  fetchLinks: (resourceType?: ResourceType, resourceId?: number) => Promise<void>;
+  createLink: (linkData: ShareableLinkCreate, infospaceId: number) => Promise<ShareableLinkRead | null>;
+  fetchLinks: (infospaceId: number, resourceType?: ResourceType, resourceId?: number) => Promise<void>;
   fetchLinkById: (linkId: number) => Promise<ShareableLinkRead | null>;
   fetchLinkByToken: (token: string) => Promise<ShareableLinkRead | null>;
   updateLink: (linkId: number, updateData: ShareableLinkUpdate) => Promise<ShareableLinkRead | null>;
   deleteLink: (linkId: number) => Promise<boolean>;
-  fetchLinkStats: () => Promise<void>;
+  fetchLinkStats: (infospaceId: number) => Promise<void>;
 
   accessSharedResource: (token: string) => Promise<unknown | null>;
   viewDatasetPackageSummary: (token: string) => Promise<DatasetPackageSummary | null>;
 
-  exportResource: (resourceType: ResourceType, resourceId: number) => Promise<void>;
-  exportResourcesBatch: (resourceType: ResourceType, resourceIds: number[]) => Promise<void>;
-  // Updated return type for importResource
-  importResource: (file: File, workspaceId?: number) => Promise<SingleImportSuccess | BatchImportSummary | null>;
+  exportResource: (resourceType: ResourceType, resourceId: number, infospaceId: number) => Promise<void>;
+  exportResourcesBatch: (resourceType: ResourceType, resourceIds: number[], infospaceId: number) => Promise<void>;
+  importResource: (file: File, infospaceId?: number) => Promise<SingleImportSuccess | BatchImportSummary | null>;
 }
 
 export const useShareableStore = create<ShareableState>((set, get) => ({
@@ -102,10 +101,10 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
 
-  createLink: async (linkData) => {
+  createLink: async (linkData, infospaceId) => {
     set({ isLoading: true, error: null });
     try {
-      const newLink = await ShareablesService.createShareableLink({ requestBody: linkData });
+      const newLink = await ShareablesService.createShareableLink({ infospaceId: infospaceId, requestBody: linkData });
       set((state) => ({ links: [...state.links, newLink], isLoading: false }));
       return newLink;
     } catch (err) {
@@ -115,11 +114,11 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     }
   },
 
-  fetchLinks: async (resourceType, resourceId) => {
+  fetchLinks: async (infospaceId, resourceType, resourceId) => {
     set({ isLoading: true, error: null });
     try {
-      const links = await ShareablesService.getShareableLinks({ resourceType, resourceId });
-      set({ links, isLoading: false });
+      const paginatedLinks = await ShareablesService.getShareableLinks({ infospaceId, resourceType, resourceId });
+      set({ links: paginatedLinks.data as ShareableLinkRead[], isLoading: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch links';
       set({ error: message, isLoading: false });
@@ -129,9 +128,9 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
   fetchLinkById: async (linkId) => {
     set({ isLoading: true, error: null });
     try {
-      const link = await ShareablesService.getShareableLink({ linkId });
+      console.warn("fetchLinkById is deprecated. Use fetchLinkByToken if needed. No route exists for fetching by ID.");
       set({ isLoading: false });
-      return link;
+      return null;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch link by ID';
       set({ error: message, isLoading: false });
@@ -142,10 +141,9 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
   fetchLinkByToken: async (token) => {
     set({ isLoading: true, error: null });
     try {
-      // This remains conceptual as there's no direct client method.
-      console.warn("fetchLinkByToken: Direct fetch by token not available in client, conceptual placeholder.");
+      const link = await ShareablesService.getShareableLinkByToken({ token });
       set({ isLoading: false });
-      return null; 
+      return link;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch link by token';
       set({ error: message, isLoading: false });
@@ -185,10 +183,10 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     }
   },
 
-  fetchLinkStats: async () => {
+  fetchLinkStats: async (infospaceId: number) => {
     set({ isLoading: true, error: null });
     try {
-      const stats = await ShareablesService.getShareableLinkStats();
+      const stats = await ShareablesService.getSharingStats({infospaceId});
       set({ linkStats: stats, isLoading: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch link stats';
@@ -222,11 +220,11 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     }
   },
 
-  exportResource: async (resourceType, resourceId) => {
+  exportResource: async (resourceType, resourceId, infospaceId) => {
     set({ isLoading: true, error: null });
     try {
       const exportPayload: Body_shareables_export_resource = { resource_type: resourceType, resource_id: resourceId };
-      const response = await ShareablesService.exportResource({ formData: exportPayload });
+      const response = await ShareablesService.exportResource({ infospaceId: infospaceId, formData: exportPayload });
 
       if (response instanceof Blob) {
         let filename = `${resourceType}_${resourceId}_export.zip`; // Default
@@ -259,7 +257,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     }
   },
 
-  exportResourcesBatch: async (resourceType, resourceIds) => {
+  exportResourcesBatch: async (resourceType, resourceIds, infospaceId) => {
     set({ isLoading: true, error: null });
     try {
       const requestBody: ExportBatchRequest = { resource_type: resourceType, resource_ids: resourceIds };
@@ -272,7 +270,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
         return;
       }
 
-      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/shareables/export-batch`, {
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/${infospaceId}/export-batch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -317,17 +315,17 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     }
   },
   
-  importResource: async (file: File, workspaceId?: number): Promise<SingleImportSuccess | BatchImportSummary | null> => {
+  importResource: async (file: File, infospaceId?: number): Promise<SingleImportSuccess | BatchImportSummary | null> => {
     set({ isLoading: true, error: null });
     try {
-      if (workspaceId === undefined) {
-        throw new Error("Target workspace ID must be provided for importResource.");
+      if (infospaceId === undefined) {
+        throw new Error("Target Infospace ID must be provided for importResource.");
       }
 
       // The ShareablesService.importResource is expected to return the parsed JSON response directly.
       const importedData = await ShareablesService.importResource({
-        formData: { file },
-        workspaceId: workspaceId 
+        targetInfospaceId: infospaceId,
+        formData: { file: file },
       }) as SingleImportSuccess | BatchImportSummary; // Type assertion based on expected backend responses
       
       set({ isLoading: false });

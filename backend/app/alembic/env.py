@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from alembic.operations import ops
 from sqlmodel import SQLModel
+import pgvector.sqlalchemy
 
 
 # this is the Alembic Config object, which provides
@@ -130,6 +131,9 @@ def run_migrations_online():
     )
 
     with connectable.connect() as connection:
+        # Add the 'vector' type to the dialect's ischema_names
+        connection.dialect.ischema_names['vector'] = pgvector.sqlalchemy.Vector
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

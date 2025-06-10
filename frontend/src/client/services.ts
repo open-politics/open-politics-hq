@@ -2,10 +2,802 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { Body_login_login_access_token,Message,NewPassword,Token,UserOut,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ItemCreate,ItemOut,ItemsOut,ItemUpdate,Body_shareables_export_resource,Body_shareables_import_resource,DatasetPackageSummary,ExportBatchRequest,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SearchHistoriesOut,SearchHistory,SearchHistoryCreate,Body_filestorage_file_upload,FileUploadResponse,DataSourceTransferRequest,DataSourceTransferResponse,ImportWorkspaceFromTokenRequest,WorkspaceCreate,WorkspaceRead,WorkspaceUpdate,ClassificationSchemeCreate,ClassificationSchemeRead,ClassificationSchemeUpdate,ClassificationResultRead,EnhancedClassificationResultRead,ClassificationJobCreate,ClassificationJobRead,ClassificationJobsOut,ClassificationJobUpdate,CreateDatasetFromJobRequest,DatasetRead,Body_datasources_create_datasource,Body_datasources_update_datasource_urls,CsvRowsOut,DataSourceRead,DataSourcesOut,DataSourceUpdate,AppendRecordInput,DataRecordRead,DataRecordUpdate,RecurringTaskCreate,RecurringTaskRead,RecurringTasksOut,RecurringTaskStatus,RecurringTaskUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetsOut,DatasetUpdate,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+import type { AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,Message,ReprocessOptions,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRead,AnnotationsOut,AnnotationUpdate,BundleCreate,BundleRead,BundleUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Body_filestorage_file_upload,FileUploadResponse,InfospaceCreate,InfospaceRead,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_shareables_export_resource,Body_shareables_import_resource,DatasetPackageSummary,ExportBatchRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+
+export type AssetsData = {
+        CreateAsset: {
+                    infospaceId: number
+requestBody: AssetCreate
+                    
+                };
+CreateAsset1: {
+                    infospaceId: number
+requestBody: AssetCreate
+                    
+                };
+ListAssets: {
+                    infospaceId: number
+limit?: number
+parentAssetId?: number | null
+skip?: number
+                    
+                };
+ListAssets1: {
+                    infospaceId: number
+limit?: number
+parentAssetId?: number | null
+skip?: number
+                    
+                };
+CreateAsset2: {
+                    infospaceId: number
+requestBody: AssetCreate
+                    
+                };
+CreateAsset3: {
+                    infospaceId: number
+requestBody: AssetCreate
+                    
+                };
+ListAssets2: {
+                    infospaceId: number
+limit?: number
+parentAssetId?: number | null
+skip?: number
+                    
+                };
+ListAssets3: {
+                    infospaceId: number
+limit?: number
+parentAssetId?: number | null
+skip?: number
+                    
+                };
+UploadFile: {
+                    formData: Body_assets_upload_file
+infospaceId: number
+                    
+                };
+UploadFile1: {
+                    formData: Body_assets_upload_file
+infospaceId: number
+                    
+                };
+IngestUrl: {
+                    infospaceId: number
+scrapeImmediately?: boolean
+title?: string | null
+url: string
+                    
+                };
+IngestUrl1: {
+                    infospaceId: number
+scrapeImmediately?: boolean
+title?: string | null
+url: string
+                    
+                };
+IngestText: {
+                    eventTimestamp?: string | null
+infospaceId: number
+textContent: string
+title?: string | null
+                    
+                };
+IngestText1: {
+                    eventTimestamp?: string | null
+infospaceId: number
+textContent: string
+title?: string | null
+                    
+                };
+BulkIngestUrls: {
+                    infospaceId: number
+requestBody: BulkUrlIngestion
+                    
+                };
+BulkIngestUrls1: {
+                    infospaceId: number
+requestBody: BulkUrlIngestion
+                    
+                };
+ReprocessAsset: {
+                    assetId: number
+infospaceId: number
+requestBody: ReprocessOptions
+                    
+                };
+ReprocessAsset1: {
+                    assetId: number
+infospaceId: number
+requestBody: ReprocessOptions
+                    
+                };
+GetAsset: {
+                    assetId: number
+infospaceId: number
+                    
+                };
+GetAsset1: {
+                    assetId: number
+infospaceId: number
+                    
+                };
+UpdateAsset: {
+                    assetId: number
+infospaceId: number
+requestBody: AssetUpdate
+                    
+                };
+UpdateAsset1: {
+                    assetId: number
+infospaceId: number
+requestBody: AssetUpdate
+                    
+                };
+DeleteAsset: {
+                    assetId: number
+infospaceId: number
+                    
+                };
+DeleteAsset1: {
+                    assetId: number
+infospaceId: number
+                    
+                };
+GetAssetChildren: {
+                    assetId: number
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetAssetChildren1: {
+                    assetId: number
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+CreateAssetsBackgroundBulk: {
+                    formData: Body_assets_create_assets_background_bulk
+infospaceId: number
+                    
+                };
+CreateAssetsBackgroundBulk1: {
+                    formData: Body_assets_create_assets_background_bulk
+infospaceId: number
+                    
+                };
+CreateAssetsBackgroundUrls: {
+                    infospaceId: number
+requestBody: BulkUrlIngestion
+                    
+                };
+CreateAssetsBackgroundUrls1: {
+                    infospaceId: number
+requestBody: BulkUrlIngestion
+                    
+                };
+AddFilesToBundleBackground: {
+                    bundleId: number
+formData: Body_assets_add_files_to_bundle_background
+infospaceId: number
+                    
+                };
+AddFilesToBundleBackground1: {
+                    bundleId: number
+formData: Body_assets_add_files_to_bundle_background
+infospaceId: number
+                    
+                };
+GetTaskStatus: {
+                    taskId: string
+                    
+                };
+GetTaskStatus1: {
+                    taskId: string
+                    
+                };
+    }
+
+export type AnnotationJobsData = {
+        CreateRun: {
+                    infospaceId: number
+requestBody: AnnotationRunCreate
+                    
+                };
+ListRuns: {
+                    /**
+ * Include counts of annotations and assets
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+CreateRun1: {
+                    infospaceId: number
+requestBody: AnnotationRunCreate
+                    
+                };
+ListRuns1: {
+                    /**
+ * Include counts of annotations and assets
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetRun: {
+                    /**
+ * Include counts of annotations and assets
+ */
+includeCounts?: boolean
+infospaceId: number
+runId: number
+                    
+                };
+UpdateRun: {
+                    infospaceId: number
+requestBody: AnnotationRunUpdate
+runId: number
+                    
+                };
+DeleteRun: {
+                    infospaceId: number
+runId: number
+                    
+                };
+RetryFailedAnnotations: {
+                    infospaceId: number
+runId: number
+                    
+                };
+CreatePackageFromRunEndpoint: {
+                    infospaceId: number
+requestBody: CreatePackageFromRunRequest
+runId: number
+                    
+                };
+    }
+
+export type RunsData = {
+        CreateRun: {
+                    infospaceId: number
+requestBody: AnnotationRunCreate
+                    
+                };
+ListRuns: {
+                    /**
+ * Include counts of annotations and assets
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+CreateRun1: {
+                    infospaceId: number
+requestBody: AnnotationRunCreate
+                    
+                };
+ListRuns1: {
+                    /**
+ * Include counts of annotations and assets
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetRun: {
+                    /**
+ * Include counts of annotations and assets
+ */
+includeCounts?: boolean
+infospaceId: number
+runId: number
+                    
+                };
+UpdateRun: {
+                    infospaceId: number
+requestBody: AnnotationRunUpdate
+runId: number
+                    
+                };
+DeleteRun: {
+                    infospaceId: number
+runId: number
+                    
+                };
+RetryFailedAnnotations: {
+                    infospaceId: number
+runId: number
+                    
+                };
+CreatePackageFromRunEndpoint: {
+                    infospaceId: number
+requestBody: CreatePackageFromRunRequest
+runId: number
+                    
+                };
+    }
+
+export type AnnotationSchemesData = {
+        CreateAnnotationSchema: {
+                    infospaceId: number
+requestBody: AnnotationSchemaCreate
+                    
+                };
+ListAnnotationSchemas: {
+                    /**
+ * Include counts of annotations using this schema
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+CreateAnnotationSchema1: {
+                    infospaceId: number
+requestBody: AnnotationSchemaCreate
+                    
+                };
+ListAnnotationSchemas1: {
+                    /**
+ * Include counts of annotations using this schema
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetAnnotationSchema: {
+                    /**
+ * Include counts of annotations using this schema
+ */
+includeCounts?: boolean
+infospaceId: number
+schemaId: number
+                    
+                };
+UpdateAnnotationSchema: {
+                    infospaceId: number
+requestBody: AnnotationSchemaUpdate
+schemaId: number
+                    
+                };
+DeleteAnnotationSchema: {
+                    infospaceId: number
+schemaId: number
+                    
+                };
+    }
+
+export type AnnotationSchemasData = {
+        CreateAnnotationSchema: {
+                    infospaceId: number
+requestBody: AnnotationSchemaCreate
+                    
+                };
+ListAnnotationSchemas: {
+                    /**
+ * Include counts of annotations using this schema
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+CreateAnnotationSchema1: {
+                    infospaceId: number
+requestBody: AnnotationSchemaCreate
+                    
+                };
+ListAnnotationSchemas1: {
+                    /**
+ * Include counts of annotations using this schema
+ */
+includeCounts?: boolean
+infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetAnnotationSchema: {
+                    /**
+ * Include counts of annotations using this schema
+ */
+includeCounts?: boolean
+infospaceId: number
+schemaId: number
+                    
+                };
+UpdateAnnotationSchema: {
+                    infospaceId: number
+requestBody: AnnotationSchemaUpdate
+schemaId: number
+                    
+                };
+DeleteAnnotationSchema: {
+                    infospaceId: number
+schemaId: number
+                    
+                };
+    }
+
+export type AnnotationsData = {
+        CreateAnnotation: {
+                    infospaceId: number
+requestBody: AnnotationCreate
+                    
+                };
+CreateAnnotation1: {
+                    infospaceId: number
+requestBody: AnnotationCreate
+                    
+                };
+ListAnnotations: {
+                    infospaceId: number
+limit?: number
+schemaId?: number | null
+skip?: number
+sourceId?: number | null
+                    
+                };
+ListAnnotations1: {
+                    infospaceId: number
+limit?: number
+schemaId?: number | null
+skip?: number
+sourceId?: number | null
+                    
+                };
+CreateAnnotation2: {
+                    infospaceId: number
+requestBody: AnnotationCreate
+                    
+                };
+CreateAnnotation3: {
+                    infospaceId: number
+requestBody: AnnotationCreate
+                    
+                };
+ListAnnotations2: {
+                    infospaceId: number
+limit?: number
+schemaId?: number | null
+skip?: number
+sourceId?: number | null
+                    
+                };
+ListAnnotations3: {
+                    infospaceId: number
+limit?: number
+schemaId?: number | null
+skip?: number
+sourceId?: number | null
+                    
+                };
+GetAnnotation: {
+                    annotationId: number
+infospaceId: number
+                    
+                };
+GetAnnotation1: {
+                    annotationId: number
+infospaceId: number
+                    
+                };
+UpdateAnnotation: {
+                    annotationId: number
+infospaceId: number
+requestBody: AnnotationUpdate
+                    
+                };
+UpdateAnnotation1: {
+                    annotationId: number
+infospaceId: number
+requestBody: AnnotationUpdate
+                    
+                };
+DeleteAnnotation: {
+                    annotationId: number
+infospaceId: number
+                    
+                };
+DeleteAnnotation1: {
+                    annotationId: number
+infospaceId: number
+                    
+                };
+CreateBatchAnnotations: {
+                    infospaceId: number
+requestBody: Array<AnnotationCreate>
+                    
+                };
+CreateBatchAnnotations1: {
+                    infospaceId: number
+requestBody: Array<AnnotationCreate>
+                    
+                };
+GetRunResults: {
+                    infospaceId: number
+limit?: number
+runId: number
+skip?: number
+                    
+                };
+GetRunResults1: {
+                    infospaceId: number
+limit?: number
+runId: number
+skip?: number
+                    
+                };
+RetrySingleAnnotation: {
+                    annotationId: number
+infospaceId: number
+                    
+                };
+RetrySingleAnnotation1: {
+                    annotationId: number
+infospaceId: number
+                    
+                };
+RetryFailedAnnotations: {
+                    infospaceId: number
+runId: number
+                    
+                };
+RetryFailedAnnotations1: {
+                    infospaceId: number
+runId: number
+                    
+                };
+    }
+
+export type BundlesData = {
+        CreateBundle: {
+                    infospaceId: number
+requestBody: BundleCreate
+                    
+                };
+GetBundles: {
+                    infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetBundle: {
+                    bundleId: number
+                    
+                };
+UpdateBundle: {
+                    bundleId: number
+requestBody: BundleUpdate
+                    
+                };
+DeleteBundle: {
+                    bundleId: number
+                    
+                };
+AddAssetToBundle: {
+                    assetId: number
+bundleId: number
+                    
+                };
+RemoveAssetFromBundle: {
+                    assetId: number
+bundleId: number
+                    
+                };
+GetAssetsInBundle: {
+                    bundleId: number
+limit?: number
+skip?: number
+                    
+                };
+GetAsset: {
+                    assetId: number
+                    
+                };
+TransferBundle: {
+                    bundleId: number
+copy?: boolean
+targetInfospaceId: number
+                    
+                };
+    }
+
+export type DatasetsData = {
+        CreateDataset: {
+                    infospaceId: number
+requestBody: DatasetCreate
+                    
+                };
+ListDatasets: {
+                    infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+CreateDataset1: {
+                    infospaceId: number
+requestBody: DatasetCreate
+                    
+                };
+ListDatasets1: {
+                    infospaceId: number
+limit?: number
+skip?: number
+                    
+                };
+GetDataset: {
+                    datasetId: number
+infospaceId: number
+                    
+                };
+UpdateDataset: {
+                    datasetId: number
+infospaceId: number
+requestBody: DatasetUpdate
+                    
+                };
+DeleteDataset: {
+                    datasetId: number
+infospaceId: number
+                    
+                };
+ExportDataset: {
+                    datasetId: number
+/**
+ * Include full text content of data records
+ */
+includeContent?: boolean
+/**
+ * Include associated classification results
+ */
+includeResults?: boolean
+/**
+ * Include original source files (PDFs, CSVs, etc.)
+ */
+includeSourceFiles?: boolean
+infospaceId: number
+                    
+                };
+ImportDataset: {
+                    /**
+ * How to handle conflicts
+ */
+conflictStrategy?: string
+formData: Body_datasets_import_dataset
+infospaceId: number
+                    
+                };
+ImportDatasetFromToken: {
+                    /**
+ * How to handle conflicts
+ */
+conflictStrategy?: string
+/**
+ * Include full text content if available
+ */
+includeContent?: boolean
+/**
+ * Include classification results if available
+ */
+includeResults?: boolean
+infospaceId: number
+/**
+ * Share token for the dataset
+ */
+shareToken: string
+                    
+                };
+    }
+
+export type FilestorageData = {
+        FileUpload: {
+                    formData: Body_filestorage_file_upload
+                    
+                };
+FileDownload: {
+                    filePath: string
+                    
+                };
+ListFiles: {
+                    maxKeys?: number
+prefix?: string | null
+                    
+                };
+DeleteFile: {
+                    objectName: string
+                    
+                };
+StreamFile: {
+                    filePath: string
+                    
+                };
+    }
+
+export type FilesData = {
+        FileUpload: {
+                    formData: Body_filestorage_file_upload
+                    
+                };
+FileDownload: {
+                    filePath: string
+                    
+                };
+ListFiles: {
+                    maxKeys?: number
+prefix?: string | null
+                    
+                };
+DeleteFile: {
+                    objectName: string
+                    
+                };
+StreamFile: {
+                    filePath: string
+                    
+                };
+    }
 
 export type AppData = {
         
+    }
+
+export type InfospacesData = {
+        CreateInfospace: {
+                    requestBody: InfospaceCreate
+                    
+                };
+ListInfospaces: {
+                    limit?: number
+skip?: number
+                    
+                };
+CreateInfospace1: {
+                    requestBody: InfospaceCreate
+                    
+                };
+ListInfospaces1: {
+                    limit?: number
+skip?: number
+                    
+                };
+GetInfospace: {
+                    infospaceId: number
+                    
+                };
+UpdateInfospace: {
+                    infospaceId: number
+requestBody: InfospaceUpdate
+                    
+                };
+DeleteInfospace: {
+                    infospaceId: number
+                    
+                };
+GetInfospaceStats: {
+                    infospaceId: number
+                    
+                };
+ImportInfospace: {
+                    infospaceId: number
+                    
+                };
     }
 
 export type LoginData = {
@@ -23,6 +815,72 @@ ResetPassword: {
                 };
 RecoverPasswordHtmlContent: {
                     email: string
+                    
+                };
+    }
+
+export type SearchHistoryData = {
+        CreateSearchHistory: {
+                    requestBody: SearchHistoryCreate
+                    
+                };
+ReadSearchHistories: {
+                    limit?: number
+skip?: number
+                    
+                };
+    }
+
+export type ShareablesData = {
+        CreateShareableLink: {
+                    infospaceId: number
+requestBody: ShareableLinkCreate
+                    
+                };
+GetShareableLinks: {
+                    infospaceId: number
+resourceId?: number | null
+resourceType?: ResourceType | null
+                    
+                };
+GetShareableLinkByToken: {
+                    token: string
+                    
+                };
+UpdateShareableLink: {
+                    linkId: number
+requestBody: ShareableLinkUpdate
+                    
+                };
+DeleteShareableLink: {
+                    linkId: number
+                    
+                };
+AccessSharedResource: {
+                    token: string
+                    
+                };
+GetSharingStats: {
+                    infospaceId: number
+                    
+                };
+ExportResource: {
+                    formData: Body_shareables_export_resource
+infospaceId: number
+                    
+                };
+ImportResource: {
+                    formData: Body_shareables_import_resource
+targetInfospaceId: number
+                    
+                };
+ExportResourcesBatch: {
+                    infospaceId: number
+requestBody: ExportBatchRequest
+                    
+                };
+ViewDatasetPackageSummary: {
+                    token: string
                     
                 };
     }
@@ -111,786 +969,65 @@ ScrapeArticle: {
                 };
     }
 
-export type ItemsData = {
-        ReadItems: {
-                    limit?: number
-skip?: number
-                    
-                };
-CreateItem: {
-                    requestBody: ItemCreate
-                    
-                };
-ReadItem: {
-                    id: number
-                    
-                };
-UpdateItem: {
-                    id: number
-requestBody: ItemUpdate
-                    
-                };
-DeleteItem: {
-                    id: number
-                    
-                };
-    }
-
-export type ShareablesData = {
-        CreateShareableLink: {
-                    requestBody: ShareableLinkCreate
-                    
-                };
-GetShareableLinks: {
+export type EntitiesData = {
+        SearchEntities: {
                     /**
- * Filter by resource ID
- */
-resourceId?: number | null
-/**
- * Filter by resource type
- */
-resourceType?: ResourceType | null
-                    
-                };
-GetShareableLink: {
-                    linkId: number
-                    
-                };
-UpdateShareableLink: {
-                    linkId: number
-requestBody: ShareableLinkUpdate
-                    
-                };
-DeleteShareableLink: {
-                    linkId: number
-                    
-                };
-AccessSharedResource: {
-                    token: string
-                    
-                };
-ExportResource: {
-                    formData: Body_shareables_export_resource
-                    
-                };
-ImportResource: {
-                    formData: Body_shareables_import_resource
-workspaceId: number
-                    
-                };
-ExportResourcesBatch: {
-                    requestBody: ExportBatchRequest
-                    
-                };
-ViewDatasetPackageSummary: {
-                    token: string
-                    
-                };
-    }
-
-export type SearchHistoryData = {
-        CreateSearchHistory: {
-                    requestBody: SearchHistoryCreate
-                    
-                };
-ReadSearchHistories: {
-                    limit?: number
-skip?: number
-                    
-                };
-    }
-
-export type FilestorageData = {
-        FileUpload: {
-                    formData: Body_filestorage_file_upload
-                    
-                };
-FileDownload: {
-                    filePath: string
-                    
-                };
-DeleteFile: {
-                    objectName: string
-                    
-                };
-    }
-
-export type FilesData = {
-        FileUpload: {
-                    formData: Body_filestorage_file_upload
-                    
-                };
-FileDownload: {
-                    filePath: string
-                    
-                };
-DeleteFile: {
-                    objectName: string
-                    
-                };
-    }
-
-export type WorkspacesData = {
-        CreateWorkspace: {
-                    requestBody: WorkspaceCreate
-                    
-                };
-ReadWorkspaces: {
-                    limit?: number
-skip?: number
-                    
-                };
-CreateWorkspace1: {
-                    requestBody: WorkspaceCreate
-                    
-                };
-ReadWorkspaces1: {
-                    limit?: number
-skip?: number
-                    
-                };
-ReadWorkspaceById: {
-                    workspaceId: number
-                    
-                };
-UpdateWorkspace: {
-                    requestBody: WorkspaceUpdate
-workspaceId: number
-                    
-                };
-DeleteWorkspace: {
-                    workspaceId: number
-                    
-                };
-TransferDatasourcesEndpoint: {
-                    requestBody: DataSourceTransferRequest
-                    
-                };
-ImportWorkspaceFromTokenEndpoint: {
-                    requestBody: ImportWorkspaceFromTokenRequest
-                    
-                };
-    }
-
-export type ClassificationSchemesData = {
-        CreateClassificationScheme: {
-                    requestBody: ClassificationSchemeCreate
-workspaceId: number
-                    
-                };
-CreateClassificationScheme1: {
-                    requestBody: ClassificationSchemeCreate
-workspaceId: number
-                    
-                };
-ReadClassificationSchemes: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-ReadClassificationSchemes1: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-DeleteAllClassificationSchemes: {
-                    workspaceId: number
-                    
-                };
-DeleteAllClassificationSchemes1: {
-                    workspaceId: number
-                    
-                };
-CreateClassificationScheme2: {
-                    requestBody: ClassificationSchemeCreate
-workspaceId: number
-                    
-                };
-CreateClassificationScheme3: {
-                    requestBody: ClassificationSchemeCreate
-workspaceId: number
-                    
-                };
-ReadClassificationSchemes2: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-ReadClassificationSchemes3: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-DeleteAllClassificationSchemes2: {
-                    workspaceId: number
-                    
-                };
-DeleteAllClassificationSchemes3: {
-                    workspaceId: number
-                    
-                };
-ReadClassificationScheme: {
-                    schemeId: number
-workspaceId: number
-                    
-                };
-ReadClassificationScheme1: {
-                    schemeId: number
-workspaceId: number
-                    
-                };
-UpdateClassificationScheme: {
-                    requestBody: ClassificationSchemeUpdate
-schemeId: number
-workspaceId: number
-                    
-                };
-UpdateClassificationScheme1: {
-                    requestBody: ClassificationSchemeUpdate
-schemeId: number
-workspaceId: number
-                    
-                };
-DeleteClassificationScheme: {
-                    schemeId: number
-workspaceId: number
-                    
-                };
-DeleteClassificationScheme1: {
-                    schemeId: number
-workspaceId: number
-                    
-                };
-    }
-
-export type ClassificationResultsData = {
-        GetClassificationResult: {
-                    resultId: number
-workspaceId: number
-                    
-                };
-GetClassificationResult1: {
-                    resultId: number
-workspaceId: number
-                    
-                };
-ListClassificationResults: {
-                    /**
- * Filter results by DataRecord IDs
- */
-datarecordIds?: Array<number> | null
-/**
- * Filter results by ClassificationJob ID
- */
-jobId?: number | null
-limit?: number
-/**
- * Filter results by ClassificationScheme IDs
- */
-schemeIds?: Array<number> | null
-skip?: number
-workspaceId: number
-                    
-                };
-ListClassificationResults1: {
-                    /**
- * Filter results by DataRecord IDs
- */
-datarecordIds?: Array<number> | null
-/**
- * Filter results by ClassificationJob ID
- */
-jobId?: number | null
-limit?: number
-/**
- * Filter results by ClassificationScheme IDs
- */
-schemeIds?: Array<number> | null
-skip?: number
-workspaceId: number
-                    
-                };
-ListClassificationResults2: {
-                    /**
- * Filter results by DataRecord IDs
- */
-datarecordIds?: Array<number> | null
-/**
- * Filter results by ClassificationJob ID
- */
-jobId?: number | null
-limit?: number
-/**
- * Filter results by ClassificationScheme IDs
- */
-schemeIds?: Array<number> | null
-skip?: number
-workspaceId: number
-                    
-                };
-ListClassificationResults3: {
-                    /**
- * Filter results by DataRecord IDs
- */
-datarecordIds?: Array<number> | null
-/**
- * Filter results by ClassificationJob ID
- */
-jobId?: number | null
-limit?: number
-/**
- * Filter results by ClassificationScheme IDs
- */
-schemeIds?: Array<number> | null
-skip?: number
-workspaceId: number
-                    
-                };
-GetJobResults: {
-                    jobId: number
-limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-GetJobResults1: {
-                    jobId: number
-limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-RetrySingleClassificationResult: {
-                    resultId: number
-workspaceId: number
-                    
-                };
-RetrySingleClassificationResult1: {
-                    resultId: number
-workspaceId: number
-                    
-                };
-    }
-
-export type ClassificationJobsData = {
-        CreateClassificationJob: {
-                    requestBody: ClassificationJobCreate
-workspaceId: number
-                    
-                };
-CreateClassificationJob1: {
-                    requestBody: ClassificationJobCreate
-workspaceId: number
-                    
-                };
-ListClassificationJobs: {
-                    /**
- * Include counts of results and data records
- */
-includeCounts?: boolean
-limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-ListClassificationJobs1: {
-                    /**
- * Include counts of results and data records
- */
-includeCounts?: boolean
-limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-CreateClassificationJob2: {
-                    requestBody: ClassificationJobCreate
-workspaceId: number
-                    
-                };
-CreateClassificationJob3: {
-                    requestBody: ClassificationJobCreate
-workspaceId: number
-                    
-                };
-ListClassificationJobs2: {
-                    /**
- * Include counts of results and data records
- */
-includeCounts?: boolean
-limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-ListClassificationJobs3: {
-                    /**
- * Include counts of results and data records
- */
-includeCounts?: boolean
-limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-GetClassificationJob: {
-                    /**
- * Include counts of results and data records
- */
-includeCounts?: boolean
-jobId: number
-workspaceId: number
-                    
-                };
-GetClassificationJob1: {
-                    /**
- * Include counts of results and data records
- */
-includeCounts?: boolean
-jobId: number
-workspaceId: number
-                    
-                };
-UpdateClassificationJob: {
-                    jobId: number
-requestBody: ClassificationJobUpdate
-workspaceId: number
-                    
-                };
-UpdateClassificationJob1: {
-                    jobId: number
-requestBody: ClassificationJobUpdate
-workspaceId: number
-                    
-                };
-DeleteClassificationJob: {
-                    jobId: number
-workspaceId: number
-                    
-                };
-DeleteClassificationJob1: {
-                    jobId: number
-workspaceId: number
-                    
-                };
-RetryFailedJobClassifications: {
-                    jobId: number
-workspaceId: number
-                    
-                };
-RetryFailedJobClassifications1: {
-                    jobId: number
-workspaceId: number
-                    
-                };
-CreateDatasetFromJobEndpoint: {
-                    jobId: number
-requestBody: CreateDatasetFromJobRequest
-workspaceId: number
-                    
-                };
-CreateDatasetFromJobEndpoint1: {
-                    jobId: number
-requestBody: CreateDatasetFromJobRequest
-workspaceId: number
-                    
-                };
-    }
-
-export type DatasourcesData = {
-        CreateDatasource: {
-                    formData: Body_datasources_create_datasource
-workspaceId: number
-                    
-                };
-ListDatasources: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-CreateDatasource1: {
-                    formData: Body_datasources_create_datasource
-workspaceId: number
-                    
-                };
-ListDatasources1: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-GetDatasource: {
-                    datasourceId: number
-workspaceId: number
-                    
-                };
-DeleteDatasource: {
-                    datasourceId: number
-workspaceId: number
-                    
-                };
-UpdateDatasource: {
-                    datasourceId: number
-requestBody: DataSourceUpdate
-workspaceId: number
-                    
-                };
-GetDatasourceUrls: {
-                    datasourceId: number
-workspaceId: number
-                    
-                };
-UpdateDatasourceUrls: {
-                    datasourceId: number
-requestBody: Body_datasources_update_datasource_urls
-workspaceId: number
-                    
-                };
-ReadDatasourceRows: {
-                    datasourceId: number
-/**
- * Number of rows to return
+ * Maximum number of records to return
  */
 limit?: number
 /**
- * Number of rows to skip
+ * Search query for entities
+ */
+query: string
+/**
+ * Number of records to skip
  */
 skip?: number
-workspaceId: number
                     
                 };
-RefetchDatasource: {
-                    datasourceId: number
-workspaceId: number
-                    
-                };
-GetDatasourceContent: {
-                    datasourceId: number
-workspaceId: number
-                    
-                };
-DownloadDatasourcePdf: {
-                    datasourceId: number
-workspaceId: number
-                    
-                };
-    }
-
-export type DatarecordsData = {
-        GetDatarecord: {
-                    datarecordId: number
-workspaceId: number
-                    
-                };
-UpdateDatarecord: {
-                    datarecordId: number
-requestBody: DataRecordUpdate
-workspaceId: number
-                    
-                };
-ListDatarecords: {
-                    datasourceId: number
+GetEntityDetails: {
+                    /**
+ * Entity for details
+ */
+entity: string
+/**
+ * Maximum number of records to return
+ */
 limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-GetDatarecordContent: {
-                    datarecordId: number
-workspaceId: number
-                    
-                };
-AppendRecord: {
-                    datasourceId: number
-requestBody: AppendRecordInput
-workspaceId: number
-                    
-                };
-    }
-
-export type RecurringTasksData = {
-        CreateRecurringTask: {
-                    requestBody: RecurringTaskCreate
-workspaceId: number
-                    
-                };
-CreateRecurringTask1: {
-                    requestBody: RecurringTaskCreate
-workspaceId: number
-                    
-                };
-ReadRecurringTasks: {
-                    limit?: number
-skip?: number
 /**
- * Filter by task status
+ * Number of records to skip
  */
-status?: RecurringTaskStatus | null
-workspaceId: number
-                    
-                };
-ReadRecurringTasks1: {
-                    limit?: number
 skip?: number
-/**
- * Filter by task status
- */
-status?: RecurringTaskStatus | null
-workspaceId: number
                     
                 };
-CreateRecurringTask2: {
-                    requestBody: RecurringTaskCreate
-workspaceId: number
-                    
-                };
-CreateRecurringTask3: {
-                    requestBody: RecurringTaskCreate
-workspaceId: number
-                    
-                };
-ReadRecurringTasks2: {
-                    limit?: number
-skip?: number
-/**
- * Filter by task status
- */
-status?: RecurringTaskStatus | null
-workspaceId: number
-                    
-                };
-ReadRecurringTasks3: {
-                    limit?: number
-skip?: number
-/**
- * Filter by task status
- */
-status?: RecurringTaskStatus | null
-workspaceId: number
-                    
-                };
-ReadRecurringTask: {
-                    taskId: number
-workspaceId: number
-                    
-                };
-ReadRecurringTask1: {
-                    taskId: number
-workspaceId: number
-                    
-                };
-UpdateRecurringTask: {
-                    requestBody: RecurringTaskUpdate
-taskId: number
-workspaceId: number
-                    
-                };
-UpdateRecurringTask1: {
-                    requestBody: RecurringTaskUpdate
-taskId: number
-workspaceId: number
-                    
-                };
-DeleteRecurringTask: {
-                    taskId: number
-workspaceId: number
-                    
-                };
-DeleteRecurringTask1: {
-                    taskId: number
-workspaceId: number
-                    
-                };
-    }
-
-export type DatasetsData = {
-        CreateDataset: {
-                    requestBody: DatasetCreate
-workspaceId: number
-                    
-                };
-ListDatasets: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-CreateDataset1: {
-                    requestBody: DatasetCreate
-workspaceId: number
-                    
-                };
-ListDatasets1: {
-                    limit?: number
-skip?: number
-workspaceId: number
-                    
-                };
-GetDataset: {
-                    datasetId: number
-workspaceId: number
-                    
-                };
-UpdateDataset: {
-                    datasetId: number
-requestBody: DatasetUpdate
-workspaceId: number
-                    
-                };
-DeleteDataset: {
-                    datasetId: number
-workspaceId: number
-                    
-                };
-ExportDataset: {
-                    datasetId: number
-/**
- * Include full text content of data records
- */
-includeContent?: boolean
-/**
- * Include associated classification results
- */
-includeResults?: boolean
-/**
- * Include original source files (PDFs, CSVs, etc.)
- */
-includeSourceFiles?: boolean
-workspaceId: number
-                    
-                };
-ImportDataset: {
+SearchEntities1: {
                     /**
- * How to handle conflicts
+ * Maximum number of records to return
  */
-conflictStrategy?: string
-formData: Body_datasets_import_dataset
-workspaceId: number
+limit?: number
+/**
+ * Search query for entities
+ */
+query: string
+/**
+ * Number of records to skip
+ */
+skip?: number
                     
                 };
-ImportDatasetFromToken: {
+GetEntityDetails1: {
                     /**
- * How to handle conflicts
+ * Entity for details
  */
-conflictStrategy?: string
+entity: string
 /**
- * Include full text content if available
+ * Maximum number of records to return
  */
-includeContent?: boolean
+limit?: number
 /**
- * Include classification results if available
+ * Number of records to skip
  */
-includeResults?: boolean
-/**
- * Share token for the dataset
- */
-shareToken: string
-workspaceId: number
+skip?: number
                     
                 };
     }
@@ -984,103 +1121,6 @@ SearchSynthesizer: {
                 };
     }
 
-export type EntitiesData = {
-        SearchEntities: {
-                    /**
- * Maximum number of records to return
- */
-limit?: number
-/**
- * Search query for entities
- */
-query: string
-/**
- * Number of records to skip
- */
-skip?: number
-                    
-                };
-GetEntityDetails: {
-                    /**
- * Entity for details
- */
-entity: string
-/**
- * Maximum number of records to return
- */
-limit?: number
-/**
- * Number of records to skip
- */
-skip?: number
-                    
-                };
-SearchEntities1: {
-                    /**
- * Maximum number of records to return
- */
-limit?: number
-/**
- * Search query for entities
- */
-query: string
-/**
- * Number of records to skip
- */
-skip?: number
-                    
-                };
-GetEntityDetails1: {
-                    /**
- * Entity for details
- */
-entity: string
-/**
- * Maximum number of records to return
- */
-limit?: number
-/**
- * Number of records to skip
- */
-skip?: number
-                    
-                };
-    }
-
-export type GeoData = {
-        GeojsonEventsView: {
-                    /**
- * ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)
- */
-endDate?: string
-eventType: string
-/**
- * Maximum number of locations to return
- */
-limit?: number
-/**
- * ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)
- */
-startDate?: string
-                    
-                };
-GeojsonRawView: {
-                    /**
- * ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)
- */
-endDate?: string
-/**
- * Maximum number of locations to return
- */
-limit?: number
-/**
- * ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)
- */
-startDate?: string
-                    
-                };
-    }
-
 export type ArticlesData = {
         GetArticles: {
                     /**
@@ -1128,8 +1168,42 @@ id: string
                 };
     }
 
-export type ClassificationData = {
-        
+export type GeoData = {
+        GeojsonEventsView: {
+                    args: unknown
+/**
+ * ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)
+ */
+endDate?: string
+eventType: string
+kwargs: unknown
+/**
+ * Maximum number of locations to return
+ */
+limit?: number
+/**
+ * ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)
+ */
+startDate?: string
+                    
+                };
+GeojsonRawView: {
+                    args: unknown
+/**
+ * ISO formatted end date (e.g. 2023-12-31T23:59:59+00:00)
+ */
+endDate?: string
+kwargs: unknown
+/**
+ * Maximum number of locations to return
+ */
+limit?: number
+/**
+ * ISO formatted start date (e.g. 2023-01-01T00:00:00+00:00)
+ */
+startDate?: string
+                    
+                };
     }
 
 export type ScoresData = {
@@ -1140,6 +1214,3133 @@ timeframeTo?: string
                     
                 };
     }
+
+export class AssetsService {
+
+	/**
+	 * Create Asset
+	 * Generic asset creation endpoint that routes to appropriate specific endpoint.
+ * 
+ * This endpoint maintains backward compatibility while using the new ContentService.
+ * Based on the asset data provided, it routes to the appropriate ingestion method:
+ * - If source_identifier (URL) is provided: ingest as web content
+ * - If text_content is provided: ingest as text
+ * - Otherwise: create a basic asset record
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAsset(data: AssetsData['CreateAsset']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Asset
+	 * Generic asset creation endpoint that routes to appropriate specific endpoint.
+ * 
+ * This endpoint maintains backward compatibility while using the new ContentService.
+ * Based on the asset data provided, it routes to the appropriate ingestion method:
+ * - If source_identifier (URL) is provided: ingest as web content
+ * - If text_content is provided: ingest as text
+ * - Otherwise: create a basic asset record
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAsset1(data: AssetsData['CreateAsset1']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Assets
+	 * Retrieve assets for an infospace.
+	 * @returns AssetsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAssets(data: AssetsData['ListAssets']): CancelablePromise<AssetsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+parentAssetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, parent_asset_id: parentAssetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Assets
+	 * Retrieve assets for an infospace.
+	 * @returns AssetsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAssets1(data: AssetsData['ListAssets1']): CancelablePromise<AssetsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+parentAssetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, parent_asset_id: parentAssetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Asset
+	 * Generic asset creation endpoint that routes to appropriate specific endpoint.
+ * 
+ * This endpoint maintains backward compatibility while using the new ContentService.
+ * Based on the asset data provided, it routes to the appropriate ingestion method:
+ * - If source_identifier (URL) is provided: ingest as web content
+ * - If text_content is provided: ingest as text
+ * - Otherwise: create a basic asset record
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAsset2(data: AssetsData['CreateAsset2']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Asset
+	 * Generic asset creation endpoint that routes to appropriate specific endpoint.
+ * 
+ * This endpoint maintains backward compatibility while using the new ContentService.
+ * Based on the asset data provided, it routes to the appropriate ingestion method:
+ * - If source_identifier (URL) is provided: ingest as web content
+ * - If text_content is provided: ingest as text
+ * - Otherwise: create a basic asset record
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAsset3(data: AssetsData['CreateAsset3']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Assets
+	 * Retrieve assets for an infospace.
+	 * @returns AssetsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAssets2(data: AssetsData['ListAssets2']): CancelablePromise<AssetsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+parentAssetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, parent_asset_id: parentAssetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Assets
+	 * Retrieve assets for an infospace.
+	 * @returns AssetsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAssets3(data: AssetsData['ListAssets3']): CancelablePromise<AssetsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+parentAssetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, parent_asset_id: parentAssetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Upload File
+	 * Upload a file and create an asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static uploadFile(data: AssetsData['UploadFile']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/upload',
+			path: {
+				infospace_id: infospaceId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Upload File
+	 * Upload a file and create an asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static uploadFile1(data: AssetsData['UploadFile1']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/upload',
+			path: {
+				infospace_id: infospaceId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Url
+	 * Ingest content from a URL.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestUrl(data: AssetsData['IngestUrl']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+url,
+title,
+scrapeImmediately = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/ingest-url',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				url, title, scrape_immediately: scrapeImmediately
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Url
+	 * Ingest content from a URL.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestUrl1(data: AssetsData['IngestUrl1']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+url,
+title,
+scrapeImmediately = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/ingest-url',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				url, title, scrape_immediately: scrapeImmediately
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Text
+	 * Ingest direct text content.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestText(data: AssetsData['IngestText']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+textContent,
+title,
+eventTimestamp,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/ingest-text',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				text_content: textContent, title, event_timestamp: eventTimestamp
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Text
+	 * Ingest direct text content.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestText1(data: AssetsData['IngestText1']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+textContent,
+title,
+eventTimestamp,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/ingest-text',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				text_content: textContent, title, event_timestamp: eventTimestamp
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Bulk Ingest Urls
+	 * Ingest multiple URLs as separate assets.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static bulkIngestUrls(data: AssetsData['BulkIngestUrls']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bulk-ingest-urls',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Bulk Ingest Urls
+	 * Ingest multiple URLs as separate assets.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static bulkIngestUrls1(data: AssetsData['BulkIngestUrls1']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bulk-ingest-urls',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Reprocess Asset
+	 * Reprocess an asset with new options.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static reprocessAsset(data: AssetsData['ReprocessAsset']): CancelablePromise<Message> {
+		const {
+infospaceId,
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}/reprocess',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Reprocess Asset
+	 * Reprocess an asset with new options.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static reprocessAsset1(data: AssetsData['ReprocessAsset1']): CancelablePromise<Message> {
+		const {
+infospaceId,
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}/reprocess',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Asset
+	 * Get a specific asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAsset(data: AssetsData['GetAsset']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Asset
+	 * Get a specific asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAsset1(data: AssetsData['GetAsset1']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Asset
+	 * Update an asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateAsset(data: AssetsData['UpdateAsset']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PUT',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Asset
+	 * Update an asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateAsset1(data: AssetsData['UpdateAsset1']): CancelablePromise<AssetRead> {
+		const {
+infospaceId,
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PUT',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Asset
+	 * Delete an asset and its children.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAsset(data: AssetsData['DeleteAsset']): CancelablePromise<Message> {
+		const {
+infospaceId,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Asset
+	 * Delete an asset and its children.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAsset1(data: AssetsData['DeleteAsset1']): CancelablePromise<Message> {
+		const {
+infospaceId,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Asset Children
+	 * Get child assets of a specific asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAssetChildren(data: AssetsData['GetAssetChildren']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+assetId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}/children',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Asset Children
+	 * Get child assets of a specific asset.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAssetChildren1(data: AssetsData['GetAssetChildren1']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+assetId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/{asset_id}/children',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Supported Content Types
+	 * Get list of supported content types.
+	 * @returns string Successful Response
+	 * @throws ApiError
+	 */
+	public static getSupportedContentTypes(): CancelablePromise<Record<string, Array<string>>> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/supported-types',
+		});
+	}
+
+	/**
+	 * Get Supported Content Types
+	 * Get list of supported content types.
+	 * @returns string Successful Response
+	 * @throws ApiError
+	 */
+	public static getSupportedContentTypes1(): CancelablePromise<Record<string, Array<string>>> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/supported-types',
+		});
+	}
+
+	/**
+	 * Create Assets Background Bulk
+	 * Upload multiple files as individual assets using background processing.
+ * Returns task IDs for progress tracking.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static createAssetsBackgroundBulk(data: AssetsData['CreateAssetsBackgroundBulk']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bulk-upload-background',
+			path: {
+				infospace_id: infospaceId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Assets Background Bulk
+	 * Upload multiple files as individual assets using background processing.
+ * Returns task IDs for progress tracking.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static createAssetsBackgroundBulk1(data: AssetsData['CreateAssetsBackgroundBulk1']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bulk-upload-background',
+			path: {
+				infospace_id: infospaceId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Assets Background Urls
+	 * Ingest multiple URLs using background processing.
+ * Returns task ID for progress tracking.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static createAssetsBackgroundUrls(data: AssetsData['CreateAssetsBackgroundUrls']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bulk-urls-background',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Assets Background Urls
+	 * Ingest multiple URLs using background processing.
+ * Returns task ID for progress tracking.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static createAssetsBackgroundUrls1(data: AssetsData['CreateAssetsBackgroundUrls1']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bulk-urls-background',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Add Files To Bundle Background
+	 * Add files to existing bundle using background processing.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static addFilesToBundleBackground(data: AssetsData['AddFilesToBundleBackground']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+bundleId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bundles/{bundle_id}/add-files-background',
+			path: {
+				infospace_id: infospaceId, bundle_id: bundleId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Add Files To Bundle Background
+	 * Add files to existing bundle using background processing.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static addFilesToBundleBackground1(data: AssetsData['AddFilesToBundleBackground1']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+bundleId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/bundles/{bundle_id}/add-files-background',
+			path: {
+				infospace_id: infospaceId, bundle_id: bundleId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Task Status
+	 * Get the status of a background task.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getTaskStatus(data: AssetsData['GetTaskStatus']): CancelablePromise<Record<string, unknown>> {
+		const {
+taskId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/tasks/{task_id}/status',
+			path: {
+				task_id: taskId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Task Status
+	 * Get the status of a background task.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getTaskStatus1(data: AssetsData['GetTaskStatus1']): CancelablePromise<Record<string, unknown>> {
+		const {
+taskId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/assets/infospaces/{infospace_id}/assets/tasks/{task_id}/status',
+			path: {
+				task_id: taskId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class AnnotationJobsService {
+
+	/**
+	 * Create Run
+	 * Create a new Run.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRun(data: AnnotationJobsData['CreateRun']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Runs
+	 * Retrieve Runs for the infospace.
+	 * @returns AnnotationRunsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listRuns(data: AnnotationJobsData['ListRuns']): CancelablePromise<AnnotationRunsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Run
+	 * Create a new Run.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRun1(data: AnnotationJobsData['CreateRun1']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Runs
+	 * Retrieve Runs for the infospace.
+	 * @returns AnnotationRunsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listRuns1(data: AnnotationJobsData['ListRuns1']): CancelablePromise<AnnotationRunsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Run
+	 * Retrieve a specific Run by its ID.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getRun(data: AnnotationJobsData['GetRun']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+runId,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			query: {
+				include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Run
+	 * Update a Run.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateRun(data: AnnotationJobsData['UpdateRun']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+runId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Run
+	 * Delete a Run.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteRun(data: AnnotationJobsData['DeleteRun']): CancelablePromise<void> {
+		const {
+infospaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Failed Annotations
+	 * Retry failed annotations in a run.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static retryFailedAnnotations(data: AnnotationJobsData['RetryFailedAnnotations']): CancelablePromise<Message> {
+		const {
+infospaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/retry_failures',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Package From Run Endpoint
+	 * Create a package from a run.
+	 * @returns PackageRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createPackageFromRunEndpoint(data: AnnotationJobsData['CreatePackageFromRunEndpoint']): CancelablePromise<PackageRead> {
+		const {
+infospaceId,
+runId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/create_package',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class RunsService {
+
+	/**
+	 * Create Run
+	 * Create a new Run.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRun(data: RunsData['CreateRun']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Runs
+	 * Retrieve Runs for the infospace.
+	 * @returns AnnotationRunsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listRuns(data: RunsData['ListRuns']): CancelablePromise<AnnotationRunsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Run
+	 * Create a new Run.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRun1(data: RunsData['CreateRun1']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Runs
+	 * Retrieve Runs for the infospace.
+	 * @returns AnnotationRunsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listRuns1(data: RunsData['ListRuns1']): CancelablePromise<AnnotationRunsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Run
+	 * Retrieve a specific Run by its ID.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getRun(data: RunsData['GetRun']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+runId,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			query: {
+				include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Run
+	 * Update a Run.
+	 * @returns AnnotationRunRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateRun(data: RunsData['UpdateRun']): CancelablePromise<AnnotationRunRead> {
+		const {
+infospaceId,
+runId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Run
+	 * Delete a Run.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteRun(data: RunsData['DeleteRun']): CancelablePromise<void> {
+		const {
+infospaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Failed Annotations
+	 * Retry failed annotations in a run.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static retryFailedAnnotations(data: RunsData['RetryFailedAnnotations']): CancelablePromise<Message> {
+		const {
+infospaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/retry_failures',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Package From Run Endpoint
+	 * Create a package from a run.
+	 * @returns PackageRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createPackageFromRunEndpoint(data: RunsData['CreatePackageFromRunEndpoint']): CancelablePromise<PackageRead> {
+		const {
+infospaceId,
+runId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/create_package',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class AnnotationSchemesService {
+
+	/**
+	 * Create Annotation Schema
+	 * Create a new Annotation Schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotationSchema(data: AnnotationSchemesData['CreateAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotation Schemas
+	 * Retrieve Annotation Schemas for the infospace.
+	 * @returns AnnotationSchemasOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotationSchemas(data: AnnotationSchemesData['ListAnnotationSchemas']): CancelablePromise<AnnotationSchemasOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Annotation Schema
+	 * Create a new Annotation Schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotationSchema1(data: AnnotationSchemesData['CreateAnnotationSchema1']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotation Schemas
+	 * Retrieve Annotation Schemas for the infospace.
+	 * @returns AnnotationSchemasOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotationSchemas1(data: AnnotationSchemesData['ListAnnotationSchemas1']): CancelablePromise<AnnotationSchemasOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Annotation Schema
+	 * Retrieve a specific Annotation Schema by its ID.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAnnotationSchema(data: AnnotationSchemesData['GetAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+schemaId,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			query: {
+				include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Annotation Schema
+	 * Update an Annotation Schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateAnnotationSchema(data: AnnotationSchemesData['UpdateAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+schemaId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Annotation Schema
+	 * Delete an annotation schema.
+ * 
+ * Args:
+ * current_user: The current user
+ * infospace_id: ID of the infospace
+ * schema_id: ID of the schema to delete
+ * session: Database session
+ * 
+ * Raises:
+ * HTTPException: If schema not found or user lacks access
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAnnotationSchema(data: AnnotationSchemesData['DeleteAnnotationSchema']): CancelablePromise<void> {
+		const {
+infospaceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class AnnotationSchemasService {
+
+	/**
+	 * Create Annotation Schema
+	 * Create a new Annotation Schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotationSchema(data: AnnotationSchemasData['CreateAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotation Schemas
+	 * Retrieve Annotation Schemas for the infospace.
+	 * @returns AnnotationSchemasOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotationSchemas(data: AnnotationSchemasData['ListAnnotationSchemas']): CancelablePromise<AnnotationSchemasOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Annotation Schema
+	 * Create a new Annotation Schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotationSchema1(data: AnnotationSchemasData['CreateAnnotationSchema1']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotation Schemas
+	 * Retrieve Annotation Schemas for the infospace.
+	 * @returns AnnotationSchemasOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotationSchemas1(data: AnnotationSchemasData['ListAnnotationSchemas1']): CancelablePromise<AnnotationSchemasOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Annotation Schema
+	 * Retrieve a specific Annotation Schema by its ID.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAnnotationSchema(data: AnnotationSchemasData['GetAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+schemaId,
+includeCounts = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			query: {
+				include_counts: includeCounts
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Annotation Schema
+	 * Update an Annotation Schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateAnnotationSchema(data: AnnotationSchemasData['UpdateAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+schemaId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Annotation Schema
+	 * Delete an annotation schema.
+ * 
+ * Args:
+ * current_user: The current user
+ * infospace_id: ID of the infospace
+ * schema_id: ID of the schema to delete
+ * session: Database session
+ * 
+ * Raises:
+ * HTTPException: If schema not found or user lacks access
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAnnotationSchema(data: AnnotationSchemasData['DeleteAnnotationSchema']): CancelablePromise<void> {
+		const {
+infospaceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class AnnotationsService {
+
+	/**
+	 * Create Annotation
+	 * Create a new annotation.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotation(data: AnnotationsData['CreateAnnotation']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Annotation
+	 * Create a new annotation.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotation1(data: AnnotationsData['CreateAnnotation1']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotations
+	 * Retrieve Annotations for the infospace.
+	 * @returns AnnotationsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotations(data: AnnotationsData['ListAnnotations']): CancelablePromise<AnnotationsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+sourceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, source_id: sourceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotations
+	 * Retrieve Annotations for the infospace.
+	 * @returns AnnotationsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotations1(data: AnnotationsData['ListAnnotations1']): CancelablePromise<AnnotationsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+sourceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, source_id: sourceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Annotation
+	 * Create a new annotation.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotation2(data: AnnotationsData['CreateAnnotation2']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Annotation
+	 * Create a new annotation.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createAnnotation3(data: AnnotationsData['CreateAnnotation3']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotations
+	 * Retrieve Annotations for the infospace.
+	 * @returns AnnotationsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotations2(data: AnnotationsData['ListAnnotations2']): CancelablePromise<AnnotationsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+sourceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, source_id: sourceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Annotations
+	 * Retrieve Annotations for the infospace.
+	 * @returns AnnotationsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnnotations3(data: AnnotationsData['ListAnnotations3']): CancelablePromise<AnnotationsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+sourceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit, source_id: sourceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Annotation
+	 * Retrieve a specific Annotation by its ID.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAnnotation(data: AnnotationsData['GetAnnotation']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+annotationId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Annotation
+	 * Retrieve a specific Annotation by its ID.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAnnotation1(data: AnnotationsData['GetAnnotation1']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+annotationId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Annotation
+	 * Update an Annotation.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateAnnotation(data: AnnotationsData['UpdateAnnotation']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+annotationId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Annotation
+	 * Update an Annotation.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateAnnotation1(data: AnnotationsData['UpdateAnnotation1']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+annotationId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Annotation
+	 * Delete an Annotation.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAnnotation(data: AnnotationsData['DeleteAnnotation']): CancelablePromise<void> {
+		const {
+infospaceId,
+annotationId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Annotation
+	 * Delete an Annotation.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteAnnotation1(data: AnnotationsData['DeleteAnnotation1']): CancelablePromise<void> {
+		const {
+infospaceId,
+annotationId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Batch Annotations
+	 * Create multiple annotations in a batch.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static createBatchAnnotations(data: AnnotationsData['CreateBatchAnnotations']): CancelablePromise<Message> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/batch',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Batch Annotations
+	 * Create multiple annotations in a batch.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static createBatchAnnotations1(data: AnnotationsData['CreateBatchAnnotations1']): CancelablePromise<Message> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/batch',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Run Results
+	 * Retrieve all annotations for a specific AnnotationRun.
+ * The service handles run ownership and infospace context verification.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getRunResults(data: AnnotationsData['GetRunResults']): CancelablePromise<Array<AnnotationRead>> {
+		const {
+infospaceId,
+runId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/results',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Run Results
+	 * Retrieve all annotations for a specific AnnotationRun.
+ * The service handles run ownership and infospace context verification.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getRunResults1(data: AnnotationsData['GetRunResults1']): CancelablePromise<Array<AnnotationRead>> {
+		const {
+infospaceId,
+runId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/results',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Single Annotation
+	 * Retries a single failed annotation synchronously.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static retrySingleAnnotation(data: AnnotationsData['RetrySingleAnnotation']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+annotationId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/retry',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Single Annotation
+	 * Retries a single failed annotation synchronously.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static retrySingleAnnotation1(data: AnnotationsData['RetrySingleAnnotation1']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+annotationId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/retry',
+			path: {
+				infospace_id: infospaceId, annotation_id: annotationId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Failed Annotations
+	 * Triggers a retry of all failed annotations in a run.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static retryFailedAnnotations(data: AnnotationsData['RetryFailedAnnotations']): CancelablePromise<Message> {
+		const {
+infospaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/retry_failed',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Retry Failed Annotations
+	 * Triggers a retry of all failed annotations in a run.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static retryFailedAnnotations1(data: AnnotationsData['RetryFailedAnnotations1']): CancelablePromise<Message> {
+		const {
+infospaceId,
+runId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/retry_failed',
+			path: {
+				infospace_id: infospaceId, run_id: runId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class BundlesService {
+
+	/**
+	 * Create Bundle
+	 * Create a new bundle in an infospace.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createBundle(data: BundlesData['CreateBundle']): CancelablePromise<BundleRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/bundles/infospaces/{infospace_id}/bundles',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Bundles
+	 * Get bundles for an infospace.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getBundles(data: BundlesData['GetBundles']): CancelablePromise<Array<BundleRead>> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/bundles/infospaces/{infospace_id}/bundles',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Bundle
+	 * Get a bundle by ID.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getBundle(data: BundlesData['GetBundle']): CancelablePromise<BundleRead> {
+		const {
+bundleId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/bundles/bundles/{bundle_id}',
+			path: {
+				bundle_id: bundleId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Bundle
+	 * Update a bundle.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateBundle(data: BundlesData['UpdateBundle']): CancelablePromise<BundleRead> {
+		const {
+bundleId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PUT',
+			url: '/api/v1/bundles/bundles/{bundle_id}',
+			path: {
+				bundle_id: bundleId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Bundle
+	 * Delete a bundle.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteBundle(data: BundlesData['DeleteBundle']): CancelablePromise<void> {
+		const {
+bundleId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/bundles/bundles/{bundle_id}',
+			path: {
+				bundle_id: bundleId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Add Asset To Bundle
+	 * Add an existing asset to a bundle by ID.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static addAssetToBundle(data: BundlesData['AddAssetToBundle']): CancelablePromise<BundleRead> {
+		const {
+bundleId,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/bundles/bundles/{bundle_id}/assets/{asset_id}',
+			path: {
+				bundle_id: bundleId, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Remove Asset From Bundle
+	 * Remove an asset from a bundle by ID.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static removeAssetFromBundle(data: BundlesData['RemoveAssetFromBundle']): CancelablePromise<BundleRead> {
+		const {
+bundleId,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/bundles/bundles/{bundle_id}/assets/{asset_id}',
+			path: {
+				bundle_id: bundleId, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Assets In Bundle
+	 * Get assets for a bundle.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAssetsInBundle(data: BundlesData['GetAssetsInBundle']): CancelablePromise<Array<AssetRead>> {
+		const {
+bundleId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/bundles/bundles/{bundle_id}/assets',
+			path: {
+				bundle_id: bundleId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Asset
+	 * Get an asset by ID.
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAsset(data: BundlesData['GetAsset']): CancelablePromise<AssetRead> {
+		const {
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/bundles/assets/{asset_id}',
+			path: {
+				asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Transfer Bundle
+	 * Transfer a bundle to another infospace.
+	 * @returns BundleRead Successful Response
+	 * @throws ApiError
+	 */
+	public static transferBundle(data: BundlesData['TransferBundle']): CancelablePromise<BundleRead> {
+		const {
+bundleId,
+targetInfospaceId,
+copy = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/bundles/bundles/{bundle_id}/transfer',
+			path: {
+				bundle_id: bundleId
+			},
+			query: {
+				target_infospace_id: targetInfospaceId, copy
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class DatasetsService {
+
+	/**
+	 * Create Dataset
+	 * Create a new dataset within a specific infospace.
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createDataset(data: DatasetsData['CreateDataset']): CancelablePromise<DatasetRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Datasets
+	 * Retrieve datasets within a specific infospace.
+	 * @returns DatasetsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listDatasets(data: DatasetsData['ListDatasets']): CancelablePromise<DatasetsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Dataset
+	 * Create a new dataset within a specific infospace.
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createDataset1(data: DatasetsData['CreateDataset1']): CancelablePromise<DatasetRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/datasets',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Datasets
+	 * Retrieve datasets within a specific infospace.
+	 * @returns DatasetsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listDatasets1(data: DatasetsData['ListDatasets1']): CancelablePromise<DatasetsOut> {
+		const {
+infospaceId,
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/datasets',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Dataset
+	 * Get a specific dataset by ID.
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getDataset(data: DatasetsData['GetDataset']): CancelablePromise<DatasetRead> {
+		const {
+infospaceId,
+datasetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/{dataset_id}',
+			path: {
+				infospace_id: infospaceId, dataset_id: datasetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Dataset
+	 * Update a dataset.
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateDataset(data: DatasetsData['UpdateDataset']): CancelablePromise<DatasetRead> {
+		const {
+infospaceId,
+datasetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/{dataset_id}',
+			path: {
+				infospace_id: infospaceId, dataset_id: datasetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Dataset
+	 * Delete a dataset.
+	 * @returns Message Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteDataset(data: DatasetsData['DeleteDataset']): CancelablePromise<Message> {
+		const {
+infospaceId,
+datasetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/{dataset_id}',
+			path: {
+				infospace_id: infospaceId, dataset_id: datasetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Export Dataset
+	 * Export a specific dataset as a self-contained package (ZIP).
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static exportDataset(data: DatasetsData['ExportDataset']): CancelablePromise<any> {
+		const {
+infospaceId,
+datasetId,
+includeContent = false,
+includeResults = false,
+includeSourceFiles = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/{dataset_id}/export',
+			path: {
+				infospace_id: infospaceId, dataset_id: datasetId
+			},
+			query: {
+				include_content: includeContent, include_results: includeResults, include_source_files: includeSourceFiles
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Import Dataset
+	 * Import a dataset from an exported Dataset Package file.
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static importDataset(data: DatasetsData['ImportDataset']): CancelablePromise<DatasetRead> {
+		const {
+infospaceId,
+formData,
+conflictStrategy = 'skip',
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/import',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				conflict_strategy: conflictStrategy
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Import Dataset From Token
+	 * Import a dataset into the target infospace using a share token.
+ * This internally performs an export from the source and then an import.
+	 * @returns DatasetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static importDatasetFromToken(data: DatasetsData['ImportDatasetFromToken']): CancelablePromise<DatasetRead> {
+		const {
+infospaceId,
+shareToken,
+includeContent = false,
+includeResults = false,
+conflictStrategy = 'skip',
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/datasets/import_from_token',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				share_token: shareToken, include_content: includeContent, include_results: includeResults, conflict_strategy: conflictStrategy
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class FilestorageService {
+
+	/**
+	 * File Upload
+	 * Upload a file to the configured storage provider.
+ * Expects form-data with a file.
+ * Generates a unique object name based on user ID and filename.
+	 * @returns FileUploadResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static fileUpload(data: FilestorageData['FileUpload']): CancelablePromise<FileUploadResponse> {
+		const {
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/files/upload',
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				401: `Unauthorized`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * File Download
+	 * Download a file from the storage provider.
+ * Expects query parameter 'file_path' (the object name).
+ * The file is saved temporarily and a background task deletes the temp file.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static fileDownload(data: FilestorageData['FileDownload']): CancelablePromise<any> {
+		const {
+filePath,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/files/download',
+			query: {
+				file_path: filePath
+			},
+			errors: {
+				401: `Unauthorized`,
+				404: `Not Found`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Files
+	 * List files in the storage provider with user authorization.
+ * Users can only list files in their own directory.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static listFiles(data: FilestorageData['ListFiles'] = {}): CancelablePromise<unknown> {
+		const {
+prefix,
+maxKeys = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/files/list',
+			query: {
+				prefix, max_keys: maxKeys
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete File
+	 * Delete a file with proper authorization checks.
+ * Users can only delete files in their own directory.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteFile(data: FilestorageData['DeleteFile']): CancelablePromise<unknown> {
+		const {
+objectName,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/files/delete',
+			query: {
+				object_name: objectName
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Stream File
+	 * Stream a file directly from storage without creating temporary files.
+ * This is more efficient for media files (images, videos, PDFs) that need to be displayed in browsers.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static streamFile(data: FilestorageData['StreamFile']): CancelablePromise<any> {
+		const {
+filePath,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/files/stream/{file_path}',
+			path: {
+				file_path: filePath
+			},
+			errors: {
+				401: `Unauthorized`,
+				404: `Not Found`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+}
+
+export class FilesService {
+
+	/**
+	 * File Upload
+	 * Upload a file to the configured storage provider.
+ * Expects form-data with a file.
+ * Generates a unique object name based on user ID and filename.
+	 * @returns FileUploadResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static fileUpload(data: FilesData['FileUpload']): CancelablePromise<FileUploadResponse> {
+		const {
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/files/upload',
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				401: `Unauthorized`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * File Download
+	 * Download a file from the storage provider.
+ * Expects query parameter 'file_path' (the object name).
+ * The file is saved temporarily and a background task deletes the temp file.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static fileDownload(data: FilesData['FileDownload']): CancelablePromise<any> {
+		const {
+filePath,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/files/download',
+			query: {
+				file_path: filePath
+			},
+			errors: {
+				401: `Unauthorized`,
+				404: `Not Found`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Files
+	 * List files in the storage provider with user authorization.
+ * Users can only list files in their own directory.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static listFiles(data: FilesData['ListFiles'] = {}): CancelablePromise<unknown> {
+		const {
+prefix,
+maxKeys = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/files/list',
+			query: {
+				prefix, max_keys: maxKeys
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete File
+	 * Delete a file with proper authorization checks.
+ * Users can only delete files in their own directory.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteFile(data: FilesData['DeleteFile']): CancelablePromise<unknown> {
+		const {
+objectName,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/files/delete',
+			query: {
+				object_name: objectName
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Stream File
+	 * Stream a file directly from storage without creating temporary files.
+ * This is more efficient for media files (images, videos, PDFs) that need to be displayed in browsers.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static streamFile(data: FilesData['StreamFile']): CancelablePromise<any> {
+		const {
+filePath,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/files/stream/{file_path}',
+			path: {
+				file_path: filePath
+			},
+			errors: {
+				401: `Unauthorized`,
+				404: `Not Found`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+}
 
 export class AppService {
 
@@ -1176,6 +4377,211 @@ export class AppService {
 				return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/healthz/healthz',
+		});
+	}
+
+}
+
+export class InfospacesService {
+
+	/**
+	 * Create Infospace
+	 * Create a new Infospace.
+	 * @returns InfospaceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createInfospace(data: InfospacesData['CreateInfospace']): CancelablePromise<InfospaceRead> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/infospaces/',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Infospaces
+	 * Retrieve Infospaces for the current user.
+	 * @returns InfospacesOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listInfospaces(data: InfospacesData['ListInfospaces'] = {}): CancelablePromise<InfospacesOut> {
+		const {
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/infospaces/',
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Infospace
+	 * Create a new Infospace.
+	 * @returns InfospaceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createInfospace1(data: InfospacesData['CreateInfospace1']): CancelablePromise<InfospaceRead> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/infospaces',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Infospaces
+	 * Retrieve Infospaces for the current user.
+	 * @returns InfospacesOut Successful Response
+	 * @throws ApiError
+	 */
+	public static listInfospaces1(data: InfospacesData['ListInfospaces1'] = {}): CancelablePromise<InfospacesOut> {
+		const {
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/infospaces',
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Infospace
+	 * Retrieve a specific Infospace by its ID.
+	 * @returns InfospaceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getInfospace(data: InfospacesData['GetInfospace']): CancelablePromise<InfospaceRead> {
+		const {
+infospaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/infospaces/{infospace_id}',
+			path: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Infospace
+	 * Update an Infospace.
+	 * @returns InfospaceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateInfospace(data: InfospacesData['UpdateInfospace']): CancelablePromise<InfospaceRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PATCH',
+			url: '/api/v1/infospaces/infospaces/{infospace_id}',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Infospace
+	 * Delete an Infospace.
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteInfospace(data: InfospacesData['DeleteInfospace']): CancelablePromise<void> {
+		const {
+infospaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/infospaces/infospaces/{infospace_id}',
+			path: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Infospace Stats
+	 * Get statistics about an Infospace.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getInfospaceStats(data: InfospacesData['GetInfospaceStats']): CancelablePromise<Record<string, unknown>> {
+		const {
+infospaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/infospaces/{infospace_id}/stats',
+			path: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Import Infospace
+	 * Import an Infospace.
+	 * @returns InfospaceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static importInfospace(data: InfospacesData['ImportInfospace']): CancelablePromise<InfospaceRead> {
+		const {
+infospaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/infospaces/import',
+			query: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
 		});
 	}
 
@@ -1275,6 +4681,325 @@ email,
 			url: '/api/v1/password-recovery-html-content/{email}',
 			path: {
 				email
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class SearchHistoryService {
+
+	/**
+	 * Create Search History
+	 * Create a new search history entry.
+	 * @returns SearchHistoryRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createSearchHistory(data: SearchHistoryData['CreateSearchHistory']): CancelablePromise<SearchHistoryRead> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/search_histories/create',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Read Search Histories
+	 * Retrieve search histories for the current user.
+	 * @returns SearchHistoriesOut Successful Response
+	 * @throws ApiError
+	 */
+	public static readSearchHistories(data: SearchHistoryData['ReadSearchHistories'] = {}): CancelablePromise<SearchHistoriesOut> {
+		const {
+skip = 0,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/search_histories/read',
+			query: {
+				skip, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class ShareablesService {
+
+	/**
+	 * Create Shareable Link
+	 * Create a new shareable link for a resource within an infospace.
+	 * @returns ShareableLinkRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createShareableLink(data: ShareablesData['CreateShareableLink']): CancelablePromise<ShareableLinkRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/shareables/{infospace_id}/links',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Shareable Links
+	 * Get shareable links for the current user, optionally filtered by resource and infospace.
+	 * @returns Paginated Successful Response
+	 * @throws ApiError
+	 */
+	public static getShareableLinks(data: ShareablesData['GetShareableLinks']): CancelablePromise<Paginated> {
+		const {
+infospaceId,
+resourceType,
+resourceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/shareables/{infospace_id}/links',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				resource_type: resourceType, resource_id: resourceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Shareable Link By Token
+	 * Get a shareable link by token.
+	 * @returns ShareableLinkRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getShareableLinkByToken(data: ShareablesData['GetShareableLinkByToken']): CancelablePromise<ShareableLinkRead> {
+		const {
+token,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/shareables/links/{token}',
+			path: {
+				token
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Update Shareable Link
+	 * Update a shareable link by its ID (owner only).
+	 * @returns ShareableLinkRead Successful Response
+	 * @throws ApiError
+	 */
+	public static updateShareableLink(data: ShareablesData['UpdateShareableLink']): CancelablePromise<ShareableLinkRead> {
+		const {
+linkId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'PUT',
+			url: '/api/v1/shareables/shareables/links/{link_id}',
+			path: {
+				link_id: linkId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Delete Shareable Link
+	 * Delete a shareable link by its ID (owner only).
+	 * @returns void Successful Response
+	 * @throws ApiError
+	 */
+	public static deleteShareableLink(data: ShareablesData['DeleteShareableLink']): CancelablePromise<void> {
+		const {
+linkId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/shareables/shareables/links/{link_id}',
+			path: {
+				link_id: linkId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Access Shared Resource
+	 * Access the resource associated with a shareable link token.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static accessSharedResource(data: ShareablesData['AccessSharedResource']): CancelablePromise<Record<string, unknown>> {
+		const {
+token,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/shareables/access/{token}',
+			path: {
+				token
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Sharing Stats
+	 * Get sharing statistics for the current user within a specific infospace.
+	 * @returns ShareableLinkStats Successful Response
+	 * @throws ApiError
+	 */
+	public static getSharingStats(data: ShareablesData['GetSharingStats']): CancelablePromise<ShareableLinkStats> {
+		const {
+infospaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/shareables/{infospace_id}/stats',
+			path: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Export Resource
+	 * Export a resource from a specific infospace to a file.
+ * Returns a file download.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static exportResource(data: ShareablesData['ExportResource']): CancelablePromise<any> {
+		const {
+infospaceId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/shareables/{infospace_id}/export',
+			path: {
+				infospace_id: infospaceId
+			},
+			formData: formData,
+			mediaType: 'application/x-www-form-urlencoded',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Import Resource
+	 * Import a resource from a file into a specific infospace.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static importResource(data: ShareablesData['ImportResource']): CancelablePromise<unknown> {
+		const {
+targetInfospaceId,
+formData,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/shareables/import/{target_infospace_id}',
+			path: {
+				target_infospace_id: targetInfospaceId
+			},
+			formData: formData,
+			mediaType: 'multipart/form-data',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Export Resources Batch
+	 * Export multiple resources of the same type to a ZIP archive.
+	 * @returns binary Successful batch export, returns a ZIP archive.
+	 * @throws ApiError
+	 */
+	public static exportResourcesBatch(data: ShareablesData['ExportResourcesBatch']): CancelablePromise<Blob | File> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/shareables/{infospace_id}/export-batch',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				400: `Bad Request (e.g., no resource IDs)`,
+				403: `Forbidden (e.g., permission denied for one or more resources)`,
+				422: `Validation Error`,
+				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * View Dataset Package Summary
+	 * Get a summary of a shared dataset package using its token.
+ * Does not trigger a full download or import of the package data.
+	 * @returns DatasetPackageSummary Successful Response
+	 * @throws ApiError
+	 */
+	public static viewDatasetPackageSummary(data: ShareablesData['ViewDatasetPackageSummary']): CancelablePromise<DatasetPackageSummary> {
+		const {
+token,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/shareables/view_dataset_package_summary/{token}',
+			path: {
+				token
 			},
 			errors: {
 				422: `Validation Error`,
@@ -1651,6 +5376,20 @@ url,
 		});
 	}
 
+	/**
+	 * Get Providers
+	 * Returns a hardcoded list of available classification providers and their models.
+ * This is a temporary solution to bypass dynamic discovery issues.
+	 * @returns ProviderListResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static getProviders(): CancelablePromise<ProviderListResponse> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/utils/providers',
+		});
+	}
+
 }
 
 export class UtilitiesService {
@@ -1783,2306 +5522,41 @@ url,
 		});
 	}
 
-}
-
-export class ItemsService {
-
 	/**
-	 * Read Items
-	 * Retrieve items.
-	 * @returns ItemsOut Successful Response
+	 * Get Providers
+	 * Returns a hardcoded list of available classification providers and their models.
+ * This is a temporary solution to bypass dynamic discovery issues.
+	 * @returns ProviderListResponse Successful Response
 	 * @throws ApiError
 	 */
-	public static readItems(data: ItemsData['ReadItems'] = {}): CancelablePromise<ItemsOut> {
-		const {
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/items/',
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Item
-	 * Create new item.
-	 * @returns ItemOut Successful Response
-	 * @throws ApiError
-	 */
-	public static createItem(data: ItemsData['CreateItem']): CancelablePromise<ItemOut> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/items/',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Item
-	 * Get item by ID.
-	 * @returns ItemOut Successful Response
-	 * @throws ApiError
-	 */
-	public static readItem(data: ItemsData['ReadItem']): CancelablePromise<ItemOut> {
-		const {
-id,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/items/{id}',
-			path: {
-				id
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Item
-	 * Update an item.
-	 * @returns ItemOut Successful Response
-	 * @throws ApiError
-	 */
-	public static updateItem(data: ItemsData['UpdateItem']): CancelablePromise<ItemOut> {
-		const {
-id,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PUT',
-			url: '/api/v1/items/{id}',
-			path: {
-				id
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Item
-	 * Delete an item.
-	 * @returns Message Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteItem(data: ItemsData['DeleteItem']): CancelablePromise<Message> {
-		const {
-id,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/items/{id}',
-			path: {
-				id
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class ShareablesService {
-
-	/**
-	 * Create Shareable Link
-	 * Create a new shareable link for a resource.
- * Transaction managed by SessionDep within the service dependency.
-	 * @returns ShareableLinkRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createShareableLink(data: ShareablesData['CreateShareableLink']): CancelablePromise<ShareableLinkRead> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/shareables/shareables/',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Shareable Links
-	 * Get all shareable links for the current user.
- * Can be filtered by resource_type and resource_id.
-	 * @returns ShareableLinkRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getShareableLinks(data: ShareablesData['GetShareableLinks'] = {}): CancelablePromise<Array<ShareableLinkRead>> {
-		const {
-resourceType,
-resourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/shareables/shareables/',
-			query: {
-				resource_type: resourceType, resource_id: resourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Shareable Link Stats
-	 * Get statistics about shareable links for the current user.
-	 * @returns ShareableLinkStats Successful Response
-	 * @throws ApiError
-	 */
-	public static getShareableLinkStats(): CancelablePromise<ShareableLinkStats> {
+	public static getProviders(): CancelablePromise<ProviderListResponse> {
 				return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/shareables/shareables/stats',
-		});
-	}
-
-	/**
-	 * Get Shareable Link
-	 * Get a specific shareable link by ID.
-	 * @returns ShareableLinkRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getShareableLink(data: ShareablesData['GetShareableLink']): CancelablePromise<ShareableLinkRead> {
-		const {
-linkId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/shareables/shareables/{link_id}',
-			path: {
-				link_id: linkId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Shareable Link
-	 * Update a shareable link by ID.
- * Transaction managed by SessionDep.
-	 * @returns ShareableLinkRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateShareableLink(data: ShareablesData['UpdateShareableLink']): CancelablePromise<ShareableLinkRead> {
-		const {
-linkId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PUT',
-			url: '/api/v1/shareables/shareables/{link_id}',
-			path: {
-				link_id: linkId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Shareable Link
-	 * Delete a shareable link by ID.
- * Transaction managed by SessionDep.
-	 * @returns Message Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteShareableLink(data: ShareablesData['DeleteShareableLink']): CancelablePromise<Message> {
-		const {
-linkId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/shareables/shareables/{link_id}',
-			path: {
-				link_id: linkId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Access Shared Resource
-	 * Access a shared resource using its token.
- * Can be accessed with or without authentication depending on the link settings.
- * Authentication errors are suppressed to allow access to public resources.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static accessSharedResource(data: ShareablesData['AccessSharedResource']): CancelablePromise<unknown> {
-		const {
-token,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/shareables/shareables/access/{token}',
-			path: {
-				token
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Export Resource
-	 * Export a resource to a file.
- * Returns a file download.
-	 * @returns any Successful Response
-	 * @throws ApiError
-	 */
-	public static exportResource(data: ShareablesData['ExportResource']): CancelablePromise<any> {
-		const {
-formData,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/shareables/shareables/export',
-			formData: formData,
-			mediaType: 'application/x-www-form-urlencoded',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Import Resource
-	 * Import a resource from a file into a specific workspace.
- * Transaction managed by SessionDep within the service dependency.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static importResource(data: ShareablesData['ImportResource']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-formData,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/shareables/shareables/import/{workspace_id}',
-			path: {
-				workspace_id: workspaceId
-			},
-			formData: formData,
-			mediaType: 'multipart/form-data',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Export Resources Batch
-	 * Export multiple resources of the same type to a ZIP archive.
-	 * @returns binary Successful batch export, returns a ZIP archive.
-	 * @throws ApiError
-	 */
-	public static exportResourcesBatch(data: ShareablesData['ExportResourcesBatch']): CancelablePromise<Blob | File> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/shareables/shareables/export-batch',
-            responseType: 'blob',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				400: `Bad Request (e.g., no resource IDs)`,
-				403: `Forbidden (e.g., permission denied for one or more resources)`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * View Dataset Package Summary
-	 * Get a summary of a shared dataset package using its token.
- * Does not trigger a full download or import of the package data.
-	 * @returns DatasetPackageSummary Successful Response
-	 * @throws ApiError
-	 */
-	public static viewDatasetPackageSummary(data: ShareablesData['ViewDatasetPackageSummary']): CancelablePromise<DatasetPackageSummary> {
-		const {
-token,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/shareables/shareables/view_dataset_package_summary/{token}',
-			path: {
-				token
-			},
-			errors: {
-				422: `Validation Error`,
-			},
+			url: '/api/v1/utils/utils/providers',
 		});
 	}
 
 }
 
-export class SearchHistoryService {
+export class EntitiesService {
 
 	/**
-	 * Create Search History
-	 * Create a new search history entry.
-	 * @returns SearchHistory Successful Response
-	 * @throws ApiError
-	 */
-	public static createSearchHistory(data: SearchHistoryData['CreateSearchHistory']): CancelablePromise<SearchHistory> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/search_histories/create',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Search Histories
-	 * Retrieve search histories for the current user.
-	 * @returns SearchHistoriesOut Successful Response
-	 * @throws ApiError
-	 */
-	public static readSearchHistories(data: SearchHistoryData['ReadSearchHistories'] = {}): CancelablePromise<SearchHistoriesOut> {
-		const {
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/search_histories/read',
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class FilestorageService {
-
-	/**
-	 * File Upload
-	 * Upload a file to the configured storage provider.
- * Expects form-data with a file.
- * Generates a unique object name based on user ID and filename.
-	 * @returns FileUploadResponse Successful Response
-	 * @throws ApiError
-	 */
-	public static fileUpload(data: FilestorageData['FileUpload']): CancelablePromise<FileUploadResponse> {
-		const {
-formData,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/files/files/',
-			formData: formData,
-			mediaType: 'multipart/form-data',
-			errors: {
-				401: `Unauthorized`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * File Download
-	 * Download a file from the storage provider.
- * Expects query parameter 'file_path' (the object name).
- * The file is saved temporarily and a background task deletes the temp file.
-	 * @returns any Successful Response
-	 * @throws ApiError
-	 */
-	public static fileDownload(data: FilestorageData['FileDownload']): CancelablePromise<any> {
-		const {
-filePath,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/files/files/',
-			query: {
-				file_path: filePath
-			},
-			errors: {
-				401: `Unauthorized`,
-				404: `Not Found`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Files
-	 * List all files in the storage bucket.
- * Note: This might list files for all users depending on bucket setup.
- * Consider adding user-specific prefix filtering if needed.
-	 * @returns string Successful Response
-	 * @throws ApiError
-	 */
-	public static listFiles(): CancelablePromise<Array<string>> {
-				return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/files/files/list',
-			errors: {
-				401: `Unauthorized`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete File
-	 * Delete a file (object) from the storage provider.
- * Requires the full object name/path.
- * TODO: Add authorization check - does this user own this file?
- * (e.g., check if object_name starts with f"user_{current_user.id}/")
+	 * Search Entities
+	 * Search and paginate through entities based on a query.
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static deleteFile(data: FilestorageData['DeleteFile']): CancelablePromise<unknown> {
+	public static searchEntities(data: EntitiesData['SearchEntities']): CancelablePromise<unknown> {
 		const {
-objectName,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/files/files/{object_name}',
-			path: {
-				object_name: objectName
-			},
-			errors: {
-				401: `Unauthorized`,
-				404: `Not Found`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-}
-
-export class FilesService {
-
-	/**
-	 * File Upload
-	 * Upload a file to the configured storage provider.
- * Expects form-data with a file.
- * Generates a unique object name based on user ID and filename.
-	 * @returns FileUploadResponse Successful Response
-	 * @throws ApiError
-	 */
-	public static fileUpload(data: FilesData['FileUpload']): CancelablePromise<FileUploadResponse> {
-		const {
-formData,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/files/files/',
-			formData: formData,
-			mediaType: 'multipart/form-data',
-			errors: {
-				401: `Unauthorized`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * File Download
-	 * Download a file from the storage provider.
- * Expects query parameter 'file_path' (the object name).
- * The file is saved temporarily and a background task deletes the temp file.
-	 * @returns any Successful Response
-	 * @throws ApiError
-	 */
-	public static fileDownload(data: FilesData['FileDownload']): CancelablePromise<any> {
-		const {
-filePath,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/files/files/',
-			query: {
-				file_path: filePath
-			},
-			errors: {
-				401: `Unauthorized`,
-				404: `Not Found`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Files
-	 * List all files in the storage bucket.
- * Note: This might list files for all users depending on bucket setup.
- * Consider adding user-specific prefix filtering if needed.
-	 * @returns string Successful Response
-	 * @throws ApiError
-	 */
-	public static listFiles(): CancelablePromise<Array<string>> {
-				return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/files/files/list',
-			errors: {
-				401: `Unauthorized`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete File
-	 * Delete a file (object) from the storage provider.
- * Requires the full object name/path.
- * TODO: Add authorization check - does this user own this file?
- * (e.g., check if object_name starts with f"user_{current_user.id}/")
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteFile(data: FilesData['DeleteFile']): CancelablePromise<unknown> {
-		const {
-objectName,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/files/files/{object_name}',
-			path: {
-				object_name: objectName
-			},
-			errors: {
-				401: `Unauthorized`,
-				404: `Not Found`,
-				422: `Validation Error`,
-				500: `Internal Server Error`,
-			},
-		});
-	}
-
-}
-
-export class WorkspacesService {
-
-	/**
-	 * Create Workspace
-	 * Create a new workspace.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createWorkspace(data: WorkspacesData['CreateWorkspace']): CancelablePromise<WorkspaceRead> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Workspaces
-	 * Retrieve all workspaces for the current user.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readWorkspaces(data: WorkspacesData['ReadWorkspaces'] = {}): CancelablePromise<Array<WorkspaceRead>> {
-		const {
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/',
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Workspace
-	 * Create a new workspace.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createWorkspace1(data: WorkspacesData['CreateWorkspace1']): CancelablePromise<WorkspaceRead> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Workspaces
-	 * Retrieve all workspaces for the current user.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readWorkspaces1(data: WorkspacesData['ReadWorkspaces1'] = {}): CancelablePromise<Array<WorkspaceRead>> {
-		const {
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces',
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Workspace By Id
-	 * Get a specific workspace by ID.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readWorkspaceById(data: WorkspacesData['ReadWorkspaceById']): CancelablePromise<WorkspaceRead> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Workspace
-	 * Update an existing workspace.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateWorkspace(data: WorkspacesData['UpdateWorkspace']): CancelablePromise<WorkspaceRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Workspace
-	 * Delete a workspace.
-	 * @returns Message Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteWorkspace(data: WorkspacesData['DeleteWorkspace']): CancelablePromise<Message> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Ensure Default Workspace
-	 * Ensure a default workspace exists for the user.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static ensureDefaultWorkspace(): CancelablePromise<WorkspaceRead> {
-				return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/ensure-default',
-		});
-	}
-
-	/**
-	 * Transfer Datasources Endpoint
-	 * Transfer (copy or move) DataSources between workspaces.
- * Requires ownership or appropriate permissions for both source and target workspaces.
-	 * @returns DataSourceTransferResponse Successful Response
-	 * @throws ApiError
-	 */
-	public static transferDatasourcesEndpoint(data: WorkspacesData['TransferDatasourcesEndpoint']): CancelablePromise<DataSourceTransferResponse> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/transfer/datasources',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				400: `Invalid request (e.g., same workspace, no IDs)`,
-				401: `Not authenticated`,
-				403: `Not authorized to access workspaces`,
-				404: `One or more workspaces/datasources not found`,
-				422: `Validation Error`,
-				500: `Internal server error during transfer`,
-			},
-		});
-	}
-
-	/**
-	 * Import Workspace From Token Endpoint
-	 * Import a complete workspace using a share token.
- * This creates a new workspace for the current user with the content of the shared workspace.
-	 * @returns WorkspaceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static importWorkspaceFromTokenEndpoint(data: WorkspacesData['ImportWorkspaceFromTokenEndpoint']): CancelablePromise<WorkspaceRead> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/import_from_token',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class ClassificationSchemesService {
-
-	/**
-	 * Create Classification Scheme
-	 * Create a new classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationScheme(data: ClassificationSchemesData['CreateClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Scheme
-	 * Create a new classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationScheme1(data: ClassificationSchemesData['CreateClassificationScheme1']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Schemes
-	 * Retrieve classification schemes for the workspace using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationSchemes(data: ClassificationSchemesData['ReadClassificationSchemes']): CancelablePromise<Array<ClassificationSchemeRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Schemes
-	 * Retrieve classification schemes for the workspace using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationSchemes1(data: ClassificationSchemesData['ReadClassificationSchemes1']): CancelablePromise<Array<ClassificationSchemeRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete All Classification Schemes
-	 * Delete all classification schemes in a workspace using the service.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAllClassificationSchemes(data: ClassificationSchemesData['DeleteAllClassificationSchemes']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete All Classification Schemes
-	 * Delete all classification schemes in a workspace using the service.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAllClassificationSchemes1(data: ClassificationSchemesData['DeleteAllClassificationSchemes1']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Scheme
-	 * Create a new classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationScheme2(data: ClassificationSchemesData['CreateClassificationScheme2']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Scheme
-	 * Create a new classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationScheme3(data: ClassificationSchemesData['CreateClassificationScheme3']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Schemes
-	 * Retrieve classification schemes for the workspace using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationSchemes2(data: ClassificationSchemesData['ReadClassificationSchemes2']): CancelablePromise<Array<ClassificationSchemeRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Schemes
-	 * Retrieve classification schemes for the workspace using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationSchemes3(data: ClassificationSchemesData['ReadClassificationSchemes3']): CancelablePromise<Array<ClassificationSchemeRead>> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete All Classification Schemes
-	 * Delete all classification schemes in a workspace using the service.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAllClassificationSchemes2(data: ClassificationSchemesData['DeleteAllClassificationSchemes2']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete All Classification Schemes
-	 * Delete all classification schemes in a workspace using the service.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAllClassificationSchemes3(data: ClassificationSchemesData['DeleteAllClassificationSchemes3']): CancelablePromise<unknown> {
-		const {
-workspaceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/',
-			path: {
-				workspace_id: workspaceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Scheme
-	 * Retrieve a specific classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationScheme(data: ClassificationSchemesData['ReadClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-schemeId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Classification Scheme
-	 * Retrieve a specific classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readClassificationScheme1(data: ClassificationSchemesData['ReadClassificationScheme1']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-schemeId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Classification Scheme
-	 * Update a classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateClassificationScheme(data: ClassificationSchemesData['UpdateClassificationScheme']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-schemeId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Classification Scheme
-	 * Update a classification scheme using the service.
-	 * @returns ClassificationSchemeRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateClassificationScheme1(data: ClassificationSchemesData['UpdateClassificationScheme1']): CancelablePromise<ClassificationSchemeRead> {
-		const {
-workspaceId,
-schemeId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Classification Scheme
-	 * Delete a classification scheme using the service.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteClassificationScheme(data: ClassificationSchemesData['DeleteClassificationScheme']): CancelablePromise<void> {
-		const {
-workspaceId,
-schemeId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Classification Scheme
-	 * Delete a classification scheme using the service.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteClassificationScheme1(data: ClassificationSchemesData['DeleteClassificationScheme1']): CancelablePromise<void> {
-		const {
-workspaceId,
-schemeId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_schemes/{scheme_id}',
-			path: {
-				workspace_id: workspaceId, scheme_id: schemeId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class ClassificationResultsService {
-
-	/**
-	 * Get Classification Result
-	 * Retrieve an individual classification result by its ID using the service.
- * The service handles workspace/user authorization.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getClassificationResult(data: ClassificationResultsData['GetClassificationResult']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-resultId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
-			path: {
-				workspace_id: workspaceId, result_id: resultId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Classification Result
-	 * Retrieve an individual classification result by its ID using the service.
- * The service handles workspace/user authorization.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getClassificationResult1(data: ClassificationResultsData['GetClassificationResult1']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-resultId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}',
-			path: {
-				workspace_id: workspaceId, result_id: resultId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List classification results for the workspace, with optional filters, using the service.
- * The service handles workspace ownership verification and data fetching.
- * Returns enhanced results with calculated display_value.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults(data: ClassificationResultsData['ListClassificationResults']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-jobId,
-datarecordIds,
-schemeIds,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List classification results for the workspace, with optional filters, using the service.
- * The service handles workspace ownership verification and data fetching.
- * Returns enhanced results with calculated display_value.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults1(data: ClassificationResultsData['ListClassificationResults1']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-jobId,
-datarecordIds,
-schemeIds,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List classification results for the workspace, with optional filters, using the service.
- * The service handles workspace ownership verification and data fetching.
- * Returns enhanced results with calculated display_value.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults2(data: ClassificationResultsData['ListClassificationResults2']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-jobId,
-datarecordIds,
-schemeIds,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Results
-	 * List classification results for the workspace, with optional filters, using the service.
- * The service handles workspace ownership verification and data fetching.
- * Returns enhanced results with calculated display_value.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationResults3(data: ClassificationResultsData['ListClassificationResults3']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-jobId,
-datarecordIds,
-schemeIds,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				job_id: jobId, datarecord_ids: datarecordIds, scheme_ids: schemeIds, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Job Results
-	 * Retrieve all classification results for a specific ClassificationJob using the service.
- * The service handles job ownership and workspace context verification.
- * Returns enhanced results with calculated display_value.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getJobResults(data: ClassificationResultsData['GetJobResults']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-jobId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/results',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Job Results
-	 * Retrieve all classification results for a specific ClassificationJob using the service.
- * The service handles job ownership and workspace context verification.
- * Returns enhanced results with calculated display_value.
-	 * @returns EnhancedClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getJobResults1(data: ClassificationResultsData['GetJobResults1']): CancelablePromise<Array<EnhancedClassificationResultRead>> {
-		const {
-workspaceId,
-jobId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/results',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Retry Single Classification Result
-	 * Retries a single failed classification result synchronously.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static retrySingleClassificationResult(data: ClassificationResultsData['RetrySingleClassificationResult']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-resultId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}/retry',
-			path: {
-				workspace_id: workspaceId, result_id: resultId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Retry Single Classification Result
-	 * Retries a single failed classification result synchronously.
-	 * @returns ClassificationResultRead Successful Response
-	 * @throws ApiError
-	 */
-	public static retrySingleClassificationResult1(data: ClassificationResultsData['RetrySingleClassificationResult1']): CancelablePromise<ClassificationResultRead> {
-		const {
-workspaceId,
-resultId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_results/{result_id}/retry',
-			path: {
-				workspace_id: workspaceId, result_id: resultId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class ClassificationJobsService {
-
-	/**
-	 * Create Classification Job
-	 * Create a new Classification Job.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationJob(data: ClassificationJobsData['CreateClassificationJob']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Job
-	 * Create a new Classification Job.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationJob1(data: ClassificationJobsData['CreateClassificationJob1']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Jobs
-	 * Retrieve Classification Jobs for the workspace.
-	 * @returns ClassificationJobsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationJobs(data: ClassificationJobsData['ListClassificationJobs']): CancelablePromise<ClassificationJobsOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit, include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Jobs
-	 * Retrieve Classification Jobs for the workspace.
-	 * @returns ClassificationJobsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationJobs1(data: ClassificationJobsData['ListClassificationJobs1']): CancelablePromise<ClassificationJobsOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit, include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Job
-	 * Create a new Classification Job.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationJob2(data: ClassificationJobsData['CreateClassificationJob2']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Classification Job
-	 * Create a new Classification Job.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createClassificationJob3(data: ClassificationJobsData['CreateClassificationJob3']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Jobs
-	 * Retrieve Classification Jobs for the workspace.
-	 * @returns ClassificationJobsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationJobs2(data: ClassificationJobsData['ListClassificationJobs2']): CancelablePromise<ClassificationJobsOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit, include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Classification Jobs
-	 * Retrieve Classification Jobs for the workspace.
-	 * @returns ClassificationJobsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listClassificationJobs3(data: ClassificationJobsData['ListClassificationJobs3']): CancelablePromise<ClassificationJobsOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit, include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Classification Job
-	 * Retrieve a specific Classification Job by its ID.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getClassificationJob(data: ClassificationJobsData['GetClassificationJob']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-jobId,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			query: {
-				include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Classification Job
-	 * Retrieve a specific Classification Job by its ID.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getClassificationJob1(data: ClassificationJobsData['GetClassificationJob1']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-jobId,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			query: {
-				include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Classification Job
-	 * Update a Classification Job.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateClassificationJob(data: ClassificationJobsData['UpdateClassificationJob']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-jobId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Classification Job
-	 * Update a Classification Job.
-	 * @returns ClassificationJobRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateClassificationJob1(data: ClassificationJobsData['UpdateClassificationJob1']): CancelablePromise<ClassificationJobRead> {
-		const {
-workspaceId,
-jobId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Classification Job
-	 * Delete a Classification Job.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteClassificationJob(data: ClassificationJobsData['DeleteClassificationJob']): CancelablePromise<void> {
-		const {
-workspaceId,
-jobId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Classification Job
-	 * Delete a Classification Job.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteClassificationJob1(data: ClassificationJobsData['DeleteClassificationJob1']): CancelablePromise<void> {
-		const {
-workspaceId,
-jobId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Retry Failed Job Classifications
-	 * Trigger a background task to retry all failed classifications within a job
- * that previously completed with errors.
-	 * @returns Message Successful Response
-	 * @throws ApiError
-	 */
-	public static retryFailedJobClassifications(data: ClassificationJobsData['RetryFailedJobClassifications']): CancelablePromise<Message> {
-		const {
-workspaceId,
-jobId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/retry_failures',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Retry Failed Job Classifications
-	 * Trigger a background task to retry all failed classifications within a job
- * that previously completed with errors.
-	 * @returns Message Successful Response
-	 * @throws ApiError
-	 */
-	public static retryFailedJobClassifications1(data: ClassificationJobsData['RetryFailedJobClassifications1']): CancelablePromise<Message> {
-		const {
-workspaceId,
-jobId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/retry_failures',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Dataset From Job Endpoint
-	 * Create a new Dataset from a completed ClassificationJob run.
- * The dataset will encapsulate the job's inputs (records, schemes) and outputs (results implicitly via records).
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createDatasetFromJobEndpoint(data: ClassificationJobsData['CreateDatasetFromJobEndpoint']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-jobId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/create_dataset',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Dataset From Job Endpoint
-	 * Create a new Dataset from a completed ClassificationJob run.
- * The dataset will encapsulate the job's inputs (records, schemes) and outputs (results implicitly via records).
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createDatasetFromJobEndpoint1(data: ClassificationJobsData['CreateDatasetFromJobEndpoint1']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-jobId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/classification_jobs/{job_id}/create_dataset',
-			path: {
-				workspace_id: workspaceId, job_id: jobId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class DatasourcesService {
-
-	/**
-	 * Create Datasource
-	 * Creates a new DataSource. Handles single/bulk PDF uploads based on file count.
-	 * @returns DataSourcesOut Successful Response
-	 * @throws ApiError
-	 */
-	public static createDatasource(data: DatasourcesData['CreateDatasource']): CancelablePromise<DataSourcesOut> {
-		const {
-workspaceId,
-formData,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/',
-			path: {
-				workspace_id: workspaceId
-			},
-			formData: formData,
-			mediaType: 'multipart/form-data',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Datasources
-	 * List DataSources in a workspace.
-	 * @returns DataSourcesOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listDatasources(data: DatasourcesData['ListDatasources']): CancelablePromise<DataSourcesOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Datasource
-	 * Creates a new DataSource. Handles single/bulk PDF uploads based on file count.
-	 * @returns DataSourcesOut Successful Response
-	 * @throws ApiError
-	 */
-	public static createDatasource1(data: DatasourcesData['CreateDatasource1']): CancelablePromise<DataSourcesOut> {
-		const {
-workspaceId,
-formData,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasources',
-			path: {
-				workspace_id: workspaceId
-			},
-			formData: formData,
-			mediaType: 'multipart/form-data',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Datasources
-	 * List DataSources in a workspace.
-	 * @returns DataSourcesOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listDatasources1(data: DatasourcesData['ListDatasources1']): CancelablePromise<DataSourcesOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Datasource
-	 * Get a specific DataSource.
-	 * @returns DataSourceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getDatasource(data: DatasourcesData['GetDatasource']): CancelablePromise<DataSourceRead> {
-		const {
-workspaceId,
-datasourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Datasource
-	 * Delete a DataSource.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteDatasource(data: DatasourcesData['DeleteDatasource']): CancelablePromise<void> {
-		const {
-workspaceId,
-datasourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Datasource
-	 * Update an existing DataSource.
-	 * @returns DataSourceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateDatasource(data: DatasourcesData['UpdateDatasource']): CancelablePromise<DataSourceRead> {
-		const {
-workspaceId,
-datasourceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PUT',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Datasource Urls
-	 * Get the list of URLs for a URL_LIST DataSource.
-	 * @returns string Successful Response
-	 * @throws ApiError
-	 */
-	public static getDatasourceUrls(data: DatasourcesData['GetDatasourceUrls']): CancelablePromise<Array<string>> {
-		const {
-workspaceId,
-datasourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/urls',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Datasource Urls
-	 * Update the list of URLs for a URL_LIST DataSource.
- * Replaces the existing list entirely. If URLs are removed,
- * their corresponding DataRecords will be deleted.
-	 * @returns DataSourceRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateDatasourceUrls(data: DatasourcesData['UpdateDatasourceUrls']): CancelablePromise<DataSourceRead> {
-		const {
-workspaceId,
-datasourceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PUT',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/urls',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Datasource Rows
-	 * Get rows from a CSV DataSource.
-	 * @returns CsvRowsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static readDatasourceRows(data: DatasourcesData['ReadDatasourceRows']): CancelablePromise<CsvRowsOut> {
-		const {
-workspaceId,
-datasourceId,
+query,
 skip = 0,
 limit = 50,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/rows',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
+			url: '/api/v1/entities/',
 			query: {
-				skip, limit
+				query, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -4091,148 +5565,22 @@ limit = 50,
 	}
 
 	/**
-	 * Refetch Datasource
-	 * Trigger a background re-ingestion task for a DataSource.
-	 * @returns Message Successful Response
+	 * Get Entity Details
+	 * Retrieve detailed information about a specific entity.
+	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static refetchDatasource(data: DatasourcesData['RefetchDatasource']): CancelablePromise<Message> {
+	public static getEntityDetails(data: EntitiesData['GetEntityDetails']): CancelablePromise<unknown> {
 		const {
-workspaceId,
-datasourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/refetch',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Datasource Content
-	 * Get the raw content of a PDF DataSource.
-	 * @returns any Successful Response
-	 * @throws ApiError
-	 */
-	public static getDatasourceContent(data: DatasourcesData['GetDatasourceContent']): CancelablePromise<any> {
-		const {
-workspaceId,
-datasourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/content',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Download Datasource Pdf
-	 * Download the PDF file for a DataSource.
-	 * @returns any Successful Response
-	 * @throws ApiError
-	 */
-	public static downloadDatasourcePdf(data: DatasourcesData['DownloadDatasourcePdf']): CancelablePromise<any> {
-		const {
-workspaceId,
-datasourceId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasources/{datasource_id}/pdf_download',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class DatarecordsService {
-
-	/**
-	 * Get Datarecord
-	 * Get a specific DataRecord.
-	 * @returns DataRecordRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getDatarecord(data: DatarecordsData['GetDatarecord']): CancelablePromise<DataRecordRead> {
-		const {
-workspaceId,
-datarecordId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}',
-			path: {
-				workspace_id: workspaceId, datarecord_id: datarecordId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Datarecord
-	 * Update specific fields of a DataRecord (e.g., title, event_timestamp).
-	 * @returns DataRecordRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateDatarecord(data: DatarecordsData['UpdateDatarecord']): CancelablePromise<DataRecordRead> {
-		const {
-workspaceId,
-datarecordId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}',
-			path: {
-				workspace_id: workspaceId, datarecord_id: datarecordId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Datarecords
-	 * List DataRecords for a specific DataSource.
-	 * @returns DataRecordRead Successful Response
-	 * @throws ApiError
-	 */
-	public static listDatarecords(data: DatarecordsData['ListDatarecords']): CancelablePromise<Array<DataRecordRead>> {
-		const {
-workspaceId,
-datasourceId,
+entity,
 skip = 0,
-limit = 1000,
+limit = 50,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
+			url: '/api/v1/entities/by_entity',
 			query: {
-				skip, limit
+				entity, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -4241,129 +5589,22 @@ limit = 1000,
 	}
 
 	/**
-	 * Get Datarecord Content
-	 * Get the raw content of the file associated with a DataRecord (primarily for PDFs).
-	 * @returns any Successful Response
+	 * Search Entities
+	 * Search and paginate through entities based on a query.
+	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static getDatarecordContent(data: DatarecordsData['GetDatarecordContent']): CancelablePromise<any> {
+	public static searchEntities1(data: EntitiesData['SearchEntities1']): CancelablePromise<unknown> {
 		const {
-workspaceId,
-datarecordId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datarecords/{datarecord_id}/content',
-			path: {
-				workspace_id: workspaceId, datarecord_id: datarecordId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Append Record
-	 * Append a record to a DataSource.
-	 * @returns DataRecordRead Successful Response
-	 * @throws ApiError
-	 */
-	public static appendRecord(data: DatarecordsData['AppendRecord']): CancelablePromise<DataRecordRead> {
-		const {
-workspaceId,
-datasourceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datarecords/by_datasource/{datasource_id}/records',
-			path: {
-				workspace_id: workspaceId, datasource_id: datasourceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class RecurringTasksService {
-
-	/**
-	 * Create Recurring Task
-	 * Create a new Recurring Task using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createRecurringTask(data: RecurringTasksData['CreateRecurringTask']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Recurring Task
-	 * Create a new Recurring Task using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createRecurringTask1(data: RecurringTasksData['CreateRecurringTask1']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Recurring Tasks
-	 * Retrieve Recurring Tasks for the workspace using the service.
-	 * @returns RecurringTasksOut Successful Response
-	 * @throws ApiError
-	 */
-	public static readRecurringTasks(data: RecurringTasksData['ReadRecurringTasks']): CancelablePromise<RecurringTasksOut> {
-		const {
-workspaceId,
+query,
 skip = 0,
-limit = 100,
-status,
+limit = 50,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/',
-			path: {
-				workspace_id: workspaceId
-			},
+			url: '/api/v2/entities/',
 			query: {
-				skip, limit, status
+				query, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -4372,544 +5613,22 @@ status,
 	}
 
 	/**
-	 * Read Recurring Tasks
-	 * Retrieve Recurring Tasks for the workspace using the service.
-	 * @returns RecurringTasksOut Successful Response
+	 * Get Entity Details
+	 * Retrieve detailed information about a specific entity.
+	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static readRecurringTasks1(data: RecurringTasksData['ReadRecurringTasks1']): CancelablePromise<RecurringTasksOut> {
+	public static getEntityDetails1(data: EntitiesData['GetEntityDetails1']): CancelablePromise<unknown> {
 		const {
-workspaceId,
+entity,
 skip = 0,
-limit = 100,
-status,
+limit = 50,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/',
-			path: {
-				workspace_id: workspaceId
-			},
+			url: '/api/v2/entities/by_entity',
 			query: {
-				skip, limit, status
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Recurring Task
-	 * Create a new Recurring Task using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createRecurringTask2(data: RecurringTasksData['CreateRecurringTask2']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Recurring Task
-	 * Create a new Recurring Task using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createRecurringTask3(data: RecurringTasksData['CreateRecurringTask3']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Recurring Tasks
-	 * Retrieve Recurring Tasks for the workspace using the service.
-	 * @returns RecurringTasksOut Successful Response
-	 * @throws ApiError
-	 */
-	public static readRecurringTasks2(data: RecurringTasksData['ReadRecurringTasks2']): CancelablePromise<RecurringTasksOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-status,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit, status
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Recurring Tasks
-	 * Retrieve Recurring Tasks for the workspace using the service.
-	 * @returns RecurringTasksOut Successful Response
-	 * @throws ApiError
-	 */
-	public static readRecurringTasks3(data: RecurringTasksData['ReadRecurringTasks3']): CancelablePromise<RecurringTasksOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-status,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit, status
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Recurring Task
-	 * Retrieve a specific Recurring Task by its ID using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readRecurringTask(data: RecurringTasksData['ReadRecurringTask']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-taskId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
-			path: {
-				workspace_id: workspaceId, task_id: taskId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Read Recurring Task
-	 * Retrieve a specific Recurring Task by its ID using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static readRecurringTask1(data: RecurringTasksData['ReadRecurringTask1']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-taskId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
-			path: {
-				workspace_id: workspaceId, task_id: taskId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Recurring Task
-	 * Update a Recurring Task using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateRecurringTask(data: RecurringTasksData['UpdateRecurringTask']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-taskId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
-			path: {
-				workspace_id: workspaceId, task_id: taskId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Recurring Task
-	 * Update a Recurring Task using the service.
-	 * @returns RecurringTaskRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateRecurringTask1(data: RecurringTasksData['UpdateRecurringTask1']): CancelablePromise<RecurringTaskRead> {
-		const {
-workspaceId,
-taskId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
-			path: {
-				workspace_id: workspaceId, task_id: taskId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Recurring Task
-	 * Delete a Recurring Task using the service.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteRecurringTask(data: RecurringTasksData['DeleteRecurringTask']): CancelablePromise<void> {
-		const {
-workspaceId,
-taskId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
-			path: {
-				workspace_id: workspaceId, task_id: taskId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Recurring Task
-	 * Delete a Recurring Task using the service.
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteRecurringTask1(data: RecurringTasksData['DeleteRecurringTask1']): CancelablePromise<void> {
-		const {
-workspaceId,
-taskId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/recurring_tasks/{task_id}',
-			path: {
-				workspace_id: workspaceId, task_id: taskId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class DatasetsService {
-
-	/**
-	 * Create Dataset
-	 * Create a new dataset within a specific workspace.
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createDataset(data: DatasetsData['CreateDataset']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Datasets
-	 * Retrieve datasets within a specific workspace.
-	 * @returns DatasetsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listDatasets(data: DatasetsData['ListDatasets']): CancelablePromise<DatasetsOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Dataset
-	 * Create a new dataset within a specific workspace.
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createDataset1(data: DatasetsData['CreateDataset1']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasets',
-			path: {
-				workspace_id: workspaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Datasets
-	 * Retrieve datasets within a specific workspace.
-	 * @returns DatasetsOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listDatasets1(data: DatasetsData['ListDatasets1']): CancelablePromise<DatasetsOut> {
-		const {
-workspaceId,
-skip = 0,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasets',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Dataset
-	 * Get a specific dataset by ID.
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getDataset(data: DatasetsData['GetDataset']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-datasetId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/{dataset_id}',
-			path: {
-				workspace_id: workspaceId, dataset_id: datasetId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Dataset
-	 * Update a dataset.
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateDataset(data: DatasetsData['UpdateDataset']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-datasetId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/{dataset_id}',
-			path: {
-				workspace_id: workspaceId, dataset_id: datasetId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Dataset
-	 * Delete a dataset.
-	 * @returns Message Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteDataset(data: DatasetsData['DeleteDataset']): CancelablePromise<Message> {
-		const {
-workspaceId,
-datasetId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/{dataset_id}',
-			path: {
-				workspace_id: workspaceId, dataset_id: datasetId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Export Dataset
-	 * Export a specific dataset as a self-contained package (ZIP).
-	 * @returns any Successful Response
-	 * @throws ApiError
-	 */
-	public static exportDataset(data: DatasetsData['ExportDataset']): CancelablePromise<any> {
-		const {
-workspaceId,
-datasetId,
-includeContent = false,
-includeResults = false,
-includeSourceFiles = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/{dataset_id}/export',
-			path: {
-				workspace_id: workspaceId, dataset_id: datasetId
-			},
-			query: {
-				include_content: includeContent, include_results: includeResults, include_source_files: includeSourceFiles
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Import Dataset
-	 * Import a dataset from an exported Dataset Package file.
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static importDataset(data: DatasetsData['ImportDataset']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-formData,
-conflictStrategy = 'skip',
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/import',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				conflict_strategy: conflictStrategy
-			},
-			formData: formData,
-			mediaType: 'multipart/form-data',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Import Dataset From Token
-	 * Import a dataset into the target workspace using a share token.
- * This internally performs an export from the source and then an import.
-	 * @returns DatasetRead Successful Response
-	 * @throws ApiError
-	 */
-	public static importDatasetFromToken(data: DatasetsData['ImportDatasetFromToken']): CancelablePromise<DatasetRead> {
-		const {
-workspaceId,
-shareToken,
-includeContent = false,
-includeResults = false,
-conflictStrategy = 'skip',
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/workspaces/{workspace_id}/datasets/import_from_token',
-			path: {
-				workspace_id: workspaceId
-			},
-			query: {
-				share_token: shareToken, include_content: includeContent, include_results: includeResults, conflict_strategy: conflictStrategy
+				entity, skip, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -5333,157 +6052,6 @@ searchQuery,
 
 }
 
-export class EntitiesService {
-
-	/**
-	 * Search Entities
-	 * Search and paginate through entities based on a query.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static searchEntities(data: EntitiesData['SearchEntities']): CancelablePromise<unknown> {
-		const {
-query,
-skip = 0,
-limit = 50,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/entities/',
-			query: {
-				query, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Entity Details
-	 * Retrieve detailed information about a specific entity.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getEntityDetails(data: EntitiesData['GetEntityDetails']): CancelablePromise<unknown> {
-		const {
-entity,
-skip = 0,
-limit = 50,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/entities/by_entity',
-			query: {
-				entity, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Search Entities
-	 * Search and paginate through entities based on a query.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static searchEntities1(data: EntitiesData['SearchEntities1']): CancelablePromise<unknown> {
-		const {
-query,
-skip = 0,
-limit = 50,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/entities/',
-			query: {
-				query, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Entity Details
-	 * Retrieve detailed information about a specific entity.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getEntityDetails1(data: EntitiesData['GetEntityDetails1']): CancelablePromise<unknown> {
-		const {
-entity,
-skip = 0,
-limit = 50,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/entities/by_entity',
-			query: {
-				entity, skip, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class GeoService {
-
-	/**
-	 * Geojson Events View
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static geojsonEventsView(data: GeoData['GeojsonEventsView']): CancelablePromise<unknown> {
-		const {
-eventType,
-startDate,
-endDate,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/geo/geojson_events',
-			query: {
-				event_type: eventType, start_date: startDate, end_date: endDate, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Geojson Raw View
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static geojsonRawView(data: GeoData['GeojsonRawView'] = {}): CancelablePromise<unknown> {
-		const {
-startDate,
-endDate,
-limit = 100,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/geo/geojson',
-			query: {
-				start_date: startDate, end_date: endDate, limit
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
 export class ArticlesService {
 
 	/**
@@ -5577,17 +6145,56 @@ id,
 
 }
 
-export class ClassificationService {
+export class GeoService {
 
 	/**
-	 * Get Providers
+	 * Geojson Events View
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static getProviders(): CancelablePromise<unknown> {
-				return __request(OpenAPI, {
+	public static geojsonEventsView(data: GeoData['GeojsonEventsView']): CancelablePromise<unknown> {
+		const {
+eventType,
+args,
+kwargs,
+startDate,
+endDate,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v2/classification/available_providers',
+			url: '/api/v2/geo/geojson_events',
+			query: {
+				event_type: eventType, start_date: startDate, end_date: endDate, limit, args, kwargs
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Geojson Raw View
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static geojsonRawView(data: GeoData['GeojsonRawView']): CancelablePromise<unknown> {
+		const {
+args,
+kwargs,
+startDate,
+endDate,
+limit = 100,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/geo/geojson',
+			query: {
+				start_date: startDate, end_date: endDate, limit, args, kwargs
+			},
+			errors: {
+				422: `Validation Error`,
+			},
 		});
 	}
 
@@ -5604,7 +6211,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-05-21',
+timeframeTo = '2025-06-08',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

@@ -1,6 +1,10 @@
+"""
+Celery app configuration.
+"""
 import os
 from celery import Celery
-from celery.schedules import crontab # Import crontab
+from celery.schedules import crontab 
+from app.core.config import settings
 
 # Get Redis URL from environment variable, default if not set
 redis_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
@@ -19,9 +23,9 @@ celery = Celery(
 # Add Celery Beat Schedule
 celery.conf.beat_schedule = {
     'check-recurring-tasks-every-minute': {
-        'task': 'app.api.tasks.scheduling.check_recurring_tasks',
+        'task': 'app.api.tasks.schedule.check_recurring_tasks',
         'schedule': 60.0,  # Run every 60 seconds
-        # Optionally add args or kwargs if the task needs them
+        # Optionally args or kwargs if the task needs them
         # 'args': (16, 16),
     },
     # Add more scheduled tasks here if needed
@@ -37,14 +41,17 @@ celery.conf.update(
     # Add other configurations as needed
     # Example: task_track_started=True,
     imports=(  # Tasks will only import when a worker starts, not when Celery app is created
-        'app.api.tasks.ingestion',
-        'app.api.tasks.classification',
-        'app.api.tasks.scheduling',
-        'app.api.tasks.recurring_ingestion',
-        'app.api.tasks.recurring_classification',
-        'app.api.tasks.retry_classification'
+        'app.api.tasks.annotate',
+        'app.api.tasks.ingest',
+        'app.api.tasks.ingest_recurringly',
+        'app.api.tasks.schedule',
+        'app.api.tasks.content_tasks',
     )
 )
+
+@celery.task(bind=True)
+def debug_task(self):
+    print(f'Request: {self.request!r}')
 
 if __name__ == '__main__':
     celery.start() 

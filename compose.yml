@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:12
+    image: pgvector/pgvector:pg16
     restart: always
     volumes:
       - app-db-data:/var/lib/postgresql/data/pgdata

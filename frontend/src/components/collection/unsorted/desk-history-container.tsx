@@ -4,7 +4,7 @@ import HistoryList from '@/components/ui/SearchHistory'
 
 type HistoryContainerProps = {
   location: 'sidebar' | 'header'
-  userId: string | null
+  userId: number | undefined
 }
 
 const HistoryContainer: React.FC<HistoryContainerProps> = async ({

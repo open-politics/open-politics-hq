@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.config import settings
 from app.models import (
-    User, Workspace, Document, ClassificationScheme, ClassificationField,
-    ClassificationResult, SavedResultSet, File, SearchHistory
+    User, Workspace, Document, AnnotationSchema, AnnotationField,
+    Annotation, SavedResultSet, File, SearchHistory
 )
 from sqlmodel import Session, select, create_engine
 
@@ -191,9 +191,9 @@ def manual_backup(backup_path: str) -> bool:
             export_table_data(session, Workspace, backup_path, "workspaces")
             export_table_data(session, Document, backup_path, "documents")
             export_table_data(session, File, backup_path, "files")
-            export_table_data(session, ClassificationScheme, backup_path, "classification_schemes")
-            export_table_data(session, ClassificationField, backup_path, "classification_fields")
-            export_table_data(session, ClassificationResult, backup_path, "classification_results")
+            export_table_data(session, AnnotationSchema, backup_path, "annotation_schemas")
+            export_table_data(session, AnnotationField, backup_path, "annotation_fields")
+            export_table_data(session, Annotation, backup_path, "annotations")
             export_table_data(session, SavedResultSet, backup_path, "saved_result_sets")
             export_table_data(session, SearchHistory, backup_path, "search_histories")
         
@@ -203,8 +203,8 @@ def manual_backup(backup_path: str) -> bool:
             "database": settings.POSTGRES_DB,
             "tables_included": [
                 "users", "workspaces", "documents", "files",
-                "classification_schemes", "classification_fields",
-                "classification_results", "saved_result_sets",
+                "annotation_schemas", "annotation_fields",
+                "annotations", "saved_result_sets",
                 "search_histories"
             ],
             "excluded": ["S3/MinIO storage"]

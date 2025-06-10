@@ -10,7 +10,7 @@ jinja2
 alembic
 httpx
 psycopg[binary]
-sqlmodel
+sqlmodel>=0.0.16
 bcrypt
 pydantic-settings
 sentry-sdk[fastapi]
@@ -45,3 +45,4 @@ sqlalchemy-celery-beat
 pytest-celery
 watchfiles>=0.18.1
 Werkzeug>=3.0.0
+pgvector

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { useEffect, useRef } from 'react'; // Import useRef
-import { useWorkspaceStore } from '@/zustand_stores/storeWorkspace';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { RecurringTasksService } from '@/client/services';
 import {
   RecurringTaskRead as ClientRecurringTaskRead,
@@ -56,18 +56,18 @@ export const useRecurringTasksStore = create<RecurringTasksState>((set, get) => 
   error: null,
 
   fetchRecurringTasks: async () => {
-    const { activeWorkspace } = useWorkspaceStore.getState();
-    if (!activeWorkspace?.id) {
-      console.warn("Cannot fetch recurring tasks, no active workspace.");
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) {
+      console.warn("Cannot fetch recurring tasks, no active Infospace.");
       set({ recurringTasks: {}, isLoading: false, error: null }); // Clear tasks
       return;
     }
-    const workspaceId = activeWorkspace.id;
+    const InfospaceId = activeInfospace.id;
 
     set({ isLoading: true, error: null });
     try {
       const response: RecurringTasksOut = await RecurringTasksService.readRecurringTasks({
-        workspaceId: workspaceId,
+        InfospaceId: InfospaceId,
         limit: 1000,
       });
       const tasksArray = response.data as RecurringTask[];
@@ -81,16 +81,16 @@ export const useRecurringTasksStore = create<RecurringTasksState>((set, get) => 
   },
 
   createRecurringTask: async (taskData: RecurringTaskCreate): Promise<RecurringTask | null> => {
-    const { activeWorkspace } = useWorkspaceStore.getState();
-    if (!activeWorkspace?.id) {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) {
       // Log the reason for failure
-      console.error("Cannot create recurring task: No active workspace selected.");
-      set({ error: "No active workspace selected" });
-       toast.error('Error Creating Recurring Task', { description: "No active workspace selected." });
+      console.error("Cannot create recurring task: No active Infospace selected.");
+      set({ error: "No active Infospace selected" });
+       toast.error('Error Creating Recurring Task', { description: "No active Infospace selected." });
       return null; // Explicitly return null
     }
-    const workspaceId = activeWorkspace.id;
-    console.log(`Attempting to create recurring task for workspace ${workspaceId}:`, taskData); // Add log
+    const InfospaceId = activeInfospace.id;
+    console.log(`Attempting to create recurring task for Infospace ${InfospaceId}:`, taskData); // Add log
 
     // Check if taskData is valid before proceeding
     console.log("Validating taskData before API call:");
@@ -112,7 +112,7 @@ export const useRecurringTasksStore = create<RecurringTasksState>((set, get) => 
     try {
       console.log("Calling RecurringTasksService.createRecurringTask..."); // Log before API call
       const createdTask: ClientRecurringTaskRead = await RecurringTasksService.createRecurringTask({
-         workspaceId: workspaceId,
+         InfospaceId: InfospaceId,
          requestBody: taskData
       });
        console.log("API call successful, created task:", createdTask); // Log after API call
@@ -142,22 +142,22 @@ export const useRecurringTasksStore = create<RecurringTasksState>((set, get) => 
   },
 
  updateRecurringTask: async (taskId: number, taskData: RecurringTaskUpdate): Promise<RecurringTask | null> => {
-    const { activeWorkspace } = useWorkspaceStore.getState();
-    if (!activeWorkspace?.id) {
-      console.error("Cannot update recurring task: No active workspace selected.");
-      set({ error: "No active workspace selected" });
-      toast.error('Error Updating Recurring Task', { description: "No active workspace selected." });
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) {
+      console.error("Cannot update recurring task: No active Infospace selected.");
+      set({ error: "No active Infospace selected" });
+      toast.error('Error Updating Recurring Task', { description: "No active Infospace selected." });
       return null;
     }
-    const workspaceId = activeWorkspace.id;
+    const InfospaceId = activeInfospace.id;
 
-    console.log(`Attempting to update recurring task ${taskId} for workspace ${workspaceId}:`, taskData);
+    console.log(`Attempting to update recurring task ${taskId} for Infospace ${InfospaceId}:`, taskData);
 
     set({ error: null }); // Clear previous errors, don't set loading for updates
     try {
         console.log("Calling RecurringTasksService.updateRecurringTask...");
         const updatedTaskRead: ClientRecurringTaskRead = await RecurringTasksService.updateRecurringTask({
-            workspaceId: workspaceId,
+            InfospaceId: InfospaceId,
             taskId: taskId,
             requestBody: taskData
         });
@@ -193,26 +193,26 @@ export const useRecurringTasksStore = create<RecurringTasksState>((set, get) => 
 
 
   deleteRecurringTask: async (taskId: number): Promise<boolean> => {
-    const { activeWorkspace } = useWorkspaceStore.getState();
-     if (!activeWorkspace?.id) {
-        console.error("Cannot delete recurring task: No active workspace selected.");
-        set({ error: "No active workspace selected" });
-        toast.error('Error Deleting Recurring Task', { description: "No active workspace selected." });
+    const { activeInfospace } = useInfospaceStore.getState();
+     if (!activeInfospace?.id) {
+        console.error("Cannot delete recurring task: No active Infospace selected.");
+        set({ error: "No active Infospace selected" });
+        toast.error('Error Deleting Recurring Task', { description: "No active Infospace selected." });
         return false;
     }
-    const workspaceId = activeWorkspace.id;
+    const InfospaceId = activeInfospace.id;
     // Get task name for toast message *before* deleting
     const taskToDelete = get().recurringTasks[taskId];
     const taskName = taskToDelete?.name || `ID ${taskId}`;
 
-     console.log(`Attempting to delete recurring task ${taskId} (${taskName}) for workspace ${workspaceId}`);
+     console.log(`Attempting to delete recurring task ${taskId} (${taskName}) for Infospace ${InfospaceId}`);
 
 
     set({ isLoading: true, error: null });
     try {
         console.log("Calling RecurringTasksService.deleteRecurringTask...");
         await RecurringTasksService.deleteRecurringTask({
-            workspaceId: workspaceId,
+            InfospaceId: InfospaceId,
             taskId: taskId,
         });
         console.log(`API call successful, deleted task ${taskId}`);
@@ -251,28 +251,28 @@ export const useRecurringTasksStore = create<RecurringTasksState>((set, get) => 
 
 // --- Hooks ---
 
-// Hook to initialize the store and fetch tasks on workspace change
+// Hook to initialize the store and fetch tasks on Infospace change
 export const useInitializeRecurringTasksStore = () => {
   const fetchRecurringTasks = useRecurringTasksStore((state) => state.fetchRecurringTasks);
-  const { activeWorkspace } = useWorkspaceStore();
-  const currentWorkspaceIdRef = useRef<number | null | undefined>(null);
+  const { activeInfospace } = useInfospaceStore();
+  const currentInfospaceIdRef = useRef<number | null | undefined>(null);
 
   useEffect(() => {
-      const currentWorkspaceId = activeWorkspace?.id;
-      // Fetch only if workspace ID exists and has changed
-      if (currentWorkspaceId && currentWorkspaceId !== currentWorkspaceIdRef.current) {
-          console.log("Initializing recurring tasks store for workspace:", currentWorkspaceId);
+      const currentInfospaceId = activeInfospace?.id;
+      // Fetch only if Infospace ID exists and has changed
+      if (currentInfospaceId && currentInfospaceId !== currentInfospaceIdRef.current) {
+          console.log("Initializing recurring tasks store for Infospace:", currentInfospaceId);
           fetchRecurringTasks();
-          currentWorkspaceIdRef.current = currentWorkspaceId; // Update ref *after* fetch is triggered
-      } else if (!currentWorkspaceId && currentWorkspaceIdRef.current !== null) {
-          // Clear tasks if workspace becomes inactive
-          console.log("Clearing recurring tasks due to inactive/no workspace.");
+          currentInfospaceIdRef.current = currentInfospaceId; // Update ref *after* fetch is triggered
+      } else if (!currentInfospaceId && currentInfospaceIdRef.current !== null) {
+          // Clear tasks if Infospace becomes inactive
+          console.log("Clearing recurring tasks due to inactive/no Infospace.");
           useRecurringTasksStore.setState({ recurringTasks: {}, isLoading: false, error: null });
-          currentWorkspaceIdRef.current = null; // Reset ref
+          currentInfospaceIdRef.current = null; // Reset ref
       }
       // Intentionally no cleanup function to clear tasks on unmount here,
-      // clearing happens when activeWorkspace changes.
-  }, [activeWorkspace?.id, fetchRecurringTasks]);
+      // clearing happens when activeInfospace changes.
+  }, [activeInfospace?.id, fetchRecurringTasks]);
 };
 
 // Export specific hooks for loading and error status
