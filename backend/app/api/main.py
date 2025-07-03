@@ -4,8 +4,11 @@ from app.api.routes import (
     assets,
     annotation_schemas,
     annotations,
+    analysis,
     bundles,
+    chunking,
     datasets,
+    embeddings,
     filestorage,
     healthcheck,
     infospaces,
@@ -36,10 +39,13 @@ api_router_v2 = APIRouter()
 # V1/ Main APIs - Using app.api.routes directly now for user-centric features
 api_router_v1.include_router(assets.router, prefix="/assets", tags=["assets"])
 api_router_v1.include_router(annotation_runs.router, prefix="/annotation_jobs", tags=["annotation_jobs"])
-api_router_v1.include_router(annotation_schemas.router, prefix="/annotation_schemes", tags=["annotation_schemes"])
+api_router_v1.include_router(annotation_schemas.router, tags=["AnnotationSchemas"])
 api_router_v1.include_router(annotations.router, prefix="/annotations", tags=["annotations"])
+api_router_v1.include_router(analysis.router, prefix="/analysis", tags=["Analysis Adapters"])
 api_router_v1.include_router(bundles.router, prefix="/bundles", tags=["Bundles"])
+api_router_v1.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
 api_router_v1.include_router(datasets.router, tags=["datasets"])
+api_router_v1.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
 api_router_v1.include_router(filestorage.router, prefix="/files", tags=["filestorage"])
 api_router_v1.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
 api_router_v1.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
@@ -64,10 +70,13 @@ api_router_v2.include_router(scores.router, prefix="/scores", tags=["scores"])
 api_router = APIRouter()
 api_router.include_router(assets.router, prefix="/assets", tags=["assets"])
 api_router.include_router(annotation_runs.router, prefix="/annotation_jobs", tags=["annotation_jobs"])
-api_router.include_router(annotation_schemas.router, prefix="/annotation_schemes", tags=["annotation_schemes"])
+api_router.include_router(annotation_schemas.router, tags=["AnnotationSchemas"])
 api_router.include_router(annotations.router, prefix="/annotations", tags=["annotations"])
+api_router.include_router(analysis.router, prefix="/analysis", tags=["Analysis Adapters"])
 api_router.include_router(bundles.router, prefix="/bundles", tags=["Bundles"])
+api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
 api_router.include_router(datasets.router, prefix="/datasets", tags=["Datasets"])
+api_router.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
 api_router.include_router(healthcheck.router, prefix="/health", tags=["health"])
 api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])

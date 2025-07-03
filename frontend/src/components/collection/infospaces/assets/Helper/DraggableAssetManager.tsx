@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback } from 'react';
 import AssetManager from '../AssetManager';
 import DraggableWrapper from '../../../wrapper/draggable-wrapper';
 import { X, Maximize2, Square, Layout } from 'lucide-react';
@@ -64,7 +64,7 @@ const DraggableAssetManager: React.FC<DraggableAssetManagerProps> = ({
     setLayoutMode(layout);
     
     const baseSize = getResponsiveSize();
-    let newSize = { ...baseSize };
+    const newSize = { ...baseSize };
     
     if (typeof window !== 'undefined') {
       const width = window.innerWidth;

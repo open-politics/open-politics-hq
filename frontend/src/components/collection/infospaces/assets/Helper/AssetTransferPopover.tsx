@@ -15,9 +15,8 @@ import {
 } from '@/components/ui/select';
 import { Input } from "@/components/ui/input";
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-// --- TODO: This component requires a backend endpoint and client service for transferring assets. ---
-// import { AssetsService } from '@/client/services'; 
-// import { AssetTransferRequest, AssetTransferResponse } from '@/client/models';
+import { BundlesService } from '@/client/services';
+import useAuth from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
 interface TransferItem {
@@ -45,7 +44,7 @@ export function AssetTransferPopover({
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingInfospace, setIsCreatingInfospace] = useState(false); // State for creation mode
   const [newInfospaceName, setNewInfospaceName] = useState(''); // State for new Infospace name
-
+  const { user } = useAuth();
   const { infospaces, activeInfospace, createInfospace } = useInfospaceStore();
 
   // Calculate total items to transfer
@@ -80,35 +79,105 @@ export function AssetTransferPopover({
   };
 
   const handleTransfer = async () => {
-    // --- TODO: Implement asset and bundle transfer logic when backend is ready ---
-    const itemDescription = getItemDescription();
-    const action = isCopy ? 'copy' : 'move';
-    const destination = isCreatingInfospace ? `new infospace "${newInfospaceName}"` : 'selected infospace';
-    
-    toast.info(`Asset and bundle transfer functionality is not yet implemented.`);
-    console.log({
-        selectedAssetIds,
-        selectedBundleIds,
-        selectedItems,
-        targetInfospaceId,
-        isCopy,
-        newInfospaceName,
-        isCreatingInfospace,
-        itemDescription,
-        action,
-        destination
-    });
-    
-    // Simulate transfer delay
     setIsLoading(true);
-    setTimeout(() => {
+
+    let finalTargetId: number | null = targetInfospaceId ? parseInt(targetInfospaceId, 10) : null;
+
+    if (isCreatingInfospace) {
+      if (!newInfospaceName.trim()) {
+        toast.error('New infospace name cannot be empty.');
+        setIsLoading(false);
+        return;
+      }
+      if (!user) {
+        toast.error("User not authenticated.");
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const newInfospace = await createInfospace({
+          name: newInfospaceName,
+          owner_id: user.id,
+        });
+
+        if (!newInfospace) {
+          toast.error('Failed to create new infospace.');
+          setIsLoading(false);
+          return;
+        }
+        toast.success(`Infospace "${newInfospace.name}" created.`);
+        finalTargetId = newInfospace.id;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Error creating infospace.";
+        toast.error(message);
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    if (!finalTargetId) {
+      toast.error('No target infospace selected.');
+      setIsLoading(false);
+      return;
+    }
+
+    const items = selectedItems.length > 0
+        ? selectedItems
+        : [
+            ...selectedAssetIds.map(id => ({ id, type: 'asset' as const, title: `Asset ${id}` })),
+            ...selectedBundleIds.map(id => ({ id, type: 'bundle' as const, title: `Bundle ${id}` }))
+          ];
+
+    const assetsToTransfer = items.filter(i => i.type === 'asset').map(i => i.id);
+    const bundlesToTransfer = items.filter(i => i.type === 'bundle').map(i => i.id);
+    const transferPromises: Promise<any>[] = [];
+
+    if (bundlesToTransfer.length > 0) {
+      bundlesToTransfer.forEach(bundleId => {
+        transferPromises.push(
+          BundlesService.transferBundle({ bundleId, targetInfospaceId: finalTargetId!, copy: isCopy })
+        );
+      });
+    }
+
+    if (assetsToTransfer.length > 0) {
+      if (!activeInfospace) {
+        toast.error("Cannot determine source infospace to create temporary transfer bundle.");
+        setIsLoading(false);
+        return;
+      }
+      const tempBundlePromise = BundlesService.createBundle({
+        infospaceId: activeInfospace.id,
+        requestBody: {
+          name: `Transfer-${new Date().toISOString()}`,
+          asset_ids: assetsToTransfer,
+        }
+      }).then(tempBundle => {
+        toast.info(`Created temporary bundle "${tempBundle.name}" for transfer.`);
+        return BundlesService.transferBundle({
+          bundleId: tempBundle.id,
+          targetInfospaceId: finalTargetId!,
+          copy: isCopy,
+        });
+      });
+      transferPromises.push(tempBundlePromise);
+    }
+
+    try {
+      await Promise.all(transferPromises);
+      const itemDescription = getItemDescription();
+      const action = isCopy ? 'Copied' : 'Moved';
+      const destinationInfospace = infospaces.find(w => w.id === finalTargetId)?.name || newInfospaceName;
+      toast.success(`${action} ${itemDescription} to "${destinationInfospace}".`);
+
+    } catch (error) {
+       const message = error instanceof Error ? error.message : "An unknown error occurred during transfer.";
+       toast.error(`Transfer failed: ${message}`);
+    } finally {
       setIsLoading(false);
       setIsOpen(false);
       onComplete();
-      toast.success(`Would ${action} ${itemDescription} to ${destination}`);
-    }, 1000);
-    return;
-    // --- End of placeholder logic ---
+    }
   };
 
   const availableInfospaces = infospaces.filter(w => w.id !== activeInfospace?.id);

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, Union
 
 from sqlmodel import SQLModel, Field
 from pydantic import computed_field, ConfigDict
@@ -23,12 +23,12 @@ from .models import (
     PermissionLevel,
     ResultStatus,
     RunStatus,
-    TaskStatus,
-    TaskType,
+    RunMode,
     ResourceType,
     AnnotationSchemaTargetLevel,
     Modality,
     ProcessingStatus,
+    ScheduleStatus,
 )
 
 # ────────────────────────────────────────────── User & Auth ──── #
@@ -41,13 +41,16 @@ class FieldJustificationConfig(SQLModel):
 class UserOut(UserBase):
     id: int
     is_active: bool = True
+    is_superuser: bool = False
 
-class UsersOut(UserBase):
+class UsersOut(SQLModel):
     data: List[UserOut]
     count: int
 
 class UserCreate(UserBase):
     password: str
+    is_superuser: bool = False
+    is_active: bool = True
 
 class UserCreateOpen(SQLModel):
     email: str
@@ -90,6 +93,7 @@ class InfospaceBase(SQLModel):
     icon: Optional[str] = None
 
 class InfospaceCreate(InfospaceBase):
+    owner_id: int
     # Optional vector‑store overrides
     vector_backend: Optional[str] = None
     embedding_model: Optional[str] = None
@@ -124,22 +128,26 @@ class InfospacesOut(SQLModel):
 class SourceBase(SQLModel):
     name: str
     kind: str
-    details: Dict[str, Any] = {}
+    configuration: Dict[str, Any] = {}
+    schedule: Optional[str] = None
 
 class SourceCreate(SourceBase):
-    pass
+    target_bundle_id: Optional[int] = None
 
 class SourceUpdate(SQLModel):
     name: Optional[str] = None
     kind: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
+    configuration: Optional[Dict[str, Any]] = None
+    schedule: Optional[str] = None
+    schedule_status: Optional[ScheduleStatus] = None
 
 class SourceRead(SourceBase):
     id: int
     uuid: str
     infospace_id: int
     user_id: int
-    status: str
+    status: str # This is the execution status
+    schedule_status: ScheduleStatus
     created_at: datetime
     updated_at: datetime
     error_message: Optional[str]
@@ -246,10 +254,10 @@ class BundleRead(BundleBase):
     id: int
     infospace_id: int
     created_at: datetime
+    updated_at: datetime
     asset_count: int
     uuid: str
     user_id: int
-    updated_at: datetime
     purpose: Optional[str] = None
     bundle_metadata: Optional[Dict[str, Any]] = None
 
@@ -272,6 +280,7 @@ class AnnotationSchemaUpdate(SQLModel):
     instructions: Optional[str] = None
     version: Optional[str] = None
     field_specific_justification_configs: Optional[Dict[str, FieldJustificationConfig]] = None
+    is_active: Optional[bool] = None
 
 class AnnotationSchemaRead(AnnotationSchemaBase):
     id: int
@@ -281,6 +290,8 @@ class AnnotationSchemaRead(AnnotationSchemaBase):
     created_at: datetime
     updated_at: datetime
     field_specific_justification_configs: Optional[Dict[str, FieldJustificationConfig]] = None
+    annotation_count: Optional[int] = None
+    is_active: bool
 
 class AnnotationSchemasOut(SQLModel):
     data: List[AnnotationSchemaRead]
@@ -294,11 +305,14 @@ class AnnotationRunBase(SQLModel):
     configuration: Dict[str, Any] = {}
     include_parent_context: bool = False
     context_window: int = 0
+    run_mode: RunMode = RunMode.ONE_TIME
+    view_config: Optional[Dict[str, Any]] = {}
 
 class AnnotationRunCreate(AnnotationRunBase):
     schema_ids: List[int]
     target_asset_ids: Optional[List[int]] = None
     target_bundle_id: Optional[int] = None
+    target_source_ids: Optional[List[int]] = None
 
 class AnnotationRunUpdate(SQLModel):
     name: Optional[str] = None
@@ -306,6 +320,8 @@ class AnnotationRunUpdate(SQLModel):
     configuration: Optional[Dict[str, Any]] = None
     include_parent_context: Optional[bool] = None
     context_window: Optional[int] = None
+    run_mode: Optional[RunMode] = None
+    view_config: Optional[Dict[str, Any]] = None
 
 class AnnotationRunRead(AnnotationRunBase):
     id: int
@@ -318,6 +334,9 @@ class AnnotationRunRead(AnnotationRunBase):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     error_message: Optional[str]
+    annotation_count: Optional[int] = None
+    schema_ids: Optional[List[int]] = None
+    target_source_ids: Optional[List[int]] = None
 
 class AnnotationRunsOut(SQLModel):
     data: List[AnnotationRunRead]
@@ -376,34 +395,6 @@ class JustificationRead(JustificationBase):
     id: int
     annotation_id: int
     created_at: datetime
-
-# ─────────────────────────────────────────────── Task ──── #
-
-class TaskBase(SQLModel):
-    name: str
-    type: TaskType
-    schedule: str
-    configuration: Dict[str, Any] = {}
-
-class TaskCreate(TaskBase):
-    pass
-
-class TaskUpdate(SQLModel):
-    name: Optional[str] = None
-    type: Optional[TaskType] = None
-    schedule: Optional[str] = None
-    configuration: Optional[Dict[str, Any]] = None
-    status: Optional[TaskStatus] = None
-    is_enabled: Optional[bool] = None
-
-class TaskRead(TaskBase):
-    id: int
-    infospace_id: int
-    status: TaskStatus
-    last_run_at: Optional[datetime]
-    consecutive_failure_count: int
-
-# ─────────────────────────────────────── Search Tasks ──── #
 
 # ───────────────────────────────────────────── Package ──── #
 
@@ -489,10 +480,6 @@ class SearchHistoriesOut(SQLModel):
     data: List[SearchHistoryRead]
     count: int
 
-class TasksOut(SQLModel): # For listing multiple tasks
-    data: List[TaskRead]
-    count: int
-
 # --- New Models for Provider Discovery ---
 class ProviderModel(SQLModel):
     name: str
@@ -505,6 +492,106 @@ class ProviderInfo(SQLModel):
 
 class ProviderListResponse(SQLModel):
     providers: List[ProviderInfo]
+
+# ================================================================================================
+# CHUNKING SCHEMAS
+# ================================================================================================
+
+class ChunkAssetRequest(SQLModel):
+    strategy: str = "token"
+    chunk_size: int = 512
+    chunk_overlap: int = 50
+    overwrite_existing: bool = False
+
+class ChunkAssetsRequest(SQLModel):
+    asset_ids: Optional[List[int]] = None
+    asset_kinds: Optional[List[str]] = None  # String representation of AssetKind
+    infospace_id: Optional[int] = None
+    strategy: str = "token"
+    chunk_size: int = 512
+    chunk_overlap: int = 50
+    overwrite_existing: bool = False
+
+class ChunkingResultResponse(SQLModel):
+    message: str
+    asset_id: int
+    chunks_created: int
+    strategy_used: str
+    strategy_params: Dict[str, Any]
+
+class ChunkingStatsResponse(SQLModel):
+    total_chunks: int
+    total_characters: Optional[int] = 0
+    average_chunk_size: Optional[float] = 0.0
+    assets_with_chunks: Optional[int] = 0
+    strategies_used: Optional[Dict[str, int]] = {}
+
+class AssetChunkBase(SQLModel):
+    asset_id: int
+    chunk_index: int
+    text_content: str
+    chunk_metadata: Optional[Dict[str, Any]] = {}
+
+class AssetChunkRead(AssetChunkBase):
+    id: int
+    created_at: datetime
+
+# ================================================================================================
+# EMBEDDING SCHEMAS
+# ================================================================================================
+
+class EmbeddingModelBase(SQLModel):
+    name: str
+    provider: str  # Using str instead of enum for flexibility
+    dimension: int
+    description: Optional[str] = None
+    config: Optional[Dict[str, Any]] = {}
+    max_sequence_length: Optional[int] = None
+
+class EmbeddingModelCreate(EmbeddingModelBase):
+    pass
+
+class EmbeddingModelRead(EmbeddingModelBase):
+    id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    embedding_time_ms: Optional[float] = None
+
+class EmbeddingGenerateRequest(SQLModel):
+    chunk_ids: List[int]
+    model_name: str
+    provider: str
+
+class EmbeddingSearchRequest(SQLModel):
+    query_text: str
+    model_name: str
+    provider: str
+    limit: int = 10
+    distance_threshold: float = 1.0
+    distance_function: str = "cosine"  # cosine, l2, inner_product
+
+class EmbeddingSearchResult(SQLModel):
+    chunk_id: int
+    asset_id: int
+    text_content: Optional[str]
+    distance: float
+    similarity: Optional[float] = None
+
+class EmbeddingSearchResponse(SQLModel):
+    query_text: str
+    results: List[EmbeddingSearchResult]
+    model_name: str
+    distance_function: str
+
+class EmbeddingStatsResponse(SQLModel):
+    model_id: int
+    model_name: str
+    provider: str
+    dimension: int
+    embedding_count: int
+    table_size: str
+    avg_embedding_time_ms: Optional[float] = None
 # --- End of New Models ---
 
 # ─────────────────────────────────────────── Pagination ──── #
@@ -599,3 +686,76 @@ class JustificationSubModel(SQLModel):
     # evidence_payload: Optional[Dict[str, Any]] = Field(default_factory=dict) # Deprecated in favor of specific types
 
 # End of new models
+
+# ────────────────────────────────────────── Public Sharing Previews ──── #
+
+class AssetPreview(SQLModel):
+    """A lightweight public representation of an Asset."""
+    id: int
+    title: str
+    kind: AssetKind
+    created_at: datetime
+    updated_at: datetime
+    text_content: Optional[str] = None
+    blob_path: Optional[str] = None
+    source_metadata: Optional[Dict[str, Any]] = None
+    children: List["AssetPreview"] = []
+    
+    @computed_field
+    @property
+    def is_container(self) -> bool:
+        """Helper to know if this asset might have children (e.g., PDF, CSV)."""
+        return self.kind in {
+            AssetKind.CSV,
+            AssetKind.PDF,
+            AssetKind.MBOX,
+            AssetKind.WEB,
+            AssetKind.ARTICLE,
+        }
+
+class BundlePreview(SQLModel):
+    """A lightweight public representation of a Bundle."""
+    id: int
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    assets: List[AssetPreview] = []
+
+class SharedResourcePreview(SQLModel):
+    """The complete public-facing model for a shared resource view."""
+    resource_type: ResourceType
+    name: str
+    description: Optional[str] = None
+    content: Union[AssetPreview, BundlePreview]
+
+# ───────────────────────────────────── Analysis Adapters ──── #
+class AnalysisAdapterBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    input_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    output_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    version: str = "1.0"
+    module_path: Optional[str] = None
+    adapter_type: str
+    is_public: bool = False
+
+class AnalysisAdapterCreate(AnalysisAdapterBase):
+    pass
+
+class AnalysisAdapterUpdate(SQLModel):
+    description: Optional[str] = None
+    input_schema_definition: Optional[Dict[str, Any]] = None
+    output_schema_definition: Optional[Dict[str, Any]] = None
+    version: Optional[str] = None
+    module_path: Optional[str] = None
+    adapter_type: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_public: Optional[bool] = None
+
+class AnalysisAdapterRead(AnalysisAdapterBase):
+    id: int
+    is_active: bool
+    creator_user_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime

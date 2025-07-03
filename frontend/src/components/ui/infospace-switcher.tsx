@@ -5,6 +5,7 @@ import { ChevronsUpDown, Plus, Settings } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useTheme } from "next-themes"
 import Link from "next/link"
+import useAuth from "@/hooks/useAuth"
 
 import {
   DropdownMenu,
@@ -28,9 +29,9 @@ import EditInfospaceOverlay from "@/components/collection/infospaces/management/
 export function InfospaceSwitcher() {
   const { isMobile } = useSidebar()
   const { theme } = useTheme()
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditOverlayOpen, setIsEditOverlayOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const { user } = useAuth()
 
   const {
     infospaces,
@@ -48,10 +49,15 @@ export function InfospaceSwitcher() {
 
   // Handle create and switch
   const handleCreateInfospace = async (name: string, description: string, icon: string) => {
+    if (!user) {
+      // Maybe show a toast message here
+      return;
+    }
     await createInfospace({
       name,
       description,
       icon,
+      owner_id: user.id,
     });
     // The store's logic should handle fetching and setting the new active Infospace
   };
@@ -80,19 +86,18 @@ export function InfospaceSwitcher() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton size="lg">
-              <div className="flex items-center gap-2 md:gap-4 text-sm leading-tight">
-                <div className={`flex aspect-square size-8 items-center justify-center rounded-lg ${theme === "dark" ? "text-white" : "text-black"}`}>
+              <div className="flex items-center justify-start w-full gap-1 text-sm leading-tight rounded-lg p-2 pl-1">
+                <div className={`flex aspect-square size-6 items-center justify-center rounded-md flex-shrink-0 ${theme === "dark" ? "text-white" : "text-black"}`}>
                   <ChevronsUpDown className="size-4" />
                 </div>
-                {activeInfospace?.icon && (
-                  <IconRenderer className="size-5 text-secondary-500" icon={activeInfospace.icon} />
-                )}
-                <span className="truncate font-semibold text-right">
-                  {activeInfospace?.name || "Select Infospace"}
-                </span>
-                {/* <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground ml-auto">
-                  <Plus className="size-4" />
-                </div> */}
+                <div className="flex items-center gap-3">
+                  {activeInfospace?.icon && (
+                    <IconRenderer className="size-5 text-secondary-500 flex-shrink-0" icon={activeInfospace.icon} />
+                  )}
+                  <span className="truncate font-semibold">
+                    {activeInfospace?.name || "Select Infospace"}
+                  </span>
+                </div>
               </div>
             </SidebarMenuButton>
           </DropdownMenuTrigger>
@@ -119,7 +124,10 @@ export function InfospaceSwitcher() {
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2 p-2" onClick={() => setIsCreateDialogOpen(true)}>
+            <DropdownMenuItem className="gap-2 p-2" onClick={() => {
+              setIsCreating(true);
+              setIsEditOverlayOpen(true);
+            }}>
               <div className="w-full flex items-center gap-2">
                 <div className="flex size-6 items-center justify-center rounded-md bg-background">
                   <Plus className="size-4" />

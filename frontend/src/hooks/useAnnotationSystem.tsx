@@ -4,50 +4,27 @@ import { useState, useCallback, useEffect } from 'react';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { 
-    AnnotationRun,
     AnnotationRunParams,
-    AnnotationRunStatus,
-    AnnotationSchema,
-    FormattedAnnotation, 
     AnnotationSchemaFormData
 } from '@/lib/annotations/types';
-
-// Placeholder Types for client models until regenerated
-type AnnotationRunRead = any;
-type AnnotationRunUpdate = any;
-type AnnotationSchemaRead = any;
-type AnnotationSchemaCreate = any;
-type AnnotationSchemaUpdate = any;
-type DataSourceRead = any;
-type AssetRead = any;
-type AnnotationRead = any;
-
-// --- Placeholder Services ---
-const AnnotationSchemasService = {
-    listAnnotationSchemas: async (p: any): Promise<AnnotationSchemaRead[]> => { console.log("Placeholder: listAnnotationSchemas"); return []; },
-    createAnnotationSchema: async (p: any): Promise<AnnotationSchemaRead> => { console.log("Placeholder: createAnnotationSchema"); return {}; },
-    updateAnnotationSchema: async (p: any): Promise<AnnotationSchemaRead> => { console.log("Placeholder: updateAnnotationSchema"); return {}; },
-    deleteAnnotationSchema: async (p: any): Promise<void> => { console.log("Placeholder: deleteAnnotationSchema"); },
-};
-const AnnotationRunsService = {
-    getRun: async (p: any): Promise<AnnotationRunRead> => { console.log("Placeholder: getAnnotationRun"); return {}; },
-    createRun: async (p: any): Promise<AnnotationRunRead> => { console.log("Placeholder: createAnnotationRun"); return {id: Math.random(), name: p.requestBody.name, status: 'pending', created_at: new Date().toISOString()}; },
-    retryFailedAnnotations: async (p: any): Promise<void> => { console.log("Placeholder: retryFailedRunAnnotations"); },
-    listRuns: async (p: any): Promise<{data: AnnotationRunRead[]}> => {console.log("Placeholder: listRuns"); return {data:[]};},
-    deleteRun: async (p: any): Promise<void> => {console.log("Placeholder: deleteRun");},
-    updateRun: async (p: any): Promise<AnnotationRunRead> => { console.log("Placeholder: updateRun"); return {}; },
-};
-const AnnotationsService = {
-    listAnnotations: async (p: any): Promise<AnnotationRead[]> => { console.log("Placeholder: listAnnotations"); return []; },
-    retrySingleAnnotationResult: async (p: any): Promise<AnnotationRead> => { console.log("Placeholder: retrySingleAnnotationResult"); return {}; },
-};
-const SourcesService = {
-    listSources: async (p: any): Promise<DataSourceRead[]> => { console.log("Placeholder: listSources"); return []; },
-};
-const AssetsService = {
-    listAssets: async (p: any): Promise<AssetRead[]> => { console.log("Placeholder: listAssets"); return []; },
-};
-// --- End Placeholder Services ---
+import { adaptSchemaFormDataToSchemaCreate } from '@/lib/annotations/adapters';
+import {
+    AnnotationRunRead,
+    AnnotationRunUpdate,
+    AnnotationSchemaRead,
+    AnnotationSchemaCreate,
+    AnnotationSchemaUpdate,
+    AssetRead,
+    AnnotationRead,
+    AnnotationRunCreate,
+    Message
+} from '@/client/models';
+import {
+    AnnotationSchemasService,
+    AnnotationJobsService,
+    AnnotationsService,
+    AssetsService,
+} from '@/client/services';
 
 export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
   const { activeInfospace } = useInfospaceStore();
@@ -62,12 +39,19 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
   const [isLoadingSchemas, setIsLoadingSchemas] = useState(false);
   const [isRetryingResultId, setIsRetryingResultId] = useState<number|null>(null);
 
-  const loadSchemas = useCallback(async (force = false) => {
+  const loadSchemas = useCallback(async (options: { force?: boolean; includeArchived?: boolean } = {}) => {
     if (!activeInfospace?.id) return;
+    
+    const { force = false, includeArchived = false } = options;
+
     setIsLoadingSchemas(true);
     try {
-      const response = await AnnotationSchemasService.listAnnotationSchemas({infospaceId: activeInfospace.id});
-      setSchemas(response); // Assuming response is the array of schemas now
+      const response = await AnnotationSchemasService.listAnnotationSchemas({
+        infospaceId: activeInfospace.id, 
+        limit: 1000,
+        includeArchived: includeArchived,
+      });
+      setSchemas(response.data);
     } catch(e: any) {
       toast.error("Failed to load schemas.", { description: e.body?.detail || e.message });
       setError(e.body?.detail || e.message);
@@ -76,10 +60,11 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
   }, [activeInfospace]);
 
-  const createSchema = useCallback(async (formData: AnnotationSchemaFormData) => {
+  const createSchema = useCallback(async (formData: AnnotationSchemaFormData): Promise<AnnotationSchemaRead | null> => {
     if (!activeInfospace?.id) return null;
     try {
-      const newSchema = await AnnotationSchemasService.createAnnotationSchema({infospaceId: activeInfospace.id, requestBody: formData });
+      const requestBody: AnnotationSchemaCreate = adaptSchemaFormDataToSchemaCreate(formData);
+      const newSchema = await AnnotationSchemasService.createAnnotationSchema({infospaceId: activeInfospace.id, requestBody });
       setSchemas(prev => [newSchema, ...prev]);
       toast.success("Schema created successfully.");
       return newSchema;
@@ -89,14 +74,47 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
   }, [activeInfospace]);
 
-  const deleteSchema = useCallback(async (schemaId: number) => {
+  const archiveSchema = useCallback(async (schemaId: number) => {
     if (!activeInfospace?.id) return;
     try {
       await AnnotationSchemasService.deleteAnnotationSchema({infospaceId: activeInfospace.id, schemaId});
-      setSchemas(p => p.filter(s => s.id !== schemaId)); 
+      setSchemas(p => p.map(s => s.id === schemaId ? { ...s, is_active: false } : s)); 
+      toast.success("Schema archived successfully.");
     } catch (e: any) {
-       toast.error(`Failed to delete schema ${schemaId}.`, { description: e.body?.detail || e.message });
+       toast.error(`Failed to archive schema ${schemaId}.`, { description: e.body?.detail || e.message });
        throw e; // re-throw for component to handle
+    }
+  }, [activeInfospace]);
+
+  const restoreSchema = useCallback(async (schemaId: number) => {
+    if (!activeInfospace?.id) return;
+    try {
+      const restoredSchema = await AnnotationSchemasService.restoreAnnotationSchema({infospaceId: activeInfospace.id, schemaId: schemaId});
+      setSchemas(p => p.map(s => s.id === schemaId ? restoredSchema : s));
+      toast.success("Schema restored successfully.");
+    } catch (e: any) {
+       toast.error(`Failed to restore schema ${schemaId}.`, { description: e.body?.detail || e.message });
+       throw e;
+    }
+  }, [activeInfospace]);
+
+  const updateScheme = useCallback(async (schemeId: number, data: AnnotationSchemaUpdate): Promise<AnnotationSchemaRead | null> => {
+    if (!activeInfospace?.id) {
+        toast.error("An active infospace is required to update a schema.");
+        return null;
+    }
+    try {
+        const updatedSchema = await AnnotationSchemasService.updateAnnotationSchema({
+            infospaceId: activeInfospace.id,
+            schemaId: schemeId,
+            requestBody: data,
+        });
+        setSchemas(prev => prev.map(s => s.id === schemeId ? updatedSchema : s));
+        toast.success("Schema updated successfully.");
+        return updatedSchema;
+    } catch (e: any) {
+        toast.error("Failed to update schema.", { description: e.body?.detail || e.message });
+        return null;
     }
   }, [activeInfospace]);
 
@@ -107,50 +125,97 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
     setIsCreatingRun(true);
     try {
-        const newRun = await AnnotationRunsService.createRun({
+        const runCreatePayload: AnnotationRunCreate = {
+            name: params.name,
+            description: params.description,
+            schema_ids: params.schemaIds,
+            target_asset_ids: params.assetIds,
+            target_bundle_id: params.bundleId,
+            configuration: params.configuration || {},
+        };
+
+        const newRun = await AnnotationJobsService.createRun({
             infospaceId: activeInfospace.id,
-            requestBody: {
-                name: params.name,
-                schema_ids: params.schemaIds,
-                target_asset_ids: params.assetIds,
-                configuration: {},
-            }
+            requestBody: runCreatePayload
         });
-        toast.success(`Run "${newRun.name}" created successfully.`);
+        toast.success(`Run "${newRun.name}" created successfully and is now processing.`);
         setRuns(prev => [newRun, ...prev]);
         setActiveRun(newRun);
         return newRun;
     } catch (e: any) {
-        toast.error("Failed to create run.", { description: e.message });
+        toast.error("Failed to create run.", { description: e.body?.detail || e.message });
         return null;
     } finally {
         setIsCreatingRun(false);
     }
   }, [activeInfospace]);
   
-  const loadRuns = useCallback(async () => { setIsLoadingRuns(true); await new Promise(r => setTimeout(r, 500)); setIsLoadingRuns(false); }, []);
-  const deleteRun = useCallback(async (runId: number) => { setRuns(p => p.filter(r => r.id !== runId)); toast.success(`Run ${runId} deleted.`); }, []);
-  const loadRun = useCallback(async (runId: number) => { const run = runs.find(r=>r.id === runId); if(run) setActiveRun(run); }, [runs]);
-  
-  const retryJobFailures = useCallback(async (runId: number) => { 
+  const loadRuns = useCallback(async () => {
     if (!activeInfospace?.id) return;
+    setIsLoadingRuns(true);
+    try {
+      const response = await AnnotationJobsService.listRuns({infospaceId: activeInfospace.id, limit: 1000 });
+      setRuns(response.data);
+    } catch (e: any) {
+      toast.error("Failed to load runs.", { description: e.body?.detail || e.message });
+      setError(e.body?.detail || e.message);
+    } finally {
+      setIsLoadingRuns(false);
+    }
+  }, [activeInfospace]);
+
+  const deleteRun = useCallback(async (runId: number) => {
+    if (!activeInfospace?.id) return;
+    try {
+      await AnnotationJobsService.deleteRun({infospaceId: activeInfospace.id, runId: runId});
+      setRuns(p => p.filter(r => r.id !== runId));
+      if (activeRun?.id === runId) {
+        setActiveRun(null);
+      }
+      toast.success(`Run ${runId} deleted.`);
+    } catch (e: any) {
+       toast.error(`Failed to delete run ${runId}.`, { description: e.body?.detail || e.message });
+       throw e; // re-throw for component to handle
+    }
+  }, [activeInfospace, activeRun?.id]);
+
+  const loadRun = useCallback(async (runId: number) => {
+    if (!activeInfospace?.id) return;
+    const run = runs.find(r => r.id === runId);
+    if (run) {
+      setActiveRun(run);
+    } else {
+      try {
+        const fetchedRun = await AnnotationJobsService.getRun({infospaceId: activeInfospace.id, runId: runId});
+        setActiveRun(fetchedRun);
+      } catch (e: any) {
+        toast.error(`Failed to load run ${runId}.`, { description: e.body?.detail || e.message });
+      }
+    }
+  }, [runs, activeInfospace]);
+  
+  const retryJobFailures = useCallback(async (runId: number): Promise<Message | null> => { 
+    if (!activeInfospace?.id) return null;
     setIsRetryingRun(true);
     try {
-      await AnnotationRunsService.retryFailedAnnotations({infospaceId: activeInfospace.id, runId});
-      toast.info(`Retrying failures for run ${runId}`); 
-      // loadRun(runId);
+      const response = await AnnotationJobsService.retryFailedAnnotations({infospaceId: activeInfospace.id, runId: runId});
+      toast.info(`Retrying failures for run ${runId}`);
+      // After triggering, we should probably poll or refresh the run details
+      loadRun(runId);
+      return response;
     } catch (e: any) {
       toast.error(`Failed to retry run ${runId}.`, { description: e.body?.detail || e.message });
+      return null;
     } finally {
       setIsRetryingRun(false);
     }
-  }, [activeInfospace]);
+  }, [activeInfospace, loadRun]);
   
-  const retrySingleResult = useCallback(async (resultId: number) => {
+  const retrySingleResult = useCallback(async (resultId: number): Promise<AnnotationRead | null> => {
       if (!activeInfospace?.id) return null;
       setIsRetryingResultId(resultId);
       try {
-        const result = await AnnotationsService.retrySingleAnnotationResult({infospaceId: activeInfospace.id, annotationId: resultId});
+        const result = await AnnotationsService.retrySingleAnnotation({infospaceId: activeInfospace.id, annotationId: resultId});
         toast.success("Annotation re-processed successfully.");
         return result;
       } catch(e: any) {
@@ -161,10 +226,10 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
       }
   }, [activeInfospace]);
 
-  const updateJob = useCallback(async (jobId: number, data: AnnotationRunUpdate) => {
+  const updateJob = useCallback(async (jobId: number, data: AnnotationRunUpdate): Promise<AnnotationRunRead | null> => {
     if(!activeInfospace?.id) return null;
     try {
-      const updatedRun = await AnnotationRunsService.updateRun({ infospaceId: activeInfospace.id, runId: jobId, requestBody: data });
+      const updatedRun = await AnnotationJobsService.updateRun({ infospaceId: activeInfospace.id, runId: jobId, requestBody: data });
       setRuns(prev => prev.map(r => r.id === jobId ? updatedRun : r));
       if (activeRun?.id === jobId) {
         setActiveRun(updatedRun);
@@ -176,6 +241,12 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
       return null;
     }
   }, [activeInfospace, activeRun]);
+
+  useEffect(() => {
+    if (autoLoadRuns && activeInfospace?.id) {
+        loadRuns();
+    }
+  }, [autoLoadRuns, activeInfospace, loadRuns]);
 
   return {
     createRun,
@@ -195,7 +266,9 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     isLoadingSchemas,
     loadSchemas,
     createSchema,
-    deleteSchema,
+    archiveSchema,
+    restoreSchema,
+    updateScheme,
     isRetryingResultId,
     retrySingleResult,
     // Aliases for compatibility with old components

@@ -1,9 +1,10 @@
 import logging
 import os
+import mimetypes
 from typing import List, Optional, Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query, status, Form, Body, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from sqlmodel import Session
 
 from app.api import deps
@@ -21,20 +22,28 @@ from app.schemas import (
     ShareableLinkStats,
     Message,
     DatasetPackageSummary,
-    Paginated
+    Paginated,
+    SharedResourcePreview
 )
 
 from app.api.services.shareable_service import ShareableService
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/shareables", tags=["shareables"])
+router = APIRouter()
 
 
 # --- Request Model for Batch Export ---
 class ExportBatchRequest(BaseModel):
     resource_type: ResourceType
     resource_ids: List[int]
+
+class ExportMixedBatchRequest(BaseModel):
+    asset_ids: List[int] = []
+    bundle_ids: List[int] = []
+
+class ImportFromTokenRequest(BaseModel):
+    target_infospace_id: int
 # --- End Request Model ---
 
 
@@ -147,6 +156,25 @@ def access_shared_resource(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not access shared resource.")
 
 
+@router.get("/view/{token}", response_model=SharedResourcePreview)
+def view_shared_resource(
+    token: str,
+    service: ShareableServiceDep,
+):
+    """
+    Provides a read-only, public view of a shared resource (Asset or Bundle).
+    This endpoint is unauthenticated and relies on the link's validity.
+    """
+    try:
+        return service.view_shared_resource(token)
+    except HTTPException as he:
+        # Re-raise HTTP exceptions from the service layer
+        raise he
+    except Exception as e:
+        logger.error(f"Error generating public view for token {token[:6]}...: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not retrieve shared resource view.")
+
+
 @router.get("/{infospace_id}/stats", response_model=ShareableLinkStats)
 def get_sharing_stats(
     infospace_id: int,
@@ -224,7 +252,7 @@ async def import_resource(
 
 # --- New Batch Export Route ---
 @router.post(
-    "/{infospace_id}/export-batch",
+    "/export-batch/{infospace_id}",
     response_class=FileResponse,
     responses={
         200: {
@@ -263,7 +291,118 @@ async def export_resources_batch(
     except Exception as e:
         logger.error(f"Batch export failed for {request_data.resource_type}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export resources batch: {str(e)}")
-# --- End New Route ---
+
+@router.post("/export-mixed-batch/{infospace_id}", response_class=FileResponse)
+async def export_mixed_batch(
+    infospace_id: int,
+    request_data: ExportMixedBatchRequest,
+    current_user: CurrentUser,
+    service: ShareableServiceDep,
+    background_tasks: BackgroundTasks,
+):
+    """Export a mix of assets and bundles to a single ZIP archive."""
+    try:
+        temp_zip_path, zip_filename = await service.export_mixed_batch(
+            user_id=current_user.id,
+            infospace_id=infospace_id,
+            asset_ids=request_data.asset_ids,
+            bundle_ids=request_data.bundle_ids
+        )
+        background_tasks.add_task(service._cleanup_temp_file, temp_zip_path)
+        return FileResponse(
+            path=temp_zip_path,
+            filename=zip_filename,
+            media_type='application/zip',
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Mixed batch export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export mixed batch: {str(e)}")
+
+@router.get("/stream/{token}/{asset_id}")
+async def stream_shared_asset_file(
+    token: str,
+    asset_id: int,
+    service: ShareableServiceDep,
+):
+    """
+    Stream the file blob associated with a publicly shared asset.
+    Access is validated via the share token.
+    """
+    try:
+        file_obj, filename = await service.stream_shared_asset_file(token, asset_id)
+        
+        media_type, _ = mimetypes.guess_type(filename)
+        media_type = media_type or 'application/octet-stream'
+
+        return StreamingResponse(file_obj, media_type=media_type)
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Failed to stream shared asset file for token {token[:6]}... asset {asset_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not process file stream.")
+
+@router.get("/download-bundle/{token}", response_class=FileResponse)
+async def download_shared_bundle(
+    token: str,
+    service: ShareableServiceDep,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Download all assets within a publicly shared bundle as a ZIP archive.
+    Access is validated via the share token.
+    """
+    try:
+        filepath, filename = await service.get_shared_bundle_filepath(token)
+        
+        if not filepath or not os.path.exists(filepath):
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bundle package could not be created.")
+
+        # Cleanup the temporary file after the response is sent
+        background_tasks.add_task(service._cleanup_temp_file, filepath)
+        
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type='application/zip'
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Failed to download shared bundle for token {token[:6]}...: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not process bundle download.")
+
+@router.get("/download/{token}/{asset_id}", response_class=FileResponse)
+async def download_shared_asset_file(
+    token: str,
+    asset_id: int,
+    service: ShareableServiceDep,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Download the file blob associated with a publicly shared asset.
+    Access is validated via the share token.
+    """
+    try:
+        filepath, filename = await service.get_shared_asset_filepath(token, asset_id)
+        
+        if not filepath or not os.path.exists(filepath):
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found or is inaccessible.")
+
+        # Cleanup the temporary file after the response is sent
+        background_tasks.add_task(service._cleanup_temp_file, filepath)
+        
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type='application/octet-stream' # Generic binary
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Failed to download shared asset file for token {token[:6]}... asset {asset_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not process file download.")
 
 # --- NEW ENDPOINT: View Dataset Package Summary ---
 @router.get("/view_dataset_package_summary/{token}", response_model=DatasetPackageSummary)
@@ -298,3 +437,26 @@ async def view_dataset_package_summary(
         logger.exception(f"Route: Unexpected error getting dataset package summary for token {token[:6]}...: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while generating package summary.")
 # --- END NEW ENDPOINT ---
+
+@router.post("/import-from-token/{token}")
+async def import_resource_from_token(
+    token: str,
+    request_data: ImportFromTokenRequest,
+    current_user: CurrentUser,
+    service: ShareableServiceDep,
+):
+    """
+    Import a shared resource into the current user's specified infospace.
+    """
+    try:
+        result = await service.import_resource_from_token(
+            token=token,
+            target_user_id=current_user.id,
+            target_infospace_id=request_data.target_infospace_id
+        )
+        return result
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Route: Failed to import from token {token[:6]}...: {e}", exc_info=True)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to import shared resource.")

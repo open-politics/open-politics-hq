@@ -39,15 +39,16 @@ export const AnnotationTimeAxisControls: React.FC<AnnotationTimeAxisControlsProp
 
   const fieldOptions = useMemo(() => {
     if (sourceType !== 'schema' || !selectedSchemaId) return [];
-    const schema = schemas.find(s => s.id === selectedSchemaId);
-    if (!schema) return [];
     
-    const properties = (schema.output_contract as any)?.properties || {};
-    return Object.entries(properties)
-      .filter(([key, value]: [string, any]) => value.type === 'string' || value.type === 'integer')
-      .map(([key, value]: [string, any]) => ({
-        value: key,
-        label: `${value.title || key} (${value.type})`,
+    // Use hierarchical field extraction to get all available fields
+    const targetKeys = getTargetKeysForScheme(selectedSchemaId, schemas);
+    
+    // Filter for fields that could contain date/time values (string, integer, number)
+    return targetKeys
+      .filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number')
+      .map(tk => ({
+        value: tk.key,
+        label: `${tk.name} (${tk.type})`,
       }));
   }, [sourceType, selectedSchemaId, schemas]);
 
@@ -78,9 +79,10 @@ export const AnnotationTimeAxisControls: React.FC<AnnotationTimeAxisControlsProp
     } else if (sourceType === 'event') {
       newConfig = { type: 'event' };
     } else if (sourceType === 'schema' && selectedSchemaId !== null && selectedFieldKey !== null) {
-      const schema = schemas.find(s => s.id === selectedSchemaId);
-      const properties = (schema?.output_contract as any)?.properties || {};
-      if (properties[selectedFieldKey]) {
+      // Use hierarchical field validation
+      const targetKeys = getTargetKeysForScheme(selectedSchemaId, schemas);
+      const isValidField = targetKeys.some(tk => tk.key === selectedFieldKey);
+      if (isValidField) {
         newConfig = { type: 'schema', schemaId: selectedSchemaId, fieldKey: selectedFieldKey };
       }
     }

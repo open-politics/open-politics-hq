@@ -173,13 +173,36 @@ class DataPackage:
     def from_zip(cls, zip_path: str) -> "DataPackage":
         """Create package from a ZIP file."""
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            manifest_data = json.loads(zf.read("manifest.json"))
+            all_files = zf.namelist()
+            
+            # Check if archive contains a single root directory
+            prefix = ""
+            if all_files:
+                top_level_entries = {p.split('/')[0] for p in all_files if p}
+                if len(top_level_entries) == 1:
+                    root_dir = list(top_level_entries)[0]
+                    # Check if all non-empty file paths start with this single root directory.
+                    if all(p.startswith(root_dir + '/') for p in all_files if p and not p.endswith('/')):
+                        prefix = root_dir + '/'
+
+            manifest_path = prefix + "manifest.json"
+            
+            try:
+                manifest_data = json.loads(zf.read(manifest_path))
+            except KeyError:
+                raise KeyError("There is no item named 'manifest.json' in the archive's root or single-folder root.")
+
             metadata = PackageMetadata.from_dict(manifest_data["metadata"])
             content = manifest_data["content"]
             files = {}
+            files_dir_path = prefix + "files/"
+
             for member_info in zf.infolist():
-                if not member_info.is_dir() and member_info.filename.startswith("files/"):
-                    files[member_info.filename] = zf.read(member_info.filename)
+                if not member_info.is_dir() and member_info.filename.startswith(files_dir_path):
+                    # Make path relative to the prefix, should be "files/..."
+                    relative_path = member_info.filename[len(prefix):]
+                    files[relative_path] = zf.read(member_info.filename)
+            
             return cls(metadata, content, files)
 
     @classmethod
@@ -239,11 +262,28 @@ class PackageBuilder:
 
     def _add_file_to_package(self, original_filename: str, content_bytes: bytes) -> str:
         """Adds file content to self.files and returns the path used in the zip."""
-        safe_stem = secure_filename(Path(original_filename).stem)
-        suffix = Path(original_filename).suffix
-        unique_filename_in_zip = f"files/{safe_stem}_{uuid.uuid4().hex[:8]}{suffix}"
-        self.files[unique_filename_in_zip] = content_bytes
-        return unique_filename_in_zip
+        safe_filename = secure_filename(original_filename)
+        if not safe_filename:
+            safe_filename = f"unnamed_file_{uuid.uuid4().hex[:8]}"
+
+        zip_path = f"files/{safe_filename}"
+        
+        if zip_path in self.files:
+            stem = Path(safe_filename).stem
+            suffix = Path(safe_filename).suffix
+            counter = 1
+            while True:
+                if not stem:
+                    stem = f"unnamed_file_{uuid.uuid4().hex[:8]}"
+                new_filename = f"{stem}_{counter}{suffix}"
+                new_zip_path = f"files/{new_filename}"
+                if new_zip_path not in self.files:
+                    zip_path = new_zip_path
+                    break
+                counter += 1
+        
+        self.files[zip_path] = content_bytes
+        return zip_path
 
     async def build_asset_package(
         self, 
@@ -259,13 +299,14 @@ class PackageBuilder:
         if asset.blob_path:
             file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
             if file_bytes:
-                file_reference_in_zip = self._add_file_to_package(Path(asset.blob_path).name, file_bytes)
+                original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
+                file_reference_in_zip = self._add_file_to_package(original_filename, file_bytes)
                 asset_content["blob_file_reference"] = file_reference_in_zip
             else:
                 asset_content["blob_path_fetch_failed"] = True
         
         if include_text_content_as_file and asset.text_content and len(asset.text_content) > 1024: 
-            text_filename = f"asset_{asset.uuid}_content.txt"
+            text_filename = f"{secure_filename(asset.title)}_content.txt"
             file_reference_in_zip = self._add_file_to_package(text_filename, asset.text_content.encode('utf-8'))
             asset_content["text_content_file_reference"] = file_reference_in_zip
             asset_content.pop("text_content", None) 
@@ -337,7 +378,8 @@ class PackageBuilder:
                 if asset_item.blob_path:
                     asset_file_bytes = await self._fetch_file_content_from_storage(asset_item.blob_path)
                     if asset_file_bytes:
-                        asset_data["blob_file_reference"] = self._add_file_to_package(Path(asset_item.blob_path).name, asset_file_bytes)
+                        original_filename = (asset_item.source_metadata or {}).get("filename") or asset_item.title or Path(asset_item.blob_path).name
+                        asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, asset_file_bytes)
                     else:
                         asset_data["blob_path_fetch_failed"] = True # Indicate failure for this specific asset's blob
                 source_content["assets"].append(asset_data)
@@ -424,7 +466,8 @@ class PackageBuilder:
                 if asset_item_in_bundle.blob_path:
                     file_bytes = await self._fetch_file_content_from_storage(asset_item_in_bundle.blob_path)
                     if file_bytes:
-                        file_ref = self._add_file_to_package(Path(asset_item_in_bundle.blob_path).name, file_bytes)
+                        original_filename = (asset_item_in_bundle.source_metadata or {}).get("filename") or asset_item_in_bundle.title or Path(asset_item_in_bundle.blob_path).name
+                        file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = file_ref
                 asset_ref["full_content"] = asset_data
                 if include_asset_annotations:
@@ -471,7 +514,8 @@ class PackageBuilder:
                 if asset_item_in_ds.blob_path:
                     file_bytes = await self._fetch_file_content_from_storage(asset_item_in_ds.blob_path)
                     if file_bytes:
-                        blob_file_ref = self._add_file_to_package(Path(asset_item_in_ds.blob_path).name, file_bytes)
+                        original_filename = (asset_item_in_ds.source_metadata or {}).get("filename") or asset_item_in_ds.title or Path(asset_item_in_ds.blob_path).name
+                        blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = blob_file_ref
                 
                 if include_annotations:
@@ -509,6 +553,126 @@ class PackageBuilder:
         )
         return DataPackage(metadata=package_metadata, content={"dataset": dataset_content}, files=self.files)
 
+    async def build_mixed_package(
+        self,
+        assets: List[Asset],
+        bundles: List[Bundle],
+        include_assets_content: bool = True,
+        include_asset_annotations: bool = True
+    ) -> DataPackage:
+        """Builds a package containing a mix of assets and bundles."""
+        logger.debug(f"Building mixed package with {len(assets)} assets and {len(bundles)} bundles.")
+        
+        content = {"assets": [], "bundles": []}
+        
+        # Process standalone assets
+        for asset in assets:
+            asset_data = AssetRead.model_validate(asset).model_dump(exclude_none=True)
+            if asset.blob_path:
+                file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
+                if file_bytes:
+                    original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
+                    asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, file_bytes)
+            
+            # Fetch and include child assets for hierarchical assets
+            if asset.kind in ['pdf', 'csv', 'web', 'mbox', 'article'] or asset.is_container:
+                child_assets_query = select(Asset).where(Asset.parent_asset_id == asset.id).order_by(Asset.part_index, Asset.created_at)
+                child_assets_result = self.session.exec(child_assets_query)
+                child_assets = list(child_assets_result)
+                
+                if child_assets:
+                    logger.debug(f"Found {len(child_assets)} child assets for asset {asset.id}")
+                    children_data = []
+                    
+                    for child_asset in child_assets:
+                        # Ensure we have a proper Asset object, not a tuple or Row
+                        if isinstance(child_asset, tuple):
+                            # Handle tuple format (Asset, other_fields...)
+                            child_asset = child_asset[0]
+                        elif hasattr(child_asset, '_mapping'):
+                            # Handle SQLAlchemy Row objects
+                            child_asset = child_asset[0] if len(child_asset) > 0 else child_asset
+                        elif not hasattr(child_asset, 'id'):
+                            # If it's not a proper Asset object, log and skip
+                            logger.error(f"Unexpected child asset type: {type(child_asset)} - {child_asset}")
+                            continue
+                        
+                        child_data = AssetRead.model_validate(child_asset).model_dump(exclude_none=True)
+                        # Include child asset files if they have blob_path
+                        if child_asset.blob_path:
+                            child_file_bytes = await self._fetch_file_content_from_storage(child_asset.blob_path)
+                            if child_file_bytes:
+                                child_filename = (child_asset.source_metadata or {}).get("filename") or child_asset.title or Path(child_asset.blob_path).name
+                                child_data["blob_file_reference"] = self._add_file_to_package(child_filename, child_file_bytes)
+                        children_data.append(child_data)
+                    
+                    asset_data["children_assets"] = children_data
+                    logger.debug(f"Added {len(children_data)} children to asset {asset.id} export data")
+            
+            content["assets"].append(asset_data)
+            
+        # Process bundles and their assets
+        for bundle in bundles:
+            bundle_content = bundle.model_dump(exclude_none=True, exclude={'assets'})
+            bundle_content["asset_references"] = []
+            assets_in_bundle = bundle.assets if hasattr(bundle, 'assets') else []
+            for asset_item in assets_in_bundle:
+                asset_ref = {"uuid": str(asset_item.uuid), "id": asset_item.id, "title": asset_item.title, "kind": asset_item.kind.value}
+                if include_assets_content:
+                    asset_data = AssetRead.model_validate(asset_item).model_dump(exclude_none=True)
+                    if asset_item.blob_path:
+                        file_bytes = await self._fetch_file_content_from_storage(asset_item.blob_path)
+                        if file_bytes:
+                            original_filename = (asset_item.source_metadata or {}).get("filename") or asset_item.title or Path(asset_item.blob_path).name
+                            asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, file_bytes)
+                    
+                    # Include child assets for hierarchical assets in bundles too
+                    if asset_item.kind in ['pdf', 'csv', 'web', 'mbox', 'article'] or asset_item.is_container:
+                        child_assets_query = select(Asset).where(Asset.parent_asset_id == asset_item.id).order_by(Asset.part_index, Asset.created_at)
+                        child_assets_result = self.session.exec(child_assets_query)
+                        child_assets = list(child_assets_result)
+                        
+                        if child_assets:
+                            logger.debug(f"Found {len(child_assets)} child assets for bundle asset {asset_item.id}")
+                            children_data = []
+                            
+                            for child_asset in child_assets:
+                                # Ensure we have a proper Asset object, not a tuple or Row
+                                if isinstance(child_asset, tuple):
+                                    # Handle tuple format (Asset, other_fields...)
+                                    child_asset = child_asset[0]
+                                elif hasattr(child_asset, '_mapping'):
+                                    # Handle SQLAlchemy Row objects
+                                    child_asset = child_asset[0] if len(child_asset) > 0 else child_asset
+                                elif not hasattr(child_asset, 'id'):
+                                    # If it's not a proper Asset object, log and skip
+                                    logger.error(f"Unexpected child asset type: {type(child_asset)} - {child_asset}")
+                                    continue
+                                
+                                child_data = AssetRead.model_validate(child_asset).model_dump(exclude_none=True)
+                                # Include child asset files if they have blob_path
+                                if child_asset.blob_path:
+                                    child_file_bytes = await self._fetch_file_content_from_storage(child_asset.blob_path)
+                                    if child_file_bytes:
+                                        child_filename = (child_asset.source_metadata or {}).get("filename") or child_asset.title or Path(child_asset.blob_path).name
+                                        child_data["blob_file_reference"] = self._add_file_to_package(child_filename, child_file_bytes)
+                                children_data.append(child_data)
+                            
+                            asset_data["children_assets"] = children_data
+                            logger.debug(f"Added {len(children_data)} children to bundle asset {asset_item.id} export data")
+                    
+                    asset_ref["full_content"] = asset_data
+                bundle_content["asset_references"].append(asset_ref)
+            content["bundles"].append(bundle_content)
+            
+        package_metadata = PackageMetadata(
+            package_type=ResourceType.MIXED,
+            source_entity_name="Mixed Export",
+            description=f"Mixed export containing {len(assets)} assets and {len(bundles)} bundles."
+        )
+        
+        return DataPackage(metadata=package_metadata, content=content, files=self.files)
+
 class PackageImporter:
     """
     Helper class for importing data packages.
@@ -519,13 +683,15 @@ class PackageImporter:
         storage_provider: StorageProvider,
         target_infospace_id: int,
         target_user_id: int,
-        settings: AppSettings
+        settings: AppSettings,
+        asset_service: AssetService
     ):
         self.session = session
         self.storage_provider = storage_provider
         self.target_infospace_id = target_infospace_id
         self.target_user_id = target_user_id
         self.settings = settings
+        self.asset_service = asset_service
         self.uuid_map: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(lambda: defaultdict(dict)) # Ensure defaultdict for inner dicts too
         self.source_instance_id_from_package: Optional[str] = None
 
@@ -653,6 +819,18 @@ class PackageImporter:
             logger.warning(f"Invalid AssetKind '{asset_kind_str}' for asset UUID {asset_uuid}. Defaulting to {AssetKind.TEXT.value}.")
             asset_kind_enum = AssetKind.TEXT
 
+        event_timestamp_raw = asset_data_in_pkg.get("event_timestamp")
+        parsed_event_timestamp = None
+        if isinstance(event_timestamp_raw, str):
+            try:
+                parsed_event_timestamp = dateutil.parser.isoparse(event_timestamp_raw)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse event_timestamp string '{event_timestamp_raw}' for asset {asset_uuid}")
+                parsed_event_timestamp = None
+        elif isinstance(event_timestamp_raw, datetime):
+            # It's already a datetime object, use it directly
+            parsed_event_timestamp = event_timestamp_raw
+
         new_asset = Asset(
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
@@ -666,16 +844,16 @@ class PackageImporter:
             source_identifier=asset_data_in_pkg.get("source_identifier"),
             source_metadata=asset_data_in_pkg.get("source_metadata", {}),
             content_hash=asset_data_in_pkg.get("content_hash"),
-            event_timestamp=dateutil.parser.isoparse(asset_data_in_pkg["event_timestamp"]) if asset_data_in_pkg.get("event_timestamp") else None
+            event_timestamp=parsed_event_timestamp
             # uuid will be auto-generated
         )
         self.session.add(new_asset)
         self.session.flush() # Flush to get ID before registering or using for children
         self._register_imported_entity(ResourceType.ASSET.value, asset_uuid, new_asset)
+
         logger.debug(f"Imported Asset '{new_asset.title}' (ID {new_asset.id}, Original UUID {asset_uuid}) linked to Source ID {parent_source_id}")
 
         # Recursively import child assets if present in this asset's data (not typical for flat asset lists under source)
-        # This structure is more for hierarchical exports of a single complex asset.
         if asset_data_in_pkg.get("children_assets") and isinstance(asset_data_in_pkg["children_assets"], list):
             logger.info(f"Importing {len(asset_data_in_pkg['children_assets'])} child assets for asset {new_asset.title} (ID: {new_asset.id})")
             for child_asset_data in asset_data_in_pkg["children_assets"]:
@@ -906,6 +1084,100 @@ class PackageImporter:
         logger.info(f"Imported Dataset '{new_dataset.name}' (ID {new_dataset.id}, Source UUID {source_uuid})")
         return new_dataset 
 
+    async def import_bundle_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> Bundle:
+        if package.metadata.package_type != ResourceType.BUNDLE:
+            raise ValueError("Invalid package type for import_bundle_package")
+        self.source_instance_id_from_package = package.metadata.source_instance_id
+
+        b_data = package.content["bundle"]
+        source_uuid = str(b_data.get("uuid") or b_data.get("entity_uuid", uuid.uuid4()))
+
+        existing_local_id = self._get_local_id_from_source_uuid(ResourceType.BUNDLE.value, source_uuid)
+        if existing_local_id and conflict_strategy == 'skip':
+            logger.info(f"Skipping import of already imported Bundle UUID {source_uuid} (local ID: {existing_local_id})")
+            existing_bundle = self.session.get(Bundle, existing_local_id)
+            if not existing_bundle:
+                logger.error(f"Mapped Bundle ID {existing_local_id} for UUID {source_uuid} not found in DB. Re-importing.")
+            else:
+                return existing_bundle
+
+        original_name = b_data.get("name", f"Imported Bundle {source_uuid[:8]}")
+        bundle_name = original_name
+        counter = 1
+        while True:
+            statement = select(Bundle).where(
+                Bundle.infospace_id == self.target_infospace_id,
+                Bundle.name == bundle_name
+            )
+            if not self.session.exec(statement).first():
+                break
+            bundle_name = f"{original_name} ({counter})"
+            counter += 1
+
+        if bundle_name != original_name:
+            logger.info(f"Bundle name collision for '{original_name}'. Renaming to '{bundle_name}'")
+
+        new_bundle = Bundle(
+            infospace_id=self.target_infospace_id,
+            user_id=self.target_user_id,
+            imported_from_uuid=source_uuid,
+            name=bundle_name,
+            description=b_data.get("description"),
+            purpose=b_data.get("purpose"),
+            bundle_metadata=b_data.get("bundle_metadata", {}),
+        )
+        self.session.add(new_bundle)
+        self.session.flush()
+
+        local_asset_ids = []
+        if b_data.get("asset_references") and isinstance(b_data["asset_references"], list):
+            for asset_ref in b_data["asset_references"]:
+                if asset_ref.get("full_content"):
+                    asset_data_in_pkg = asset_ref["full_content"]
+                    imported_asset = await self._import_asset_data(asset_data_in_pkg, package.files, parent_source_id=None)
+                    if imported_asset:
+                        local_asset_ids.append(imported_asset.id)
+                else:
+                    logger.warning(f"Bundle asset reference (UUID: {asset_ref.get('uuid')}) without full_content. Linking by UUID is not supported yet. Asset will be skipped.")
+        
+        if local_asset_ids:
+            assets_to_link = [self.session.get(Asset, asset_id) for asset_id in local_asset_ids]
+            new_bundle.assets = assets_to_link
+            new_bundle.asset_count = len(assets_to_link)
+        
+        self.session.add(new_bundle)
+        self.session.flush()
+        self._register_imported_entity(ResourceType.BUNDLE.value, source_uuid, new_bundle)
+        logger.info(f"Imported Bundle '{new_bundle.name}' (ID {new_bundle.id}, Original UUID {source_uuid}) into infospace {self.target_infospace_id}")
+        return new_bundle
+
+    async def import_mixed_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> Dict[str, List[Any]]:
+        if package.metadata.package_type != ResourceType.MIXED:
+            raise ValueError("Invalid package type for import_mixed_package")
+
+        imported_entities = {"assets": [], "bundles": []}
+
+        for asset_data in package.content.get("assets", []):
+            try:
+                imported_asset = await self._import_asset_data(asset_data, package.files, parent_source_id=None)
+                if imported_asset:
+                    imported_entities["assets"].append(imported_asset)
+            except Exception as e:
+                logger.error(f"Failed to import a standalone asset from mixed package: {e}", exc_info=True)
+
+        for bundle_data in package.content.get("bundles", []):
+            try:
+                bundle_meta = PackageMetadata(package_type=ResourceType.BUNDLE, source_entity_uuid=str(bundle_data.get("uuid")))
+                temp_bundle_pkg = DataPackage(metadata=bundle_meta, content={"bundle": bundle_data}, files=package.files)
+                imported_bundle = await self.import_bundle_package(temp_bundle_pkg, conflict_strategy)
+                if imported_bundle:
+                    imported_entities["bundles"].append(imported_bundle)
+            except Exception as e:
+                logger.error(f"Failed to import a bundle from mixed package: {e}", exc_info=True)
+        
+        logger.info(f"Imported {len(imported_entities['assets'])} assets and {len(imported_entities['bundles'])} bundles from mixed package.")
+        return imported_entities
+
 class PackageService:
     def __init__(
         self,
@@ -987,7 +1259,8 @@ class PackageService:
             storage_provider=self.storage_provider,
             target_infospace_id=target_infospace_id,
             target_user_id=target_user_id,
-            settings=self.settings
+            settings=self.settings,
+            asset_service=self.asset_service
         )
         
         pt = package.metadata.package_type
@@ -1011,11 +1284,32 @@ class PackageService:
             imported_entity = await importer.import_annotation_run_package(package, conflict_strategy)
         elif pt == ResourceType.DATASET:
             imported_entity = await importer.import_dataset_package(package, conflict_strategy)
+        elif pt == ResourceType.BUNDLE:
+            imported_entity = await importer.import_bundle_package(package, conflict_strategy)
+        elif pt == ResourceType.MIXED:
+            imported_entity = await importer.import_mixed_package(package, conflict_strategy)
         else:
             raise NotImplementedError(f"Import for resource type {pt} not implemented in PackageService.")
         
         if imported_entity:
             self.session.commit()
+
+            # --- NEW: Trigger processing AFTER commit ---
+            assets_to_process = []
+            if pt == ResourceType.ASSET:
+                assets_to_process.append(imported_entity)
+            elif pt == ResourceType.BUNDLE:
+                if hasattr(imported_entity, 'assets'):
+                    assets_to_process.extend(imported_entity.assets)
+            elif pt == ResourceType.SOURCE:
+                 if hasattr(imported_entity, 'assets'):
+                    assets_to_process.extend(imported_entity.assets)
+            
+            for asset in assets_to_process:
+                if self.asset_service._needs_processing(asset.kind):
+                    self.asset_service._trigger_content_processing(asset)
+            # --- END NEW ---
+
             if hasattr(imported_entity, 'id') and imported_entity.id is not None:
                 self.session.refresh(imported_entity)
             logger.info(f"Successfully imported and committed {pt.value} (Original UUID: {package.metadata.source_entity_uuid}, New ID: {getattr(imported_entity, 'id', 'N/A')})")

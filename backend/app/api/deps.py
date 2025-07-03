@@ -21,8 +21,8 @@ from app.api.providers.base import (
     ScrapingProvider, 
     ClassificationProvider, 
     SearchProvider,
-    GeospatialProvider
-    # GeospatialProvider, EmbeddingProvider (protocols to be added in base.py when defined)
+    GeospatialProvider,
+    EmbeddingProvider
 )
 
 # --- Provider Factory Imports --- 
@@ -31,9 +31,8 @@ from app.api.providers.factory import (
     create_scraping_provider,
     create_classification_provider,
     create_search_provider,
-    create_geospatial_provider
-    # create_geospatial_provider, # Example
-    # create_embedding_provider  # Example
+    create_geospatial_provider,
+    create_embedding_provider
 )
 
 # --- Service Class Imports --- 
@@ -149,11 +148,15 @@ def get_search_provider_dependency(settings: SettingsDep) -> SearchProvider:
 def get_geospatial_provider_dependency(settings: SettingsDep) -> GeospatialProvider:
     return create_geospatial_provider(settings)
 
+def get_embedding_provider_dependency(settings: SettingsDep) -> EmbeddingProvider:
+    return create_embedding_provider(settings)
+
 StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dependency)]
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dependency)]
 ClassificationProviderDep = Annotated[ClassificationProvider, Depends(get_classification_provider_dependency)]
 SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dependency)]
 GeospatialProviderDep = Annotated[GeospatialProvider, Depends(get_geospatial_provider_dependency)]
+EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider_dependency)]
 
 
 # --- Service Dependencies (Per-Request with Request State Caching) ---

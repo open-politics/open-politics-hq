@@ -1,7 +1,7 @@
 'use client'
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Folder, Globe, MessageSquare, Key, Brain, SquareTerminal, Microscope, FileText, FolderCog } from "lucide-react"
+import { Folder, Globe, MessageSquare, Key, Brain, SquareTerminal, Microscope, FileText, FolderCog, Search } from "lucide-react"
 import { InfospaceItems } from "@/components/collection/unsorted/AppSidebar"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -37,7 +37,7 @@ export default function DesksPage() {
       {/* Tools Section */}
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4">Tools</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/globe" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
@@ -55,23 +55,6 @@ export default function DesksPage() {
             </Link>
           </div>
 
-          {/* <div className="relative transition-all duration-200 h-full">
-            <Link href="/desks/home/chat" className="h-full block">
-              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full">
-                <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-teal-500 blur-xl opacity-10 rounded-full -z-10 animate-pulse [animation-duration:3s]"></div>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <MessageSquare className="w-5 h-5" />
-                    Chat Interface
-                  </CardTitle>
-                  <CardDescription>
-                    AI-powered political analysis assistant.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-          </div> */}
-
           <div className="relative transition-all duration-200 h-full">
             <Link href="/desks/home/infospaces/annotation-runner" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
@@ -88,6 +71,23 @@ export default function DesksPage() {
               </Card>
             </Link>
           </div>
+
+          <div className="relative transition-all duration-200 h-full">
+            <Link href="/desks/home/infospaces/content-search" className="h-full block">
+              <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[var(--tool-search-from)] to-[var(--tool-search-to)] rounded-lg"></div>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Search className="w-5 h-5" />
+                    Content Search
+                  </CardTitle>
+                  <CardDescription>
+                    Ask questions about your assets using AI-powered retrieval
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -96,7 +96,7 @@ export default function DesksPage() {
         <h2 className="text-xl font-semibold mb-4">Stores</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="relative transition-all duration-200 h-full">
-            <Link href="/desks/home/infospaces/classification-schemes" className="h-full block">
+            <Link href="/desks/home/infospaces/annotation-schemes" className="h-full block">
               <Card className="transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer relative h-full overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-r from-[var(--store-schemes-from)] to-[var(--store-schemes-to)] rounded-lg"></div>
                 <CardHeader>

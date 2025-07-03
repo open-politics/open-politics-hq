@@ -1,19 +1,11 @@
 // frontend/src/components/collection/infospaces/documents/AssetDetailViewCsv.tsx
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, Search, ArrowUp, ArrowDown, FileSpreadsheet, Table as TableIcon, List, X, Copy, Download, Share2, Eye, ExternalLink, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, Search, ArrowUp, ArrowDown, FileSpreadsheet, Table as TableIcon, List, X, Copy, Eye, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { AssetRead } from '@/client/models';
 import { formatDistanceToNow, format } from 'date-fns';
@@ -90,7 +82,6 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     return filtered;
   }, [childAssets, searchTerm, sortField, sortDirection]);
 
-
   const selectedIndex = useMemo(() => {
     if (!selectedChildAsset) return -1;
     return filteredAndSortedAssets.findIndex(asset => asset.id === selectedChildAsset.id);
@@ -117,37 +108,44 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   const isHighlighted = (assetId: number) => 
     !selectedChildAsset && highlightedAssetId === assetId;
 
-  // Ref for scrolling to highlighted row
-  const highlightedRowRef = useRef<HTMLElement>(null);
-  const selectedRowRef = useRef<HTMLElement>(null);
+  // Refs for scrolling to highlighted/selected rows - separate refs for different view modes
+  const highlightedTableRowRef = useRef<HTMLTableRowElement>(null);
+  const selectedTableRowRef = useRef<HTMLTableRowElement>(null);
+  const highlightedCardRef = useRef<HTMLDivElement>(null);
+  const selectedCardRef = useRef<HTMLDivElement>(null);
 
   // Effect to scroll to highlighted asset
   useEffect(() => {
-    if (highlightedAssetId && highlightedRowRef.current) {
-      // Small delay to ensure rendering is complete
-      setTimeout(() => {
-        highlightedRowRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center',
-        });
-      }, 100);
+    if (highlightedAssetId) {
+      const targetRef = viewMode === 'table' ? highlightedTableRowRef.current : highlightedCardRef.current;
+      if (targetRef) {
+        // Small delay to ensure rendering is complete
+        setTimeout(() => {
+          targetRef.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+          });
+        }, 100);
+      }
     }
   }, [highlightedAssetId, viewMode]);
 
   // Effect to scroll to selected asset
   useEffect(() => {
-    if (selectedChildAsset && selectedRowRef.current) {
-      // Small delay to ensure rendering is complete
-      setTimeout(() => {
-        selectedRowRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center',
-        });
-      }, 100);
+    if (selectedChildAsset) {
+      const targetRef = viewMode === 'table' ? selectedTableRowRef.current : selectedCardRef.current;
+      if (targetRef) {
+        // Small delay to ensure rendering is complete
+        setTimeout(() => {
+          targetRef.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+          });
+        }, 100);
+      }
     }
   }, [selectedChildAsset, viewMode]);
 
-  
   const handleSort = (field: string) => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -171,6 +169,14 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     ? filteredAndSortedAssets.some(asset => asset.id === highlightedAssetId)
     : false;
 
+  // Effect to clear search when a new highlight is requested and not visible
+  useEffect(() => {
+    if (highlightedAssetId && !isHighlightedInView && searchTerm) {
+      setSearchTerm('');
+      toast.info('Search cleared to show highlighted row.');
+    }
+  }, [highlightedAssetId, isHighlightedInView, searchTerm]);
+
   const handleCopyRowData = (childAsset: AssetRead) => {
     const rowData = childAsset.source_metadata?.original_row_data;
     if (rowData) {
@@ -184,98 +190,112 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   };
 
   const renderTableView = () => (
-    <div className="border rounded-md max-h-64 max-w-full overflow-auto  scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-muted-foreground/10">
-      <div className="overflow-auto h-full">
-        <Table className="text-sm w-full" style={{ tableLayout: 'fixed', width: '100%' }}>
-          <TableHeader className="sticky top-0 bg-muted z-10">
-            <TableRow>
-              <TableHead 
-                className="w-[100px] cursor-pointer hover:bg-muted-foreground/10"
-                onClick={() => handleSort('part_index')}
-              >
-                <div className="flex items-center gap-1">
-                  Row #
-                  {renderSortIcon('part_index')}
-                </div>
-              </TableHead>
-              <TableHead 
-                className="w-[250px] cursor-pointer hover:bg-muted-foreground/10"
-                onClick={() => handleSort('title')}
-              >
-                <div className="flex items-center gap-1">
-                  Title
-                  {renderSortIcon('title')}
-                </div>
-              </TableHead>
-              <TableHead>Content Preview</TableHead>
-              <TableHead 
-                className="w-[150px] cursor-pointer hover:bg-muted-foreground/10"
-                onClick={() => handleSort('created_at')}
-              >
-                <div className="flex items-center gap-1">
-                  Created
-                  {renderSortIcon('created_at')}
-                </div>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredAndSortedAssets.length > 0 ? (
-              filteredAndSortedAssets.map((childAsset) => {
-                const selected = isSelected(childAsset.id);
-                const highlighted = isHighlighted(childAsset.id);
-                
-                return (
-                  <TableRow
-                    key={childAsset.id}
-                    ref={
-                      selected ? (selectedRowRef as React.RefObject<HTMLTableRowElement>) :
-                      highlighted ? (highlightedRowRef as React.RefObject<HTMLTableRowElement>) : 
-                      undefined
-                    }
-                    onClick={() => handleRowClick(childAsset)}
-                    className={cn(
-                      "cursor-pointer hover:bg-muted/50 transition-colors",
-                      (selected || highlighted) && "bg-yellow-50 hover:bg-yellow-100 border-l-4 border-yellow-400 dark:bg-yellow-900 dark:hover:bg-yellow-800"
-                    )}
-                  >
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2 truncate">
-                        {childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}
-                        {selected && <Eye className="h-3 w-3 text-yellow-800 dark:text-yellow-300 flex-shrink-0" />}
+    <div className="border rounded-md max-h-64 w-full overflow-auto">
+      <table className="text-sm border-collapse w-full table-fixed" style={{ minWidth: '500px' }}>
+        <colgroup>
+          <col style={{ width: '60px' }} />
+          <col style={{ width: '100px' }} />
+          <col />
+          <col style={{ width: '80px' }} />
+        </colgroup>
+        <thead className="sticky top-0 bg-muted z-10">
+          <tr>
+            <th 
+              className="px-2 py-2 text-left font-medium text-xs cursor-pointer hover:bg-muted-foreground/10 border-b"
+              onClick={() => handleSort('part_index')}
+            >
+              <div className="flex items-center gap-1 truncate">
+                Row #
+                {renderSortIcon('part_index')}
+              </div>
+            </th>
+            <th 
+              className="px-2 py-2 text-left font-medium text-xs cursor-pointer hover:bg-muted-foreground/10 border-b"
+              onClick={() => handleSort('title')}
+            >
+              <div className="flex items-center gap-1 truncate">
+                Title
+                {renderSortIcon('title')}
+              </div>
+            </th>
+            <th className="px-2 py-2 text-left font-medium text-xs border-b">Content Preview</th>
+            <th 
+              className="px-2 py-2 text-left font-medium text-xs cursor-pointer hover:bg-muted-foreground/10 border-b"
+              onClick={() => handleSort('created_at')}
+            >
+              <div className="flex items-center gap-1 truncate">
+                Created
+                {renderSortIcon('created_at')}
+              </div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredAndSortedAssets.length > 0 ? (
+            filteredAndSortedAssets.map((childAsset) => {
+              const selected = isSelected(childAsset.id);
+              const highlighted = isHighlighted(childAsset.id);
+              
+              return (
+                <tr
+                  key={childAsset.id}
+                  ref={
+                    selected ? selectedTableRowRef :
+                    highlighted ? highlightedTableRowRef : 
+                    undefined
+                  }
+                  onClick={() => handleRowClick(childAsset)}
+                  className={cn(
+                    "cursor-pointer hover:bg-muted/50 transition-colors border-b border-border/50",
+                    (selected || highlighted) && "bg-yellow-50 hover:bg-yellow-100 border-l-4 border-yellow-400 dark:bg-yellow-900 dark:hover:bg-yellow-800"
+                  )}
+                >
+                  <td className="px-2 py-2 font-medium">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="truncate">{childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}</span>
+                      {selected && <Eye className="h-3 w-3 text-yellow-800 dark:text-yellow-300 flex-shrink-0" />}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 font-medium">
+                    <div className="min-w-0">
+                      <div className="truncate" title={childAsset.title || ''}>
+                        {childAsset.title || `Row ${childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}`}
                       </div>
-                    </TableCell>
-                    <TableCell className="font-medium truncate" title={childAsset.title || ''}>
-                      {childAsset.title || `Row ${childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}`}
-                    </TableCell>
-                    <TableCell className="max-w-0">
+                    </div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <div className="w-full overflow-hidden">
                       <div className="truncate" title={childAsset.text_content || 'No content'}>
                         {childAsset.text_content || 
-                         (childAsset.source_metadata ? JSON.stringify(childAsset.source_metadata).substring(0, 100) + '...' : 'No content')}
+                         (childAsset.source_metadata ? JSON.stringify(childAsset.source_metadata).substring(0, 150) + '...' : 'No content')}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-xs truncate">
-                      {formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            ) : (
-              <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-muted-foreground italic">
-                  {searchTerm ? 'No rows found matching your search.' : 'No CSV rows found.'}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 text-muted-foreground text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate" title={formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}>
+                        {formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })
+          ) : (
+            <tr>
+              <td colSpan={4} className="h-24 text-center text-muted-foreground italic px-2 py-2">
+                {searchTerm ? 'No rows found matching your search.' : 'No CSV rows found.'}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 
   const renderCardsView = () => (
-    <div className="max-h-[calc(100vh-400px)] overflow-auto">
-      <div className="space-y-3 pr-2">
+    <div className="max-h-[calc(100vh-400px)] overflow-auto w-full">
+      <div className="space-y-3 w-full">
         {filteredAndSortedAssets.length > 0 ? (
           filteredAndSortedAssets.map((childAsset) => {
             const selected = isSelected(childAsset.id);
@@ -285,19 +305,19 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
               <Card
                 key={childAsset.id}
                 ref={
-                  selected ? (selectedRowRef as React.RefObject<HTMLDivElement>) :
-                  highlighted ? (highlightedRowRef as React.RefObject<HTMLDivElement>) : 
+                  selected ? selectedCardRef :
+                  highlighted ? highlightedCardRef : 
                   undefined
                 }
                 className={cn(
-                  "cursor-pointer transition-colors hover:bg-muted/50",
+                  "cursor-pointer transition-colors hover:bg-muted/50 w-full",
                   selected && "bg-yellow-50 border-yellow-500 border-2",
                   highlighted && "bg-yellow-50 border-yellow-400 border-l-4"
                 )}
                 onClick={() => handleRowClick(childAsset)}
               >
                 <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
                     <div className={cn(
                       "w-8 h-8 rounded-full bg-muted flex items-center justify-center text-xs font-semibold flex-shrink-0",
                       selected && "bg-yellow-400 text-yellow-900",
@@ -307,13 +327,13 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="font-medium truncate flex items-center gap-2">
-                        {childAsset.title || `Row ${childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}`}
-                        {selected && <Eye className="h-4 w-4 text-yellow-800" />}
+                        <span className="truncate">{childAsset.title || `Row ${childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}`}</span>
+                        {selected && <Eye className="h-4 w-4 text-yellow-800 flex-shrink-0" />}
                       </h4>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
                         <Badge variant="outline" className="capitalize">{childAsset.kind}</Badge>
-                        <span>ID: {childAsset.id}</span>
-                        <span>{formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}</span>
+                        <span className="whitespace-nowrap">ID: {childAsset.id}</span>
+                        <span className="truncate">{formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}</span>
                         {highlighted && (
                           <Badge variant="outline" className="bg-yellow-100 text-yellow-800 border-yellow-400">
                             Highlighted
@@ -322,15 +342,15 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                       </div>
                       {childAsset.text_content && (
                         <div className="mt-2 max-h-16 overflow-hidden">
-                          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+                          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed break-words">
                             {childAsset.text_content}
                           </p>
                         </div>
                       )}
                       {childAsset.source_metadata && Object.keys(childAsset.source_metadata).length > 0 && (
-                        <div className="mt-2">
-                          <ScrollArea className="max-h-20">
-                            <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto">
+                        <div className="mt-2 min-w-0">
+                          <ScrollArea className="max-h-20 w-full">
+                            <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto break-all">
                               {JSON.stringify(childAsset.source_metadata, null, 2)}
                             </pre>
                           </ScrollArea>
@@ -412,59 +432,26 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Basic Asset Information */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div className="min-w-0">
               <strong className="text-muted-foreground">Asset ID:</strong>
-              <div className="font-mono">{selectedChildAsset.id}</div>
+              <div className="font-mono truncate">{selectedChildAsset.id}</div>
             </div>
-            <div>
+            <div className="min-w-0">
               <strong className="text-muted-foreground">UUID:</strong>
-              <div className="font-mono text-xs truncate">{selectedChildAsset.uuid}</div>
+              <div className="font-mono text-xs truncate" title={selectedChildAsset.uuid}>{selectedChildAsset.uuid}</div>
             </div>
-            <div>
+            <div className="min-w-0">
               <strong className="text-muted-foreground">Kind:</strong>
               <div><Badge variant="outline">{selectedChildAsset.kind}</Badge></div>
             </div>
-            <div>
+            <div className="min-w-0">
               <strong className="text-muted-foreground">Row Position:</strong>
               <div className="font-semibold">{selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'N/A'}</div>
             </div>
           </div>
 
           <Separator />
-
-          {/* Column Data */}
-          {columnNames.length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold mb-3 text-muted-foreground flex items-center gap-2">
-                <TableIcon className="h-4 w-4" />
-                Column Data ({columnNames.length} columns)
-              </h4>
-              <div className="grid gap-3">
-                {columnNames.map((columnName, index) => (
-                  <div key={index} className="border rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <strong className="text-sm text-muted-foreground truncate" title={columnName}>{columnName}</strong>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          navigator.clipboard.writeText(String(rowData[columnName] || ''));
-                          toast.success(`Copied "${columnName}" value`);
-                        }}
-                        className="h-6 px-2 text-xs"
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <div className="text-sm bg-muted/30 p-2 rounded font-mono break-all max-w-full overflow-x-auto">
-                      {String(rowData[columnName] || '')}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Full Text Content */}
           {selectedChildAsset.text_content && (
@@ -476,37 +463,82 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
             </div>
           )}
 
+          <Separator />
+
+          {/* Column Data */}
+          {columnNames.length > 0 && (
+            <div>
+              <h4 className="text-sm font-semibold mb-3 text-muted-foreground flex items-center gap-2">
+                <TableIcon className="h-4 w-4" />
+                Column Data ({columnNames.length} columns)
+              </h4>
+              <div className="grid gap-3 w-full">
+                {columnNames.map((columnName, index) => (
+                  <div key={index} className="border rounded-lg p-3 min-w-0">
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <strong className="text-sm text-muted-foreground truncate flex-1 min-w-0" title={columnName}>{columnName}</strong>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(String(rowData[columnName] || ''));
+                          toast.success(`Copied "${columnName}" value`);
+                        }}
+                        className="h-6 px-2 text-xs flex-shrink-0"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div className="text-sm bg-muted/30 p-2 rounded font-mono break-all w-full overflow-x-auto">
+                      {String(rowData[columnName] || '')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          
+
           {/* Timestamps */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div>
+            <div className="min-w-0">
               <strong className="text-muted-foreground">Created:</strong>
-              <div>{format(new Date(selectedChildAsset.created_at), "PPp")}</div>
+              <div className="truncate" title={format(new Date(selectedChildAsset.created_at), "PPp")}>
+                {format(new Date(selectedChildAsset.created_at), "PPp")}
+              </div>
             </div>
             {selectedChildAsset.updated_at && (
-              <div>
+              <div className="min-w-0">
                 <strong className="text-muted-foreground">Updated:</strong>
-                <div>{format(new Date(selectedChildAsset.updated_at), "PPp")}</div>
+                <div className="truncate" title={format(new Date(selectedChildAsset.updated_at), "PPp")}>
+                  {format(new Date(selectedChildAsset.updated_at), "PPp")}
+                </div>
               </div>
             )}
             {selectedChildAsset.event_timestamp ? (
-              <div>
+              <div className="min-w-0">
                 <strong className="text-muted-foreground">Event Timestamp:</strong>
-                <div>{format(new Date(selectedChildAsset.event_timestamp), "PPp")}</div>
+                <div className="truncate" title={format(new Date(selectedChildAsset.event_timestamp), "PPp")}>
+                  {format(new Date(selectedChildAsset.event_timestamp), "PPp")}
+                </div>
               </div>
             ) : (
-              <div>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="h-3 w-3" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>This field is the time reference point of what is discussed for this asset.
-                      It can be annotated with a timestamp, but it can also be a time reference point for the asset.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                <strong className="text-muted-foreground">Event Timestamp:</strong>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-3 w-3 flex-shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>This field is the time reference point of what is discussed for this asset.
+                        It can be annotated with a timestamp, but it can also be a time reference point for the asset.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <strong className="text-muted-foreground">Event Timestamp:</strong>
+                </div>
                 <div>N/A</div>
               </div>
             )}
@@ -548,21 +580,6 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
               Highlighting Row ID: {highlightedAssetId}
             </Badge>
           )}
-          {highlightedAssetId && !isHighlightedInView && (
-            <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-400">
-              Highlighted row not in current view
-            </Badge>
-          )}
-          {highlightedAssetId && !isHighlightedInView && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setSearchTerm('')}
-              className="h-7 px-2 text-xs"
-            >
-              Show Highlighted
-            </Button>
-          )}
         </div>
         
         <div className="flex items-center gap-2">
@@ -586,7 +603,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
       </div>
 
       {/* Search */}
-      <div className="relative max-w-md border border-primary/20 rounded-md p-1">
+      <div className="relative w-full max-w-md border border-primary/20 rounded-md p-1">
         <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search CSV rows..."
@@ -597,7 +614,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto max-w-4xl mx-auto">
+      <div className="flex-1 min-h-0 overflow-auto w-full max-w-full">
         {isLoadingChildren ? (
           <div className="flex items-center justify-center h-32">
             <Loader2 className="h-6 w-6 animate-spin mr-2" />
@@ -608,10 +625,10 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
             Error loading CSV rows: {childrenError}
           </div>
         ) : (
-          <>
+          <div className="w-full max-w-full">
             {viewMode === 'table' ? renderTableView() : renderCardsView()}
             {renderSelectedRowDetail()}
-          </>
+          </div>
         )}
       </div>
     </div>

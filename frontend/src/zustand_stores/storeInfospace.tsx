@@ -20,6 +20,7 @@ interface InfospaceState {
   // New actions
   exportInfospace: (infospaceId: number) => Promise<void>;
   importInfospace: (file: File, placeholderInfospaceId: number) => Promise<InfospaceRead | null>; // placeholderInfospaceId is for the API path, ignored by backend for WS import
+  importInfospaceFromToken: (token: string, name: string) => Promise<InfospaceRead | null>;
 }
 
 export const useInfospaceStore = create<InfospaceState>()(
@@ -178,6 +179,29 @@ export const useInfospaceStore = create<InfospaceState>()(
         } catch (err) {
           console.error("Import infospace error:", err);
           const message = err instanceof Error ? err.message : 'Failed to import infospace';
+          set({ error: message, isLoading: false });
+          return null;
+        }
+      },
+
+      importInfospaceFromToken: async (token: string, name: string): Promise<InfospaceRead | null> => {
+        set({ isLoading: true, error: null });
+        try {
+          const result = await useShareableStore.getState().importResourceFromToken(token, name as unknown as number);
+          if (result && result.resource_type === 'infospace' && result.imported_resource_id) {
+            await get().fetchInfospaces();
+            const newInfospace = get().infospaces.find(ws => ws.id === result.imported_resource_id);
+            if (newInfospace) {
+              set({ activeInfospace: newInfospace, isLoading: false });
+              localStorage.setItem('activeInfospaceId', String(newInfospace.id));
+              return newInfospace;
+            }
+          }
+          // If we reach here, something went wrong or the imported resource was not an infospace
+          set({ isLoading: false });
+          return null;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Failed to import infospace from token';
           set({ error: message, isLoading: false });
           return null;
         }

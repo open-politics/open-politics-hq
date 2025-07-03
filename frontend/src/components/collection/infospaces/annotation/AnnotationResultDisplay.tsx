@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { AnnotationRead, AnnotationSchemaRead } from '@/client/models';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SchemeField, FieldType } from "@/lib/annotations/types";
+import { AnnotationResultStatus } from "@/lib/annotations/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnnotationService } from '@/lib/annotations/service';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,15 @@ import {
     Legend
 } from 'recharts';
 import { HelpCircle } from 'lucide-react';
+import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
+
+// Local interface for schema fields
+interface SchemaField {
+  name: string;
+  type: string;
+  description: string;
+  config: any;
+}
 
 // Component-level types (if needed, e.g., for props)
 interface AnnotationResultDisplayProps {
@@ -67,15 +76,6 @@ interface ConsolidatedSchemasViewProps {
   highlightValue?: string | null;
 }
 
-// This type is likely not needed if the base AnnotationRead from the client is sufficient.
-// Keeping it commented out for now.
-// export interface EnhancedAnnotationRead extends AnnotationRead {
-//   display_value?: string | number | Record<string, any> | null;
-//   run_name?: string | null;
-//   run_description?: string | null;
-// }
-
-
 /**
  * Component for displaying a single annotation result based on its schema.
  */
@@ -93,19 +93,19 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
 
   // This adapter is complex because `output_contract` is a JSON schema, not a simple fields array.
   // This logic will need to be much more robust.
-  const adaptContractToSchemeFields = (contract: any): SchemeField[] => {
-      const properties = contract?.properties;
-      if (!properties) return [];
-      return Object.entries(properties).map(([key, value]: [string, any]) => ({
-          name: key,
-          type: value.type, // This is a simplification
-          description: value.description || '',
+  const adaptContractToSchemeFields = (contract: any, schemas: AnnotationSchemaRead[], schemaId: number): SchemaField[] => {
+      // Use the hierarchical field extraction logic
+      const targetKeys = getTargetKeysForScheme(schemaId, schemas);
+      return targetKeys.map(tk => ({
+          name: tk.key, // This is now the full hierarchical path like "document.topics"
+          type: tk.type,
+          description: '', // We don't have descriptions from getTargetKeysForScheme
           config: {} // Placeholder
       }));
   }
 
   const fieldsToDisplay = useMemo(() => {
-    let fields = adaptContractToSchemeFields(schema.output_contract);
+    let fields = adaptContractToSchemeFields(schema.output_contract, [schema], schema.id);
 
     if (selectedFieldKeys && selectedFieldKeys.length > 0) {
       fields = fields.filter(f => selectedFieldKeys.includes(f.name));
@@ -116,34 +116,30 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
     }
     
     return fields;
-  }, [schema.output_contract, selectedFieldKeys, targetFieldKey, compact]);
+  }, [schema.output_contract, schema, selectedFieldKeys, targetFieldKey, compact]);
 
   const isPotentiallyLong = useMemo(() => {
-    // This logic needs to be updated based on the `output_contract`
-    return fieldsToDisplay.some(f => f.type === 'array');
+    return fieldsToDisplay.some(f => (f as any).type === "array");
   }, [fieldsToDisplay]);
   
-  const isFailed = result.status === 'failed';
+  const isFailed = result.status === "failure";
 
-  const formatFieldValue = (rawValueObject: any, field: SchemeField, highlightValue: string | null): React.ReactNode => {
-      let valueForField: any;
-      if (typeof rawValueObject === 'object' && rawValueObject !== null && !Array.isArray(rawValueObject)) {
-          valueForField = rawValueObject[field.name];
-      } else {
-          valueForField = rawValueObject;
-      }
+  const formatFieldValue = (rawValueObject: any, field: SchemaField, highlightValue: string | null): React.ReactNode => {
+      // Use hierarchical field access with the full path (e.g., "document.topics")
+      const valueForField = getAnnotationFieldValue(rawValueObject, field.name);
 
       if (valueForField === null || valueForField === undefined) {
            return <span className="text-gray-400 italic">N/A</span>;
       }
 
       // This switch logic needs to be updated to handle JSON schema types
-      switch (field.type) {
-          case 'integer':
+      switch ((field as any).type) {
+          case "integer":
               return <Badge variant="outline" className="bg-green-200/40 text-black">{String(valueForField)}</Badge>; 
-          case 'string':
+          case "string":
+          case "boolean":
               return <span>{String(valueForField)}</span>;
-          case 'array':
+          case "array":
               if (Array.isArray(valueForField)) {
                   if (valueForField.length === 0) return <span className="text-gray-400 italic"></span>;
                   return (
@@ -154,7 +150,7 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
                                 variant="secondary" 
                                 className={cn(highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background")}
                               >
-                                  {String(item)}
+                                  {typeof item === 'object' ? JSON.stringify(item) : String(item)}
                               </Badge>
                           ))}
                       </div>
@@ -222,7 +218,15 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
                       return null;
                   }
 
-                  const justificationValue = (typeof result.value === 'object' && result.value !== null) ? result.value[`${schemaField.name}_justification`] : undefined;
+                  const justificationValue = (() => {
+                    if (typeof result.value === 'object' && result.value !== null) {
+                      // For hierarchical schemas, the field name might be like "document.topics"
+                      // So the justification field would be "document.topics_justification"
+                      const justificationFieldPath = `${schemaField.name}_justification`;
+                      return getAnnotationFieldValue(result.value, justificationFieldPath);
+                    }
+                    return undefined;
+                  })();
                   
                   return (
                       <div key={idx} className={ 'space-y-1 border-b border-dashed border-border/30 pb-3 last:border-b-0 last:pb-0'}>
@@ -254,7 +258,10 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setIsExpanded(!isExpanded)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(!isExpanded);
+              }}
               className="mt-1 text-xs w-full justify-start text-muted-foreground hover:text-foreground"
             >
               {isExpanded ? (

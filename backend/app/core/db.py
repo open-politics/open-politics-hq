@@ -3,11 +3,13 @@ from sqlmodel import Session, create_engine, select, text
 
 from app import crud
 from app.core.config import settings
-from app.models import User, Infospace, AnnotationSchema, Asset, AssetKind, Source, Bundle, Task, AssetBundleLink, SourceStatus
+from app.models import User, Infospace, AnnotationSchema, Asset, AssetKind, Source, Bundle, Task, AssetBundleLink, SourceStatus, AnalysisAdapter, EmbeddingModel, EmbeddingProvider
+from app.api.providers.embedding_config import embedding_models_config
 from app.schemas import UserCreate, InfospaceCreate
 from app.core.security import get_password_hash
-from app.core.initial_data import INITIAL_SCHEMAS, INITIAL_ASSETS
-from app.core.initial_data_scenario import (
+from app.core.initial_data import (
+    INITIAL_SCHEMAS, 
+    INITIAL_ASSETS,
     SCENARIO_ANALYSIS_SCHEMA,
     SCENARIO_CSV_CONTENT,
     SCENARIO_PDF_ASSET,
@@ -106,10 +108,10 @@ def init_db(session: Session) -> None:
         infospace_in = InfospaceCreate(
             name="Default Infospace",
             description="This is the default infospace for the user",
+            owner_id=user.id
         )
         infospace = Infospace(
-            **infospace_in.model_dump(),
-            owner_id=user.id
+            **infospace_in.model_dump()
         )
         session.add(infospace)
         session.commit()
@@ -119,39 +121,41 @@ def init_db(session: Session) -> None:
         infospace = super_user_infospace
         logger.info(f"Default infospace for user {user.email} already exists.")
 
-    # --- Create Initial Annotation Schemas from initial_data.py ---
-    for schema_data in INITIAL_SCHEMAS:
-        existing_schema = session.exec(
-            select(AnnotationSchema).where(
-                AnnotationSchema.infospace_id == infospace.id,
-                AnnotationSchema.name == schema_data.name
-            )
-        ).first()
-        
-        if not existing_schema:
-            # Convert FieldJustificationConfig objects to dictionaries for JSON storage
-            justification_configs = {}
-            if schema_data.field_specific_justification_configs:
-                for field_name, config in schema_data.field_specific_justification_configs.items():
-                    justification_configs[field_name] = config.model_dump() if hasattr(config, 'model_dump') else config
+    # --- Create Initial Annotation Schemas from initial_data.py for ALL infospaces ---
+    all_infospaces = session.exec(select(Infospace)).all()
+    for space in all_infospaces:
+        for schema_data in INITIAL_SCHEMAS:
+            existing_schema = session.exec(
+                select(AnnotationSchema).where(
+                    AnnotationSchema.infospace_id == space.id,
+                    AnnotationSchema.name == schema_data.name
+                )
+            ).first()
             
-            new_schema = AnnotationSchema(
-                name=schema_data.name,
-                description=schema_data.description,
-                output_contract=schema_data.output_contract or {},
-                instructions=schema_data.instructions,
-                field_specific_justification_configs=justification_configs,
-                version=schema_data.version or "1.0",
-                infospace_id=infospace.id,
-                user_id=user.id
-            )
-            session.add(new_schema)
-            logger.info(f"Creating initial schema: {new_schema.name}")
-        else:
-            logger.info(f"Initial schema '{schema_data.name}' already exists.")
+            if not existing_schema:
+                # Convert FieldJustificationConfig objects to dictionaries for JSON storage
+                justification_configs = {}
+                if schema_data.field_specific_justification_configs:
+                    for field_name, config in schema_data.field_specific_justification_configs.items():
+                        justification_configs[field_name] = config.model_dump() if hasattr(config, 'model_dump') else config
+                
+                new_schema = AnnotationSchema(
+                    name=schema_data.name,
+                    description=schema_data.description,
+                    output_contract=schema_data.output_contract or {},
+                    instructions=schema_data.instructions,
+                    field_specific_justification_configs=justification_configs,
+                    version=schema_data.version or "1.0",
+                    infospace_id=space.id, # Use the current infospace's ID
+                    user_id=space.owner_id # Associate with the infospace owner
+                )
+                session.add(new_schema)
+                logger.info(f"Creating initial schema: '{new_schema.name}' in Infospace {space.id} ('{space.name}')")
+            else:
+                logger.info(f"Initial schema '{schema_data.name}' already exists in Infospace {space.id} ('{space.name}').")
     session.commit()
 
-    # --- Create Initial Assets from initial_data.py ---
+    # --- Create Initial Assets from initial_data.py (Only for the default infospace)---
     for asset_data in INITIAL_ASSETS:
         try:
             asset_kind_enum = AssetKind(asset_data.kind)
@@ -352,7 +356,7 @@ def init_db(session: Session) -> None:
         scheme_in = AnnotationSchema(
             name="Default Scheme",
             description="Default classification scheme for the infospace",
-            output_contract={"label": "string"},
+            output_contract={"properties": {"label": {"type": "string"}}},
             infospace_id=infospace.id,
             user_id=user.id
         )
@@ -372,9 +376,17 @@ def init_db(session: Session) -> None:
             name="Sentiment Analysis",
             description="Classifies text as positive, negative, or neutral.",
             output_contract={
-                "sentiment": {
-                    "type": "string",
-                    "enum": ["positive", "negative", "neutral"],
+                "properties": {
+                    "document": {
+                        "type": "object",
+                        "properties": {
+                            "sentiment": {
+                                "type": "string",
+                                "enum": ["positive", "negative", "neutral"],
+                            }
+                        },
+                        "required": ["sentiment"]
+                    }
                 }
             },
             infospace_id=infospace.id,
@@ -393,7 +405,7 @@ def init_db(session: Session) -> None:
         t_scheme = AnnotationSchema(
             name="Topic Modeling",
             description="Identifies the main topic of a document.",
-            output_contract={"topic": "string"},
+            output_contract={"properties": {"document": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]}}},
             infospace_id=infospace.id,
             user_id=user.id
         )
@@ -413,12 +425,20 @@ def init_db(session: Session) -> None:
             description="Categorize political content into predefined categories.",
             instructions="Analyze the text and select all applicable political categories that the content belongs to.",
             output_contract={
-                "categories": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": ["Economic Policy", "Foreign Policy", "Healthcare", "Education", 
-                                 "Environment", "Immigration", "Civil Rights", "National Security"]
+                "properties":{
+                    "document": {
+                        "type": "object",
+                        "properties": {
+                            "categories": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["Economic Policy", "Foreign Policy", "Healthcare", "Education", 
+                                            "Environment", "Immigration", "Civil Rights", "National Security"]
+                                }
+                            }
+                        },
+                        "required": ["categories"]
                     }
                 }
             },
@@ -442,16 +462,24 @@ def init_db(session: Session) -> None:
             description="Extract entities and their associated statements from political text.",
             instructions="Identify key political entities mentioned in the text and extract the main statements or claims made about them.",
             output_contract={
-                "entity_statements": {
-                    "type": "array",
-                    "items": {
+                "properties": {
+                    "document": {
                         "type": "object",
                         "properties": {
-                            "entity": {"type": "string"},
-                            "statement": {"type": "string"},
-                            "sentiment": {"type": "integer"}
+                            "entity_statements": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entity": {"type": "string"},
+                                        "statement": {"type": "string"},
+                                        "sentiment": {"type": "integer"}
+                                    },
+                                    "required": ["entity", "statement"]
+                                }
+                            }
                         },
-                        "required": ["entity", "statement"]
+                        "required": ["entity_statements"]
                     }
                 }
             },
@@ -461,6 +489,420 @@ def init_db(session: Session) -> None:
         session.add(entity_statement_schema_in)
         session.commit()
         session.refresh(entity_statement_schema_in)
+
+    # --- Create Analysis Adapters ---
+    logger.info("Creating initial analysis adapters...")
+    
+    # Graph Aggregator Adapter
+    graph_aggregator_exists = session.exec(
+        select(AnalysisAdapter).where(AnalysisAdapter.name == "graph_aggregator")
+    ).first()
+    
+    if not graph_aggregator_exists:
+        graph_aggregator_adapter = AnalysisAdapter(
+            name="graph_aggregator",
+            description="Aggregates individual graph fragments from an AnnotationRun into a single, cohesive graph for visualization. Outputs react-flow compatible JSON with nodes and edges.",
+            input_schema_definition={
+                "type": "object",
+                "properties": {
+                    "target_run_id": {
+                        "type": "integer",
+                        "description": "ID of the AnnotationRun containing graph fragments"
+                    },
+                    "target_schema_id": {
+                        "type": "integer", 
+                        "description": "ID of the AnnotationSchema used (should be Knowledge Graph Extractor)"
+                    },
+                    "include_isolated_nodes": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Whether to include nodes that have no edges"
+                    },
+                    "max_nodes": {
+                        "type": "integer",
+                        "description": "Maximum number of nodes to include (most frequent nodes kept)"
+                    },
+                    "node_frequency_threshold": {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Minimum frequency for a node to be included"
+                    }
+                },
+                "required": ["target_run_id", "target_schema_id"]
+            },
+            output_schema_definition={
+                "type": "object",
+                "properties": {
+                    "graph_data": {
+                        "type": "object",
+                        "properties": {
+                            "nodes": {
+                                "type": "array",
+                                "description": "React-flow compatible node objects"
+                            },
+                            "edges": {
+                                "type": "array", 
+                                "description": "React-flow compatible edge objects"
+                            }
+                        }
+                    },
+                    "graph_metrics": {
+                        "type": "object",
+                        "description": "Statistical information about the graph"
+                    },
+                    "processing_summary": {
+                        "type": "object",
+                        "description": "Summary of the aggregation process"
+                    }
+                }
+            },
+            module_path="app.api.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
+            adapter_type="graph_analysis",
+            version="1.0",
+            is_active=True,
+            is_public=True,
+            creator_user_id=user.id
+        )
+        session.add(graph_aggregator_adapter)
+        logger.info("Created Graph Aggregator analysis adapter")
+    else:
+        logger.info("Graph Aggregator analysis adapter already exists")
+
+    # RAG Adapter
+    rag_adapter_exists = session.exec(
+        select(AnalysisAdapter).where(AnalysisAdapter.name == "rag_adapter")
+    ).first()
+    
+    if not rag_adapter_exists:
+        rag_adapter = AnalysisAdapter(
+            name="rag_adapter",
+            description="Retrieval-Augmented Generation for question answering over embedded content. Uses vector similarity search to find relevant chunks and LLM generation to provide comprehensive answers.",
+            input_schema_definition={
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to answer using the knowledge base"
+                    },
+                    "embedding_model_id": {
+                        "type": "integer",
+                        "description": "ID of the embedding model to use for vector search"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Number of most relevant chunks to retrieve"
+                    },
+                    "similarity_threshold": {
+                        "type": "number",
+                        "default": 0.7,
+                        "description": "Minimum similarity threshold for chunk inclusion (0.0-1.0)"
+                    },
+                    "distance_function": {
+                        "type": "string",
+                        "default": "cosine",
+                        "enum": ["cosine", "l2", "inner_product"],
+                        "description": "Distance function for vector similarity"
+                    },
+                    "model": {
+                        "type": "string", 
+                        "default": "gemini-2.5-flash-preview-05-20",
+                        "description": "LLM model for generation"
+                    },
+                    "enable_thinking": {
+                        "type": "boolean", 
+                        "default": False,
+                        "description": "Enable thinking/reasoning in the response"
+                    },
+                    "temperature": {
+                        "type": "number", 
+                        "default": 0.1, 
+                        "description": "Generation temperature"
+                    },
+                    "max_tokens": {
+                        "type": "integer", 
+                        "default": 500, 
+                        "description": "Maximum tokens for response"
+                    },
+                    "asset_filters": {
+                        "type": "object",
+                        "properties": {
+                            "asset_kinds": {"type": "array", "items": {"type": "string"}},
+                            "source_ids": {"type": "array", "items": {"type": "integer"}},
+                            "date_range": {
+                                "type": "object",
+                                "properties": {
+                                    "start_date": {"type": "string", "format": "date-time"},
+                                    "end_date": {"type": "string", "format": "date-time"}
+                                }
+                            }
+                        },
+                        "description": "Optional filters to apply to asset selection"
+                    },
+                    "infospace_id": {
+                        "type": "integer",
+                        "description": "Limit search to specific infospace (optional)"
+                    }
+                },
+                "required": ["question", "embedding_model_id"]
+            },
+            output_schema_definition={
+                "type": "object",
+                "properties": {
+                    "answer": {
+                        "type": "string",
+                        "description": "The generated answer to the user's question"
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Explanation of how the answer was derived"
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_number": {"type": "integer"},
+                                "chunk_id": {"type": "integer"},
+                                "asset_id": {"type": "integer"},
+                                "asset_title": {"type": "string"},
+                                "text_content": {"type": "string"},
+                                "distance": {"type": "number"},
+                                "similarity": {"type": "number"}
+                            }
+                        },
+                        "description": "Sources used to generate the answer"
+                    },
+                    "context_used": {
+                        "type": "string",
+                        "description": "The assembled context provided to the LLM"
+                    },
+                    "retrieval_stats": {
+                        "type": "object",
+                        "description": "Statistics about the retrieval process"
+                    }
+                }
+            },
+            module_path="app.api.analysis.adapters.rag_adapter.RagAdapter",
+            adapter_type="question_answering",
+            version="1.0",
+            is_active=True,
+            is_public=True,
+            creator_user_id=user.id
+        )
+        session.add(rag_adapter)
+        logger.info("Created RAG analysis adapter")
+    else:
+        logger.info("RAG analysis adapter already exists")
+
+    # Graph RAG Adapter
+    graph_rag_adapter_exists = session.exec(
+        select(AnalysisAdapter).where(AnalysisAdapter.name == "graph_rag_adapter")
+    ).first()
+    
+    if not graph_rag_adapter_exists:
+        graph_rag_adapter = AnalysisAdapter(
+            name="graph_rag_adapter",
+            description="Graph-enhanced RAG adapter that combines structured graph knowledge with vector similarity search for comprehensive question-answering. Retrieves relevant graph fragments and combines them with embedding-based document retrieval.",
+            input_schema_definition={
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to answer using graph and document knowledge"
+                    },
+                    "embedding_model_id": {
+                        "type": "integer",
+                        "description": "ID of the embedding model to use for vector search"
+                    },
+                    "target_run_id": {
+                        "type": "integer",
+                        "description": "ID of the AnnotationRun containing graph fragments"
+                    },
+                    "target_schema_id": {
+                        "type": "integer",
+                        "description": "ID of the AnnotationSchema used (should be Knowledge Graph Extractor)"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Number of most relevant chunks to retrieve"
+                    },
+                    "similarity_threshold": {
+                        "type": "number",
+                        "default": 0.7,
+                        "description": "Minimum similarity threshold for chunk inclusion (0.0-1.0)"
+                    },
+                    "distance_function": {
+                        "type": "string",
+                        "default": "cosine",
+                        "enum": ["cosine", "l2", "inner_product"],
+                        "description": "Distance function for vector similarity"
+                    },
+                    "combine_strategy": {
+                        "type": "string",
+                        "default": "graph_enhanced",
+                        "enum": ["graph_only", "embedding_only", "graph_enhanced"],
+                        "description": "Strategy for combining graph and embedding contexts"
+                    },
+                                         "model": {
+                         "type": "string", 
+                         "default": "gemini-2.5-flash-preview-05-20",
+                         "description": "LLM model for generation"
+                     },
+                     "enable_thinking": {
+                         "type": "boolean", 
+                         "default": False,
+                         "description": "Enable thinking/reasoning in the response"
+                     },
+                     "temperature": {
+                         "type": "number", 
+                         "default": 0.1, 
+                         "description": "Generation temperature"
+                     },
+                     "max_tokens": {
+                         "type": "integer", 
+                         "default": 600, 
+                         "description": "Maximum tokens for response"
+                     },
+                    "asset_filters": {
+                        "type": "object",
+                        "properties": {
+                            "asset_kinds": {"type": "array", "items": {"type": "string"}},
+                            "source_ids": {"type": "array", "items": {"type": "integer"}},
+                            "date_range": {
+                                "type": "object",
+                                "properties": {
+                                    "start_date": {"type": "string", "format": "date-time"},
+                                    "end_date": {"type": "string", "format": "date-time"}
+                                }
+                            }
+                        },
+                        "description": "Optional filters to apply to asset selection"
+                    },
+                    "infospace_id": {
+                        "type": "integer",
+                        "description": "Limit search to specific infospace (optional)"
+                    }
+                },
+                "required": ["question", "embedding_model_id", "target_run_id", "target_schema_id"]
+            },
+            output_schema_definition={
+                "type": "object",
+                "properties": {
+                    "answer": {
+                        "type": "string",
+                        "description": "The generated answer combining graph and document knowledge"
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Explanation of how the answer was derived from both sources"
+                    },
+                    "graph_context": {
+                        "type": "string",
+                        "description": "Formatted graph knowledge used in the answer"
+                    },
+                    "embedding_context": {
+                        "type": "string",
+                        "description": "Formatted document context used in the answer"
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_number": {"type": "integer"},
+                                "chunk_id": {"type": "integer"},
+                                "asset_id": {"type": "integer"},
+                                "asset_title": {"type": "string"},
+                                "text_content": {"type": "string"},
+                                "distance": {"type": "number"},
+                                "similarity": {"type": "number"}
+                            }
+                        },
+                        "description": "Sources used to generate the answer"
+                    },
+                    "retrieval_stats": {
+                        "type": "object",
+                        "description": "Statistics about the retrieval process including graph fragments"
+                    }
+                }
+            },
+            module_path="app.api.analysis.adapters.graph_rag_adapter.GraphRagAdapter",
+            adapter_type="graph_question_answering",
+            version="1.0",
+            is_active=True,
+            is_public=True,
+            creator_user_id=user.id
+        )
+        session.add(graph_rag_adapter)
+        logger.info("Created Graph RAG analysis adapter")
+    else:
+        logger.info("Graph RAG analysis adapter already exists")
+
+    session.commit()
+
+    # --- Create Initial Embedding Models from Configuration ---
+    logger.info("Creating initial embedding models from configuration...")
+    
+    try:
+        # Load all provider configurations
+        for provider_name in embedding_models_config.list_all_providers():
+            provider_enum = None
+            if provider_name.upper() == "OLLAMA":
+                provider_enum = EmbeddingProvider.OLLAMA
+            elif provider_name.upper() == "JINA":
+                provider_enum = EmbeddingProvider.JINA
+            elif provider_name.upper() == "OPENAI":
+                provider_enum = EmbeddingProvider.OPENAI
+            else:
+                logger.warning(f"Unknown provider '{provider_name}', skipping")
+                continue
+            
+            provider_models = embedding_models_config.get_provider_models(provider_name)
+            
+            for model_name, model_config in provider_models.items():
+                existing_model = session.exec(
+                    select(EmbeddingModel).where(
+                        EmbeddingModel.name == model_name,
+                        EmbeddingModel.provider == provider_enum
+                    )
+                ).first()
+                
+                if not existing_model:
+                    # Create config dictionary from model_config
+                    config_dict = {
+                        "max_sequence_length": model_config.get("max_sequence_length"),
+                        "tags": model_config.get("tags", []),
+                        "languages": model_config.get("languages", []),
+                        "use_cases": model_config.get("use_cases", []),
+                        "recommended": model_config.get("recommended", False)
+                    }
+                    
+                    # Add provider-specific config
+                    if provider_name == "jina":
+                        config_dict["cost_per_1k_tokens"] = model_config.get("cost_per_1k_tokens")
+                    elif provider_name == "ollama":
+                        config_dict["model_size"] = model_config.get("model_size")
+                    
+                    embedding_model = EmbeddingModel(
+                        name=model_name,
+                        provider=provider_enum,
+                        dimension=model_config["dimension"],
+                        description=model_config.get("description", ""),
+                        config=config_dict,
+                        max_sequence_length=model_config.get("max_sequence_length")
+                    )
+                    session.add(embedding_model)
+                    logger.info(f"Created embedding model: {model_name} ({provider_name})")
+                else:
+                    logger.info(f"Embedding model '{model_name}' already exists")
+        
+        session.commit()
+        
+    except Exception as e:
+        logger.error(f"Error creating embedding models from configuration: {e}")
+        session.rollback()
 
     logger.info("Database initialization complete.")
 

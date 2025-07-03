@@ -78,14 +78,14 @@ const HomePage: React.FC<HiProps> = () => {
         <section className="flex flex-col items-center justify-center flex-grow p-8">
           <div className="text-center mb-8">
             <h1 className="text-4xl md:text-6xl font-bold leading-none dark:text-white">
-              <div className="flex flex-col items-center">
+              <span className="flex flex-col items-center">
                 <span style={{ letterSpacing: '0.1em' }}>What are you</span>
-                <div className="flex items-center">
+                <span className="flex items-center">
                   <span id="shimmer-ast" className="shimmer mt-2" style={{ letterSpacing: '0.1em' }}>*</span>
                   <TypeAsync words={words} />
-                </div>
+                </span>
                 <span style={{ letterSpacing: '0.1em' }}>for?</span>
-              </div>
+              </span>
             </h1>
           </div>
 

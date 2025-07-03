@@ -1,11 +1,11 @@
 'use client';
 
-import AnnotationSchemeManager from '@/components/collection/infospaces/annotation/AnnotationSchemeManager';
+import AnnotationSchemaManager from '@/components/collection/infospaces/annotation/AnnotationSchemaManager';
   
 export default function AnnotationSchemesPage() {
   return (
-    <div className="container mx-auto px-4 py-8">
-      <AnnotationSchemeManager />
+    <div className="h-full w-full">
+      <AnnotationSchemaManager />
     </div>
   );
-};
+}

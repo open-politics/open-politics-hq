@@ -23,7 +23,7 @@ import {
 } from '@tanstack/react-table';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AnnotationSchemaRead, AnnotationRead, SourceRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AnnotationRead, AssetRead } from '@/client/models';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import AssetLink from '../assets/Helper/AssetLink';
 import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';
@@ -71,7 +71,7 @@ type AssetRow = {
 };
 
 // Interface for results potentially enriched with Source info
-interface ResultWithSourceInfo extends AnnotationRead {
+export interface ResultWithSourceInfo extends FormattedAnnotation {
   source_name?: string; 
   source_id?: number;
 }
@@ -79,7 +79,7 @@ interface ResultWithSourceInfo extends AnnotationRead {
 interface AnnotationResultsTableProps {
   results: ResultWithSourceInfo[];
   schemas: AnnotationSchemaRead[];
-  sources: SourceRead[];
+  sources: { id: number; name: string }[];
   assets: AssetRead[];
   filters?: ResultFilter[];
   isLoading?: boolean;
@@ -153,14 +153,15 @@ export function AnnotationResultsTable({
     pageSize: 20,
   });
   const [globalFilter, setGlobalFilter] = useState('');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const { activeInfospace } = useInfospaceStore();
-  const { loadRuns: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
+  const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
 
   const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
     const initialState: Record<number, string[]> = {};
     schemas.forEach(schema => {
-        const properties = (schema.output_contract as any)?.properties;
-        initialState[schema.id] = properties ? Object.keys(properties) : [];
+        const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+        initialState[schema.id] = targetKeys.map(tk => tk.key);
     });
     return initialState;
   });
@@ -169,8 +170,8 @@ export function AnnotationResultsTable({
     setSelectedFieldsPerScheme(prev => {
       const newState: Record<number, string[]> = {};
       schemas.forEach(schema => {
-        const properties = (schema.output_contract as any)?.properties;
-        const keys = properties ? Object.keys(properties) : [];
+        const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+        const keys = targetKeys.map(tk => tk.key);
         newState[schema.id] = prev[schema.id] ?? keys;
       });
       return newState;
@@ -186,6 +187,10 @@ export function AnnotationResultsTable({
   type EnrichedAssetRecord = AssetRead & {
     sourceName: string | null;
     resultsMap: Record<number, ResultWithSourceInfo>; // Map schema_id to result
+    isChildRow?: boolean; // Indicates if this is a CSV row child
+    parentAssetId?: number; // Reference to parent asset for child rows
+    hasChildren?: boolean; // Indicates if this asset has children
+    children?: EnrichedAssetRecord[]; // Child assets for hierarchical display
   };
 
   const tableData = useMemo((): EnrichedAssetRecord[] => {
@@ -207,35 +212,154 @@ export function AnnotationResultsTable({
         return acc;
     }, {} as Record<number, ResultWithSourceInfo[]>);
 
-    const filteredAssets = assets.filter(asset => {
-        const assetResults = resultsByAssetId[asset.id] || [];
-        if (assetResults.length === 0 && filters.length > 0) return false;
-        return filters.every(filter => checkFilterMatch(filter, assetResults, schemas));
+    // Get all assets that have results OR are CSV parents with children that have results
+    const assetsWithResults = new Set<number>();
+    const csvParentsWithChildren = new Set<number>();
+    
+    // First pass: identify assets with direct results
+    assets.forEach(asset => {
+      if (resultsByAssetId[asset.id] && resultsByAssetId[asset.id].length > 0) {
+        assetsWithResults.add(asset.id);
+        
+        // If this is a CSV row, also include its parent
+        if (asset.kind === 'csv_row' && asset.parent_asset_id) {
+          csvParentsWithChildren.add(asset.parent_asset_id);
+        }
+      }
     });
 
-    const enrichedRecords: EnrichedAssetRecord[] = filteredAssets.map(asset => {
+    // Create enriched records for both parents and children
+    const enrichedRecordsMap = new Map<number, EnrichedAssetRecord>();
+    
+    assets.forEach(asset => {
+      const shouldInclude = assetsWithResults.has(asset.id) || csvParentsWithChildren.has(asset.id);
+      
+      if (shouldInclude) {
         const sourceInfo = typeof asset.source_id === 'number'
-            ? sourceInfoMap.get(asset.source_id)
-            : null;
+          ? sourceInfoMap.get(asset.source_id)
+          : null;
         const assetResults = resultsByAssetId[asset.id] || [];
         const resultsMap: Record<number, ResultWithSourceInfo> = {};
         assetResults.forEach(res => {
-            resultsMap[res.schema_id] = res;
+          resultsMap[res.schema_id] = res;
         });
 
-        return {
-            ...asset,
-            sourceName: sourceInfo ? sourceInfo.name : 'Unknown Source',
-            resultsMap: resultsMap,
+        const isCSVParent = asset.kind === 'csv' && csvParentsWithChildren.has(asset.id);
+        const isCSVChild = asset.kind === 'csv_row';
+
+        const enrichedRecord: EnrichedAssetRecord = {
+          ...asset,
+          sourceName: sourceInfo ? sourceInfo.name : 'Unknown Source',
+          resultsMap: resultsMap,
+          isChildRow: isCSVChild,
+          parentAssetId: asset.parent_asset_id || undefined,
+          hasChildren: isCSVParent,
+          children: [],
         };
+
+        enrichedRecordsMap.set(asset.id, enrichedRecord);
+      }
     });
 
-    return enrichedRecords;
+    // Build hierarchy: attach children to parents
+    const topLevelRecords: EnrichedAssetRecord[] = [];
+    
+    enrichedRecordsMap.forEach(record => {
+      if (record.isChildRow && record.parentAssetId) {
+        // This is a child row, attach to parent
+        const parent = enrichedRecordsMap.get(record.parentAssetId);
+        if (parent) {
+          parent.children = parent.children || [];
+          parent.children.push(record);
+        }
+      } else {
+        // This is a top-level record
+        topLevelRecords.push(record);
+      }
+    });
 
+    // Sort children by part_index
+    topLevelRecords.forEach(record => {
+      if (record.children && record.children.length > 0) {
+        record.children.sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
+      }
+    });
+
+    // Apply filters to top-level records
+    const filteredRecords = topLevelRecords.filter(record => {
+      // For CSV parents, check if any children match filters
+      if (record.hasChildren && record.children) {
+        return record.children.some(child => {
+          const childResults = Object.values(child.resultsMap);
+          return filters.every(filter => checkFilterMatch(filter, childResults, schemas));
+        });
+      }
+      
+      // For regular assets, check direct results
+      const assetResults = Object.values(record.resultsMap);
+      if (assetResults.length === 0) return false;
+      return filters.every(filter => checkFilterMatch(filter, assetResults, schemas));
+    });
+
+    return filteredRecords;
   }, [results, filters, schemas, assets, sources]);
+
+  // Create flattened data for table display (including expanded children)
+  const flattenedTableData = useMemo((): EnrichedAssetRecord[] => {
+    const flattened: EnrichedAssetRecord[] = [];
+    
+    tableData.forEach(record => {
+      // Always add the parent record
+      flattened.push(record);
+      
+      // Add children if expanded
+      if (record.hasChildren && record.children && expanded[record.id.toString()]) {
+        record.children.forEach(child => {
+          flattened.push(child);
+        });
+      }
+    });
+    
+    return flattened;
+  }, [tableData, expanded]);
 
   const columns = useMemo((): ColumnDef<EnrichedAssetRecord>[] => {
     const staticColumns: ColumnDef<EnrichedAssetRecord>[] = [
+      {
+        id: 'expander',
+        header: '',
+        cell: ({ row }) => {
+          const record = row.original;
+          if (record.hasChildren && record.children && record.children.length > 0) {
+            const isExpanded = expanded[record.id.toString()];
+            return (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0"
+                                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpanded(prev => {
+                      const newExpanded = Object.assign({}, prev);
+                      newExpanded[record.id.toString()] = !prev[record.id.toString()];
+                      return newExpanded;
+                    });
+                  }}
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            );
+          }
+          return null;
+        },
+        size: 40,
+        enableSorting: false,
+        enableHiding: false,
+      },
       {
         id: 'exclude',
         header: ({ table }) => (
@@ -250,15 +374,22 @@ export function AnnotationResultsTable({
                 </Tooltip>
             </TooltipProvider>
         ),
-        cell: ({ row }) => (
-            <Checkbox
-                checked={!!excludedRecordIds && excludedRecordIds.has(row.original.id)}
-                onCheckedChange={() => onToggleRecordExclusion(row.original.id)}
-                aria-label="Exclude this record from analysis"
-                className="ml-1 data-[state=checked]:bg-orange-600 data-[state=checked]:border-orange-700"
-                onClick={(e) => e.stopPropagation()}
-            />
-        ),
+        cell: ({ row }) => {
+          const record = row.original;
+          // Only show exclude checkbox for records that have annotations (child rows)
+          if (record.isChildRow || (!record.hasChildren && Object.keys(record.resultsMap).length > 0)) {
+            return (
+              <Checkbox
+                  checked={!!excludedRecordIds && excludedRecordIds.has(record.id)}
+                  onCheckedChange={() => onToggleRecordExclusion(record.id)}
+                  aria-label="Exclude this record from analysis"
+                  className="ml-1 data-[state=checked]:bg-orange-600 data-[state=checked]:border-orange-700"
+                  onClick={(e) => e.stopPropagation()}
+              />
+            );
+          }
+          return null;
+        },
         size: 40,
         enableSorting: false,
         enableHiding: false,
@@ -271,14 +402,20 @@ export function AnnotationResultsTable({
             <ArrowUpDown className="ml-2 h-3.5 w-3.5" />
           </Button>
         ),
-        cell: ({ row }) => (
-          <div className="pl-1 w-[60px] truncate">
-            <AssetLink assetId={row.original.id}>
-              <div className="hover:underline cursor-pointer">{row.original.id}</div>
-            </AssetLink>
-          </div>
-        ),
-        size: 100,
+        cell: ({ row }) => {
+          const record = row.original;
+          return (
+            <div className={cn("pl-1 w-[60px] truncate flex items-center", record.isChildRow && "ml-4")}>
+              {record.isChildRow && (
+                <div className="w-2 h-2 rounded-full bg-muted-foreground/40 mr-2 flex-shrink-0"></div>
+              )}
+              <AssetLink assetId={record.id}>
+                <div className="hover:underline cursor-pointer">{record.id}</div>
+              </AssetLink>
+            </div>
+          );
+        },
+        size: 120,
       },
       {
         accessorKey: 'title',
@@ -288,13 +425,22 @@ export function AnnotationResultsTable({
             <ArrowUpDown className="ml-2 h-4 w-4" />
           </Button>
         ),
-        cell: ({ row }) => (
-          <AssetLink assetId={row.original.id}>
-            <div className="font-medium max-w-[250px] truncate hover:underline cursor-pointer" title={row.original.title || 'No Title'}>
-              {row.original.title || <span className="italic text-muted-foreground">No Title</span>}
-            </div>
-          </AssetLink>
-        ),
+        cell: ({ row }) => {
+          const record = row.original;
+          return (
+            <AssetLink assetId={record.id}>
+              <div className={cn(
+                "font-medium max-w-[250px] truncate hover:underline cursor-pointer flex items-center",
+                record.isChildRow && "ml-4 text-sm"
+              )} title={record.title || 'No Title'}>
+                {record.isChildRow && (
+                  <div className="w-2 h-2 rounded-full bg-muted-foreground/40 mr-2 flex-shrink-0"></div>
+                )}
+                {record.title || <span className="italic text-muted-foreground">No Title</span>}
+              </div>
+            </AssetLink>
+          );
+        },
         size: 250,
       },
       {
@@ -305,7 +451,14 @@ export function AnnotationResultsTable({
              <ArrowUpDown className="ml-2 h-4 w-4" />
            </Button>
          ),
-         cell: ({ row }) => <div className="font-medium">{row.getValue('sourceName')}</div>,
+         cell: ({ row }) => {
+           const record = row.original;
+           return (
+             <div className={cn("font-medium", record.isChildRow && "ml-4 text-sm")}>
+               {record.sourceName}
+             </div>
+           );
+         },
          size: 150,
        },
     ];
@@ -318,8 +471,8 @@ export function AnnotationResultsTable({
             const currentSelected = prev[schema.id] || [];
             const isSelected = currentSelected.includes(fieldKey);
             const newSelected = isSelected ? currentSelected.filter(key => key !== fieldKey) : [...currentSelected, fieldKey];
-            const properties = (schema.output_contract as any)?.properties;
-            const keys = properties ? Object.keys(properties) : [];
+            const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+            const keys = targetKeys.map(tk => tk.key);
             if (newSelected.length === 0 && keys.length > 0) {
               return { ...prev, [schema.id]: [keys[0]] };
             }
@@ -327,6 +480,7 @@ export function AnnotationResultsTable({
           });
         };
         const currentSelectedFields = selectedFieldsPerScheme[schema.id] || [];
+        const availableFields = getTargetKeysForScheme(schema.id, schemas);
 
         return (
           <div className="flex flex-col space-y-1">
@@ -342,19 +496,19 @@ export function AnnotationResultsTable({
                  <PopoverContent className="w-56 p-0" align="start">
                     <div className="p-2 font-medium text-xs border-b">Show Fields:</div>
                     <ScrollArea className="max-h-60 p-1">
-                      {Object.keys((schema.output_contract as any)?.properties || {}).map(fieldKey => (
-                        <div key={fieldKey} className="flex items-center space-x-2 px-2 py-1.5 text-xs">
+                      {availableFields.map(field => (
+                        <div key={field.key} className="flex items-center space-x-2 px-2 py-1.5 text-xs">
                            <Checkbox
-                              id={`field-header-toggle-${schema.id}-${fieldKey}`}
-                              checked={currentSelectedFields.includes(fieldKey)}
-                              onCheckedChange={() => handleFieldToggle(fieldKey)}
-                              disabled={currentSelectedFields.length === 1 && currentSelectedFields.includes(fieldKey)}
+                              id={`field-header-toggle-${schema.id}-${field.key}`}
+                              checked={currentSelectedFields.includes(field.key)}
+                              onCheckedChange={() => handleFieldToggle(field.key)}
+                              disabled={currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)}
                            />
                            <Label
-                              htmlFor={`field-header-toggle-${schema.id}-${fieldKey}`}
-                              className={cn("font-normal cursor-pointer", (currentSelectedFields.length === 1 && currentSelectedFields.includes(fieldKey)) && "opacity-50 cursor-not-allowed")}
+                              htmlFor={`field-header-toggle-${schema.id}-${field.key}`}
+                              className={cn("font-normal cursor-pointer", (currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)) && "opacity-50 cursor-not-allowed")}
                            >
-                              {fieldKey}
+                              {field.name} ({field.type})
                            </Label>
                         </div>
                       ))}
@@ -373,7 +527,7 @@ export function AnnotationResultsTable({
         }
 
         const fieldKeysToShow = selectedFieldsPerScheme[schema.id] || [];
-        const isFailed = resultForThisCell.status === 'failed';
+        const isFailed = resultForThisCell.status === 'failure';
 
         return (
           <div className={cn("relative h-full", isFailed && "border-l-2 border-destructive pl-1")}>
@@ -392,7 +546,7 @@ export function AnnotationResultsTable({
               </TooltipProvider>
             )}
             <AnnotationResultDisplay
-              result={resultForThisCell as FormattedAnnotation}
+              result={resultForThisCell}
               schema={schema}
               compact={false}
               selectedFieldKeys={fieldKeysToShow}
@@ -411,7 +565,7 @@ export function AnnotationResultsTable({
            size: 120,
            cell: ({ row }) => {
              const firstResult = Object.values(row.original.resultsMap)[0];
-             const timestamp = firstResult?.created_at;
+             const timestamp = firstResult?.timestamp;
              return <div className="text-xs w-[100px] truncate">{timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}</div>;
            },
         },
@@ -447,7 +601,7 @@ export function AnnotationResultsTable({
                     </DropdownMenuItem>
                   )}
                   {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
-                   {onRetrySingleResult && firstResult.status === 'failed' && (
+                   {onRetrySingleResult && firstResult.status === 'failure' && (
                      <DropdownMenuItem
                        onClick={(e) => {
                          e.stopPropagation();
@@ -491,7 +645,7 @@ export function AnnotationResultsTable({
   ]);
   
   const table = useReactTable<EnrichedAssetRecord>({ 
-    data: tableData,
+    data: flattenedTableData,
     columns,
     state: {
       sorting,
@@ -499,17 +653,29 @@ export function AnnotationResultsTable({
       rowSelection,
       pagination, 
       globalFilter,
+      expanded: expanded as ExpandedState,
     },
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     getRowId: (record) => record.id.toString(),
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
+    onExpandedChange: (updater) => {
+      if (typeof updater === 'function') {
+        setExpanded(prev => {
+          const newState = updater(prev as ExpandedState);
+          return newState as Record<string, boolean>;
+        });
+      } else {
+        setExpanded(updater as Record<string, boolean>);
+      }
+    },
   });
 
   return (
@@ -546,11 +712,28 @@ export function AnnotationResultsTable({
                     <TableRow
                       key={row.id}
                       data-state={row.getIsSelected() && "selected"}
-                      className={cn("cursor-pointer hover:bg-muted/30 transition-opacity", !!excludedRecordIds && excludedRecordIds.has(row.original.id) && "opacity-50 bg-muted/10 hover:bg-muted/20")}
+                      className={cn(
+                        "cursor-pointer hover:bg-muted/30 transition-opacity", 
+                        !!excludedRecordIds && excludedRecordIds.has(row.original.id) && "opacity-50 bg-muted/10 hover:bg-muted/20",
+                        row.original.isChildRow && "bg-muted/5",
+                        row.original.hasChildren && "font-medium"
+                      )}
                       onClick={() => {
-                        const firstResult = Object.values(row.original.resultsMap)[0];
-                        if (firstResult && onResultSelect) {
-                           onResultSelect(firstResult);
+                        const record = row.original;
+                        
+                                                 if (record.hasChildren && record.children && record.children.length > 0) {
+                           // This is a CSV parent - toggle expansion
+                           setExpanded(prev => {
+                             const newExpanded = Object.assign({}, prev);
+                             newExpanded[record.id.toString()] = !prev[record.id.toString()];
+                             return newExpanded;
+                           });
+                         } else {
+                          // This is a child row or regular asset - show details if it has results
+                          const firstResult = Object.values(record.resultsMap)[0];
+                          if (firstResult && onResultSelect) {
+                             onResultSelect(firstResult);
+                          }
                         }
                       }}
                     >

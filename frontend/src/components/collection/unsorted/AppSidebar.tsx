@@ -31,7 +31,8 @@ import {
   ChevronRight,
   ArrowLeftToLine,
   ArrowRightToLine,
-  Database
+  Database,
+  Search
 } from "lucide-react"
 
 import { NavMain } from "@/components/ui/nav-main"
@@ -79,7 +80,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     },
     {
     title: "Classifiers",
-    url: "/desks/home/infospaces/classification-schemes",
+    url: "/desks/home/infospaces/annotation-schemes",
       icon: Microscope,
       isActive: true,
     },
@@ -91,8 +92,14 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     },
     {
       title: "Analysis Runner",
-      url: "/desks/home/infospaces/classification-runner",
+      url: "/desks/home/infospaces/annotation-runner",
       icon: SquareTerminal,
+      isActive: true,
+    },
+    {
+      title: "Content Search",
+      url: "/desks/home/infospaces/content-search",
+      icon: Search,
       isActive: true,
     },
     {

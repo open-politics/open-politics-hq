@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.core.opol_config import get_fastclass # Relies on global opol instance configured by settings
 from app.api.providers.base import ClassificationProvider # Protocol
+from app.api.providers.llm_config import llm_models_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -128,4 +129,41 @@ class OpolClassificationProvider(ClassificationProvider):
 
         except Exception as e:
             logger.error(f"OPOL fastclass classification failed for model_class {output_model_class.__name__} (provider: {self.provider_for_fastclass}, model: {current_model_name}): {str(e)}", exc_info=True)
-            raise RuntimeError(f"OPOL (fastclass) classification failed: {str(e)}") from e 
+            raise RuntimeError(f"OPOL (fastclass) classification failed: {str(e)}") from e
+    
+    def get_model_capabilities(self) -> Dict[str, Any]:
+        """Get capabilities of the current model from the LLM config."""
+        try:
+            # Map provider names to config names
+            provider_map = {
+                "Google": "gemini",
+                "OpenAI": "openai", 
+                "Ollama": "ollama"
+            }
+            
+            config_provider = provider_map.get(self.provider_for_fastclass, self.provider_for_fastclass.lower())
+            model_config = llm_models_config.get_model_config(config_provider, self.model_name_for_fastclass)
+            
+            if model_config:
+                return {
+                    "supports_multimodal": False,  # OPOL/fastclass is primarily text-based
+                    "supports_structured_output": True,  # OPOL supports structured output
+                    "supports_thinking": model_config.get("supports_thinking", False),
+                    "max_tokens": model_config.get("max_tokens"),
+                    "context_length": model_config.get("context_length"),
+                    "model_name": self.model_name_for_fastclass,
+                    "provider": f"opol_{self.provider_for_fastclass.lower()}"
+                }
+        except Exception as e:
+            logger.warning(f"Could not get model capabilities from config: {e}")
+        
+        # Fallback capabilities
+        return {
+            "supports_multimodal": False,
+            "supports_structured_output": True,
+            "supports_thinking": False,
+            "max_tokens": 4096,
+            "context_length": 32768,
+            "model_name": self.model_name_for_fastclass,
+            "provider": f"opol_{self.provider_for_fastclass.lower()}"
+        } 

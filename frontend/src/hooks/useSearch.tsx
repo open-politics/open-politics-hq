@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ArticlesService, ClassificationService } from '@/client/services';
+import { ArticlesService, LocationsService } from '@/client/services';
 import { useLocationData } from './useLocationData';
 import { useCoordinatesStore } from '@/zustand_stores/storeCoordinates';
 import { useArticleTabNameStore } from './useArticleTabNameStore';
@@ -102,13 +102,15 @@ export function useSearch(
   const fetchLocationFromNLQuery = useCallback(
     async (query: string): Promise<LocationData | null> => {
       try {
-        const response = await ClassificationService.getLocationFromQuery({
+        const response = await LocationsService.locationFromQuery({
           query: query,
         });
 
-        if (response?.data) {
+        const responseData = response as any; // Cast to access data property
+
+        if (responseData?.data) {
           const { coordinates, country_name, bbox, area, location_type } =
-            response.data;
+            responseData.data;
           const locationData = {
             country_name,
             coordinates: {

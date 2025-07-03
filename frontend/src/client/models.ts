@@ -1,3 +1,21 @@
+export type AnalysisAdapterRead = {
+	name: string;
+	description?: string | null;
+	input_schema_definition?: Record<string, unknown> | null;
+	output_schema_definition?: Record<string, unknown> | null;
+	version?: string;
+	module_path?: string | null;
+	adapter_type: string;
+	is_public?: boolean;
+	id: number;
+	is_active: boolean;
+	creator_user_id?: number | null;
+	created_at: string;
+	updated_at: string;
+};
+
+
+
 export type AnnotationCreate = {
 	value: Record<string, unknown>;
 	status?: ResultStatus;
@@ -60,6 +78,8 @@ export type AnnotationRunRead = {
 	started_at: string | null;
 	completed_at: string | null;
 	error_message: string | null;
+	annotation_count?: number | null;
+	schema_ids?: Array<number> | null;
 };
 
 
@@ -105,6 +125,8 @@ export type AnnotationSchemaRead = {
 	created_at: string;
 	updated_at: string;
 	field_specific_justification_configs?: Record<string, FieldJustificationConfig> | null;
+	annotation_count?: number | null;
+	is_active: boolean;
 };
 
 
@@ -116,6 +138,7 @@ export type AnnotationSchemaUpdate = {
 	instructions?: string | null;
 	version?: string | null;
 	field_specific_justification_configs?: Record<string, FieldJustificationConfig> | null;
+	is_active?: boolean | null;
 };
 
 
@@ -150,6 +173,17 @@ export type ArticleResponse = {
 
 
 
+export type AssetChunkRead = {
+	asset_id: number;
+	chunk_index: number;
+	text_content: string;
+	chunk_metadata?: Record<string, unknown> | null;
+	id: number;
+	created_at: string;
+};
+
+
+
 export type AssetCreate = {
 	title?: string | null;
 	kind: AssetKind;
@@ -168,6 +202,27 @@ export type AssetCreate = {
 
 
 export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | 'csv' | 'csv_row' | 'mbox' | 'email' | 'pdf_page' | 'text_chunk' | 'image_region' | 'video_scene' | 'audio_segment' | 'article' | 'file';
+
+
+
+/**
+ * A lightweight public representation of an Asset.
+ */
+export type AssetPreview = {
+	id: number;
+	title: string;
+	kind: AssetKind;
+	created_at: string;
+	updated_at: string;
+	text_content?: string | null;
+	blob_path?: string | null;
+	source_metadata?: Record<string, unknown> | null;
+	children?: Array<AssetPreview>;
+	/**
+	 * Helper to know if this asset might have children (e.g., PDF, CSV).
+	 */
+	readonly is_container: boolean;
+};
 
 
 
@@ -313,6 +368,20 @@ export type BundleCreate = {
 
 
 
+/**
+ * A lightweight public representation of a Bundle.
+ */
+export type BundlePreview = {
+	id: number;
+	name: string;
+	description?: string | null;
+	created_at: string;
+	updated_at: string;
+	assets?: Array<AssetPreview>;
+};
+
+
+
 export type BundleRead = {
 	name: string;
 	description?: string | null;
@@ -320,10 +389,10 @@ export type BundleRead = {
 	id: number;
 	infospace_id: number;
 	created_at: string;
+	updated_at: string;
 	asset_count: number;
 	uuid: string;
 	user_id: number;
-	updated_at: string;
 	purpose?: string | null;
 	bundle_metadata?: Record<string, unknown> | null;
 };
@@ -336,6 +405,47 @@ export type BundleUpdate = {
 	tags?: Array<string> | null;
 	purpose?: string | null;
 	bundle_metadata?: Record<string, unknown> | null;
+};
+
+
+
+export type ChunkAssetRequest = {
+	strategy?: string;
+	chunk_size?: number;
+	chunk_overlap?: number;
+	overwrite_existing?: boolean;
+};
+
+
+
+export type ChunkAssetsRequest = {
+	asset_ids?: Array<number> | null;
+	asset_kinds?: Array<string> | null;
+	infospace_id?: number | null;
+	strategy?: string;
+	chunk_size?: number;
+	chunk_overlap?: number;
+	overwrite_existing?: boolean;
+};
+
+
+
+export type ChunkingResultResponse = {
+	message: string;
+	asset_id: number;
+	chunks_created: number;
+	strategy_used: string;
+	strategy_params: Record<string, unknown>;
+};
+
+
+
+export type ChunkingStatsResponse = {
+	total_chunks: number;
+	total_characters?: number | null;
+	average_chunk_size?: number | null;
+	assets_with_chunks?: number | null;
+	strategies_used?: Record<string, number> | null;
 };
 
 
@@ -415,9 +525,97 @@ export type DatasetsOut = {
 
 
 
+export type EmbeddingGenerateRequest = {
+	chunk_ids: Array<number>;
+	model_name: string;
+	provider: string;
+};
+
+
+
+export type EmbeddingModelCreate = {
+	name: string;
+	provider: string;
+	dimension: number;
+	description?: string | null;
+	config?: Record<string, unknown> | null;
+	max_sequence_length?: number | null;
+};
+
+
+
+export type EmbeddingModelRead = {
+	name: string;
+	provider: string;
+	dimension: number;
+	description?: string | null;
+	config?: Record<string, unknown> | null;
+	max_sequence_length?: number | null;
+	id: number;
+	is_active: boolean;
+	created_at: string;
+	updated_at: string;
+	embedding_time_ms?: number | null;
+};
+
+
+
+export type EmbeddingProvider = 'ollama' | 'jina' | 'openai' | 'huggingface';
+
+
+
+export type EmbeddingSearchRequest = {
+	query_text: string;
+	model_name: string;
+	provider: string;
+	limit?: number;
+	distance_threshold?: number;
+	distance_function?: string;
+};
+
+
+
+export type EmbeddingSearchResponse = {
+	query_text: string;
+	results: Array<EmbeddingSearchResult>;
+	model_name: string;
+	distance_function: string;
+};
+
+
+
+export type EmbeddingSearchResult = {
+	chunk_id: number;
+	asset_id: number;
+	text_content: string | null;
+	distance: number;
+	similarity?: number | null;
+};
+
+
+
+export type EmbeddingStatsResponse = {
+	model_id: number;
+	model_name: string;
+	provider: string;
+	dimension: number;
+	embedding_count: number;
+	table_size: string;
+	avg_embedding_time_ms?: number | null;
+};
+
+
+
 export type ExportBatchRequest = {
 	resource_type: ResourceType;
 	resource_ids: Array<number>;
+};
+
+
+
+export type ExportMixedBatchRequest = {
+	asset_ids?: Array<number>;
+	bundle_ids?: Array<number>;
 };
 
 
@@ -448,10 +646,17 @@ export type HTTPValidationError = {
 
 
 
+export type ImportFromTokenRequest = {
+	target_infospace_id: number;
+};
+
+
+
 export type InfospaceCreate = {
 	name: string;
 	description?: string | null;
 	icon?: string | null;
+	owner_id: number;
 	vector_backend?: string | null;
 	embedding_model?: string | null;
 	embedding_dim?: number | null;
@@ -587,7 +792,7 @@ export type Request = {
 
 
 
-export type ResourceType = 'bundle' | 'asset' | 'schema' | 'infospace' | 'run' | 'package';
+export type ResourceType = 'source' | 'bundle' | 'asset' | 'schema' | 'infospace' | 'run' | 'package' | 'dataset' | 'mixed';
 
 
 
@@ -681,6 +886,18 @@ export type ShareableLinkUpdate = {
 
 
 
+/**
+ * The complete public-facing model for a shared resource view.
+ */
+export type SharedResourcePreview = {
+	resource_type: ResourceType;
+	name: string;
+	description?: string | null;
+	content: AssetPreview | BundlePreview;
+};
+
+
+
 export type Token = {
 	access_token: string;
 	token_type?: string;
@@ -700,6 +917,8 @@ export type UserCreate = {
 	full_name?: string | null;
 	tier?: UserTier;
 	password: string;
+	is_superuser?: boolean;
+	is_active?: boolean;
 };
 
 
@@ -718,6 +937,7 @@ export type UserOut = {
 	tier?: UserTier;
 	id: number;
 	is_active?: boolean;
+	is_superuser?: boolean;
 };
 
 
@@ -743,9 +963,6 @@ export type UserUpdateMe = {
 
 
 export type UsersOut = {
-	email: string;
-	full_name?: string | null;
-	tier?: UserTier;
 	data: Array<UserOut>;
 	count: number;
 };

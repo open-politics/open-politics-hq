@@ -1,7 +1,7 @@
 #! /usr/bin/env bash
 
 # alembic stamp head
-# alembic revision --autogenerate -m "initial migration"
+# alembic revision --autogenerate -m "Add partial unique index to annotation schemas"
 # alembic upgrade head
 
 # Let the DB start

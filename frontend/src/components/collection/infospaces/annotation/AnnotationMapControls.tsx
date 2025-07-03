@@ -58,16 +58,18 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
 
   const geocodeFieldOptions = useMemo(() => {
     if (!selectedGeocodeSchemaId) return [];
-    const schema = schemas.find(s => s.id === parseInt(selectedGeocodeSchemaId, 10));
-    if (!schema) return [];
-    // This needs to be adapted to the new `output_contract` structure
-    // Placeholder logic:
-    const properties = (schema.output_contract as any)?.properties;
-    if (!properties) return [];
-    return Object.keys(properties).map(key => ({
-        value: key,
-        label: `${key} (${properties[key].type})`
-    }));
+    const schemaId = parseInt(selectedGeocodeSchemaId, 10);
+    
+    // Use hierarchical field extraction to get all available fields
+    const targetKeys = getTargetKeysForScheme(schemaId, schemas);
+    
+    // Filter for fields that could contain location data (primarily strings)
+    return targetKeys
+      .filter(tk => tk.type === 'string' || (tk.type === 'array' && tk.key.toLowerCase().includes('location')))
+      .map(tk => ({
+        value: tk.key,
+        label: `${tk.name} (${tk.type})`
+      }));
   }, [selectedGeocodeSchemaId, schemas]);
 
   const currentMapLabelKeys = useMemo(() => {

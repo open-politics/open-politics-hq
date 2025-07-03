@@ -4,9 +4,9 @@ import {
   AnnotationSchema,
   FormattedAnnotation,
   AnnotationSchemaFormData,
-  SchemeField,
-  FieldType,
-  DictKeyDefinition,
+  AdvancedSchemeField,
+  JsonSchemaType,
+  SchemaSection,
   SourceKind,
   SourceStatus,
   AnnotationRunStatus,
@@ -17,11 +17,10 @@ import {
   AnnotationSchemaRead as ClientAnnotationSchemaRead,
   AnnotationRunRead as ClientAnnotationRunRead,
   AnnotationSchemaCreate,
-  // Assuming these will exist after client regeneration
-  // TODO: Check these types after client regeneration
-  // We are assuming AnnotationFieldCreate and DictKeyDefinition exist on the client models
+  FieldJustificationConfig,
   AssetRead as ClientAssetRead,
 } from '@/client/models';
+import { nanoid } from 'nanoid';
 
 type ClientSourceRead = any;
 
@@ -37,6 +36,196 @@ type ClientEnhancedAnnotationRead = ClientAnnotationRead & {
  * and internal frontend types (from `./types`).
  */
 
+// --- NEW ADAPTERS FOR ADVANCED SCHEMA BUILDER ---
+
+const buildJsonSchemaProperties = (fields: AdvancedSchemeField[]): { properties: any, required: string[] } => {
+    const properties: any = {};
+    const required: string[] = [];
+
+    fields.forEach(field => {
+        if (field.name) {
+            const property: any = {
+                description: field.description || undefined,
+                type: field.type
+            };
+
+            if (field.required) {
+                required.push(field.name);
+            }
+            if (field.enum && field.enum.length > 0) {
+                property.enum = field.enum;
+            }
+            if (field.type === 'object' && field.properties) {
+                const sub = buildJsonSchemaProperties(field.properties);
+                property.properties = sub.properties;
+                if (sub.required.length > 0) {
+                    property.required = sub.required;
+                }
+            }
+            if (field.type === 'array' && field.items) {
+                property.items = { type: field.items.type };
+                if (field.items.type === 'object' && field.items.properties) {
+                    const sub = buildJsonSchemaProperties(field.items.properties);
+                    property.items.properties = sub.properties;
+                     if (sub.required.length > 0) {
+                        property.items.required = sub.required;
+                    }
+                }
+            }
+            properties[field.name] = property;
+        }
+    });
+
+    return { properties, required };
+};
+
+const collectJustificationConfigs = (structure: SchemaSection[]): { [key: string]: FieldJustificationConfig } => {
+    const configs: { [key: string]: FieldJustificationConfig } = {};
+
+    const recurse = (fields: AdvancedSchemeField[]) => {
+        for (const field of fields) {
+            if (field.justification?.enabled) {
+                configs[field.name] = {
+                    enabled: true,
+                    custom_prompt: field.justification.custom_prompt || undefined
+                };
+            }
+            if (field.properties) {
+                recurse(field.properties);
+            }
+            if (field.items?.properties) {
+                recurse(field.items.properties);
+            }
+        }
+    };
+    
+    recurse(structure.flatMap(s => s.fields));
+    return configs;
+};
+
+
+export const adaptSchemaFormDataToSchemaCreate = (formData: AnnotationSchemaFormData): AnnotationSchemaCreate => {
+    const outputContract: any = {
+        type: 'object',
+        properties: {}
+    };
+
+    formData.structure.forEach(section => {
+        const { properties, required } = buildJsonSchemaProperties(section.fields);
+        if (section.name === 'document') {
+            outputContract.properties.document = {
+                type: 'object',
+                properties: properties,
+            };
+            if (required.length > 0) {
+                 outputContract.properties.document.required = required;
+            }
+        } else { // per_image, per_audio, etc.
+             outputContract.properties[section.name] = {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: properties
+                }
+            };
+            if (required.length > 0) {
+                 outputContract.properties[section.name].items.required = required;
+            }
+        }
+    });
+    
+    const justificationConfigs = collectJustificationConfigs(formData.structure);
+
+    return {
+        name: formData.name,
+        description: formData.description,
+        instructions: formData.instructions,
+        output_contract: outputContract,
+        field_specific_justification_configs: justificationConfigs,
+        // TODO: Map global settings from form to the backend model if they exist.
+        // For now, they are not part of AnnotationSchemaCreate.
+    };
+};
+
+const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []): AdvancedSchemeField[] => {
+    return Object.entries(properties).map(([name, schema]: [string, any]) => {
+        const field: AdvancedSchemeField = {
+            id: nanoid(),
+            name: name,
+            type: schema.type,
+            description: schema.description,
+            required: required.includes(name),
+        };
+
+        if (schema.enum) {
+            field.enum = schema.enum;
+        }
+        if (schema.type === 'object') {
+            field.properties = parseJsonSchemaProperties(schema.properties, schema.required);
+        }
+        if (schema.type === 'array' && schema.items) {
+            field.items = { type: schema.items.type };
+            if(schema.items.type === 'object') {
+                field.items.properties = parseJsonSchemaProperties(schema.items.properties, schema.items.required);
+            }
+        }
+
+        return field;
+    });
+};
+
+export const adaptSchemaReadToSchemaFormData = (apiData: ClientAnnotationSchemaRead): AnnotationSchemaFormData => {
+    const structure: SchemaSection[] = [];
+    const outputContract = apiData.output_contract as any;
+    
+    if (outputContract?.properties) {
+        Object.entries(outputContract.properties).forEach(([name, sectionSchema]: [string, any]) => {
+            if (name === 'document' && sectionSchema.type === 'object') {
+                structure.push({
+                    id: nanoid(),
+                    name: 'document',
+                    fields: parseJsonSchemaProperties(sectionSchema.properties, sectionSchema.required)
+                });
+            } else if (name.startsWith('per_') && sectionSchema.type === 'array' && sectionSchema.items?.type === 'object') {
+                 structure.push({
+                    id: nanoid(),
+                    name: name as SchemaSection['name'],
+                    fields: parseJsonSchemaProperties(sectionSchema.items.properties, sectionSchema.items.required)
+                });
+            }
+        });
+    }
+
+    // Add justification info back to fields
+    if (apiData.field_specific_justification_configs) {
+        const allFields = structure.flatMap(s => s.fields); // Simple for now, need recursion for nested
+        Object.entries(apiData.field_specific_justification_configs).forEach(([fieldName, config]) => {
+            const field = allFields.find(f => f.name === fieldName);
+            if (field && config) {
+                field.justification = {
+                    enabled: config.enabled,
+                    custom_prompt: config.custom_prompt || ''
+                };
+            }
+        });
+    }
+    
+    // Ensure at least a default document section exists
+    if (!structure.some(s => s.name === 'document')) {
+        structure.unshift({ id: nanoid(), name: 'document', fields: [] });
+    }
+
+    return {
+      name: apiData.name,
+      description: apiData.description || "",
+      instructions: apiData.instructions ?? undefined,
+      structure: structure,
+      // TODO: Map global settings from backend to form if they exist
+    };
+};
+
+
+// --- OLD ADAPTERS (to be phased out or updated) ---
 export const adaptSchemaReadToSchema = (schemaRead: ClientAnnotationSchemaRead): AnnotationSchema => {
   // This is a bit of a placeholder as the frontend `fields` and backend `output_contract` differ.
   // We assume the client generation or a service-layer function handles the transformation.
@@ -45,7 +234,7 @@ export const adaptSchemaReadToSchema = (schemaRead: ClientAnnotationSchemaRead):
       id: schemaRead.id,
       name: schemaRead.name,
       description: schemaRead.description || "",
-      fields: (schemaRead.output_contract as any)?.properties ? [] : [], // Placeholder logic
+      fields: [], // Empty array as placeholder
       instructions: schemaRead.instructions || undefined,
       created_at: schemaRead.created_at,
       updated_at: schemaRead.updated_at,
@@ -69,42 +258,6 @@ export const adaptAnnotationToAnnotationRead = (result: FormattedAnnotation): Cl
         // This is a potential source of mismatch.
     } as ClientAnnotationRead;
 };
-
-const adaptApiDictKeyDefinition = (apiDictKey: any): DictKeyDefinition => ({
-  name: apiDictKey.name,
-  type: apiDictKey.type as "str" | "int" | "float" | "bool"
-});
-
-
-export const adaptSchemaFormDataToSchemaCreate = (formData: AnnotationSchemaFormData): AnnotationSchemaCreate => ({
-  name: formData.name,
-  description: formData.description,
-  // The frontend's `fields` need to be converted to the backend's `output_contract`.
-  // This is a complex transformation that depends on the desired JSON schema structure.
-  // The following is a simplified placeholder.
-  output_contract: {
-    title: formData.name,
-    description: formData.description,
-    type: "object",
-    properties: formData.fields.reduce((acc, field) => {
-      // Basic mapping, needs to be more robust
-      (acc as any)[field.name] = { type: "string", description: field.description };
-      return acc;
-    }, {})
-  },
-  instructions: formData.instructions ?? undefined,
-  // validation_rules is not on the backend model
-});
-
-export const adaptSchemaReadToSchemaFormData = (apiData: ClientAnnotationSchemaRead): AnnotationSchemaFormData => ({
-  name: apiData.name,
-  description: apiData.description || "",
-  // This requires parsing the `output_contract` from the backend into the `fields` array for the form.
-  // This is a complex transformation. The following is a simplified placeholder.
-  fields: [],
-  instructions: apiData.instructions ?? undefined,
-  // validation_rules not on backend model
-});
 
 export function adaptAnnotationReadToAnnotationResult(resultRead: ClientAnnotationRead): AnnotationResult {
   return {

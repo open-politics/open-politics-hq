@@ -59,12 +59,12 @@ export default function ShareManagerView() {
   const [linkToDelete, setLinkToDelete] = useState<ShareableLinkRead | null>(null);
 
   useEffect(() => {
-    fetchLinks(); // Fetch all links initially
+    fetchLinks(20); // Fetch all links initially
   }, [fetchLinks]);
 
   const handleRefresh = () => {
     toast.info("Refreshing share links...");
-    fetchLinks();
+    fetchLinks(20);
   };
 
   const handleDeleteConfirmation = (link: ShareableLinkRead) => {
@@ -155,7 +155,7 @@ export default function ShareManagerView() {
                 <TableRow key={link.id}>
                   <TableCell>
                     <div className="font-medium">{link.name || `Link ID: ${link.id}`}</div>
-                    {link.description && <div className="text-xs text-muted-foreground truncate max-w-xs">{link.description}</div>}
+                    {link.resource_type === 'infospace' && link.infospace_id && <div className="text-xs text-muted-foreground truncate max-w-xs">Infospace ID: {link.infospace_id}</div>}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="capitalize">

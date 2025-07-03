@@ -159,6 +159,63 @@ class ClassificationProvider(ABC):
 
 
 @runtime_checkable
+class EmbeddingProvider(Protocol):
+    """
+    Abstract interface for embedding providers.
+    """
+    async def embed_texts(self, texts: List[str], model_name: Optional[str] = None) -> List[List[float]]:
+        """
+        Generate embeddings for a list of texts.
+        
+        Args:
+            texts: List of text strings to embed
+            model_name: Optional model name override
+            
+        Returns:
+            List of embedding vectors (one per input text)
+        """
+        pass
+    
+    async def embed_single(self, text: str, model_name: Optional[str] = None) -> List[float]:
+        """
+        Generate embedding for a single text.
+        
+        Args:
+            text: Text string to embed
+            model_name: Optional model name override
+            
+        Returns:
+            Single embedding vector
+        """
+        pass
+    
+    def get_available_models(self) -> List[Dict[str, Any]]:
+        """
+        Get list of available embedding models from this provider.
+        
+        Returns:
+            List of model info dictionaries with keys:
+            - name: str
+            - dimension: int  
+            - description: str
+            - max_sequence_length: int
+        """
+        pass
+    
+    def get_model_dimension(self, model_name: str) -> int:
+        """
+        Get the embedding dimension for a specific model.
+        
+        Args:
+            model_name: Name of the model
+            
+        Returns:
+            Embedding dimension (e.g., 384, 768, 1024)
+        """
+        pass
+
+
+@runtime_checkable
 class GeospatialProvider(Protocol):
     """
     Abstract interface for geospatial data providers.

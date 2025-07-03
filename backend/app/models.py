@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
@@ -70,6 +71,12 @@ class RunStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     COMPLETED_WITH_ERRORS = "completed_with_errors"
+    MONITORING = "monitoring"
+
+
+class RunMode(str, enum.Enum):
+    ONE_TIME = "one_time"
+    MONITORING = "monitoring"
 
 
 class ResultStatus(str, enum.Enum):
@@ -95,12 +102,15 @@ class PermissionLevel(str, enum.Enum):
 
 
 class ResourceType(str, enum.Enum):
+    SOURCE = "source"
     BUNDLE = "bundle"
     ASSET = "asset"
     SCHEMA = "schema"
     INFOSPACE = "infospace"
     RUN = "run"
     PACKAGE = "package"
+    DATASET = "dataset"
+    MIXED = "mixed"
 
 
 class SourceStatus(str, enum.Enum):
@@ -108,6 +118,12 @@ class SourceStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETE = "complete"
     FAILED = "failed"
+
+
+class ScheduleStatus(str, enum.Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    INACTIVE = "inactive" # Completed for run_once, or manually disabled
 
 
 class ProcessingStatus(str, enum.Enum):
@@ -123,6 +139,14 @@ class AnnotationSchemaTargetLevel(str, enum.Enum):
     ASSET = "asset"
     CHILD = "child"
     BOTH = "both"
+
+
+class EmbeddingProvider(str, enum.Enum):
+    OLLAMA = "ollama"
+    JINA = "jina"
+    OPENAI = "openai"  # For future use
+    HUGGINGFACE = "huggingface"  # For future use
+
 
 # ─────────────────────────────────────────────────────────── Core Access ──── #
 
@@ -143,7 +167,6 @@ class User(SQLModel, table=True):
     runs: List["AnnotationRun"] = Relationship(back_populates="user")
     annotations: List["Annotation"] = Relationship(back_populates="user")
     sources: List["Source"] = Relationship(back_populates="user")
-    tasks: List["Task"] = Relationship(back_populates="user")
     analysis_adapters_created: List["AnalysisAdapter"] = Relationship(back_populates="creator")
 
 
@@ -192,8 +215,10 @@ class Source(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     name: str
-    kind: str  # rss, api, scrape, upload, search
-    details: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    kind: str  # search, api, scrape, upload
+    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    schedule: Optional[str] = Field(default=None, description="Cron string or 'run_once'")
+    schedule_status: ScheduleStatus = Field(default=ScheduleStatus.INACTIVE)
 
     status: SourceStatus = SourceStatus.PENDING
     source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
@@ -204,12 +229,14 @@ class Source(SQLModel, table=True):
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
+    target_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")
     
     # Import/export lineage
     imported_from_uuid: Optional[str] = Field(default=None, index=True)
-    
+
     infospace: Optional[Infospace] = Relationship(back_populates="sources")
     user: Optional[User] = Relationship(back_populates="sources")
+    target_bundle: Optional["Bundle"] = Relationship(sa_relationship_kwargs={'foreign_keys': '[Source.target_bundle_id]'})
 
     assets: List["Asset"] = Relationship(back_populates="source")
 
@@ -255,6 +282,47 @@ class Asset(SQLModel, table=True):
     annotations: List["Annotation"] = Relationship(back_populates="asset")
     chunks: List["AssetChunk"] = Relationship(back_populates="asset")
 
+    @property
+    def is_container(self) -> bool:  
+        """Read-only property to check if this asset can have child assets."""
+        return self.kind in {
+            AssetKind.CSV,
+            AssetKind.PDF,
+            AssetKind.MBOX,
+            AssetKind.WEB,
+            AssetKind.ARTICLE,
+        }
+
+
+# ──────────────────────────────────────────────────── Embedding Models ──── #
+
+class EmbeddingModel(SQLModel, table=True):
+    """Registry of available embedding models with their specifications."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)  # e.g., "all-MiniLM-L6-v2", "llama2:7b"
+    provider: EmbeddingProvider
+    dimension: int  # Embedding dimension (384, 768, 1024, 4096, etc.)
+    description: Optional[str] = None
+    
+    # Provider-specific configuration
+    config: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    # Model metadata
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+    
+    # Performance characteristics
+    max_sequence_length: Optional[int] = None  # Maximum input length
+    embedding_time_ms: Optional[float] = None  # Average embedding time in milliseconds
+    
+    chunks: List["AssetChunk"] = Relationship(back_populates="embedding_model")
+
+    __table_args__ = (
+        UniqueConstraint("name", "provider"),
+        Index("ix_embeddingmodel_provider_active", "provider", "is_active"),
+    )
+
 
 # ──────────────────────────────────────────────────────── Asset Chunks ──── #
 
@@ -266,19 +334,25 @@ class AssetChunk(SQLModel, table=True):
     text_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     blob_reference: Optional[str] = None # For non-text chunks, e.g., image region coordinates as JSON string or path
     
-    # Assuming embedding_dim is taken from Infospace settings, e.g., 1024
-    # This might need adjustment based on how pgvector handles dynamic dimensions or if a fixed dimension is used.
-    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1024))) # Defaulting to 1024
-    embedding_model: Optional[str] = None # Model used for this specific embedding, e.g. "text-embedding-ada-002"
+    # UPDATED: Variable dimension embedding support
+    embedding_model_id: Optional[int] = Field(default=None, foreign_key="embeddingmodel.id")
+    # Embedding stored as JSON array for variable dimensions
+    # We'll use separate model-specific tables for efficient vector operations
+    embedding_json: Optional[List[float]] = Field(default=None, sa_column=Column(JSON))
+    
+    # Keep old embedding column for backward compatibility (will be deprecated)
+    embedding_legacy: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1024)))
     
     chunk_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     asset: "Asset" = Relationship(back_populates="chunks")
+    embedding_model: Optional[EmbeddingModel] = Relationship(back_populates="chunks")
 
     __table_args__ = (
         UniqueConstraint("asset_id", "chunk_index"),
-        Index("ix_assetchunk_embedding", "embedding", postgresql_using="ivfflat", postgresql_with={"lists": 100}),
+        Index("ix_assetchunk_embedding_model", "embedding_model_id"),
+        Index("ix_assetchunk_embedding_legacy", "embedding_legacy", postgresql_using="ivfflat", postgresql_with={"lists": 100}),
     )
 
 
@@ -321,6 +395,7 @@ class AnnotationSchema(SQLModel, table=True):
     instructions: Optional[str] = Field(default=None, sa_column=Column(Text))
     version: str = Field(default="1.0")
     field_specific_justification_configs: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    is_active: bool = Field(default=True, index=True)
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
@@ -333,12 +408,21 @@ class AnnotationSchema(SQLModel, table=True):
     annotations: List["Annotation"] = Relationship(back_populates="schema")
 
     __table_args__ = (
-        UniqueConstraint("infospace_id", "name", "version"),
+        Index(
+            "ix_unique_active_schema_name_version",
+            "infospace_id", "name", "version",
+            unique=True,
+            postgresql_where=text("is_active = true")
+        ),
     )
 
 class RunSchemaLink(SQLModel, table=True):
     run_id: Optional[int] = Field(foreign_key="annotationrun.id", primary_key=True)
     schema_id: Optional[int] = Field(foreign_key="annotationschema.id", primary_key=True)
+
+class AnnotationRunSourceLink(SQLModel, table=True):
+    run_id: int = Field(foreign_key="annotationrun.id", primary_key=True)
+    source_id: int = Field(foreign_key="source.id", primary_key=True)
 
 class AnnotationRun(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -347,6 +431,12 @@ class AnnotationRun(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     status: RunStatus = RunStatus.PENDING
+    
+    # New fields for analysis workbench concept
+    run_mode: RunMode = Field(default=RunMode.ONE_TIME)
+    view_config: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    last_processed_timestamp: Optional[datetime] = Field(default=None)
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
     started_at: Optional[datetime] = Field(default=None)
@@ -367,6 +457,7 @@ class AnnotationRun(SQLModel, table=True):
     user: Optional[User] = Relationship(back_populates="runs")
 
     target_schemas: List["AnnotationSchema"] = Relationship(link_model=RunSchemaLink)
+    target_sources: List["Source"] = Relationship(link_model=AnnotationRunSourceLink)
     annotations: List["Annotation"] = Relationship(back_populates="run")
 
 # ───────────────────────────────────────────────────────── Annotation Results ──── #
@@ -431,33 +522,7 @@ class Justification(SQLModel, table=True):
         Index("ix_justification_annotation_field", "annotation_id", "field_name"),
     )
 
-# ─────────────────────────────────────────────────────────────── Tasks ──── #
-
-class Task(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    type: TaskType
-    schedule: str  # cron syntax, or 'on_event:asset_created' etc.
-    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    status: TaskStatus = TaskStatus.PAUSED
-    is_enabled: bool = Field(default=True)
-
-    infospace_id: int = Field(foreign_key="infospace.id")
-    user_id: int = Field(foreign_key="user.id")
-
-    last_run_at: Optional[datetime] = None
-    last_successful_run_at: Optional[datetime] = None
-    last_run_status: Optional[str] = Field(default=None)
-    last_run_message: Optional[str] = Field(default=None, sa_column=Column(Text))
-    consecutive_failure_count: int = Field(default=0)
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
-
-    infospace: Optional[Infospace] = Relationship(back_populates="tasks")
-    user: Optional[User] = Relationship(back_populates="tasks")
-
-# ───────────────────────────────────────────────────────────── Packages ──── #
+# ─────────────────────────────────────────────────────────────── Packages ──── #
 
 class Package(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

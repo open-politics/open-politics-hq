@@ -191,18 +191,29 @@ class BundleService:
             logger.info(f"Service: Asset {asset_id} not found in bundle {bundle_id}. No change.")
         return db_bundle
 
-    def get_assets_in_bundle(
+    def get_assets_for_bundle(
         self,
         *,
         bundle_id: int,
         infospace_id: int,
-        user_id: int,
+        user_id: Optional[int],
         skip: int = 0,
         limit: int = 100
     ) -> List[Asset]:
         """Get assets for a bundle, with pagination on the assets."""
         logger.debug(f"Service: Getting assets for bundle {bundle_id}, infospace {infospace_id}")
-        bundle = self.get_bundle(bundle_id, infospace_id, user_id)
+        
+        # If a user_id is provided, validate their access to the bundle.
+        # If no user_id is provided, we assume access has been validated by a higher-level
+        # mechanism (like a share token) and fetch the bundle directly.
+        if user_id:
+            bundle = self.get_bundle(bundle_id, infospace_id, user_id)
+        else:
+            bundle = self.session.get(Bundle, bundle_id)
+            if bundle and bundle.infospace_id != infospace_id:
+                logger.warning(f"Public access attempt for bundle {bundle_id} failed infospace check ({bundle.infospace_id} != {infospace_id})")
+                return []
+        
         if not bundle:
             return []
         

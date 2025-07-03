@@ -36,38 +36,59 @@ export interface Asset {
 }
 
 // --- Annotation Schema & Field Types --- //
-export type FieldType = "int" | "str" | "List[str]" | "List[Dict[str, any]]";
-export type IntType = "binary" | "scale";
 
-export interface DictKeyDefinition {
-  name: string;
-  type: "str" | "int" | "float" | "bool";
+// Types for the Advanced Schema Builder, replacing the old flat structure.
+export type JsonSchemaType = 'string' | 'number' | 'boolean' | 'object' | 'array';
+
+export interface AdvancedSchemeField {
+  // UI-specific identifier for keys and loops
+  id: string; 
+  
+  // JSON Schema properties
+  name: string; // Corresponds to the key in the 'properties' object
+  type: JsonSchemaType;
+  description?: string;
+  
+  // For 'string' with a list of choices
+  enum?: string[];
+
+  // For 'array' type, defines the schema of items in the array
+  items?: {
+    type: JsonSchemaType;
+    properties?: AdvancedSchemeField[]; // For an array of objects
+  };
+
+  // For 'object' type
+  properties?: AdvancedSchemeField[];
+
+  // Not a direct JSON schema property, but used to build the 'required' array on the parent.
+  required: boolean;
+
+  // Field-specific justification config
+  justification?: {
+    enabled: boolean;
+    custom_prompt?: string;
+  };
+
+  // Field-specific AI model configuration
+  provider?: string;
+  model_name?: string;
 }
 
-export interface FieldConfig {
-  scale_min?: number;
-  scale_max?: number;
-  is_set_of_labels?: boolean;
-  labels?: string[];
-  dict_keys?: DictKeyDefinition[];
-  is_time_axis_hint?: boolean;
-}
-
-export interface SchemeField {
-  name: string;
-  type: FieldType;
-  description: string;
-  config: FieldConfig;
-  request_justification?: boolean | null;
-  request_bounding_boxes?: boolean;
-  use_enum_for_labels?: boolean;
+export interface SchemaSection {
+  id: string; // UI identifier
+  name: 'document' | 'per_image' | 'per_audio' | 'per_video';
+  fields: AdvancedSchemeField[];
 }
 
 export interface AnnotationSchema {
   id: number;
   name: string;
   description: string;
-  fields: SchemeField[];
+  // The 'fields' property is deprecated in favor of a representation of the output_contract
+  // This will be handled by the adapters and new components.
+  // For now, we leave it for any components that haven't been migrated.
+  fields: any[]; 
   instructions?: string;
   validation_rules?: Record<string, any>;
   created_at?: string;
@@ -75,12 +96,15 @@ export interface AnnotationSchema {
   annotation_count?: number;
 }
 
+// This is the new data structure for the form in the Advanced Schema Builder
 export interface AnnotationSchemaFormData {
   name: string;
   description: string;
-  fields: SchemeField[];
   instructions?: string;
-  validation_rules?: Record<string, any>;
+  // The 'structure' represents the visual layout of the schema builder
+  // which will be transformed into the backend's 'output_contract'.
+  structure: SchemaSection[];
+  // Global AI settings
   default_thinking_budget?: number | null;
   request_justifications_globally?: boolean;
   enable_image_analysis_globally?: boolean;
@@ -106,7 +130,7 @@ export interface AnnotationRun {
   target_bundle_id?: number;
 }
 
-export type AnnotationResultStatus = 'success' | 'failed';
+export type AnnotationResultStatus = 'success' | 'failure' | 'in_progress';
 
 export interface AnnotationResult {
   id: number;
@@ -135,49 +159,21 @@ export interface TimeAxisConfig {
 
 // --- Parameters for initiating an annotation RUN --- //
 export interface AnnotationRunParams {
-  infospaceId: number;
   name: string;
   description?: string;
-  assetIds: number[];
+  assetIds?: number[];
+  bundleId?: number | null;
   schemaIds: number[];
-  target_bundle_id?: number;
-  thinking_budget_override?: number | null;
-  enable_image_analysis_override?: boolean;
+  configuration?: Record<string, any>;
 }
 
-// Type guard functions
-export const isFieldType = (value: string): value is FieldType => {
-  return ["int", "str", "List[str]", "List[Dict[str, any]]"].includes(value);
-};
-
-export const isIntType = (value: string | null | undefined): value is IntType => {
-  return value === "binary" || value === "scale";
-};
-
-export function getFieldTypeDescription(field: SchemeField): string {
-  switch (field.type) {
-    case 'str':
-      return 'Text';
-    case 'int':
-      if (field.config.scale_min === 0 && field.config.scale_max === 1) {
-        return 'Yes/No';
-      }
-      return `Scale (${field.config.scale_min} to ${field.config.scale_max})`;
-    case 'List[str]':
-      if (field.config.is_set_of_labels && field.config.labels && field.config.labels.length > 0) {
-        return `Multiple Choice (${field.config.labels.length} options)`;
-      }
-      return 'List of Strings';
-    case 'List[Dict[str, any]]':
-      return 'Complex Structure';
-    default:
-      return field.type;
-  }
-}
-
-export const SCHEME_TYPE_OPTIONS = [
-  { value: 'str', label: 'Text' },
-  { value: 'int', label: 'Number' },
-  { value: 'List[str]', label: 'Multiple Choice' },
-  { value: 'List[Dict[str, any]]', label: 'Complex Structure' }
+// New options for the Advanced Schema Builder dropdown
+export const ADVANCED_SCHEME_TYPE_OPTIONS = [
+  { value: 'string', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'True/False' },
+  { value: 'array_string', label: 'List of Text' },
+  { value: 'array_number', label: 'List of Numbers' },
+  { value: 'array_object', label: 'List of Objects' },
+  { value: 'object', label: 'Object (Nested Fields)' },
 ]; 

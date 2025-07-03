@@ -90,7 +90,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       const title = formData.get('title') as string;
       const files = formData.getAll('files') as File[];
 
-      let createdAssets: AssetRead[] = [];
+      const createdAssets: AssetRead[] = [];
 
       if (kind === 'pdf' || kind === 'csv' || kind === 'mbox' || kind === 'image' || kind === 'audio' || kind === 'video') {
         // Handle file uploads - upload each file individually with correct type detection

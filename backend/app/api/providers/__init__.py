@@ -16,7 +16,8 @@ from .base import (
     ScrapingProvider,
     SearchProvider,
     ClassificationProvider,
-    GeospatialProvider
+    GeospatialProvider,
+    EmbeddingProvider
 )
 
 # Removed provider factory imports
@@ -27,5 +28,5 @@ __all__ = [
     "SearchProvider",
     "ClassificationProvider",
     "GeospatialProvider",
-    # Removed provider factory function names from __all__
+    "EmbeddingProvider",
 ]

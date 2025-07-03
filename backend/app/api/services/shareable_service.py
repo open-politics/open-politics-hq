@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 from app.api.services.annotation_service import AnnotationService
 from app.api.services.dataset_service import DatasetService
 from app.api.services.infospace_service import InfospaceService
-from app.api.services.package_service import PackageService
+from app.api.services.package_service import PackageService, PackageBuilder
 from app.api.services.bundle_service import BundleService
 from app.api.services.asset_service import AssetService
 
@@ -57,7 +57,10 @@ from app.schemas import (
     InfospaceRead, 
     ShareableLinkCreate, 
     ShareableLinkUpdate,
-    ShareableLinkStats
+    ShareableLinkStats,
+    SharedResourcePreview, 
+    AssetPreview, 
+    BundlePreview
 )
 from app.api.providers.base import StorageProvider
 from app.api.services.package_service import DataPackage, PackageMetadata
@@ -104,12 +107,14 @@ class ShareableService:
             if exp_date and exp_date.tzinfo is None: exp_date = exp_date.replace(tzinfo=timezone.utc)
             link = ShareableLink(
                 token=token, user_id=user_id, resource_type=link_data.resource_type,
-                resource_id=link_data.resource_id, name=link_data.name, description=link_data.description,
+                resource_id=link_data.resource_id, name=link_data.name,
                 permission_level=link_data.permission_level, is_public=link_data.is_public,
-                requires_login=link_data.requires_login, expiration_date=exp_date, max_uses=link_data.max_uses,
+                expiration_date=exp_date, max_uses=link_data.max_uses,
                 infospace_id=infospace_id 
             )
-            self.session.add(link); self.session.flush(); self.session.refresh(link)
+            self.session.add(link)
+            self.session.commit()
+            self.session.refresh(link)
             return link
         except HTTPException as he: raise he
         except Exception as e: logger.error(f"Error creating link: {e}", exc_info=True); raise ValueError(f"Failed to create link: {e}")
@@ -212,6 +217,101 @@ class ShareableService:
             else: resource_data = {c.name: getattr(resource, c.name) for c in resource.__table__.columns if hasattr(resource, c.name)}
             return {"resource_type": link.resource_type.value, "resource_id": link.resource_id, "permission_level": link.permission_level.value, "data": resource_data}
 
+    def view_shared_resource(self, token: str) -> SharedResourcePreview:
+        """
+        Provides a read-only, public view of a shared resource (Asset or Bundle).
+        This method does not require authentication if the link is public.
+        """
+        link = self.get_link_by_token(token)
+
+        if not link or not link.is_valid():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found or has expired.")
+
+        # This endpoint is only for viewing assets and bundles.
+        if link.resource_type not in [ResourceType.ASSET, ResourceType.BUNDLE]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This link cannot be viewed directly.")
+
+        # Robustly determine the infospace_id for the resource,
+        # supporting older links that may not have it stored directly.
+        resource_infospace_id = link.infospace_id
+        if not resource_infospace_id:
+            resource_for_infospace = self._get_resource_by_type(
+                rt=link.resource_type, 
+                r_id=link.resource_id, 
+                u_id=link.user_id, 
+                fetch_for_infospace_id_only=True
+            )
+            if resource_for_infospace and hasattr(resource_for_infospace, 'infospace_id'):
+                resource_infospace_id = resource_for_infospace.infospace_id
+        
+        if not resource_infospace_id:
+            logger.error(f"Could not determine infospace for shared resource. Link ID: {link.id}, Resource: {link.resource_type.value}/{link.resource_id}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not determine the context for the shared resource.")
+
+        # The resource should be fetched without a specific user context (u_id=None),
+        # as the link's validity is the sole authorization for this public view.
+        resource = self._get_resource_by_type(
+            rt=link.resource_type, 
+            r_id=link.resource_id, 
+            u_id=None, 
+            inf_id_ctx=resource_infospace_id
+        )
+        if not resource:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The shared resource could not be found.")
+
+        if link.resource_type == ResourceType.ASSET:
+            asset_preview = self._build_asset_preview_tree(resource)
+            return SharedResourcePreview(
+                resource_type=link.resource_type,
+                name=asset_preview.title,
+                content=asset_preview
+            )
+        
+        elif link.resource_type == ResourceType.BUNDLE:
+            # Fetch assets without user context as well.
+            bundle_assets = self.bundle_service.get_assets_for_bundle(
+                bundle_id=resource.id, 
+                user_id=None,
+                infospace_id=resource_infospace_id
+            )
+            bundle_preview = BundlePreview(
+                id=resource.id,
+                name=resource.name,
+                description=resource.description,
+                created_at=resource.created_at,
+                updated_at=resource.updated_at,
+                assets=[self._build_asset_preview_tree(asset) for asset in bundle_assets]
+            )
+            return SharedResourcePreview(
+                resource_type=link.resource_type,
+                name=bundle_preview.name,
+                description=bundle_preview.description,
+                content=bundle_preview
+            )
+        
+        # This should not be reached due to the check above, but as a safeguard:
+        raise HTTPException(status_code=500, detail="Unexpected error processing the shared resource.")
+
+    def _build_asset_preview_tree(self, asset: Asset) -> AssetPreview:
+        """Recursively builds a tree of AssetPreview models."""
+        children_previews = []
+        # Eager load children if they are not already loaded
+        children = asset.children_assets if hasattr(asset, 'children_assets') and asset.children_assets else []
+        for child in children:
+            children_previews.append(self._build_asset_preview_tree(child))
+
+        return AssetPreview(
+            id=asset.id,
+            title=asset.title,
+            kind=asset.kind,
+            created_at=asset.created_at,
+            updated_at=asset.updated_at,
+            text_content=asset.text_content,
+            blob_path=asset.blob_path,
+            source_metadata=asset.source_metadata,
+            children=children_previews
+        )
+
     def _get_resource_by_type(self, rt: ResourceType, r_id: int, u_id: Optional[int], inf_id_ctx: Optional[int]=None, fetch_for_infospace_id_only:bool=False) -> Optional[Any]:
         model_map = {ResourceType.INFOSPACE: Infospace, ResourceType.SOURCE: Source, ResourceType.SCHEMA: AnnotationSchema, ResourceType.RUN: AnnotationRun, ResourceType.DATASET: Dataset, ResourceType.ASSET: Asset, ResourceType.BUNDLE: Bundle}
         if fetch_for_infospace_id_only and rt != ResourceType.INFOSPACE:
@@ -226,11 +326,22 @@ class ShareableService:
             if source and source.infospace_id == inf_id_ctx:
                 return source
             return None
+        
+        # For Assets and Bundles, handle both authenticated and unauthenticated (public view) cases.
+        if rt == ResourceType.ASSET:
+            if u_id is None: # Public view: direct lookup
+                return self.session.exec(select(Asset).where(Asset.id == r_id, Asset.infospace_id == inf_id_ctx)).first()
+            return self.asset_service.get_asset_by_id(asset_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
+        
+        elif rt == ResourceType.BUNDLE:
+            if u_id is None: # Public view: direct lookup
+                return self.session.exec(select(Bundle).where(Bundle.id == r_id, Bundle.infospace_id == inf_id_ctx)).first()
+            return self.bundle_service.get_bundle(bundle_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
+            
         elif rt == ResourceType.SCHEMA: return self.annotation_service.get_schema(schema_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
         elif rt == ResourceType.RUN: return self.annotation_service.get_run_details(run_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
         elif rt == ResourceType.DATASET: return self.dataset_service.get_dataset(dataset_id=r_id, user_id=u_id, infospace_id=inf_id_ctx)
-        elif rt == ResourceType.ASSET: return self.asset_service.get_asset_by_id(asset_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
-        elif rt == ResourceType.BUNDLE: return self.bundle_service.get_bundle(bundle_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
+
         raise ValueError(f"Unsupported type: {rt}")
 
     def _validate_resource_ownership(self, rt: ResourceType, r_id: int, u_id: int, inf_id: int ):
@@ -245,11 +356,11 @@ class ShareableService:
             if not own_inf or own_inf.owner_id != u_id: raise HTTPException(status.HTTP_403_FORBIDDEN, f"User not own infospace {inf_id} for resource {r_id}")
             if hasattr(res, 'user_id') and res.user_id is not None and res.user_id != u_id: raise HTTPException(status.HTTP_403_FORBIDDEN, f"User not own resource {r_id}")
 
-    async def _get_export_data_for_resource(self, user_id: int, rt: ResourceType, r_id: int, inf_id: int) -> Tuple[Optional[DataPackage], str]:
+    async def _get_export_data_for_resource(self, user_id: int, resource_type: ResourceType, resource_id: int, infospace_id: int) -> Tuple[Optional[DataPackage], str]:
         if not self.package_service: raise RuntimeError("PackageService NA")
-        pkg = await self.package_service.export_resource_package(rt, r_id, user_id, inf_id)
-        if not pkg: raise ValueError(f"Failed to build package for {rt.value} {r_id}")
-        fname_base = f"{rt.value}_{pkg.metadata.source_entity_name or r_id}".replace(" ", "_")
+        pkg = await self.package_service.export_resource_package(resource_type, resource_id, user_id, infospace_id)
+        if not pkg: raise ValueError(f"Failed to build package for {resource_type.value} {resource_id}")
+        fname_base = f"{resource_type.value}_{pkg.metadata.source_entity_name or resource_id}".replace(" ", "_")
         tmp_path, _ = self._create_temp_file(prefix=f"{fname_base}_", suffix=".zip" if pkg.files else ".json")
         try:
             if pkg.files: pkg.to_zip(tmp_path); logger.info(f"ZIP: {tmp_path}")
@@ -259,8 +370,8 @@ class ShareableService:
             return pkg, tmp_path
         except Exception as e: logger.error(f"Save failed: {e}", exc_info=True); self._cleanup_temp_file(tmp_path); raise
 
-    async def export_resource(self, user_id: int, rt: ResourceType, r_id: int, inf_id: int) -> Tuple[str, str]: 
-        _, path = await self._get_export_data_for_resource(user_id, rt, r_id, inf_id)
+    async def export_resource(self, user_id: int, resource_type: ResourceType, resource_id: int, infospace_id: int) -> Tuple[str, str]: 
+        _, path = await self._get_export_data_for_resource(user_id, resource_type, resource_id, infospace_id)
         if not path: raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Export file creation failed.")
         return path, os.path.basename(path)
 
@@ -291,6 +402,37 @@ class ShareableService:
         except Exception as batch_e: self._cleanup_temp_file(batch_path); logger.error(f"Batch ZIP err: {batch_e}",exc_info=True); raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Batch fail: {batch_e}")
         finally: 
             for path_clean in temp_files: self._cleanup_temp_file(path_clean)
+
+    async def export_mixed_batch(self, user_id: int, infospace_id: int, asset_ids: List[int], bundle_ids: List[int]) -> Tuple[str, str]:
+        """Exports a mix of assets and bundles into a single package."""
+        if not asset_ids and not bundle_ids:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No items selected for export.")
+        if not self.package_service:
+            raise RuntimeError("PackageService is not available.")
+
+        # Fetch and validate all resources
+        assets = self.session.exec(select(Asset).where(col(Asset.id).in_(asset_ids))).all() if asset_ids else []
+        bundles = self.session.exec(select(Bundle).where(col(Bundle.id).in_(bundle_ids))).all() if bundle_ids else []
+        
+        for asset in assets:
+            self._validate_resource_ownership(ResourceType.ASSET, asset.id, user_id, infospace_id)
+        for bundle in bundles:
+            self._validate_resource_ownership(ResourceType.BUNDLE, bundle.id, user_id, infospace_id)
+
+        # Build the mixed package
+        builder = PackageBuilder(
+            session=self.session,
+            storage_provider=self.storage_provider,
+            source_instance_id=self.source_instance_id,
+            settings=self.settings
+        )
+        package = await builder.build_mixed_package(assets=assets, bundles=bundles)
+
+        # Save to a temporary file
+        filepath, filename = self._create_temp_file(prefix="mixed_export_", suffix=".zip")
+        package.to_zip(filepath)
+
+        return filepath, filename
 
     async def import_resource(self, user_id: int, target_infospace_id: int, file: UploadFile) -> Dict[str, Any]:
         validate_infospace_access(self.session, target_infospace_id, user_id)
@@ -340,13 +482,25 @@ class ShareableService:
             if not imported_entity: 
                 raise ValueError(f"Import of {pt.value} failed to return the imported entity.")
             
-            return {
-                "message": f"{pt.value.capitalize().replace('_',' ')} imported successfully.", 
-                "resource_type": pt.value, 
-                "imported_resource_id": imported_entity.id, 
-                "imported_resource_name": getattr(imported_entity, 'name', None), 
-                "target_infospace_id": target_infospace_id if pt != ResourceType.INFOSPACE else imported_entity.id
-            }
+            if isinstance(imported_entity, dict):
+                # Handle mixed import summary
+                num_assets = len(imported_entity.get("assets", []))
+                num_bundles = len(imported_entity.get("bundles", []))
+                return {
+                    "message": f"Mixed package imported successfully with {num_assets} assets and {num_bundles} bundles.",
+                    "resource_type": pt.value,
+                    "target_infospace_id": target_infospace_id,
+                }
+            else:
+                # Handle single entity import
+                return {
+                    "message": f"{pt.value.capitalize().replace('_',' ')} imported successfully.",
+                    "resource_type": pt.value,
+                    "imported_resource_id": imported_entity.id,
+                    "imported_resource_name": getattr(imported_entity, 'name', None),
+                    "target_infospace_id": target_infospace_id if pt != ResourceType.INFOSPACE else imported_entity.id,
+                }
+
         except ValueError as ve: 
             self.session.rollback()
             logger.warning(f"Import resource ValueError: {ve}", exc_info=False)
@@ -429,3 +583,224 @@ class ShareableService:
                 logger.debug(f"Temporary file {filepath} cleaned up")
         except Exception as e:
             logger.warning(f"Error cleaning up temporary file {filepath}: {e}") 
+
+    async def get_shared_asset_filepath(self, token: str, asset_id: int) -> Tuple[str, str]:
+        """
+        Validates a share token and prepares a temporary local file for a shared asset's blob.
+
+        Args:
+            token: The shareable link token.
+            asset_id: The ID of the asset whose file is being requested.
+
+        Returns:
+            A tuple containing the temporary file path and the original filename.
+        
+        Raises:
+            HTTPException: If the link is invalid, the resource is not found, 
+                           or the asset is not accessible via the link.
+        """
+        link = self.get_link_by_token(token)
+        if not link or not link.is_valid():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found or has expired.")
+
+        # The asset being requested must be either the root resource of the link,
+        # or a child of the root resource (for bundles or container assets).
+        requested_asset = self.session.get(Asset, asset_id)
+        if not requested_asset or not requested_asset.blob_path:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found or has no downloadable file.")
+
+        # Validation: Check if the requested asset is part of the shared resource
+        is_accessible = False
+        if link.resource_type == ResourceType.ASSET and link.resource_id == requested_asset.id:
+            is_accessible = True
+        elif link.resource_type == ResourceType.BUNDLE:
+            bundle = self.session.get(Bundle, link.resource_id)
+            if bundle:
+                # Check if the asset is directly in the bundle
+                if any(asset.id == requested_asset.id for asset in bundle.assets):
+                    is_accessible = True
+                else: # Check if it's a child of an asset in the bundle
+                    for root_asset in bundle.assets:
+                        # Simple recursive check, could be optimized for deep hierarchies
+                        q = self.session.query(Asset).filter(Asset.id == requested_asset.id).filter(Asset.parent_asset_id == root_asset.id)
+                        if self.session.query(q.exists()).scalar():
+                             is_accessible = True
+                             break
+        elif link.resource_type == ResourceType.ASSET and link.resource_id == requested_asset.parent_asset_id:
+             # This allows downloading files of child assets if the parent container is shared
+             is_accessible = True
+
+
+        if not is_accessible:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This file is not accessible through the provided share link.")
+
+        # Fetch from storage and save to a temporary file
+        try:
+            file_obj = await self.storage_provider.get_file(requested_asset.blob_path)
+            content_bytes = await asyncio.to_thread(file_obj.read)
+            if hasattr(file_obj, 'close'):
+                await asyncio.to_thread(file_obj.close)
+
+            original_filename = (requested_asset.source_metadata or {}).get("filename") or Path(requested_asset.blob_path).name
+            
+            temp_path, _ = self._create_temp_file(prefix=f"shared_{asset_id}_", suffix=Path(original_filename).suffix)
+            with open(temp_path, 'wb') as f:
+                f.write(content_bytes)
+            
+            return temp_path, original_filename
+        except Exception as e:
+            logger.error(f"Failed to fetch or save shared file from storage. Asset: {asset_id}, Path: {requested_asset.blob_path}, Error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Could not retrieve file from storage.") 
+
+    async def get_shared_bundle_filepath(self, token: str) -> Tuple[str, str]:
+        """
+        Validates a share token and prepares a temporary ZIP archive for a shared bundle.
+        """
+        link = self.get_link_by_token(token)
+        if not link or not link.is_valid() or link.resource_type != ResourceType.BUNDLE:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="A valid share link for a bundle is required.")
+
+        bundle = self.session.get(Bundle, link.resource_id)
+        if not bundle:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The shared bundle could not be found.")
+
+        try:
+            builder = PackageBuilder(
+                session=self.session,
+                storage_provider=self.storage_provider,
+                source_instance_id=self.source_instance_id,
+                settings=self.settings
+            )
+            # Build a package containing the bundle with its full asset content and files
+            package = await builder.build_bundle_package(bundle, include_assets_content=True, include_asset_annotations=False)
+            
+            # Save the package to a temporary zip file
+            filename = f"bundle_{bundle.name.replace(' ', '_')}_{bundle.id}.zip"
+            filepath, _ = self._create_temp_file(prefix=f"shared_bundle_{bundle.id}_", suffix=".zip")
+            package.to_zip(filepath)
+            
+            return filepath, filename
+        except Exception as e:
+            logger.error(f"Failed to package shared bundle. Bundle: {bundle.id}, Error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Could not create bundle package for download.") 
+
+    async def stream_shared_asset_file(self, token: str, asset_id: int) -> Tuple[Any, str]:
+        """
+        Validates a share token and returns a file-like object for streaming.
+
+        Returns:
+            A tuple containing the file-like object and the original filename.
+        """
+        link = self.get_link_by_token(token)
+        if not link or not link.is_valid():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found or has expired.")
+
+        requested_asset = self.session.get(Asset, asset_id)
+        if not requested_asset or not requested_asset.blob_path:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found or has no downloadable file.")
+
+        is_accessible = False
+        if link.resource_type == ResourceType.ASSET and link.resource_id == requested_asset.id:
+            is_accessible = True
+        elif link.resource_type == ResourceType.ASSET and link.resource_id == requested_asset.parent_asset_id:
+            is_accessible = True
+        elif link.resource_type == ResourceType.BUNDLE:
+            bundle = self.session.get(Bundle, link.resource_id)
+            if bundle:
+                if any(asset.id == requested_asset.id for asset in bundle.assets):
+                    is_accessible = True
+                else: # Check if it's a child of an asset in the bundle
+                    for root_asset in bundle.assets:
+                        # Simple recursive check, could be optimized for deep hierarchies
+                        q = self.session.query(Asset).filter(Asset.id == requested_asset.id, Asset.parent_asset_id == root_asset.id)
+                        if self.session.query(q.exists()).scalar():
+                                is_accessible = True
+                                break
+        
+        if not is_accessible:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This file is not accessible through the provided share link.")
+
+        try:
+            file_obj = await self.storage_provider.get_file(requested_asset.blob_path)
+            original_filename = (requested_asset.source_metadata or {}).get("filename") or Path(requested_asset.blob_path).name
+            return file_obj, original_filename
+        except Exception as e:
+            logger.error(f"Failed to get shared file stream from storage. Asset: {asset_id}, Path: {requested_asset.blob_path}, Error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Could not retrieve file from storage.") 
+
+    async def import_resource_from_token(
+        self,
+        token: str,
+        target_user_id: int,
+        target_infospace_id: int
+    ) -> Any:
+        """
+        Imports a resource from a share token into a user's infospace.
+        This orchestrates an in-memory export and import.
+        """
+        logger.info(f"User {target_user_id} attempting to import from token {token[:6]}... into infospace {target_infospace_id}")
+        
+        link = self.get_link_by_token(token)
+        if not link or not link.is_valid():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Link not found or has expired.")
+        
+        validate_infospace_access(self.session, target_infospace_id, target_user_id)
+
+        original_user_id = link.user_id
+        original_infospace_id = link.infospace_id
+        resource_type = link.resource_type
+        resource_id = link.resource_id
+
+        if not original_infospace_id:
+            temp_res = self._get_resource_by_type(resource_type, resource_id, original_user_id, fetch_for_infospace_id_only=True)
+            if temp_res and hasattr(temp_res, 'infospace_id'):
+                original_infospace_id = temp_res.infospace_id
+            else:
+                logger.error(f"Cannot determine original infospace for link {link.id}")
+                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Cannot determine resource context.")
+        
+        logger.info(f"Exporting resource {resource_type.value}:{resource_id} from owner {original_user_id}/infospace {original_infospace_id} for import.")
+        
+        try:
+            package_to_import = await self.package_service.export_resource_package(
+                resource_type=resource_type,
+                resource_id=resource_id,
+                user_id=original_user_id,
+                infospace_id=original_infospace_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to create in-memory package for import from token: {e}", exc_info=True)
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to prepare resource for import.")
+
+        logger.info(f"Importing package of type {package_to_import.metadata.package_type.value} into infospace {target_infospace_id} for user {target_user_id}")
+        
+        try:
+            imported_entity = await self.package_service.import_resource_package(
+                package=package_to_import,
+                target_user_id=target_user_id,
+                target_infospace_id=target_infospace_id
+            )
+        except Exception as e:
+            self.session.rollback()
+            logger.error(f"Failed to import package from token: {e}", exc_info=True)
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Failed to import resource: {e}")
+
+        if not imported_entity:
+            raise ValueError(f"Import of {resource_type.value} failed to return the imported entity.")
+
+        if isinstance(imported_entity, dict):
+            num_assets = len(imported_entity.get("assets", []))
+            num_bundles = len(imported_entity.get("bundles", []))
+            return {
+                "message": f"Mixed package from bundle imported successfully with {num_assets} assets and {num_bundles} bundles.",
+                "resource_type": resource_type.value,
+                "target_infospace_id": target_infospace_id,
+            }
+        else:
+            return {
+                "message": f"{resource_type.value.capitalize().replace('_', ' ')} imported successfully.",
+                "resource_type": resource_type.value,
+                "imported_resource_id": imported_entity.id,
+                "imported_resource_name": getattr(imported_entity, 'name', getattr(imported_entity, 'title', 'Untitled')),
+                "target_infospace_id": target_infospace_id,
+            } 

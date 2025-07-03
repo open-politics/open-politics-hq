@@ -8,6 +8,7 @@ import {
 } from '@/client';
 import { toast } from 'sonner';
 import { useInfospaceStore } from './storeInfospace';
+import { OpenAPI } from '@/client';
 
 interface BundleState {
   bundles: BundleRead[];
@@ -152,17 +153,52 @@ export const useBundleStore = create<BundleState>((set, get) => ({
       }
   },
 
-  getBundleAssets: async(bundleId: number) => {
+  getBundleAssets: async (bundleId: number): Promise<AssetRead[]> => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace) {
+      const error = 'No active infospace selected.';
+      set({ error, isLoading: false });
+      toast.error(error);
+      throw new Error(error);
+    }
+
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      const error = "Authentication token not found.";
+      set({ error, isLoading: false });
+      toast.error(error);
+      throw new Error(error);
+    }
+    
     set({ isLoading: true, error: null });
     try {
-        const assets = await BundlesService.getAssetsInBundle({bundleId});
-        set({ isLoading: false });
-        return assets;
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/bundles/infospaces/${activeInfospace.id}/bundles/${bundleId}/assets?skip=0&limit=100`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        let errorDetail = `Failed to get bundle assets with status: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorDetail = errorBody.detail || errorDetail;
+        } catch (e) {
+          errorDetail = `${errorDetail} - ${response.statusText}`;
+        }
+        throw new Error(errorDetail);
+      }
+
+      const assets = await response.json();
+      set({ isLoading: false });
+      return assets as AssetRead[];
+
     } catch (err: any) {
-        const message = err.body?.detail || err.message || 'Failed to fetch assets for bundle';
-        toast.error(message);
-        set({ error: message, isLoading: false });
-        return [];
+      const message = err.message || 'Failed to get bundle assets';
+      set({ error: message, isLoading: false });
+      toast.error(message);
+      throw new Error(message);
     }
   }
 })); 

@@ -23,7 +23,7 @@ from app.models import (
 from app.schemas import AnnotationCreate
 from app.core.db import engine
 from app.api.providers.factory import create_classification_provider, create_storage_provider
-from app.api.tasks.utils import create_pydantic_model_from_json_schema
+from app.api.tasks.utils import create_pydantic_model_from_json_schema, make_python_identifier
 from app.core.config import settings
 
 if TYPE_CHECKING:
@@ -31,6 +31,41 @@ if TYPE_CHECKING:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# Module-level provider cache to avoid recreating providers in the same worker process
+_provider_cache = {}
+
+def get_cached_provider(provider_type: str, settings_instance):
+    """Get a cached provider instance or create a new one."""
+    cache_key = f"{provider_type}_{id(settings_instance)}"
+    
+    if cache_key not in _provider_cache:
+        if provider_type == "storage":
+            _provider_cache[cache_key] = create_storage_provider(settings_instance)
+        elif provider_type == "classification":
+            _provider_cache[cache_key] = create_classification_provider(settings_instance)
+        else:
+            raise ValueError(f"Unknown provider type: {provider_type}")
+        
+        logger.info(f"Task: Created and cached {provider_type} provider")
+    else:
+        logger.debug(f"Task: Using cached {provider_type} provider")
+    
+    return _provider_cache[cache_key]
+
+def clear_provider_cache():
+    """Clear the provider cache. Useful for memory management in long-running workers."""
+    global _provider_cache
+    cache_size = len(_provider_cache)
+    _provider_cache.clear()
+    logger.info(f"Task: Cleared provider cache ({cache_size} providers removed)")
+
+def get_cache_status():
+    """Get information about the current provider cache."""
+    return {
+        "cache_size": len(_provider_cache),
+        "cached_providers": list(_provider_cache.keys())
+    }
 
 def validate_hierarchical_schema(output_contract: dict) -> bool:
     """Validate that hierarchical schema follows conventions"""
@@ -294,11 +329,38 @@ async def demultiplex_results(
     return annotations
 
 @shared_task
-async def process_annotation_run(run_id: int) -> None:
+def process_annotation_run(run_id: int) -> None:
+    """
+    Process an annotation run using the new multi-modal engine. (sync wrapper)
+    """
+    logger.info(f"Task: Sync wrapper started for annotation run {run_id}")
+    try:
+        # Using asyncio.run() to execute the async task from a sync context
+        asyncio.run(_process_annotation_run_async(run_id))
+    except Exception as e:
+        logger.exception(f"Task: Critical unhandled error in async processing for run {run_id}: {e}")
+        # If the async task fails with an unhandled exception, mark the run as FAILED.
+        with Session(engine) as session:
+            try:
+                run = session.get(AnnotationRun, run_id)
+                if run:
+                    run.status = RunStatus.FAILED
+                    run.error_message = f"Critical task execution error: {str(e)}"
+                    run.completed_at = datetime.now(timezone.utc)
+                    run.updated_at = datetime.now(timezone.utc)
+                    session.add(run)
+                    session.commit()
+            except Exception as db_exc:
+                logger.error(f"Task: Could not even update run {run_id} to FAILED status: {db_exc}")
+        raise  # Re-raise the exception so Celery knows the task failed
+
+async def _process_annotation_run_async(run_id: int) -> None:
     """
     Process an annotation run using the new multi-modal engine.
     Fetches target assets, applies schemas, calls providers, and demultiplexes results.
     """
+    import time
+    start_time = time.time()
     logger.info(f"Task: Processing annotation run {run_id} with multi-modal engine.")
     
     with Session(engine) as session:
@@ -322,12 +384,16 @@ async def process_annotation_run(run_id: int) -> None:
             session.commit()
             session.refresh(run)
 
-            # Get classification provider instance
+            # OPTIMIZATION 1: Create providers once per run, not per asset
+            provider_start_time = time.time()
             app_settings = settings
             try:
-                classification_provider = create_classification_provider(settings=app_settings)
+                classification_provider = get_cached_provider("classification", app_settings)
+                storage_provider_instance = get_cached_provider("storage", app_settings)
+                provider_creation_time = time.time() - provider_start_time
+                logger.info(f"Task: Provider creation/retrieval took {provider_creation_time:.3f}s for Run {run.id}")
             except Exception as e_provider:
-                logger.error(f"Task: Failed to create classification provider for Run {run.id}: {e_provider}", exc_info=True)
+                logger.error(f"Task: Failed to create providers for Run {run.id}: {e_provider}", exc_info=True)
                 run.status = RunStatus.FAILED
                 run.error_message = f"Provider initialization failed: {str(e_provider)}"
                 session.add(run)
@@ -361,6 +427,53 @@ async def process_annotation_run(run_id: int) -> None:
                 session.commit()
                 return
 
+            # CSV Row Expansion: Check for CSV parent assets and optionally expand to their CSV_ROW children
+            csv_row_processing = run_config.get("csv_row_processing", True)  # Default to True for CSV row processing
+            
+            logger.info(f"Task: CSV row processing setting for Run {run.id}: {csv_row_processing}")
+            logger.info(f"Task: Initial target asset IDs for Run {run.id}: {target_asset_ids_to_process}")
+            
+            if csv_row_processing:
+                expanded_asset_ids = []
+                csv_parents_processed = []
+                
+                for asset_id in target_asset_ids_to_process:
+                    asset = session.get(Asset, asset_id)
+                    logger.debug(f"Task: Checking asset {asset_id} - Kind: {asset.kind if asset else 'NOT_FOUND'}, Infospace: {asset.infospace_id if asset else 'N/A'}")
+                    
+                    if asset and asset.infospace_id == run.infospace_id and asset.kind == AssetKind.CSV:
+                        # This is a CSV parent asset - fetch its CSV_ROW children
+                        csv_row_children = session.exec(
+                            select(Asset).where(
+                                Asset.parent_asset_id == asset.id,
+                                Asset.kind == AssetKind.CSV_ROW,
+                                Asset.infospace_id == run.infospace_id
+                            ).order_by(Asset.part_index)
+                        ).all()
+                        
+                        logger.info(f"Task: Found {len(csv_row_children)} CSV_ROW children for CSV asset {asset.id}")
+                        
+                        if csv_row_children:
+                            logger.info(f"Task: Expanding CSV asset {asset.id} ({asset.title}) to {len(csv_row_children)} CSV row children for Run {run.id}")
+                            expanded_asset_ids.extend([child.id for child in csv_row_children])
+                            csv_parents_processed.append(asset.id)
+                        else:
+                            logger.warning(f"Task: CSV asset {asset.id} has no CSV_ROW children. Including parent asset for Run {run.id}")
+                            expanded_asset_ids.append(asset_id)
+                    else:
+                        # Not a CSV parent or asset not found - include as-is
+                        expanded_asset_ids.append(asset_id)
+                
+                # Update the target asset list with expanded CSV rows
+                target_asset_ids_to_process = expanded_asset_ids
+                
+                logger.info(f"Task: Final target asset IDs after CSV expansion for Run {run.id}: {target_asset_ids_to_process}")
+                
+                if csv_parents_processed:
+                    logger.info(f"Task: Run {run.id} expanded {len(csv_parents_processed)} CSV parent assets to {len(target_asset_ids_to_process)} total assets including CSV rows")
+            else:
+                logger.info(f"Task: CSV row processing disabled for Run {run.id}. Processing CSV parent assets directly.")
+
             schemas_to_apply = run.target_schemas
             if not schemas_to_apply:
                 logger.error(f"Task: No schemas for Run {run.id}.")
@@ -376,6 +489,8 @@ async def process_annotation_run(run_id: int) -> None:
             all_created_annotations: List[Annotation] = []
             all_created_justifications: List[Justification] = []
 
+            # OPTIMIZATION 2: Pre-validate all schemas before processing assets
+            validated_schemas = []
             for schema in schemas_to_apply:
                 if not validate_hierarchical_schema(schema.output_contract):
                     logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} has invalid hierarchical structure. Skipping this schema.")
@@ -404,37 +519,54 @@ async def process_annotation_run(run_id: int) -> None:
                     errors_run_level.append(f"Schema {schema.id} Pydantic model creation failed: {e_model_create}")
                     continue
 
+                # NEW: Validate that the created model is not empty
+                if not OutputModelClass.model_fields:
+                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} resulted in an empty model with no fields. This schema cannot be used for structured output. Skipping this schema.")
+                    errors_run_level.append(f"Schema {schema.id} ('{schema.name}') is invalid or empty and was skipped.")
+                    continue
+
                 # Assemble justification prompts to append to schema.instructions
                 final_schema_instructions = schema.instructions or ""
                 justification_prompts_parts = []
                 needs_any_field_specific_justification_prompts = False
 
-                # Determine which fields will actually get a _justification field in the output model
                 # This is a precursor to generating detailed prompts for them.
                 fields_that_will_have_justification_submodel = []
                 potential_fields_to_check_for_justification = []
+                
+                # We need to map the python-safe field name back to its original schema and title
+                field_metadata_map = {}
 
                 # Gather all top-level field names from the original schema structure
                 # These are the keys that schema.field_specific_justification_configs would refer to.
                 if schema_structure.get("document_fields"): # This is the sub-schema for document
                     doc_props = schema_structure["document_fields"].get("properties", {})
-                    potential_fields_to_check_for_justification.extend(doc_props.keys())
+                    for prop_name, prop_schema in doc_props.items():
+                        py_name = make_python_identifier(prop_name)
+                        potential_fields_to_check_for_justification.append(py_name)
+                        field_metadata_map[py_name] = {"original_name": prop_name, "title": prop_schema.get("title")}
                 
                 for modality, per_modality_item_schema in schema_structure.get("per_modality_fields", {}).items():
                     # per_modality_item_schema is the sub-schema for an item (e.g., for one image)
                     modality_props = per_modality_item_schema.get("properties", {})
-                    potential_fields_to_check_for_justification.extend(modality_props.keys())
+                    for prop_name, prop_schema in modality_props.items():
+                        py_name = make_python_identifier(prop_name)
+                        potential_fields_to_check_for_justification.append(py_name)
+                        field_metadata_map[py_name] = {"original_name": prop_name, "title": prop_schema.get("title")}
                 
                 # Remove duplicates if a field name could appear in multiple contexts and ensure consistent order
                 potential_fields_to_check_for_justification = sorted(list(set(potential_fields_to_check_for_justification)))
 
                 if justification_mode != "NONE":
                     for field_name_to_check in potential_fields_to_check_for_justification:
+                        # Use original name to check config
+                        original_name = field_metadata_map.get(field_name_to_check, {}).get("original_name", field_name_to_check)
+                        
                         # Simplified check mimicking part of create_pydantic_model_from_json_schema's decision
                         should_add_just_for_this_field = False
                         # schema_justification_configs uses the direct field name as key as per current examples.
                         # It expects FieldJustificationConfig objects or dicts convertible to them.
-                        field_config_from_schema = schema_justification_configs.get(field_name_to_check)
+                        field_config_from_schema = schema_justification_configs.get(original_name)
 
                         if justification_mode == "SCHEMA_DEFAULT":
                             # cfg is an instance of FieldJustificationConfig (or a dict that was part of the input)
@@ -458,7 +590,7 @@ async def process_annotation_run(run_id: int) -> None:
                             "For evidence: use 'text_spans' (list of objects with 'start_char_offset', 'end_char_offset', 'text_snippet', optional 'asset_uuid'), "
                             "'image_regions' (list of objects with 'asset_uuid', 'bounding_box' dict {'x', 'y', 'width', 'height', 'label'}), "
                             "'audio_segments' (list of objects with 'asset_uuid', 'start_time_seconds', 'end_time_seconds'), "
-                            "or 'additional_evidence' (a dictionary for other structured data)."
+                            "or 'additional_evidence' (a dictionary for any other structured data)."
                         )
                     else: # SCHEMA_DEFAULT or ALL_WITH_SCHEMA_OR_DEFAULT_PROMPT
                         # Add general structural guidance once if any field needs it
@@ -473,23 +605,31 @@ async def process_annotation_run(run_id: int) -> None:
                         )
                         for field_name in fields_that_will_have_justification_submodel:
                             prompt_for_field_reasoning = None
-                            field_config = schema_justification_configs.get(field_name)
+                            metadata = field_metadata_map.get(field_name, {})
+                            original_name = metadata.get("original_name", field_name)
+                            title = metadata.get("title")
+                            
+                            field_display_name = f"'{original_name}'"
+                            if title and title.lower() != original_name.lower():
+                                field_display_name += f" (titled '{title}')"
+
+                            field_config = schema_justification_configs.get(original_name)
                             
                             if field_config and field_config.get("custom_prompt"):
                                 prompt_for_field_reasoning = field_config["custom_prompt"]
                             elif default_justification_prompt_template:
                                 try:
-                                    prompt_for_field_reasoning = default_justification_prompt_template.format(field_name=field_name, field_path=field_name)
+                                    prompt_for_field_reasoning = default_justification_prompt_template.format(field_name=original_name, field_path=original_name)
                                 except KeyError: # Handle if template has unexpected keys
-                                    logger.warning(f"Default justification prompt template has unfulfillable keys for field {field_name}. Using basic prompt.")
-                                    prompt_for_field_reasoning = f"Provide the reasoning for your value for the field '{field_name}'."
+                                    logger.warning(f"Default justification prompt template has unfulfillable keys for field {original_name}. Using basic prompt.")
+                                    prompt_for_field_reasoning = f"Provide the reasoning for your value for the field {field_display_name}."
                             else:
-                                prompt_for_field_reasoning = f"Provide the reasoning for your value for the field '{field_name}'."
+                                prompt_for_field_reasoning = f"Provide the reasoning for your value for the field {field_display_name}."
                             
                             if prompt_for_field_reasoning:
                                 # This prompt now focuses on the 'reasoning' part, structure is separate.
                                 justification_prompts_parts.append(
-                                    f"For the field '{field_name}', populate its '{field_name}_justification.reasoning' with: {prompt_for_field_reasoning}"
+                                    f"For the field {field_display_name}, populate its '{field_name}_justification.reasoning' with: {prompt_for_field_reasoning}"
                                 )
                 
                 if needs_any_field_specific_justification_prompts and justification_prompts_parts:
@@ -512,18 +652,50 @@ async def process_annotation_run(run_id: int) -> None:
                     else:
                         final_schema_instructions = system_mapping_prompt[4:] # Remove leading \n\n if no prior instructions
 
+                # Store the validated schema with all computed values
+                validated_schemas.append({
+                    "schema": schema,
+                    "schema_structure": schema_structure,
+                    "output_model_class": OutputModelClass,
+                    "final_instructions": final_schema_instructions
+                })
 
-                for asset_id in target_asset_ids_to_process:
-                    parent_asset = session.get(Asset, asset_id)
-                    if not parent_asset or parent_asset.infospace_id != run.infospace_id:
-                        logger.warning(f"Task: Asset {asset_id} for Run {run.id} not found/invalid. Skipping.")
-                        errors_run_level.append(f"Asset {asset_id} not found/invalid.")
-                        continue
-                    
+            if not validated_schemas:
+                logger.error(f"Task: No valid schemas for Run {run.id} after validation.")
+                run.status = RunStatus.FAILED
+                run.error_message = "No valid schemas after validation."
+                session.add(run)
+                session.commit()
+                return
+
+            # OPTIMIZATION 3: Pre-fetch all assets to reduce DB queries
+            assets_map = {}
+            for asset_id in target_asset_ids_to_process:
+                asset = session.get(Asset, asset_id)
+                if asset and asset.infospace_id == run.infospace_id:
+                    assets_map[asset_id] = asset
+                else:
+                    logger.warning(f"Task: Asset {asset_id} for Run {run.id} not found/invalid. Skipping.")
+                    errors_run_level.append(f"Asset {asset_id} not found/invalid.")
+
+            if not assets_map:
+                logger.error(f"Task: No valid assets for Run {run.id}.")
+                run.status = RunStatus.FAILED
+                run.error_message = "No valid assets found."
+                session.add(run)
+                session.commit()
+                return
+
+            # OPTIMIZATION 4: Process schemas and assets more efficiently
+            for schema_info in validated_schemas:
+                schema = schema_info["schema"]
+                schema_structure = schema_info["schema_structure"]
+                OutputModelClass = schema_info["output_model_class"]
+                final_schema_instructions = schema_info["final_instructions"]
+
+                for asset_id, parent_asset in assets_map.items():
                     try:
-                        from app.api.providers.factory import create_storage_provider
-                        storage_provider_instance = create_storage_provider(settings=settings)
-
+                        # OPTIMIZATION 5: Reuse the same storage provider instance
                         text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
                             parent_asset, run_config, session, storage_provider_instance
                         )
@@ -532,7 +704,6 @@ async def process_annotation_run(run_id: int) -> None:
                         # Pass thinking_config from run_config to provider_specific_config if not already there.
                         if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
                              provider_specific_config["thinking_config"] = run_config["thinking_config"]
-
 
                         logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
@@ -616,7 +787,9 @@ async def process_annotation_run(run_id: int) -> None:
             run.updated_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
-            logger.info(f"Task: AnnotationRun {run.id} finished. Status: {run.status}. Total Annotations: {len(all_created_annotations)}, Justifications: {len(all_created_justifications)}.")
+            
+            total_time = time.time() - start_time
+            logger.info(f"Task: AnnotationRun {run.id} finished. Status: {run.status}. Total Annotations: {len(all_created_annotations)}, Justifications: {len(all_created_justifications)}. Total time: {total_time:.2f}s")
             
         except Exception as e_task_critical:
             logger.exception(f"Task: Critical unexpected error processing AnnotationRun {run_id}: {e_task_critical}")
@@ -631,7 +804,7 @@ async def process_annotation_run(run_id: int) -> None:
                 session.commit()
 
 @shared_task
-async def retry_failed_annotations(run_id: int) -> None:
+def retry_failed_annotations(run_id: int) -> None:
     """
     Retry failed annotations in a run.
     This task will find annotations from the given run that are in a FAILED status
@@ -670,7 +843,8 @@ async def retry_failed_annotations(run_id: int) -> None:
             if not failed_annotations_to_retry:
                 logger.info(f"Task: No failed annotations found to retry for Run {run_id}.")
                 run.status = original_status # Revert to original status if no failed annotations
-                if not errors and original_status == RunStatus.COMPLETED_WITH_ERRORS: # if all retries succeed
+                # Fixed variable name - 'errors' wasn't defined yet
+                if original_status == RunStatus.COMPLETED_WITH_ERRORS: # if all retries succeed
                      run.status = RunStatus.COMPLETED
                 session.add(run)
                 session.commit()

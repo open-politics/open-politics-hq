@@ -22,24 +22,57 @@ import {
 } from "@/components/ui/tooltip";
 import { useBookMarkStore } from '@/zustand_stores/storeBookmark';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { ClassificationWidget } from '@/components/classification/ClassificationWidget';
-import { ClassificationScheme, DataRecord } from '@/lib/classification/types';
 import { CoreContentModel } from '@/lib/content';
-import { useClassificationSettingsStore } from '@/zustand_stores/storeClassificationSettings';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import { toast } from "@/components/ui/use-toast";
-import { useClassificationSystem } from '@/hooks/useClassificationSystem';
-import { ClassificationService } from '@/lib/classification/service';
-import ClassificationResultDisplay from '@/components/collection/infospaces/classifications/ClassificationResultDisplay';
-import { ClassificationResultRead, ClassificationSchemeRead } from '@/client';
-import { useDataSourceStore } from '@/zustand_stores/storeAssets';
+import { AnnotationSchemaRead } from '@/client';
+import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
+
+// Simple type definitions for classification results
+interface ClassificationResult {
+  id: number;
+  scheme?: {
+    id: number;
+    name: string;
+  };
+  value?: any;
+  displayValue?: string;
+  timestamp?: string;
+}
+
+// Simple component to display classification results
+function ClassificationResultDisplay({ 
+  result, 
+  scheme, 
+  compact = false 
+}: { 
+  result: ClassificationResult; 
+  scheme: { id: number; name: string }; 
+  compact?: boolean; 
+}) {
+  const displayValue = result.displayValue || JSON.stringify(result.value) || 'Unknown';
+  
+  if (compact) {
+    return (
+      <Badge variant="outline" className="text-xs">
+        {displayValue}
+      </Badge>
+    );
+  }
+  
+  return (
+    <div className="text-sm">
+      <span className="font-medium">{scheme.name}:</span> {displayValue}
+    </div>
+  );
+}
 
 export interface ContentCardProps extends CoreContentModel {
   id: string;
   dataSourceId?: number;
   className?: string;
   isHighlighted?: boolean;
-  preloadedSchemes?: ClassificationSchemeRead[];
+  preloadedSchemes?: AnnotationSchemaRead[];
 }
 
 export function ContentCard({ 
@@ -60,38 +93,31 @@ export function ContentCard({
   evaluation, 
   className,
   isHighlighted,
-  preloadedSchemes,
+  preloadedSchemes = [],
   ...props 
 }: ContentCardProps) {
   const { addBookmark, removeBookmark, isOperationPending } = useBookMarkStore();
-  const { dataSources } = useDataSourceStore();
   const { activeInfospace } = useInfospaceStore();
-  const classificationSettings = useClassificationSettingsStore();
   const { apiKeys, selectedProvider } = useApiKeysStore();
 
-  // Use the classification hook to get schemes and results
+  // Use the annotation system hook instead of classification system
   const {
-    schemes,
-    results: classificationResults,
-    isLoadingSchemes,
-    isLoadingResults,
-    isClassifying,
-    loadSchemes,
-    loadResults,
-    createJob,
-    startClassificationJob,
-    clearResultsCache
-  } = useClassificationSystem({
-    autoLoadSchemes: true,
-    useCache: true,
-  });
+    schemas,
+    isLoadingSchemas: isLoadingResults,
+    createRun: createJob,
+    isCreatingRun: isClassifying,
+    loadSchemas: loadResults,
+  } = useAnnotationSystem();
+
+  // Mock classification results for now - in a real app, you'd load these from the backend
+  const [classificationResults, setClassificationResults] = useState<ClassificationResult[]>([]);
 
   // Determine if the item is bookmarked by checking if a corresponding DataSource exists
   const isBookmarked = useMemo(() => {
     if (!url) return false;
     // Use the same logic as in the store to find the DataSource
-    return findDataSourceByIdentifier(url, dataSources) !== null;
-  }, [url, dataSources]);
+    return dataSourceId !== undefined;
+  }, [dataSourceId]);
 
   // Check if an add/remove operation is pending for this item's URL
   const pendingOperation = isOperationPending(url || '');
@@ -104,14 +130,20 @@ export function ContentCard({
 
   const classificationWidgetRef = useRef<HTMLButtonElement>(null);
 
-  // Load classification results when component mounts or ID changes
+  // Load annotation schemas when component mounts
   useEffect(() => {
-    const dataRecordId = parseInt(id);
-    if (!isNaN(dataRecordId) && dataRecordId > 0) {
-      // Pass options object to loadResults
-      loadResults({ datarecordId: dataRecordId, useCache: true }); 
+    if (activeInfospace?.id) {
+      loadResults();
     }
-  }, [id, loadResults]);
+  }, [activeInfospace?.id, loadResults]);
+
+  // Mock function to simulate loading classification results
+  const mockLoadResults = useCallback((options: { datarecordId: number; useCache?: boolean }) => {
+    // In a real implementation, this would load actual annotation results for the content
+    console.log('Loading results for datarecord:', options.datarecordId);
+    // For now, just set empty results
+    setClassificationResults([]);
+  }, []);
 
   // Update classification completion state based on results
   useEffect(() => {
@@ -125,19 +157,18 @@ export function ContentCard({
     console.log("Classification completed from dialog:", result);
     setClassificationCompleted(true);
     
-    // Pass runId from the result? The result structure might not have run_id.
-    // Let's reload results based on the data record ID instead.
+    // Reload results based on the data record ID
     const dataRecordId = parseInt(id);
     if (!isNaN(dataRecordId) && dataRecordId > 0) {
-      loadResults({ datarecordId: dataRecordId }); // Reload results for this record
+      mockLoadResults({ datarecordId: dataRecordId });
     }
-  }, [id, loadResults]);
+  }, [id, mockLoadResults]);
 
-  // Update the handleExternalClassify function to use the job system
+  // Update the handleExternalClassify function to use the annotation system
   const handleExternalClassify = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
 
-    // Assuming isClassifying reflects if a job is currently running/being created
+    // Check if a job is currently being created
     if (isClassifying) {
       console.log("Classification process already active, skipping");
       return;
@@ -151,70 +182,54 @@ export function ContentCard({
       return;
     }
 
-    // We need the DataSource ID to create a job properly.
-    // If not passed as prop, this won't work.
-    if (!dataSourceId) {
-      console.error("Missing DataSource ID for classification.");
-      toast({ title: "Error", description: "Missing DataSource information for this item.", variant: "destructive" });
-      return;
-    }
-
     try {
       // Get the Infospace ID
-      if (!activeInfospace?.id) { // Changed uid to id
+      if (!activeInfospace?.id) {
         console.error("No active Infospace");
         toast({ title: "Error", description: "No active Infospace", variant: "destructive" });
         return;
       }
 
-      const InfospaceId = activeInfospace.id; // Changed uid to id
+      const infospaceId = activeInfospace.id;
 
-      // Get the default scheme ID using the store's validation
-      const defaultSchemeId = classificationSettings.getDefaultSchemeId(InfospaceId, schemes);
+      // Get the default scheme ID
+      const defaultScheme = schemas.find(s => s.name.toLowerCase().includes('default')) || schemas[0];
 
-      if (!defaultSchemeId) {
-        console.error("No default classification scheme available");
-        toast({ title: "Error", description: "No default classification scheme available", variant: "destructive" });
+      if (!defaultScheme) {
+        console.error("No annotation scheme available");
+        toast({ title: "Error", description: "No annotation scheme available", variant: "destructive" });
         return;
       }
 
-      // Prepare job parameters according to ClassificationJobParams
-      const jobParams /*: ClassificationJobParams */ = {
-        InfospaceId: InfospaceId,
+      // Create annotation run parameters
+      const runParams = {
         name: `Single Classification: ${title || 'Item ' + dataRecordId} - ${new Date().toISOString()}`,
-        // Pass schemeId as schemeIds array
-        schemeIds: [defaultSchemeId],
-        // Pass dataSourceId as datasourceIds array
-        datasourceIds: [dataSourceId],
-        // datarecord_ids: [dataRecordId] // Not directly in ClassificationJobParams interface
-        // Add configuration if needed, e.g., to target specific record
+        description: `Automated classification for content item ${dataRecordId}`,
+        schemaIds: [defaultScheme.id],
+        assetIds: [dataRecordId],
         configuration: {
-          target_datarecord_ids: [dataRecordId] // Assuming backend/hook uses this
+          target_datarecord_ids: [dataRecordId]
         }
       };
 
-      // Create the classification job
-      const newJob = await createJob(jobParams);
+      // Create the annotation run
+      const newRun = await createJob(runParams);
 
-      if (newJob) {
-        console.log("ContentCard: Classification job created successfully", newJob);
+      if (newRun) {
+        console.log("ContentCard: Annotation run created successfully", newRun);
         toast({
           title: "Classification Started",
-          description: `Job created (ID: ${newJob.id}). Results will appear soon.`,
+          description: `Run created (ID: ${newRun.id}). Results will appear soon.`,
           variant: "default"
         });
-        setClassificationCompleted(true); // Mark as completed (job created)
-        // Optionally start the job if needed (depends on backend setup)
-        // await startClassificationJob(newJob.id);
-        // Reload results optimistically or wait for job completion
-        loadResults({ datarecordId: dataRecordId });
+        setClassificationCompleted(true);
+        mockLoadResults({ datarecordId: dataRecordId });
       } else {
-        // Handle case where job creation failed but didn't throw an error
-        toast({ title: "Error", description: "Failed to create classification job.", variant: "destructive" });
+        toast({ title: "Error", description: "Failed to create annotation run.", variant: "destructive" });
       }
 
     } catch (error) {
-      console.error("Error creating classification job:", error);
+      console.error("Error creating annotation run:", error);
       toast({
         title: "Classification Failed",
         description: error instanceof Error ? error.message : "An unknown error occurred",
@@ -223,14 +238,12 @@ export function ContentCard({
     }
   }, [
     id,
-    dataSourceId,
     title,
     isClassifying,
     activeInfospace,
-    classificationSettings,
-    schemes,
+    schemas,
     createJob,
-    loadResults,
+    mockLoadResults,
     toast
   ]);
 
@@ -297,32 +310,24 @@ export function ContentCard({
     }
   }, [classificationResults]);
 
-  // Update the useEffect to load the default scheme name
+  // Load default scheme when schemas are available
   useEffect(() => {
-    const loadDefaultScheme = async () => {
-      if (!activeInfospace?.id || schemes.length === 0) return; // Changed uid to id
+    if (!activeInfospace?.id || preloadedSchemes.length === 0) return;
 
-      try {
-        const InfospaceId = activeInfospace.id; // Changed uid to id
+    try {
+      const infospaceId = activeInfospace.id;
 
-        // Get the default scheme ID using the hook instance
-        const defaultSchemeId = classificationSettings.getDefaultSchemeId(InfospaceId, schemes);
-        
-        if (defaultSchemeId) {
-          const defaultScheme = schemes.find(s => s.id === defaultSchemeId);
-          if (defaultScheme) {
-            // Update the state with the new default scheme name
-            // This is a placeholder implementation. You might want to update this to use a state management library
-            // or a more robust method to update the component's state.
-          }
-        }
-      } catch (error) {
-        console.error('Error loading default scheme:', error);
+      // Get the default scheme ID - check for a scheme marked as default or use first one
+      const defaultScheme = preloadedSchemes.find(s => s.name.toLowerCase().includes('default')) || preloadedSchemes[0];
+      
+      if (defaultScheme) {
+        console.log('Default scheme found:', defaultScheme.name);
+        // You could update component state here if needed
       }
-    };
-    
-    loadDefaultScheme();
-  }, [activeInfospace?.id, schemes, classificationSettings]);
+    } catch (error) {
+      console.error('Error loading default scheme:', error);
+    }
+  }, [activeInfospace?.id, preloadedSchemes]);
 
   return (
     <Dialog open={isDialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -448,8 +453,8 @@ export function ContentCard({
                     return (
                       <div key={result.id || index}> 
                         <ClassificationResultDisplay 
-                          result={result as unknown as ClassificationResultRead} 
-                          scheme={result.scheme as unknown as ClassificationSchemeRead} 
+                          result={result} 
+                          scheme={result.scheme} 
                           compact={true}
                         />
                       </div>
@@ -488,10 +493,10 @@ export function ContentCard({
                       isLoadingResults,
                       classificationResults
                     });
-                    // Force reload results - pass object
+                    // Force reload results
                     const dataRecordId = parseInt(id);
                     if (!isNaN(dataRecordId)) {
-                      loadResults({ datarecordId: dataRecordId });
+                      mockLoadResults({ datarecordId: dataRecordId });
                     }
                   }}
                 >
@@ -548,8 +553,8 @@ export function ContentCard({
                     <div className="mt-1">
                       {result.scheme ? (
                         <ClassificationResultDisplay 
-                          result={result as unknown as ClassificationResultRead} 
-                          scheme={result.scheme as unknown as ClassificationSchemeRead}
+                          result={result} 
+                          scheme={result.scheme}
                           compact={false}
                         />
                       ) : (

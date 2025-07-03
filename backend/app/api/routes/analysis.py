@@ -1,15 +1,27 @@
 import logging
 import importlib
 import asyncio # Added for checking async functions
-from typing import Dict, Any
+from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Body, Path
 from sqlmodel import Session, select # Added select
 
 from app.models import AnalysisAdapter # Ensure this is correctly imported
 from app.api.deps import SessionDep, CurrentUser # Ensure these are correctly imported
+from app.schemas import AnalysisAdapterRead # We'll need a Pydantic model for the response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["Analysis Adapters"])
+
+@router.get("/adapters", response_model=List[AnalysisAdapterRead])
+async def list_analysis_adapters(
+    session: SessionDep,
+    current_user: CurrentUser
+):
+    """
+    List all active and available analysis adapters.
+    """
+    adapters = session.exec(select(AnalysisAdapter).where(AnalysisAdapter.is_active == True)).all()
+    return adapters
 
 @router.post("/{adapter_name}/execute")
 async def execute_analysis_adapter(
@@ -46,7 +58,12 @@ async def execute_analysis_adapter(
         # Some adapters might not need it, so it's optional in their constructor.
         # For simplicity, let's assume the adapter constructor takes session and config.
         # If user context is needed within adapter, it can be passed in config or as separate param.
-        adapter_instance = AdapterClass(session=session, config=config)
+        adapter_instance = AdapterClass(
+            session=session, 
+            config=config,
+            current_user=current_user,
+            infospace_id=config.get("infospace_id") # Assuming infospace_id is passed in the config
+        )
         
         # Check if execute is an async method
         if asyncio.iscoroutinefunction(adapter_instance.execute):

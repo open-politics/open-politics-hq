@@ -1,3 +1,90 @@
+export const $AnalysisAdapterRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		input_schema_definition: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		output_schema_definition: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		version: {
+	type: 'string',
+	default: '1.0',
+},
+		module_path: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		adapter_type: {
+	type: 'string',
+	isRequired: true,
+},
+		is_public: {
+	type: 'boolean',
+	default: false,
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		is_active: {
+	type: 'boolean',
+	isRequired: true,
+},
+		creator_user_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
 export const $AnnotationCreate = {
 	properties: {
 		value: {
@@ -307,6 +394,25 @@ export const $AnnotationRunRead = {
 }],
 	isRequired: true,
 },
+		annotation_count: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		schema_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -494,6 +600,18 @@ export const $AnnotationSchemaRead = {
 	type: 'null',
 }],
 },
+		annotation_count: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		is_active: {
+	type: 'boolean',
+	isRequired: true,
+},
 	},
 } as const;
 
@@ -550,6 +668,14 @@ export const $AnnotationSchemaUpdate = {
 	contains: {
 		type: 'FieldJustificationConfig',
 	},
+}, {
+	type: 'null',
+}],
+},
+		is_active: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
 }, {
 	type: 'null',
 }],
@@ -666,6 +792,44 @@ export const $ArticleResponse = {
 	},
 } as const;
 
+export const $AssetChunkRead = {
+	properties: {
+		asset_id: {
+	type: 'number',
+	isRequired: true,
+},
+		chunk_index: {
+	type: 'number',
+	isRequired: true,
+},
+		text_content: {
+	type: 'string',
+	isRequired: true,
+},
+		chunk_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
 export const $AssetCreate = {
 	properties: {
 		title: {
@@ -775,6 +939,75 @@ export const $AssetCreate = {
 export const $AssetKind = {
 	type: 'Enum',
 	enum: ['pdf','web','image','video','audio','text','csv','csv_row','mbox','email','pdf_page','text_chunk','image_region','video_scene','audio_segment','article','file',],
+} as const;
+
+export const $AssetPreview = {
+	description: `A lightweight public representation of an Asset.`,
+	properties: {
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		title: {
+	type: 'string',
+	isRequired: true,
+},
+		kind: {
+	type: 'AssetKind',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		text_content: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		blob_path: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		children: {
+	type: 'array',
+	contains: {
+		type: 'AssetPreview',
+	},
+	default: [],
+},
+		is_container: {
+	type: 'boolean',
+	description: `Helper to know if this asset might have children (e.g., PDF, CSV).`,
+	isReadOnly: true,
+	isRequired: true,
+},
+	},
 } as const;
 
 export const $AssetRead = {
@@ -1096,6 +1329,7 @@ export const $Body_login_login_access_token = {
 		password: {
 	type: 'string',
 	isRequired: true,
+	format: 'password',
 },
 		scope: {
 	type: 'string',
@@ -1242,6 +1476,45 @@ export const $BundleCreate = {
 	},
 } as const;
 
+export const $BundlePreview = {
+	description: `A lightweight public representation of a Bundle.`,
+	properties: {
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		assets: {
+	type: 'array',
+	contains: {
+		type: 'AssetPreview',
+	},
+	default: [],
+},
+	},
+} as const;
+
 export const $BundleRead = {
 	properties: {
 		name: {
@@ -1280,6 +1553,11 @@ export const $BundleRead = {
 	isRequired: true,
 	format: 'date-time',
 },
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
 		asset_count: {
 	type: 'number',
 	isRequired: true,
@@ -1291,11 +1569,6 @@ export const $BundleRead = {
 		user_id: {
 	type: 'number',
 	isRequired: true,
-},
-		updated_at: {
-	type: 'string',
-	isRequired: true,
-	format: 'date-time',
 },
 		purpose: {
 	type: 'any-of',
@@ -1364,6 +1637,151 @@ export const $BundleUpdate = {
 	contains: {
 	properties: {
 	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $ChunkAssetRequest = {
+	properties: {
+		strategy: {
+	type: 'string',
+	default: 'token',
+},
+		chunk_size: {
+	type: 'number',
+	default: 512,
+},
+		chunk_overlap: {
+	type: 'number',
+	default: 50,
+},
+		overwrite_existing: {
+	type: 'boolean',
+	default: false,
+},
+	},
+} as const;
+
+export const $ChunkAssetsRequest = {
+	properties: {
+		asset_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		asset_kinds: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'string',
+},
+}, {
+	type: 'null',
+}],
+},
+		infospace_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		strategy: {
+	type: 'string',
+	default: 'token',
+},
+		chunk_size: {
+	type: 'number',
+	default: 512,
+},
+		chunk_overlap: {
+	type: 'number',
+	default: 50,
+},
+		overwrite_existing: {
+	type: 'boolean',
+	default: false,
+},
+	},
+} as const;
+
+export const $ChunkingResultResponse = {
+	properties: {
+		message: {
+	type: 'string',
+	isRequired: true,
+},
+		asset_id: {
+	type: 'number',
+	isRequired: true,
+},
+		chunks_created: {
+	type: 'number',
+	isRequired: true,
+},
+		strategy_used: {
+	type: 'string',
+	isRequired: true,
+},
+		strategy_params: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ChunkingStatsResponse = {
+	properties: {
+		total_chunks: {
+	type: 'number',
+	isRequired: true,
+},
+		total_characters: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		average_chunk_size: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		assets_with_chunks: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		strategies_used: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	type: 'number',
 },
 }, {
 	type: 'null',
@@ -1638,6 +2056,271 @@ export const $DatasetsOut = {
 	},
 } as const;
 
+export const $EmbeddingGenerateRequest = {
+	properties: {
+		chunk_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		model_name: {
+	type: 'string',
+	isRequired: true,
+},
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $EmbeddingModelCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+		dimension: {
+	type: 'number',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		config: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		max_sequence_length: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $EmbeddingModelRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+		dimension: {
+	type: 'number',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		config: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		max_sequence_length: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		is_active: {
+	type: 'boolean',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		embedding_time_ms: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $EmbeddingProvider = {
+	type: 'Enum',
+	enum: ['ollama','jina','openai','huggingface',],
+} as const;
+
+export const $EmbeddingSearchRequest = {
+	properties: {
+		query_text: {
+	type: 'string',
+	isRequired: true,
+},
+		model_name: {
+	type: 'string',
+	isRequired: true,
+},
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+		limit: {
+	type: 'number',
+	default: 10,
+},
+		distance_threshold: {
+	type: 'number',
+	default: 1,
+},
+		distance_function: {
+	type: 'string',
+	default: 'cosine',
+},
+	},
+} as const;
+
+export const $EmbeddingSearchResponse = {
+	properties: {
+		query_text: {
+	type: 'string',
+	isRequired: true,
+},
+		results: {
+	type: 'array',
+	contains: {
+		type: 'EmbeddingSearchResult',
+	},
+	isRequired: true,
+},
+		model_name: {
+	type: 'string',
+	isRequired: true,
+},
+		distance_function: {
+	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $EmbeddingSearchResult = {
+	properties: {
+		chunk_id: {
+	type: 'number',
+	isRequired: true,
+},
+		asset_id: {
+	type: 'number',
+	isRequired: true,
+},
+		text_content: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		distance: {
+	type: 'number',
+	isRequired: true,
+},
+		similarity: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $EmbeddingStatsResponse = {
+	properties: {
+		model_id: {
+	type: 'number',
+	isRequired: true,
+},
+		model_name: {
+	type: 'string',
+	isRequired: true,
+},
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+		dimension: {
+	type: 'number',
+	isRequired: true,
+},
+		embedding_count: {
+	type: 'number',
+	isRequired: true,
+},
+		table_size: {
+	type: 'string',
+	isRequired: true,
+},
+		avg_embedding_time_ms: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $ExportBatchRequest = {
 	properties: {
 		resource_type: {
@@ -1650,6 +2333,25 @@ export const $ExportBatchRequest = {
 	type: 'number',
 },
 	isRequired: true,
+},
+	},
+} as const;
+
+export const $ExportMixedBatchRequest = {
+	properties: {
+		asset_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	default: [],
+},
+		bundle_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	default: [],
 },
 	},
 } as const;
@@ -1697,6 +2399,15 @@ export const $HTTPValidationError = {
 	},
 } as const;
 
+export const $ImportFromTokenRequest = {
+	properties: {
+		target_infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $InfospaceCreate = {
 	properties: {
 		name: {
@@ -1718,6 +2429,10 @@ export const $InfospaceCreate = {
 }, {
 	type: 'null',
 }],
+},
+		owner_id: {
+	type: 'number',
+	isRequired: true,
 },
 		vector_backend: {
 	type: 'any-of',
@@ -2107,7 +2822,7 @@ export const $Request = {
 
 export const $ResourceType = {
 	type: 'Enum',
-	enum: ['bundle','asset','schema','infospace','run','package',],
+	enum: ['source','bundle','asset','schema','infospace','run','package','dataset','mixed',],
 } as const;
 
 export const $ResultStatus = {
@@ -2430,6 +3145,37 @@ export const $ShareableLinkUpdate = {
 	},
 } as const;
 
+export const $SharedResourcePreview = {
+	description: `The complete public-facing model for a shared resource view.`,
+	properties: {
+		resource_type: {
+	type: 'ResourceType',
+	isRequired: true,
+},
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		content: {
+	type: 'any-of',
+	contains: [{
+	type: 'AssetPreview',
+}, {
+	type: 'BundlePreview',
+}],
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $Token = {
 	properties: {
 		access_token: {
@@ -2477,6 +3223,14 @@ export const $UserCreate = {
 		password: {
 	type: 'string',
 	isRequired: true,
+},
+		is_superuser: {
+	type: 'boolean',
+	default: false,
+},
+		is_active: {
+	type: 'boolean',
+	default: true,
 },
 	},
 } as const;
@@ -2527,6 +3281,10 @@ export const $UserOut = {
 		is_active: {
 	type: 'boolean',
 	default: true,
+},
+		is_superuser: {
+	type: 'boolean',
+	default: false,
 },
 	},
 } as const;
@@ -2596,22 +3354,6 @@ export const $UserUpdateMe = {
 
 export const $UsersOut = {
 	properties: {
-		email: {
-	type: 'string',
-	isRequired: true,
-},
-		full_name: {
-	type: 'any-of',
-	contains: [{
-	type: 'string',
-}, {
-	type: 'null',
-}],
-},
-		tier: {
-	type: 'UserTier',
-	default: 'tier_0',
-},
 		data: {
 	type: 'array',
 	contains: {

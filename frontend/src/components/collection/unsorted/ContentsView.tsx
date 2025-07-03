@@ -37,10 +37,10 @@ import {
   BrainCircuit
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ClassificationSchemeRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client/models';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { ContentCardProps } from './ContentCard';
-import { useClassificationSystem } from '@/hooks/useClassificationSystem';
+import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -50,7 +50,6 @@ import {
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
-import { useDataSourceStore } from '@/zustand_stores/storeAssets';
 import { CoreContentModel } from '@/lib/content';
 
 interface ContentsViewProps {
@@ -66,7 +65,7 @@ interface ContentsViewProps {
 }
 
 interface ContentEvaluation {
-  content_id: string;
+  content_id?: string;
   rhetoric: string;
   sociocultural_interest: number | null;
   global_political_impact: number | null;
@@ -150,17 +149,15 @@ export function ContentsView({
   const [selectedSchemeId, setSelectedSchemeId] = useState<number | null>(null);
   const { activeInfospace } = useInfospaceStore();
   
-  // Use the consolidated classification system hook to load schemes once
+  // Use the annotation system hook to load schemes
   const {
     schemes,
-    isLoadingSchemes,
-    isClassifying,
-    createJob,
-    startClassificationJob,
-    loadSchemes
-  } = useClassificationSystem({
+    isLoadingSchemas,
+    isCreatingRun: isClassifying,
+    createRun: createJob,
+    loadSchemas
+  } = useAnnotationSystem({
     autoLoadSchemes: true, // Load schemes automatically on mount
-    useCache: true // Use caching to prevent redundant API calls
   });
 
   const [filters, setFilters] = useState<ContentFilter[]>([]);
@@ -171,8 +168,8 @@ export function ContentsView({
 
   const selectedContentRef = useRef<HTMLDivElement>(null);
 
-  // Get DataSources for checking bookmark status
-  const { dataSources } = useDataSourceStore();
+  // Mock data sources for now - in a real app, this would come from a proper store
+  const dataSources: any[] = [];
 
   useEffect(() => {
     setSelectedEventType(highlightedEventType || 'all');
@@ -191,10 +188,10 @@ export function ContentsView({
 
   useEffect(() => {
     if (activeInfospace?.id) {
-      // Load schemes using the new hook
-      loadSchemes();
+      // Load schemes using the annotation system
+      loadSchemas();
     }
-  }, [activeInfospace?.id, loadSchemes]);
+  }, [activeInfospace?.id, loadSchemas]);
 
   useEffect(() => {
     if (selectedContentId && selectedContentRef.current) {
@@ -277,14 +274,14 @@ export function ContentsView({
       toast({ title: "Error", description: "No active Infospace selected.", variant: "destructive" });
       return;
     }
-    const InfospaceId = activeInfospace.id;
+    const infospaceId = activeInfospace.id;
     let addedCount = 0;
     for (const content of filteredAndSortedContents) { // Iterate over currently filtered/visible contents
       const identifier = content.url;
       if (identifier && findDataSourceByIdentifier(identifier, dataSources) === null) {
         // Item is not bookmarked, add it
-        if (InfospaceId) {
-          await addBookmark(content as CoreContentModel, InfospaceId);
+        if (infospaceId) {
+          await addBookmark(content as CoreContentModel, infospaceId);
           addedCount++;
         }
       }
@@ -301,15 +298,15 @@ export function ContentsView({
       toast({ title: "Error", description: "No active Infospace selected.", variant: "destructive" });
       return;
     }
-    const InfospaceId = activeInfospace.id;
+    const infospaceId = activeInfospace.id;
     let removedCount = 0;
     for (const content of filteredAndSortedContents) { // Iterate over currently filtered/visible contents
        const identifier = content.url;
        if (identifier) {
          const dataSourceId = findDataSourceByIdentifier(identifier, dataSources);
          if (dataSourceId !== null) {
-           if (InfospaceId) {
-             await removeBookmark(identifier, InfospaceId);
+           if (infospaceId) {
+             await removeBookmark(identifier, infospaceId);
              removedCount++;
            }
          }
@@ -399,45 +396,42 @@ export function ContentsView({
     try {
       // Generate a unique run name
       const runName = `Batch classification - ${new Date().toLocaleString()}`;
-      const InfospaceId = activeInfospace?.id;
+      const infospaceId = activeInfospace?.id;
 
-      if (!InfospaceId) {
+      if (!infospaceId) {
          toast({ title: "Error", description: "No active Infospace found.", variant: "destructive" });
          return;
       }
 
-      // Prepare job parameters
-      const jobParams /*: ClassificationJobParams */ = {
-        InfospaceId: InfospaceId,
+      // Prepare annotation run parameters
+      const runParams = {
         name: runName,
-        schemeIds: [selectedSchemeId],
-        datasourceIds: infospaceIds, // All involved Infospace IDs
+        description: `Batch annotation for ${totalAssetsToClassify} selected items`,
+        schemaIds: [selectedSchemeId],
+        assetIds: allAssetIds,
         configuration: {
-          // Target specific records across potentially multiple sources
           target_asset_ids: allAssetIds
         }
       };
 
-      console.log("Creating job with params:", jobParams);
+      console.log("Creating annotation run with params:", runParams);
 
-      const newJob = await createJob(jobParams);
+      const newRun = await createJob(runParams);
 
-      if (newJob) {
-        console.log(`Batch classification job created with ID: ${newJob.id}`);
+      if (newRun) {
+        console.log(`Batch annotation run created with ID: ${newRun.id}`);
         toast({
-          title: "Classification Job Created",
-          description: `Job "${runName}" (ID: ${newJob.id}) created for ${totalAssetsToClassify} items. It will start processing shortly.`,
+          title: "Annotation Run Created",
+          description: `Run "${runName}" (ID: ${newRun.id}) created for ${totalAssetsToClassify} items. It will start processing shortly.`,
           variant: "default",
         });
         clearAllSelections();
-        // Optionally start the job or rely on backend
-        // await startClassificationJob(newJob.id);
       } else {
-         toast({ title: "Error", description: "Failed to create classification job.", variant: "destructive" });
+         toast({ title: "Error", description: "Failed to create annotation run.", variant: "destructive" });
       }
 
     } catch (error: any) {
-      console.error("Error during batch classification job creation:", error);
+      console.error("Error during batch annotation run creation:", error);
 
       toast({
         title: "Classification Failed",
@@ -464,7 +458,7 @@ export function ContentsView({
       
       const formattedEvaluation = content.evaluation 
         ? {
-            content_id: content.evaluation.content_id || content.id,
+            content_id: content.id, // Use content.id as the content_id
             rhetoric: content.evaluation.rhetoric || '',
             sociocultural_interest: content.evaluation.sociocultural_interest !== undefined 
               ? content.evaluation.sociocultural_interest 
@@ -493,7 +487,7 @@ export function ContentsView({
         title: content.title,
         text_content: content.text_content?.slice(0, 350) || '',
         url: content.url,
-        source: content.source,
+        source: content.source_identifier || content.source_metadata?.name || 'Unknown',
         insertion_date: content.insertion_date,
         content_type: content.content_type || 'article',
         content_language: content.content_language || null,
@@ -582,11 +576,6 @@ export function ContentsView({
       </svg>
       
       <div className="flex items-center justify-between mb-0">
-        {/* <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">{locationName}</h2>
-          
-        </div> */}
-        
         <div className="flex items-center gap-2">
           {selectedContents.length > 0 && (
             <Badge variant="secondary" className="flex items-center gap-1">

@@ -10,7 +10,7 @@ import {
     ResourceType,
     // Message, // Message is not used directly here, can be removed if not needed for other parts
 } from '@/client/models';
-import { useShareableStore } from './storeShareables';
+import { useShareableStore, SingleImportSuccess } from './storeShareables';
 
 // Utility for file download (can be moved to a shared utils file later)
 const triggerDownload = (blob: Blob, filename: string) => {
@@ -38,7 +38,7 @@ interface DatasetState {
     exportMultipleDatasets: (datasetIds: number[], options: ExportOptions) => Promise<void>;
     // Import Operations
     importDataset: (file: File, conflictStrategy?: 'skip' | 'update' | 'replace') => Promise<DatasetRead | null>;
-    importFromToken: (token: string, options?: ImportOptions) => Promise<DatasetRead | null>;
+    importFromToken: (token: string, options?: ImportOptions) => Promise<SingleImportSuccess | null>;
 }
 
 export interface ExportOptions { // Exported for use in components
@@ -71,7 +71,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             const response: DatasetsOut = await DatasetsService.listDatasets({
-                InfospaceId: activeInfospace.id,
+                infospaceId: activeInfospace.id,
                 skip: 0,
                 limit: 1000 // Increased limit, consider pagination for UI
             });
@@ -104,7 +104,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             const dataset = await DatasetsService.createDataset({
-                InfospaceId: activeInfospace.id,
+                infospaceId: activeInfospace.id,
                 requestBody: datasetData
             });
 
@@ -136,7 +136,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             const updated = await DatasetsService.updateDataset({
-                InfospaceId: activeInfospace.id,
+                infospaceId: activeInfospace.id,
                 datasetId: datasetId,
                 requestBody: updateData
             });
@@ -169,7 +169,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             await DatasetsService.deleteDataset({
-                InfospaceId: activeInfospace.id,
+                infospaceId: activeInfospace.id,
                 datasetId: datasetId
             });
 
@@ -199,7 +199,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             const response = await DatasetsService.exportDataset({
-                InfospaceId: activeInfospace.id,
+                infospaceId: activeInfospace.id,
                 datasetId: datasetId,
                 includeContent: options.includeRecordContent,
                 includeResults: options.includeResults,
@@ -246,7 +246,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
             // This assumes useShareableStore can batch export datasets.
             // The ShareableService backend supports batch export by resource type.
             const { exportResourcesBatch } = useShareableStore.getState();
-            await exportResourcesBatch('dataset' as ResourceType, datasetIds);
+            await exportResourcesBatch('dataset' as ResourceType, datasetIds, activeInfospace.id);
             // Note: The `options` (includeRecordContent etc.) are not directly passed to exportResourcesBatch
             // as the generic batch exporter in ShareableService might use default export settings for each resource type.
             // If fine-grained control per item in a batch is needed, the backend ShareableService.export_resources_batch
@@ -273,7 +273,7 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             const importedDataset = await DatasetsService.importDataset({
-                InfospaceId: activeInfospace.id,
+                infospaceId: activeInfospace.id,
                 formData: { file },
                 conflictStrategy: conflictStrategy,
             });
@@ -295,44 +295,42 @@ export const useDatasetStore = create<DatasetState>((set, get) => ({
         }
     },
 
-    importFromToken: async (token: string, options?: ImportOptions): Promise<DatasetRead | null> => {
+    importFromToken: async (token: string, options?: ImportOptions): Promise<SingleImportSuccess | null> => {
         const targetInfospaceId = options?.InfospaceId || useInfospaceStore.getState().activeInfospace?.id;
 
         if (!targetInfospaceId) {
-            toast.error("Target Infospace ID must be specified for importing dataset from token.");
-            set({ isLoading: false, error: "Target Infospace ID missing for token import" });
+            const error = "Target Infospace ID must be specified for importing from token.";
+            set({ isLoading: false, error });
+            toast.error(error);
             return null;
         }
 
         set({ isLoading: true, error: null });
         try {
-            const dataset = await DatasetsService.importDatasetFromToken({
-                InfospaceId: targetInfospaceId, // Use the determined InfospaceId
-                shareToken: token,
-                includeContent: options?.includeContent,
-                includeResults: options?.includeResults,
-                conflictStrategy: options?.conflictStrategy
-            });
+            const result = await useShareableStore.getState().importResourceFromToken(
+                token,
+                targetInfospaceId
+            );
 
-            const currentActiveInfospaceId = useInfospaceStore.getState().activeInfospace?.id;
-            if (dataset.Infospace_id === currentActiveInfospaceId) {
-                set(state => ({
-                    datasets: [dataset, ...state.datasets].sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-                    isLoading: false
-                }));
-                toast.success(`Dataset "${dataset.name}" imported successfully into the current Infospace.`);
-            } else {
-                set({ isLoading: false }); // Still imported, but not to current active Infospace visible list
-                toast.success(`Dataset "${dataset.name}" imported into Infospace ID ${dataset.Infospace_id}. Switch to that Infospace to view it.`);
+            if (result && result.resource_type === 'dataset') {
+                const currentActiveInfospaceId = useInfospaceStore.getState().activeInfospace?.id;
+                if (result.target_infospace_id === currentActiveInfospaceId) {
+                    await get().fetchDatasets(); // Refresh the list
+                    toast.success(`Dataset "${result.imported_resource_name}" imported successfully into the current Infospace.`);
+                } else {
+                    toast.success(`Dataset "${result.imported_resource_name}" imported into Infospace ID ${result.target_infospace_id}. Switch to that Infospace to view it.`);
+                }
             }
-            return dataset;
+            
+            set({ isLoading: false });
+            return result;
         } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : "Failed to import dataset from token";
+            const errorMsg = err instanceof Error ? err.message : "Failed to import from token";
             const detail = (err as any).body?.detail;
             const finalMsg = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : errorMsg;
             set({ error: finalMsg, isLoading: false });
             toast.error(finalMsg);
-            console.error("Error importing dataset from token:", err);
+            console.error("Error importing from token:", err);
             return null;
         }
     }

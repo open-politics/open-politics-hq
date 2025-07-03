@@ -8,9 +8,7 @@ from app.api.providers.base import (
     ScrapingProvider,
     SearchProvider,
     GeospatialProvider,
-    # Import other provider protocols as they are defined, e.g.:
-    # EmbeddingProvider,
-    # GeospatialProvider,
+    EmbeddingProvider,
 )
 
 # Import concrete provider implementations
@@ -31,8 +29,11 @@ from app.api.providers.impl.search_opol import OpolSearchProvider # Assuming sea
 from app.api.providers.impl.search_tavily import TavilySearchProvider
 # from app.api.providers.impl.search_elasticsearch import ElasticsearchSearchProvider # Example
 
-# Placeholder for future provider imports
-# from app.api.providers.impl.embedding_openai import OpenAIEmbeddingProvider
+# Embedding provider implementations
+from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
+from app.api.providers.impl.embedding_jina import JinaEmbeddingProvider
+# from app.api.providers.impl.embedding_openai import OpenAIEmbeddingProvider # Future
+
 from app.api.providers.impl.geospatial_opol import OpolGeospatialProvider
 
 logger = logging.getLogger(__name__)
@@ -122,16 +123,29 @@ def create_search_provider(settings: AppSettings) -> SearchProvider:
     else:
         raise ValueError(f"Unsupported search provider type configured: {settings.SEARCH_PROVIDER_TYPE}")
 
-# --- Placeholder for Future Provider Factories ---
-# def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
-#     provider_type = settings.EMBEDDING_PROVIDER_TYPE.lower()
-#     logger.info(f"Factory: Creating embedding provider of type: {provider_type}")
-#     if provider_type == "openai":
-#         if not settings.OPENAI_API_KEY: raise ValueError("OPENAI_API_KEY required for OpenAI embeddings")
-#         return OpenAIEmbeddingProvider(api_key=settings.OPENAI_API_KEY, model_name=settings.DEFAULT_EMBEDDING_MODEL_NAME)
-#     # ... other embedding providers
-#     else:
-#         raise ValueError(f"Unsupported embedding provider type: {provider_type}")
+def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
+    """Create and configure an embedding provider based on settings."""
+    provider_type = getattr(settings, 'EMBEDDING_PROVIDER_TYPE', 'ollama').lower()
+    logger.info(f"Factory: Creating embedding provider of type: {provider_type}")
+
+    if provider_type == "ollama":
+        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
+        default_model = getattr(settings, 'OLLAMA_EMBEDDING_MODEL', 'nomic-embed-text')
+        return OllamaEmbeddingProvider(base_url=ollama_base_url, default_model=default_model)
+    
+    elif provider_type == "jina":
+        jina_api_key = getattr(settings, 'JINA_API_KEY', None)
+        default_model = getattr(settings, 'JINA_EMBEDDING_MODEL', 'jina-embeddings-v2-base-en')
+        return JinaEmbeddingProvider(api_key=jina_api_key, default_model=default_model)
+    
+    elif provider_type == "openai":
+        # Placeholder for future OpenAI implementation
+        # if not settings.OPENAI_API_KEY: raise ValueError("OPENAI_API_KEY required for OpenAI embeddings")
+        # return OpenAIEmbeddingProvider(api_key=settings.OPENAI_API_KEY, model_name=settings.DEFAULT_EMBEDDING_MODEL_NAME)
+        raise ValueError("OpenAI embedding provider not yet implemented")
+    
+    else:
+        raise ValueError(f"Unsupported embedding provider type: {provider_type}")
 
 def create_geospatial_provider(settings: AppSettings) -> GeospatialProvider:
     provider_type = settings.GEOSPATIAL_PROVIDER_TYPE.lower()

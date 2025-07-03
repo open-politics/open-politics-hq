@@ -366,35 +366,3 @@ def retry_single_annotation(
     except Exception as e:
         logger.exception(f"Route: Unexpected error retrying annotation {annotation_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during annotation retry")
-
-@router.post("/run/{run_id}/retry_failed", response_model=Message)
-def retry_failed_annotations(
-    *,
-    current_user: CurrentUser,
-    infospace_id: int,
-    run_id: int,
-    annotation_service: AnnotationServiceDep,
-) -> Message:
-    """
-    Triggers a retry of all failed annotations in a run.
-    """
-    try:
-        success = annotation_service.trigger_retry_failed_annotations(
-            run_id=run_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id
-        )
-        if success:
-            return Message(message="Retry of failed annotations triggered successfully")
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to trigger retry of failed annotations"
-            )
-    except ValueError as ve:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.exception(f"Route: Error triggering retry for run {run_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") 

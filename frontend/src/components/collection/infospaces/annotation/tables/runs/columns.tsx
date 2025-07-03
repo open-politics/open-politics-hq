@@ -10,8 +10,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowUpDown, MoreHorizontal, Eye, Download, Share2, Trash2, PlayCircle, CheckCircle, XCircle, Loader2, PauseCircle, AlertTriangle, Star } from 'lucide-react';
-import { ClassificationJobRead, ClassificationJobStatus, ResourceType } from '@/client/models';
+import { ArrowUpDown, MoreHorizontal, Eye, Download, Share2, Trash2, PlayCircle, CheckCircle, XCircle, Loader2, PauseCircle, AlertTriangle, Star, HelpCircle } from 'lucide-react';
+import { AnnotationRunRead, RunStatus, ResourceType } from '@/client/models';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from '@/components/ui/badge';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -19,57 +19,65 @@ import { useFavoriteRunsStore } from "@/zustand_stores/storeFavoriteRuns";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+// import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 
-export type ClassificationJobRowData = ClassificationJobRead;
+export type AnnotationRunRowData = AnnotationRunRead;
 
-const renderJobStatusBadge = (status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'completed_with_errors' | null | undefined) => {
+const renderRunStatusBadge = (status: RunStatus | null | undefined) => {
   if (!status) return <Badge variant="outline">Unknown</Badge>;
 
-  switch (status) {
-    case 'pending':
-      return <Badge variant="outline"><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Pending</Badge>;
-    case 'running':
-      return <Badge variant="secondary"><PlayCircle className="mr-1 h-3 w-3" /> Running</Badge>;
-    case 'completed':
-      return <Badge variant="default"><CheckCircle className="mr-1 h-3 w-3 text-green-500" /> Completed</Badge>;
-    case 'failed':
-      return <Badge variant="destructive"><XCircle className="mr-1 h-3 w-3" /> Failed</Badge>;
-    case 'cancelled':
-      return <Badge variant="destructive" className="bg-amber-500 hover:bg-amber-600 text-white"><PauseCircle className="mr-1 h-3 w-3" /> Cancelled</Badge>;
-    case 'completed_with_errors':
-        return <Badge variant="outline" className="border-yellow-500 text-yellow-600"><AlertTriangle className="mr-1 h-3 w-3" /> Partial</Badge>;
-    default:
-      const exhaustiveCheck: never = status;
-      return <Badge variant="outline">{status}</Badge>;
-  }
+  const statusConfig = {
+    completed: { icon: CheckCircle, color: "text-green-500", label: "Completed" },
+    failed: { icon: AlertTriangle, color: "text-red-500", label: "Failed" },
+    running: { icon: Loader2, color: "text-blue-500", label: "Running", animate: "animate-spin" },
+    pending: { icon: Loader2, color: "text-yellow-500", label: "Pending", animate: "animate-spin" }
+  }[status] || { icon: HelpCircle, color: "text-gray-500", label: "Unknown" };
+
+  const Icon = statusConfig.icon;
+
+  return (
+    <Badge variant="outline">
+      <Icon className={`mr-1 h-3 w-3 ${statusConfig.animate ? "animate-spin" : ""} ${statusConfig.color}`} />
+      {statusConfig.label}
+    </Badge>
+  );
 };
 
-interface JobColumnProps {
-  onViewResults: (job: ClassificationJobRowData) => void;
-  onExport: (jobId: number) => void;
-  onShare: (jobId: number) => void;
-  onDelete: (job: ClassificationJobRowData) => void;
+interface RunColumnProps {
+  onViewResults: (run: AnnotationRunRowData) => void;
+  onExport: (runId: number) => void;
+  onShare: (runId: number) => void;
+  onDelete: (run: AnnotationRunRowData) => void;
 }
 
-export const classificationJobColumns = ({ onViewResults, onExport, onShare, onDelete }: JobColumnProps): ColumnDef<ClassificationJobRowData>[] => {
+export const annotationRunColumns = ({ onViewResults, onExport, onShare, onDelete }: RunColumnProps): ColumnDef<AnnotationRunRowData>[] => {
   const { activeInfospace } = useInfospaceStore.getState();
   const { favoriteRuns, addFavoriteRun, removeFavoriteRun } = useFavoriteRunsStore.getState();
   
-  const isFavorite = (jobId: number) => {
+  const isFavorite = (runId: number) => {
     if (!activeInfospace?.id) return false;
-    return favoriteRuns.some(fav => fav.id === jobId && Number(fav.InfospaceId) === activeInfospace.id);
+    return favoriteRuns.some(fav => fav.id === runId && Number(fav.InfospaceId) === activeInfospace.id);
   };
 
-  const toggleFavorite = (job: ClassificationJobRowData) => {
+  const toggleFavorite = (run: AnnotationRunRowData) => {
     if (!activeInfospace) {
       toast.error("An active Infospace is required to manage favorites.");
       return;
     }
-    const { id, name } = job;
-    const fav = { id, name: name || `Job ${id}`, InfospaceId: activeInfospace.id.toString(), type: 'run' as 'run' };
+    const { id, name, created_at } = run;
+    const config = run.configuration as any;
+    const fav = { 
+        id, 
+        name: name || `Run ${id}`, 
+        InfospaceId: activeInfospace.id.toString(), 
+        type: 'run' as const,
+        timestamp: format(new Date(created_at), "PP pp"),
+        documentCount: config?.target_asset_ids?.length || 0,
+        schemeCount: config?.schema_ids?.length || 0,
+    };
     
     if (isFavorite(id)) {
-      removeFavoriteRun(id, activeInfospace.id.toString());
+      removeFavoriteRun(id);
       toast.info(`'${fav.name}' removed from favorites.`);
     } else {
       addFavoriteRun(fav);
@@ -87,7 +95,7 @@ export const classificationJobColumns = ({ onViewResults, onExport, onShare, onD
             (table.getIsSomePageRowsSelected() && "indeterminate")
           }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all jobs"
+          aria-label="Select all runs"
           className="translate-y-[2px]"
         />
       ),
@@ -106,26 +114,44 @@ export const classificationJobColumns = ({ onViewResults, onExport, onShare, onD
     },
     {
       accessorKey: 'name',
-      header: 'Job Name',
-      cell: ({ row }) => <span className="font-medium">{row.original.name || `Job ${row.original.id}`}</span>,
+      header: 'Run Name',
+      cell: ({ row }) => <span className="font-medium">{row.original.name || `Run ${row.original.id}`}</span>,
       size: 200,
     },
     {
       accessorKey: 'status',
-      header: 'Status',
-      cell: ({ row }) => renderJobStatusBadge(row.original.status),
+      header: ({ column }) => <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>Status<ArrowUpDown className="ml-2 h-4 w-4" /></Button>,
+      cell: ({ row }) => {
+        const status = row.getValue("status") as string;
+        const statusConfig = {
+          completed: { icon: CheckCircle, color: "text-green-500", label: "Completed" },
+          failed: { icon: AlertTriangle, color: "text-red-500", label: "Failed" },
+          running: { icon: Loader2, color: "text-blue-500", label: "Running", animate: "animate-spin" },
+          pending: { icon: Loader2, color: "text-yellow-500", label: "Pending", animate: "animate-spin" }
+        }[status] || { icon: HelpCircle, color: "text-gray-500", label: "Unknown" };
+
+        const Icon = statusConfig.icon;
+
+        return renderRunStatusBadge(status as RunStatus);
+      },
       size: 120,
     },
     {
-      accessorKey: 'target_scheme_ids',
+      accessorKey: 'target_schema_ids',
       header: 'Schemes',
-      cell: ({ row }) => row.original.target_scheme_ids?.length || 0,
+      cell: ({ row }) => {
+        const config = row.original.configuration as any;
+        return config?.schema_ids?.length || 0;
+      },
       size: 80,
     },
     {
-      accessorKey: 'target_datasource_ids',
-      header: 'Sources',
-      cell: ({ row }) => row.original.target_datasource_ids?.length || 0,
+      accessorKey: 'target_asset_ids',
+      header: 'Assets',
+      cell: ({ row }) => {
+        const config = row.original.configuration as any;
+        return config?.target_asset_ids?.length || 'N/A';
+      },
       size: 80,
     },
     {
@@ -143,10 +169,10 @@ export const classificationJobColumns = ({ onViewResults, onExport, onShare, onD
       id: 'favorite',
       header: () => <Star className="h-4 w-4" />,
       cell: ({ row }) => {
-        const job = row.original;
+        const run = row.original;
         return (
-          <Button variant="ghost" size="icon" onClick={() => toggleFavorite(job)}>
-            <Star className={cn("h-4 w-4", isFavorite(job.id) && "fill-yellow-400 text-yellow-500")} />
+          <Button variant="ghost" size="icon" onClick={() => toggleFavorite(run)}>
+            <Star className={cn("h-4 w-4", isFavorite(run.id) && "fill-yellow-400 text-yellow-500")} />
           </Button>
         );
       },
@@ -157,7 +183,7 @@ export const classificationJobColumns = ({ onViewResults, onExport, onShare, onD
       id: 'actions',
       header: 'Actions',
       cell: ({ row }) => {
-        const job = row.original;
+        const run = row.original;
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -168,21 +194,21 @@ export const classificationJobColumns = ({ onViewResults, onExport, onShare, onD
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onViewResults(job);}}>
+              <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onViewResults(run);}}>
                 <Eye className="mr-2 h-4 w-4" /> View Results
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onExport(job.id);}}>
-                <Download className="mr-2 h-4 w-4" /> Export Job
+              <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onExport(run.id);}}>
+                <Download className="mr-2 h-4 w-4" /> Export Run
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onShare(job.id);}}>
-                <Share2 className="mr-2 h-4 w-4" /> Share Job
+              <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onShare(run.id);}}>
+                <Share2 className="mr-2 h-4 w-4" /> Share Run
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem 
-                onClick={(e) => {e.stopPropagation(); onDelete(job);}}
+                onClick={(e) => {e.stopPropagation(); onDelete(run);}}
                 className="text-red-600 focus:text-red-500 focus:bg-red-100 dark:focus:bg-red-800/50"
               >
-                <Trash2 className="mr-2 h-4 w-4" /> Delete Job
+                <Trash2 className="mr-2 h-4 w-4" /> Delete Run
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

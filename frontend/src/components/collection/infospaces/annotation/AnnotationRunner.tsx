@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Card,
   CardHeader,
@@ -11,27 +11,26 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2 } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network } from 'lucide-react';
 import {
   AnnotationSchemaRead,
   AssetRead,
   AnnotationRunRead,
   AnnotationRead,
+  AnnotationRunUpdate,
 } from '@/client/models';
-import { FormattedAnnotation, AnnotationSchema, TimeAxisConfig } from '@/lib/annotations/types';
+import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';
 import { format } from 'date-fns';
 import { AnnotationResultFilters, ResultFilter, getTargetKeysForScheme } from './AnnotationResultFilters';
-import { checkFilterMatch, formatDisplayValue, extractLocationString } from '@/lib/annotations/utils';
-import AnnotationResultDisplay from './AnnotationResultDisplay';
+import { checkFilterMatch, extractLocationString } from '@/lib/annotations/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast as sonnerToast } from 'sonner';
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils";
-import AssetDetailProvider from '../assets/Views/AssetDetailProvider';
-import AssetDetailWrapper from '../assets/Views/AssetDetailWrapper';
+import AssetDetailView from '../assets/Views/AssetDetailView';
 import { useTutorialStore } from '../../../../zustand_stores/storeTutorial';
 import {
   Tooltip,
@@ -48,6 +47,7 @@ import { useAnnotationSettingsStore } from '@/zustand_stores/storeAnnotationSett
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import { useGeocodingCacheStore } from '@/zustand_stores/storeGeocodingCache';
 import AnnotationResultsTable from './AnnotationResultsTable';
+import AnnotationResultsGraph from './AnnotationResultsGraph';
 import { Switch } from '@/components/ui/switch';
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -64,21 +64,25 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Link from 'next/link';
 import { AnnotationTimeAxisControls } from './AnnotationTimeAxisControls';
 import { SchemePreview } from './schemaCreation/SchemePreview';
-import { transformApiToFormData } from '@/lib/annotations/service';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { AnnotationResultStatus } from '@/lib/annotations/types';
-import { DocumentResults } from './AnnotationResultsChart';
 import { toast } from 'sonner';
+import AssetSelector from '../assets/AssetSelector';
+import AnnotationSchemaCard from './AnnotationSchemaCard';
+import AssetDetailProvider from '../assets/Views/AssetDetailProvider';
+import RunHistoryView from './AnnotationRunHistory';
 
 type SourceRead = any;
-type DataRecordRead = any;
 
 export type FilterLogicMode = 'and' | 'or';
 
 interface AnnotationRunnerProps {
+  allRuns: AnnotationRunRead[];
+  isLoadingRuns: boolean;
+  onSelectRun: (runId: number) => void;
   allSchemas: AnnotationSchemaRead[];
   allSources: SourceRead[];
   activeRun: AnnotationRunRead | null;
@@ -86,9 +90,13 @@ interface AnnotationRunnerProps {
   results: FormattedAnnotation[];
   assets: AssetRead[];
   onClearRun: () => void;
+  onRunWithNewAssets: (template: { schemaIds: number[], config: any, assetIds: number[] }) => void;
 }
 
 export default function AnnotationRunner({
+  allRuns,
+  isLoadingRuns,
+  onSelectRun,
   allSchemas,
   allSources,
   activeRun,
@@ -96,6 +104,7 @@ export default function AnnotationRunner({
   results: currentRunResults,
   assets: currentRunAssets,
   onClearRun,
+  onRunWithNewAssets,
 }: AnnotationRunnerProps) {
   const {
     retryJobFailures,
@@ -136,25 +145,34 @@ export default function AnnotationRunner({
   const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
 
   const [excludedRecordIdsSet, setExcludedRecordIdsSet] = useState<Set<number>>(new Set());
+  const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
+  const [viewingSchema, setViewingSchema] = useState<AnnotationSchemaRead | null>(null);
 
   const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
   const { getCache, setCache } = useGeocodingCacheStore();
   const { activeInfospace } = useInfospaceStore();
 
-  const currentActiveJob = activeRun;
-
   const runSchemes = useMemo(() => {
-    const schemeIds = (currentActiveJob?.configuration as any)?.schema_ids;
-    if (!schemeIds) return [];
-    return allSchemas.filter(s => schemeIds.includes(s.id));
-  }, [currentActiveJob, allSchemas]);
+    const config = activeRun?.configuration as any;
+    
+    const schemeIds = (activeRun as any)?.schema_ids ||
+                   config?.schema_ids || 
+                   (activeRun as any)?.target_schema_ids ||
+                   [];
+    
+    if (!schemeIds || schemeIds.length === 0) {
+      return [];
+    }
+    
+    const foundSchemas = allSchemas.filter(s => schemeIds.includes(s.id));
+    
+    return foundSchemas;
+  }, [activeRun, allSchemas]);
 
   const runDataSources = useMemo(() => {
-    const targetAssetIds = (currentActiveJob?.configuration as any)?.target_asset_ids || [];
-    if (targetAssetIds.length === 0) return [];
-    // This logic is still tricky
     return allSources;
-  }, [currentActiveJob, allSources]);
+  }, [allSources]);
 
   const formattedRunResults = currentRunResults;
 
@@ -238,12 +256,12 @@ export default function AnnotationRunner({
   }, [runDataSources]);
 
   const generateGeocodingCacheKey = useCallback(() => {
-    if (!activeInfospace?.id || !currentActiveJob?.id) return null;
-    return `${activeInfospace.id}-run-${currentActiveJob.id}`;
-  }, [activeInfospace?.id, currentActiveJob]);
+    if (!activeInfospace?.id || !activeRun?.id) return null;
+    return `${activeInfospace.id}-run-${activeRun.id}`;
+  }, [activeInfospace?.id, activeRun]);
 
   const handleGeocodeRequest = useCallback(async (schemaIdStr: string, fieldKey: string) => {
-    if (!currentActiveJob?.id || !schemaIdStr || !fieldKey || !currentRunResults) {
+    if (!activeRun?.id || !schemaIdStr || !fieldKey || !currentRunResults) {
       setGeocodedPoints([]);
       setFilteredGeocodedPoints([]);
       return;
@@ -289,7 +307,6 @@ export default function AnnotationRunner({
         const result = await geocodeLocation(locStr);
         geocodedData.set(locStr, result);
       } catch (error: any) {
-        console.error(`Error geocoding "${locStr}":`, error);
         geocodedData.set(locStr, null);
         errorsEncountered = true;
       }
@@ -328,9 +345,8 @@ export default function AnnotationRunner({
     setGeocodedPoints(newPoints);
     if (cacheKey) setCache(cacheKey, newPoints);
     setIsLoadingGeocoding(false);
-    // ... re-apply filters ...
   }, [
-    currentActiveJob?.id, currentRunResults, extractLocationString, geocodeLocation, generateGeocodingCacheKey, getCache, setCache, activeFilters, filterLogicMode, runSchemes
+    activeRun?.id, currentRunResults, extractLocationString, geocodeLocation, generateGeocodingCacheKey, getCache, setCache, activeFilters, filterLogicMode, runSchemes
   ]);
 
   const toggleRecordExclusion = useCallback((recordId: number) => {
@@ -379,15 +395,19 @@ export default function AnnotationRunner({
   }, [currentRunResults, activeFilters, filterLogicMode, runSchemes, excludedRecordIdsSet]);
 
   useEffect(() => {
-    // ... logic to filter geocoded points ...
-  }, [geocodedPoints, activeFilters, filterLogicMode, currentRunResults, runSchemes, excludedRecordIdsSet]);
+    const filteredPoints = geocodedPoints.filter(point => {
+        const pointAssetIds = point.documentIds;
+        return pointAssetIds.some(assetId => !excludedRecordIdsSet.has(assetId));
+    });
+    setFilteredGeocodedPoints(filteredPoints);
+  }, [geocodedPoints, excludedRecordIdsSet]);
 
   useEffect(() => {
     setGeocodedPoints([]);
     setFilteredGeocodedPoints([]);
     setGeocodingError(null);
     setIsLoadingGeocoding(false);
-  }, [currentActiveJob?.id]);
+  }, [activeRun?.id]);
 
   const handleTableRowClick = (result: FormattedAnnotation) => {
     setSelectedAssetId(result.asset_id);
@@ -406,12 +426,12 @@ export default function AnnotationRunner({
   const handleEditClick = (field: 'name' | 'description') => {
     if (field === 'name') setIsEditingName(true);
     else setIsEditingDescription(true);
-    // Focus logic can be re-added if needed
   };
 
   const handleUpdate = (field: 'name' | 'description', value: string) => {
-    if (!currentActiveJob) return;
-    updateJob(currentActiveJob.id, { [field]: value });
+    if (!activeRun) return;
+    const updatePayload: AnnotationRunUpdate = { [field]: value };
+    updateJob(activeRun.id, updatePayload);
     if (field === 'name') setIsEditingName(false);
     if (field === 'description') setIsEditingDescription(false);
   };
@@ -419,47 +439,41 @@ export default function AnnotationRunner({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLSpanElement>, field: 'name' | 'description') => {
     if (e.key === 'Enter') {
       e.preventDefault();
+      handleUpdate(field, e.currentTarget.innerText);
       e.currentTarget.blur();
     }
     if (e.key === 'Escape') {
-      e.currentTarget.innerText = field === 'name' ? currentActiveJob?.name ?? '' : currentActiveJob?.description ?? '';
+      e.currentTarget.innerText = field === 'name' ? activeRun?.name ?? '' : activeRun?.description ?? '';
       e.currentTarget.blur();
     }
   };
 
   const handleShareActiveJob = () => {
-    // Placeholder
     toast.info("Sharing not implemented yet.");
   };
   
   const handleExportActiveJob = () => {
-    // Placeholder
     toast.info("Exporting not implemented yet.");
   };
 
   const renderResultsTabs = () => {
     if (isActuallyProcessing) {
-      return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Job is running...</span></div>;
+      return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Run is processing...</span></div>;
     }
-    if (!filteredResults || filteredResults.length === 0) {
-       if (currentActiveJob && currentActiveJob.status !== 'running' && currentActiveJob.status !== 'pending') {
-           const noResultsReason = activeFilters.length > 0
-              ? "No results match the current filters."
-              : "No results found for this job.";
-          return <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                    <span>{noResultsReason}</span>
-                    {currentActiveJob.status === 'failed' && <span className="text-xs mt-1">(Job Failed)</span>}
-                 </div>;
-       }
-       return <div className="flex items-center justify-center h-64 text-muted-foreground">Load a job to view results.</div>;
+    // Show tabs even with no data to allow user to see and configure chart controls
+    const hasNoResults = !filteredResults || filteredResults.length === 0;
+    
+    if (hasNoResults && activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
+       return <div className="flex items-center justify-center h-64 text-muted-foreground">Load a run to view results.</div>;
     }
 
     return (
        <Tabs defaultValue="table" className="w-full">
-         <TabsList className="grid w-full grid-cols-4 mb-2 border border-background! sticky top-0 z-10 bg-background/80 backdrop-blur">
+         <TabsList className="grid w-full grid-cols-5 mb-2 border border-background! sticky top-0 z-10 bg-background/80 backdrop-blur">
            <TabsTrigger value="chart"><BarChart3 className="h-4 w-4 mr-2" />Chart</TabsTrigger>
            <TabsTrigger value="pie"><PieChartIcon className="h-4 w-4 mr-2" />Pie</TabsTrigger>
            <TabsTrigger value="table"><TableIcon className="h-4 w-4 mr-2" />Table</TabsTrigger>
+           <TabsTrigger value="graph"><Network className="h-4 w-4 mr-2" />Graph</TabsTrigger>
            <TabsTrigger value="map"><MapPin className="h-4 w-4 mr-2" />Map</TabsTrigger>
          </TabsList>
          <TabsContent value="chart">
@@ -471,7 +485,7 @@ export default function AnnotationRunner({
                   onTimeAxisConfigChange={setCurrentTimeAxisConfig}
                 />
              </div>
-             <div className="flex items-center gap-4 p-2 mb-2 border-b flex-wrap">
+             <div className="flex items-center gap-4 p-2 mb-2 flex-wrap">
                <Popover>
                  <PopoverTrigger asChild>
                    <Button variant="outline" size="sm" disabled={runDataSources.length === 0}>
@@ -518,7 +532,7 @@ export default function AnnotationRunner({
                            ))}
                          </>
                        ) : (
-                         <div className="p-4 text-center text-xs text-muted-foreground">No sources in this job.</div>
+                         <div className="p-4 text-center text-xs text-muted-foreground">No sources in this run.</div>
                        )}
                      </div>
                    </ScrollArea>
@@ -544,51 +558,66 @@ export default function AnnotationRunner({
                  </Select>
                </div>
              </div>
-             <AnnotationResultsChart
-               results={filteredResults}
-               schemas={runSchemes}
-               sources={runDataSources}
-               assets={currentRunAssets as AssetRead[]}
-               filters={activeFilters}
-               timeAxisConfig={currentTimeAxisConfig}
-               selectedDataSourceIds={selectedDataSourceIdsForChart}
-               onDataSourceSelectionChange={setSelectedDataSourceIdsForChart}
-               selectedTimeInterval={selectedTimeInterval}
-               onTimeIntervalChange={setSelectedTimeInterval}
-             />
+             <AssetDetailProvider>
+               <AnnotationResultsChart
+                 results={filteredResults}
+                 schemas={runSchemes}
+                 sources={runDataSources}
+                 assets={currentRunAssets}
+                 timeAxisConfig={currentTimeAxisConfig}
+                 selectedDataSourceIds={selectedDataSourceIdsForChart}
+                 selectedTimeInterval={selectedTimeInterval}
+                 aggregateSourcesDefault={true}
+               />
+             </AssetDetailProvider>
            </div>
          </TabsContent>
          <TabsContent value="pie">
             <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                <AnnotationResultsPieChart
-                    results={filteredResults}
-                    schemas={runSchemes}
-                    sources={runDataSources}
-                    selectedSourceIds={selectedDataSourceIdsForChart}
-                    assets={currentRunAssets as AssetRead[]}
-                />
+                <AssetDetailProvider>
+                  <AnnotationResultsPieChart
+                      results={filteredResults}
+                      schemas={runSchemes}
+                      sources={runDataSources}
+                      selectedSourceIds={selectedDataSourceIdsForChart}
+                      assets={currentRunAssets}
+                  />
+                </AssetDetailProvider>
             </div>
          </TabsContent>
          <TabsContent value="table">
            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             <AnnotationResultsTable
+             <AssetDetailProvider>
+               <AnnotationResultsTable
+                 results={filteredResults as any}
+                 schemas={runSchemes}
+                 sources={runDataSources}
+                 assets={currentRunAssets}
+                 filters={activeFilters}
+                 onResultSelect={handleTableRowClick as any}
+                 onRetrySingleResult={retrySingleResult}
+                 retryingResultId={isRetryingResultId}
+                 excludedRecordIds={excludedRecordIdsSet}
+                 onToggleRecordExclusion={toggleRecordExclusion}
+               />
+             </AssetDetailProvider>
+           </div>
+         </TabsContent>
+         <TabsContent value="graph">
+           <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60 overflow-hidden h-[600px] relative">
+             <AnnotationResultsGraph
                results={filteredResults}
                schemas={runSchemes}
-               sources={runDataSources}
-               assets={currentRunAssets as AssetRead[]}
-               filters={activeFilters}
-               onResultSelect={handleTableRowClick}
-               onRetrySingleResult={retrySingleResult}
-               retryingResultId={isRetryingResultId}
-               excludedRecordIds={excludedRecordIdsSet}
-               onToggleRecordExclusion={toggleRecordExclusion}
+               assets={currentRunAssets}
+               activeRunId={activeRun?.id}
+               allSchemas={allSchemas}
              />
            </div>
          </TabsContent>
          <TabsContent value="map">
             <AnnotationMapControls
                schemas={allSchemas}
-               results={currentRunResults as FormattedAnnotation[]}
+               results={currentRunResults}
                onGeocodeRequest={handleGeocodeRequest}
                isLoadingGeocoding={isLoadingGeocoding}
                geocodingError={geocodingError}
@@ -605,11 +634,9 @@ export default function AnnotationRunner({
               ) : filteredGeocodedPoints.length > 0 ? (
                   <AnnotationResultsMap
                       points={filteredGeocodedPoints}
-                      sources={allSources}
                       results={currentRunResults}
                       schemas={allSchemas}
-                      assets={currentRunAssets as AssetRead[]}
-                      labelConfig={currentMapLabelConfig}
+                      labelConfig={currentMapLabelConfig ? { schemaId: currentMapLabelConfig.schemaId, fieldKey: currentMapLabelConfig.fieldKey } : undefined}
                       onPointClick={handleMapPointClick}
                   />
               ) : (
@@ -631,305 +658,301 @@ export default function AnnotationRunner({
     setSelectedMapPointForDialog(null);
   };
 
-  let recurringTaskInfoElement: React.ReactNode = null;
-  if (currentActiveJob?.configuration?.recurring_task_id) {
-    const recurringTaskId = currentActiveJob.configuration.recurring_task_id;
-    const taskName = Object.values(recurringTasks).find(t => t.id === recurringTaskId)?.name;
-    const taskLabel = taskName ? `"${taskName}" (ID: ${recurringTaskId})` : `ID: ${recurringTaskId}`;
-    recurringTaskInfoElement = (
-      <div className="text-xs text-muted-foreground mt-1">
-        Triggered by Recurring Task:{' '}
-        <Link href={`/infospaces/${activeInfospace?.id}/settings/recurring?highlight=${recurringTaskId}`} legacyBehavior>
-          <a className="underline hover:text-primary cursor-pointer">{taskLabel}</a>
-        </Link>
-      </div>
-    );
-  }
-
-  const renderJobActions = () => {
-    if (!currentActiveJob) return null;
+  if (!activeRun) {
     return (
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={handleExportActiveJob} disabled={isActuallyProcessing || !currentActiveJob}>
-          <Download className="mr-2 h-4 w-4" /> Export Job
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleShareActiveJob} disabled={isActuallyProcessing || !currentActiveJob}>
-          <Share2 className="mr-2 h-4 w-4" /> Share Job
-        </Button>
-      </div>
-    );
-  };
-
-  if (!currentActiveJob) {
-    return (
-      <div className="flex-grow flex items-center justify-center">
-        <div className="text-center text-muted-foreground">
-          <Info className="mx-auto h-12 w-12" />
-          <h3 className="mt-4 text-lg font-medium">No Run Loaded</h3>
-          <p className="mt-1 text-sm">Please select a run from the list to see its results.</p>
-        </div>
-      </div>
+      <RunHistoryView 
+        runs={allRuns}
+        activeRunId={null}
+        onSelectRun={onSelectRun}
+        isLoading={isLoadingRuns}
+      />
     );
   }
 
   return (
-    <DocumentDetailProvider>
-      <DocumentDetailWrapper onLoadIntoRunner={() => { /* Placeholder - Parent should handle this if needed */ }}>
-          <div className="flex-1 flex flex-col overflow-auto">
-            <div className="p-4 flex-1 space-y-4">
-
-              {currentActiveJob ? (
-                <div className="p-3 rounded-md bg-muted/10 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur z-10 flex-wrap gap-2 border-b">
-                  <div className="flex flex-col flex-1 min-w-0 mr-4">
-                    <div className="flex items-center gap-1">
-                      <span
-                          id="run-name-editable"
-                          className={`font-medium text-base px-1 truncate ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
-                          contentEditable={isEditingName ? 'true' : 'false'}
-                          suppressContentEditableWarning={true}
-                          onBlur={(e) => handleKeyDown(e, 'name')}
-                          onKeyDown={(e) => handleKeyDown(e, 'name')}
-                          onClick={() => !isEditingName && handleEditClick('name')}
-                          title={activeRun.name}
+    <div className="flex-1 flex flex-col overflow-auto">
+      <div className="p-4 flex-1 space-y-4">
+        <div className="p-3 rounded-md bg-muted/10 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur z-10 flex-wrap gap-2">
+          <div className="flex flex-col flex-1 min-w-0 mr-4">
+            <div className="flex items-center gap-1">
+              <span
+                  id="run-name-editable"
+                  className={`font-medium text-base px-1 truncate ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
+                  contentEditable={isEditingName ? 'true' : 'false'}
+                  suppressContentEditableWarning={true}
+                  onBlur={(e) => handleUpdate('name', e.currentTarget.innerText)}
+                  onKeyDown={(e) => handleKeyDown(e, 'name')}
+                  onClick={() => !isEditingName && handleEditClick('name')}
+                  title={activeRun.name}
+              >
+                  {activeRun.name}
+              </span>
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
+                    </TooltipTrigger>
+                    <TooltipContent><p>Edit Run Name</p></TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <div className="flex items-center gap-1 mt-1">
+               <span
+                  id="run-description-editable"
+                  className={`text-sm px-1 truncate ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
+                  contentEditable={isEditingDescription ? 'true' : 'false'}
+                  suppressContentEditableWarning={true}
+                  onBlur={(e) => handleUpdate('description', e.currentTarget.innerText)}
+                  onKeyDown={(e) => handleKeyDown(e, 'description')}
+                  onClick={() => !isEditingDescription && handleEditClick('description')}
+                  title={activeRun.description || 'Add a description...'}
+              >
+                  {activeRun.description || 'Add a description...'}
+              </span>
+               <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                      <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
+                      </TooltipTrigger>
+                      <TooltipContent><p>Edit Description</p></TooltipContent>
+                  </Tooltip>
+              </TooltipProvider>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <Badge variant={
+                 activeRun?.status === 'completed' ? 'default'
+                 : activeRun?.status === 'failed' ? 'destructive'
+                 : activeRun?.status === 'running' ? 'secondary'
+                 : activeRun?.status === 'pending' ? 'secondary'
+                 : activeRun?.status === 'completed_with_errors' ? 'outline'
+                 : 'outline'
+              } className="capitalize">
+                {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                {(activeRun?.status ?? '').replace(/_/g, ' ')}
+              </Badge>
+              {(activeRun?.status === 'failed' || activeRun?.status === 'completed_with_errors') && (
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (activeRun?.id) {
+                              retryJobFailures(activeRun.id);
+                          }
+                        }}
+                        disabled={isActuallyProcessing || !activeRun?.id}
+                        className="h-6 px-2"
                       >
-                          {activeRun.name}
-                      </span>
-                      <TooltipProvider delayDuration={100}>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p>Edit Job Name</p></TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </div>
-                    <div className="flex items-center gap-1 mt-1">
-                       <span
-                          id="run-description-editable"
-                          className={`text-sm px-1 truncate ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
-                          contentEditable={isEditingDescription ? 'true' : 'false'}
-                          suppressContentEditableWarning={true}
-                          onBlur={(e) => handleKeyDown(e, 'description')}
-                          onKeyDown={(e) => handleKeyDown(e, 'description')}
-                          onClick={() => !isEditingDescription && handleEditClick('description')}
-                          title={activeRun.description || 'Add a description...'}
-                      >
-                          {activeRun.description || 'Add a description...'}
-                      </span>
-                       <TooltipProvider delayDuration={100}>
-                          <Tooltip>
-                              <TooltipTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
-                              </TooltipTrigger>
-                              <TooltipContent><p>Edit Description</p></TooltipContent>
-                          </Tooltip>
-                      </TooltipProvider>
-                    </div>
-                    {recurringTaskInfoElement}
-                    <div className="mt-2 flex items-center gap-2">
-                      <Badge variant={
-                         activeRun?.status === 'completed' ? 'default'
-                         : activeRun?.status === 'failed' ? 'destructive'
-                         : activeRun?.status === 'running' ? 'secondary'
-                         : activeRun?.status === 'pending' ? 'secondary'
-                         : activeRun?.status === 'completed_with_errors' ? 'outline'
-                         : 'outline'
-                      } className="capitalize">
-                        {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                        {(activeRun?.status ?? '').replace(/_/g, ' ')}
-                      </Badge>
-                      {(activeRun?.status === 'failed' || activeRun?.status === 'completed_with_errors') && (
-                        <TooltipProvider delayDuration={100}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  if (activeRun?.status === 'failed' && retryJob && activeRun.id) {
-                                      retryJob(activeRun.id);
-                                  } else if (activeRun?.status === 'completed_with_errors' && activeRun.id) {
-                                    retryJobFailures(activeRun.id);
-                                  }
-                                }}
-                                disabled={isActuallyProcessing || !activeRun?.id}
-                                className="h-6 px-2"
-                              >
-                                <RefreshCw className={`h-3 w-3 mr-1 ${isRetryingJob ? 'animate-spin' : ''}`} />
-                                {activeRun?.status === 'failed' ? 'Retry Job' : 'Retry Failed Items'}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{activeRun?.status === 'failed' ? 'Restart the entire job from the beginning.' : 'Attempt to re-run only the classifications that failed in this job.'}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
-                    </div>
-                    {activeRun?.status === 'failed' && activeRun.error_message && (
-                       <Alert variant="destructive" className="mt-2 text-xs p-2">
-                         <AlertCircle className="h-4 w-4" />
-                         <AlertTitle>Job Failed</AlertTitle>
-                         <AlertDescription>{activeRun.error_message}</AlertDescription>
-                       </Alert>
-                    )}
-                     {activeRun?.status === 'completed_with_errors' && (
-                       <Alert variant="default" className="mt-2 text-xs p-2 bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
-                         <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                         <AlertTitle className="text-yellow-800 dark:text-yellow-200">Completed with Errors</AlertTitle>
-                         <AlertDescription className="text-yellow-700 dark:text-yellow-300">
-                           Some classifications may have failed. {activeRun.error_message && `Error: ${activeRun.error_message}`}
-                         </AlertDescription>
-                       </Alert>
-                    )}
-                  </div>
-                  <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRun?.id}>
-                    <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Job
-                  </Button>
-                  <div className="w-full mt-2">
-                     {sourceStats && (
-                          <Collapsible
-                              open={isSourceStatsOpen}
-                              onOpenChange={setIsSourceStatsOpen}
-                              className="w-full"
-                          >
-                              <CollapsibleTrigger asChild>
-                                  <Button
-                                      variant="ghost"
-                                      className="flex justify-between items-center w-full px-2 py-1.5 text-xs h-auto hover:bg-muted/50"
-                                  >
-                                      <span className="text-muted-foreground">
-                                          Run Overview: Sources & Schemes
-                                      </span>
-                                      {isSourceStatsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                                  </Button>
-                              </CollapsibleTrigger>
-                              <CollapsibleContent className="mt-2 px-1 pb-1 space-y-4">
-                                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                       <div className="flex flex-col">
-                                           <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Source Distribution</h4>
-                                           <ScrollArea className="max-h-[200px] border rounded-md">
-                                               <Table className="text-xs">
-                                                   <TableHeader className="sticky top-0 bg-muted/90">
-                                                       <TableRow>
-                                                           <TableHead className="h-7 px-2">Source Name</TableHead>
-                                                           <TableHead className="h-7 px-2 text-right">Records</TableHead>
-                                                           <TableHead className="h-7 px-2 text-right">% of Total</TableHead>
-                                                       </TableRow>
-                                                   </TableHeader>
-                                                   <TableBody>
-                                                       {sourceStats.detailedStats.map(stat => (
-                                                           <TableRow key={stat.id} className="h-7">
-                                                               <TableCell className="px-2 py-1 font-medium truncate" title={stat.name}>{stat.name}</TableCell>
-                                                               <TableCell className="px-2 py-1 text-right">{stat.count}</TableCell>
-                                                               <TableCell className="px-2 py-1 text-right">{stat.percentage}</TableCell>
-                                                           </TableRow>
-                                                       ))}
-                                                   </TableBody>
-                                               </Table>
-                                           </ScrollArea>
-                                           <p className="text-xs text-muted-foreground mt-1 px-1">
-                                               Total: {sourceStats.totalRecords} records from {sourceStats.sourcesWithRecordsCount} sources
-                                               {sourceStats.sourcesWithRecordsCount !== sourceStats.totalSourcesInRun && ` (of ${sourceStats.totalSourcesInRun} targeted)`}
-                                           </p>
-                                       </div>
-
-                                       {activeRun && runSchemes.length > 0 && (
-                                           <div className="flex flex-col">
-                                                 <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Schemes Used</h4>
-                                                 <ScrollArea className="max-h-[200px] border rounded-md p-1">
-                                                        <div className="grid grid-cols-1 gap-3 p-1">
-                                                          {runSchemes.map(scheme => (
-                                                            <div key={scheme.id} className="border rounded-lg p-3 bg-card/50 shadow-sm">
-                                                              <SchemePreview scheme={transformApiToFormData(scheme)} />
-                                                            </div>
-                                                          ))}
-                                                        </div>
-                                                 </ScrollArea>
-                                            </div>
-                                        )}
-                                   </div>
-                              </CollapsibleContent>
-                          </Collapsible>
-                     )}
-                  </div>
-                </div>
-              ) : (
-                 <div className="p-3 rounded-md bg-muted/10 text-center text-muted-foreground italic">
-                    No job loaded. Create a new job or load one from the dock.
-                 </div>
-              )}
-
-              {activeRun && !isActuallyProcessing && (
-                <div className="p-3 rounded-md bg-muted/10 space-y-3">
-                  <AnnotationResultFilters
-                    filters={activeFilters}
-                    schemas={runSchemes}
-                    onChange={setActiveFilters}
-                    logicMode={filterLogicMode}
-                    onLogicModeChange={setFilterLogicMode}
-                  />
-                </div>
-              )}
-
-              {activeRun ? (
-                <div className="mt-2">
-                  {renderResultsTabs()}
-                </div>
-              ) : (
-                 !isActuallyProcessing && <div className="text-center p-12 text-muted-foreground border rounded-lg border-dashed mt-4">
-                  Load a job from the dock to view results.
-                </div>
+                        <RefreshCw className={`h-3 w-3 mr-1 ${isRetryingJob ? 'animate-spin' : ''}`} />
+                        {activeRun?.status === 'failed' ? 'Retry Run' : 'Retry Failed Items'}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{activeRun?.status === 'failed' ? 'Restart the entire run from the beginning.' : 'Attempt to re-run only the annotations that failed.'}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
             </div>
+            {activeRun?.status === 'failed' && activeRun.error_message && (
+               <Alert variant="destructive" className="mt-2 text-xs p-2">
+                 <AlertCircle className="h-4 w-4" />
+                 <AlertTitle>Run Failed</AlertTitle>
+                 <AlertDescription>{activeRun.error_message}</AlertDescription>
+               </Alert>
+            )}
+             {activeRun?.status === 'completed_with_errors' && (
+               <Alert variant="default" className="mt-2 text-xs p-2 bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
+                 <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                 <AlertTitle className="text-yellow-800 dark:text-yellow-200">Completed with Errors</AlertTitle>
+                 <AlertDescription className="text-yellow-700 dark:text-yellow-300">
+                   Some annotations may have failed. {activeRun.error_message && `Error: ${activeRun.error_message}`}
+                 </AlertDescription>
+               </Alert>
+            )}
+          </div>
+          <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRun?.id}>
+            <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Run
+          </Button>
+          <div className="w-full mt-2">
+             {sourceStats && (
+                  <Collapsible
+                      open={isSourceStatsOpen}
+                      onOpenChange={setIsSourceStatsOpen}
+                      className="w-full"
+                  >
+                      <CollapsibleTrigger asChild>
+                          <Button
+                              variant="ghost"
+                              className="flex justify-between items-center w-full px-2 py-1.5 text-xs h-auto hover:bg-muted/50"
+                          >
+                              <span className="text-muted-foreground">
+                                  Run Overview: Sources & Schemes
+                              </span>
+                              {isSourceStatsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="mt-2 px-1 pb-1 space-y-4">
+                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                               <div className="flex flex-col">
+                                   <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Source Distribution</h4>
+                                   <ScrollArea className="max-h-[200px] border rounded-md">
+                                       <Table className="text-xs">
+                                           <TableHeader className="sticky top-0 bg-muted/90">
+                                               <TableRow>
+                                                   <TableHead className="h-7 px-2">Source Name</TableHead>
+                                                   <TableHead className="h-7 px-2 text-right">Records</TableHead>
+                                                   <TableHead className="h-7 px-2 text-right">% of Total</TableHead>
+                                               </TableRow>
+                                           </TableHeader>
+                                           <TableBody>
+                                               {sourceStats.detailedStats.map(stat => (
+                                                   <TableRow key={stat.id} className="h-7">
+                                                       <TableCell className="px-2 py-1 font-medium truncate" title={stat.name}>{stat.name}</TableCell>
+                                                       <TableCell className="px-2 py-1 text-right">{stat.count}</TableCell>
+                                                       <TableCell className="px-2 py-1 text-right">{stat.percentage}</TableCell>
+                                                   </TableRow>
+                                               ))}
+                                           </TableBody>
+                                       </Table>
+                                   </ScrollArea>
+                                   <p className="text-xs text-muted-foreground mt-1 px-1">
+                                       Total: {sourceStats.totalRecords} records from {sourceStats.sourcesWithRecordsCount} sources
+                                       {sourceStats.sourcesWithRecordsCount !== sourceStats.totalSourcesInRun && ` (of ${sourceStats.totalSourcesInRun} targeted)`}
+                                   </p>
+                               </div>
+
+                               {activeRun && runSchemes.length > 0 && (
+                                   <div className="flex flex-col">
+                                         <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Schemes Used</h4>
+                                         <ScrollArea className="max-h-[200px] border rounded-md p-1">
+                                                <div className="grid grid-cols-1 gap-3 p-1">
+                                                  {runSchemes.map(scheme => (
+                                                    <div key={scheme.id} className="border rounded-lg p-3 bg-card/50 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onClick={() => setViewingSchema(scheme)}>
+                                                      <SchemePreview scheme={scheme} />
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                         </ScrollArea>
+                                      </div>
+                                  )}
+                             </div>
+                        </CollapsibleContent>
+                    </Collapsible>
+               )}
           </div>
 
-        <Dialog open={isDetailsDialogOpen} onOpenChange={(open) => !open && closeDetailsDialog()}> 
-          <DialogContent className="max-w-2xl">
+        </div>
+
+        <div className="p-3 rounded-md bg-muted/10 space-y-3">
+          <AnnotationResultFilters
+            filters={activeFilters}
+            schemas={runSchemes}
+            onChange={setActiveFilters}
+            logicMode={filterLogicMode}
+            onLogicModeChange={setFilterLogicMode}
+          />
+        </div>
+
+        <div className="mt-2">
+          {renderResultsTabs()}
+        </div>
+      </div>
+
+      <Dialog open={isAssetSelectorOpen} onOpenChange={setIsAssetSelectorOpen}>
+        <DialogContent className="max-w-7xl h-[80vh] flex flex-col">
             <DialogHeader>
-              <DialogTitle>Result Details</DialogTitle>
-              <DialogDescription>
-                {selectedMapPointForDialog 
-                  ? `Showing documents and results for location: ${selectedMapPointForDialog.locationString}`
-                  : `Detailed view of classification results for the selected data record.`
-                }
-              </DialogDescription>
+                <DialogTitle>Select Assets for a New Run</DialogTitle>
+                <DialogDescription>
+                    Select assets or bundles to include in a new run using the previous run's configuration.
+                </DialogDescription>
             </DialogHeader>
-            <ScrollArea className="py-4 max-h-[70vh]">
-                {/* --- RENDER DocumentResults --- */} 
-                {(selectedAssetId !== null || selectedMapPointForDialog !== null) && (
-                    <DocumentResults 
-                      // Construct the point to pass based on which state is active
-                      selectedPoint={selectedMapPointForDialog ?? (
-                        // Create a dummy structure if only data record ID is known?
-                        // Or refactor DocumentResults to accept ID array directly?
-                        // For now, assume DocumentResults needs a point structure.
-                        // We need to simulate a GroupedDataPoint or ChartDataPoint if only ID is known.
-                        // Let's ensure DocumentResults can handle MapPoint first.
-                        // If a table row was clicked (selectedAssetId set), we still need 
-                        // to pass *something* to DocumentResults. Let's pass a MapPoint-like structure 
-                        // containing just that one document ID.
-                        selectedAssetId !== null 
-                        ? { 
-                            id: `record-${selectedAssetId}`, 
-                            locationString: 'N/A', // Indicate it's not from a map point
-                            coordinates: { latitude: 0, longitude: 0 }, 
-                            documentIds: [selectedAssetId]
-                          } as MapPoint // Treat single record selection as a point with one doc
-                        : { id: 'invalid', locationString: 'invalid', coordinates: { latitude: 0, longitude: 0 }, documentIds: [] } as MapPoint // Should not happen if dialog is open
-                      )}
-                      results={filteredResults} // Pass filtered results
-                      schemas={runSchemes} // Pass schemes used in the run
-                      assets={currentRunAssets as AssetRead[]} // Pass sources used in the run
-                    />
-                )} 
-            </ScrollArea>
+            <div className="flex-1 min-h-0">
+                <AssetSelector
+                    selectedItems={new Set(selectedAssetIds.map(id => `asset-${id}`))}
+                    onSelectionChange={(newSelection) => {
+                        const assetIds = Array.from(newSelection)
+                            .filter(id => id.startsWith('asset-'))
+                            .map(id => parseInt(id.replace('asset-', '')));
+                        setSelectedAssetIds(assetIds);
+                    }}
+                />
+            </div>
             <DialogFooter>
-                <Button variant="outline" onClick={closeDetailsDialog}>Close</Button>
+                <Button variant="outline" onClick={() => setIsAssetSelectorOpen(false)}>Cancel</Button>
+                <Button onClick={() => {
+                  if (!activeRun) return;
+                  const schemaIds = (activeRun.configuration as any)?.schema_ids || (activeRun as any)?.target_schema_ids || [];
+                  if (selectedAssetIds.length === 0) {
+                    toast.warning("Please select at least one asset to run on.");
+                    return;
+                  }
+                  onRunWithNewAssets({
+                    schemaIds: schemaIds,
+                    config: activeRun.configuration,
+                    assetIds: selectedAssetIds
+                  });
+                  setIsAssetSelectorOpen(false);
+                }}>Create New Run with Selection</Button>
             </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </DocumentDetailWrapper>
-    </DocumentDetailProvider>
+        </DialogContent>
+      </Dialog>
+
+    <AnnotationSchemaCard
+        show={!!viewingSchema}
+        onClose={() => setViewingSchema(null)}
+        title={`Schema: ${viewingSchema?.name}`}
+        mode="watch"
+      >
+        {viewingSchema && <SchemePreview scheme={viewingSchema} />}
+    </AnnotationSchemaCard>
+
+    <Dialog open={isDetailsDialogOpen} onOpenChange={closeDetailsDialog}> 
+      <DialogContent className="max-w-[95vw] w-full max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Details</DialogTitle>
+          <DialogDescription>
+            {selectedMapPointForDialog 
+              ? `Showing assets for location: ${selectedMapPointForDialog.locationString}`
+              : `Detailed view for the selected asset.`
+            }
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="min-w-0">
+            { selectedAssetId ? (
+              <AssetDetailView
+                  selectedAssetId={selectedAssetId}
+                  schemas={runSchemes}
+                  onLoadIntoRunner={() => {}}
+                  onEdit={() => {}}
+                  highlightAssetIdOnOpen={null}
+              />
+            ) : selectedMapPointForDialog ? (
+              <div className="space-y-4">
+                {selectedMapPointForDialog.documentIds.map(assetId => (
+                    <div key={assetId} className="pb-4 mb-4">
+                        <h3 className="text-lg font-semibold mb-2">Asset #{assetId}</h3>
+                         <AssetDetailView
+                            selectedAssetId={assetId}
+                            schemas={runSchemes}
+                            onLoadIntoRunner={() => {}}
+                            onEdit={() => {}}
+                            highlightAssetIdOnOpen={null}
+                         />
+                    </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <DialogFooter>
+            <Button variant="outline" onClick={closeDetailsDialog}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </div>
   );
 }

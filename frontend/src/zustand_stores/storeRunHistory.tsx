@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 // import { ClassificationService } from '@/lib/classification/service'; // Deprecated
-import { ClassificationJobsService } from '@/client/services'; // Use new service
-import { ClassificationJobRead, ClassificationJobsOut } from '@/client/models'; // Use new model & import ClassificationJobsOut
+import { AnnotationJobsService, AnnotationsService } from '@/client/services';
+import { AnnotationRunRead, AnnotationRunsOut } from '@/client/models';
 import { format } from 'date-fns';
 
 export interface RunHistoryItem {
@@ -14,7 +14,7 @@ export interface RunHistoryItem {
   status?: string;
   createdAt?: string;
   updatedAt?: string; // Keep for sorting if available, fallback to created_at
-  configuration?: ClassificationJobRead['configuration'];
+  configuration?: AnnotationRunRead['configuration'];
 }
 
 interface RunHistoryState {
@@ -22,7 +22,7 @@ interface RunHistoryState {
   isLoading: boolean;
   error: string | null;
   // Renamed to fetchJobHistory for clarity, but keep original name for compatibility if needed
-  fetchRunHistory: (InfospaceId: number) => Promise<void>; 
+  fetchRunHistory: (infospaceId: number) => Promise<void>; 
 }
 
 export const useRunHistoryStore = create<RunHistoryState>((set) => ({
@@ -31,45 +31,40 @@ export const useRunHistoryStore = create<RunHistoryState>((set) => ({
   error: null,
 
   // Renamed function internally for clarity, but exposed as fetchRunHistory
-  fetchRunHistory: async (InfospaceId: number) => {
+  fetchRunHistory: async (infospaceId: number) => {
     set({ isLoading: true, error: null });
     try {
-      // Call the correct service method to fetch jobs - returns ClassificationJobsOut
-      const response: ClassificationJobsOut = await ClassificationJobsService.listClassificationJobs({ 
-        InfospaceId,
-        limit: 1000 // Added a limit, adjust as needed
+      const response: AnnotationRunsOut = await AnnotationJobsService.listRuns({
+        infospaceId,
+        limit: 1000
       });
-      // Extract the jobs array from the 'data' property of the response object
-      const apiJobs: ClassificationJobRead[] = response.data || [];
+      const apiRuns: AnnotationRunRead[] = response.data || [];
 
-      // Map ClassificationJobRead to RunHistoryItem
-      const runs: RunHistoryItem[] = apiJobs.map((job: ClassificationJobRead) => {
-        // Determine the timestamp - prioritize updated_at, fallback to created_at
-        const timestampToSort = job.updated_at || job.created_at || new Date(0).toISOString(); 
+      const runs: RunHistoryItem[] = apiRuns.map((run: AnnotationRunRead) => {
+        const timestampToSort = run.updated_at || run.created_at || new Date(0).toISOString();
         
-        // Safely derive counts from the configuration object
-        const config = job.configuration;
-        const docCount = (config && Array.isArray(config.datasource_ids)) ? config.datasource_ids.length : 0;
-        const schCount = (config && Array.isArray(config.scheme_ids)) ? config.scheme_ids.length : 0;
+        const config = run.configuration as any;
+        const targetAssetIds = (run as any)?.target_asset_ids || config?.asset_ids || config?.target_asset_ids || [];
+        const targetSchemaIds = (run as any)?.schema_ids || config?.schema_ids || (run as any)?.target_schema_ids || [];
+
+        const docCount = Array.isArray(targetAssetIds) ? targetAssetIds.length : 0;
+        const schCount = Array.isArray(targetSchemaIds) ? targetSchemaIds.length : 0;
 
         return {
-          id: job.id,
-          name: job.name || `Job ${job.id}`,
-          // Format the most relevant timestamp for display
-          timestamp: format(new Date(timestampToSort), 'PPp'), 
+          id: run.id,
+          name: run.name || `Run ${run.id}`,
+          timestamp: format(new Date(timestampToSort), 'PPp'),
           documentCount: docCount,
           schemeCount: schCount,
-          description: job.description ?? undefined,
-          status: job.status ?? 'unknown',
-          createdAt: job.created_at,
-          updatedAt: job.updated_at,
-          configuration: job.configuration,
+          description: run.description ?? undefined,
+          status: run.status ?? 'unknown',
+          createdAt: run.created_at,
+          updatedAt: run.updated_at,
+          configuration: run.configuration,
         };
       });
 
-      // Sort by timestamp (most recent first)
       runs.sort((a, b) => {
-        // Use the original date strings for more reliable sorting
         const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
         const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
         return dateB - dateA;
@@ -77,12 +72,11 @@ export const useRunHistoryStore = create<RunHistoryState>((set) => ({
 
       set({ runs, isLoading: false, error: null });
     } catch (error: any) {
-      console.error('Error fetching job history:', error);
-      // Extract specific error message if available from the API response
-      const detail = error.body?.detail || error.message || 'Failed to fetch job history';
-      set({ 
-        error: detail, 
-        isLoading: false, 
+      console.error('Error fetching run history:', error);
+      const detail = error.body?.detail || error.message || 'Failed to fetch run history';
+      set({
+        error: detail,
+        isLoading: false,
         runs: []
       });
     }

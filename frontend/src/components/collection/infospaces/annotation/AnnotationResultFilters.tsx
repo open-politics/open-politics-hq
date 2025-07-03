@@ -5,13 +5,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { X, Plus, Info, HelpCircle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
-import { FieldType } from "@/lib/annotations/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { FilterLogicMode } from './ClassificationRunner';
+
+// Define field types locally since they're not exported from the main types
+type FieldType = 'int' | 'float' | 'str' | 'bool' | 'List[str]' | 'List[Dict[str, any]]';
+
+// Define the filter logic mode type
+export type FilterLogicMode = 'and' | 'or';
 
 // Define the filter interface more formally
 export interface ResultFilter {
@@ -50,7 +54,8 @@ export const getTargetFieldDefinition = (
          return { type: null, definition: null };
     }
 
-    const fieldDef = properties[targetKeyName];
+    // Use the new hierarchical field definition lookup
+    const fieldDef = getFieldDefinitionFromSchema(schema, targetKeyName);
     if (fieldDef) {
         const typeMap: Record<string, FieldType | 'bool' | 'float'> = {
             "integer": "int", "number": "float", "string": "str", "boolean": "bool", "array": "List[str]",
@@ -68,11 +73,60 @@ export const getTargetKeysForScheme = (schemaId: number, schemas: AnnotationSche
     const properties = (schema.output_contract as any).properties;
     if (!properties) return [];
 
-    return Object.entries(properties).map(([key, value] : [string, any]) => ({
-        key: key,
-        name: value.title || key,
-        type: value.type || 'unknown',
-    }));
+    const results: { key: string, name: string, type: string }[] = [];
+    
+    // Helper function to extract fields from a properties object
+    const extractFromProperties = (props: any, prefix: string = '') => {
+        if (!props || typeof props !== 'object') return;
+        
+        Object.entries(props).forEach(([key, value]: [string, any]) => {
+            const fullKey = prefix ? `${prefix}.${key}` : key;
+            
+            // Add the field itself if it's a supported type for visualization
+            if (value.type === 'string' || value.type === 'integer' || value.type === 'number' || value.type === 'boolean' || 
+                (value.type === 'array' && value.items?.type === 'string')) {
+                results.push({
+                    key: fullKey,
+                    name: value.title || key,
+                    type: value.type || 'unknown'
+                });
+            }
+            
+            // Recursively extract from nested object properties
+            if (value.type === 'object' && value.properties) {
+                extractFromProperties(value.properties, fullKey);
+            }
+            
+            // Handle array of objects (per_modality patterns)
+            if (value.type === 'array' && value.items?.type === 'object' && value.items.properties) {
+                extractFromProperties(value.items.properties, fullKey);
+            }
+        });
+    };
+    
+    // Check if this is a hierarchical schema (has document, per_* fields)
+    const isHierarchical = Object.keys(properties).some(key => 
+        key === 'document' || key.startsWith('per_')
+    );
+    
+    if (isHierarchical) {
+        // Extract from hierarchical structure
+        Object.entries(properties).forEach(([topKey, topValue]: [string, any]) => {
+            if (topKey === 'document' && topValue.type === 'object' && topValue.properties) {
+                // Extract from document.properties
+                extractFromProperties(topValue.properties, 'document');
+            } else if (topKey.startsWith('per_') && topValue.type === 'array' && 
+                       topValue.items?.type === 'object' && topValue.items.properties) {
+                // Extract from per_modality array items
+                extractFromProperties(topValue.items.properties, topKey);
+            }
+        });
+    } else {
+        // Flat schema - extract from top level
+        extractFromProperties(properties);
+    }
+    
+    return results;
 };
 
 export const AnnotationResultFilters = ({ filters, schemas, onChange, logicMode, onLogicModeChange }: AnnotationResultFiltersProps) => {
@@ -455,4 +509,60 @@ const renderValueInput = (
       className={cn(commonProps.className, "flex-1 min-w-[100px]")}
     />
   );
+};
+
+// Helper function to get nested property value using dot notation
+const getNestedValue = (obj: any, path: string): any => {
+    if (!obj || !path) return undefined;
+    
+    const keys = path.split('.');
+    let current = obj;
+    
+    for (const key of keys) {
+        if (current && typeof current === 'object' && key in current) {
+            current = current[key];
+        } else {
+            return undefined;
+        }
+    }
+    
+    return current;
+};
+
+// Helper function to get field definition from hierarchical schema
+const getFieldDefinitionFromSchema = (schema: AnnotationSchemaRead, fieldKey: string): any => {
+    if (!schema.output_contract) return null;
+    
+    const properties = (schema.output_contract as any).properties;
+    if (!properties) return null;
+    
+    // Handle hierarchical paths like "document.topics"
+    const keys = fieldKey.split('.');
+    let currentSchema = properties;
+    
+    for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        
+        if (currentSchema[key]) {
+            if (i === keys.length - 1) {
+                // Last key - return the field definition
+                return currentSchema[key];
+            } else {
+                // Navigate deeper
+                if (currentSchema[key].type === 'object' && currentSchema[key].properties) {
+                    currentSchema = currentSchema[key].properties;
+                } else if (currentSchema[key].type === 'array' && 
+                          currentSchema[key].items?.type === 'object' && 
+                          currentSchema[key].items.properties) {
+                    currentSchema = currentSchema[key].items.properties;
+                } else {
+                    return null;
+                }
+            }
+        } else {
+            return null;
+        }
+    }
+    
+    return null;
 }; 

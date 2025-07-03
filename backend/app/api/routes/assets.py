@@ -318,20 +318,32 @@ def list_assets(
     
     # Build query
     query = select(Asset).where(
-        Asset.infospace_id == infospace_id,
-        Asset.user_id == current_user.id
+        Asset.infospace_id == infospace_id
     )
     
+    # For child assets, we need to be more permissive with user filtering
+    # since child assets might be created by system processes
     if parent_asset_id is not None:
+        # Verify the parent asset belongs to the user
+        parent_asset = session.get(Asset, parent_asset_id)
+        if not parent_asset or parent_asset.infospace_id != infospace_id or parent_asset.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Parent asset not found"
+            )
         query = query.where(Asset.parent_asset_id == parent_asset_id)
+    else:
+        # For top-level assets, filter by user
+        query = query.where(Asset.user_id == current_user.id)
     
     # Get total count
     count_query = select(Asset.id).where(
-        Asset.infospace_id == infospace_id,
-        Asset.user_id == current_user.id
+        Asset.infospace_id == infospace_id
     )
     if parent_asset_id is not None:
         count_query = count_query.where(Asset.parent_asset_id == parent_asset_id)
+    else:
+        count_query = count_query.where(Asset.user_id == current_user.id)
     
     total_count = len(session.exec(count_query).all())
     

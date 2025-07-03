@@ -1,0 +1,196 @@
+{
+  "providers": {
+    "ollama": {
+      "name": "Ollama",
+      "type": "local",
+      "description": "Local embedding models via Ollama",
+      "base_url_env": "OLLAMA_BASE_URL",
+      "default_base_url": "http://localhost:11434",
+      "models": {
+        "nomic-embed-text": {
+          "name": "nomic-embed-text",
+          "dimension": 768,
+          "description": "High-performance text embedding model from Nomic AI",
+          "max_sequence_length": 8192,
+          "recommended": true,
+          "tags": ["general", "high-performance"],
+          "model_size": "274MB",
+          "languages": ["en"],
+          "use_cases": ["semantic_search", "classification", "clustering"]
+        },
+        "mxbai-embed-large": {
+          "name": "mxbai-embed-large", 
+          "dimension": 1024,
+          "description": "Large embedding model optimized for retrieval tasks",
+          "max_sequence_length": 512,
+          "recommended": false,
+          "tags": ["large", "retrieval"],
+          "model_size": "669MB",
+          "languages": ["en"],
+          "use_cases": ["document_retrieval", "rag"]
+        },
+        "all-minilm": {
+          "name": "all-minilm",
+          "dimension": 384, 
+          "description": "Compact and fast sentence embedding model",
+          "max_sequence_length": 256,
+          "recommended": false,
+          "tags": ["fast", "compact"],
+          "model_size": "133MB", 
+          "languages": ["en"],
+          "use_cases": ["fast_search", "lightweight_apps"]
+        },
+        "snowflake-arctic-embed": {
+          "name": "snowflake-arctic-embed",
+          "dimension": 1024,
+          "description": "Snowflake's Arctic embedding model for retrieval",
+          "max_sequence_length": 512,
+          "recommended": false,
+          "tags": ["retrieval", "enterprise"],
+          "model_size": "669MB",
+          "languages": ["en"],
+          "use_cases": ["enterprise_search", "rag"]
+        },
+        "bge-large": {
+          "name": "bge-large",
+          "dimension": 1024,
+          "description": "BAAI general embedding model, large variant",
+          "max_sequence_length": 512,
+          "recommended": true,
+          "tags": ["multilingual", "general"],
+          "model_size": "1.3GB",
+          "languages": ["en", "zh", "multilingual"],
+          "use_cases": ["multilingual_search", "cross_lingual"]
+        },
+        "bge-base": {
+          "name": "bge-base", 
+          "dimension": 768,
+          "description": "BAAI general embedding model, base variant",
+          "max_sequence_length": 512,
+          "recommended": true,
+          "tags": ["multilingual", "balanced"],
+          "model_size": "438MB",
+          "languages": ["en", "zh", "multilingual"],
+          "use_cases": ["general_purpose", "balanced_performance"]
+        }
+      }
+    },
+    "jina": {
+      "name": "Jina AI",
+      "type": "cloud",
+      "description": "Cloud-based embedding models from Jina AI",
+      "api_key_env": "JINA_API_KEY",
+      "base_url": "https://api.jina.ai/v1/embeddings",
+      "models": {
+        "jina-embeddings-v2-base-en": {
+          "name": "jina-embeddings-v2-base-en",
+          "dimension": 768,
+          "description": "English-optimized embedding model, good balance of performance and efficiency", 
+          "max_sequence_length": 8192,
+          "recommended": true,
+          "tags": ["english", "balanced"],
+          "cost_per_1k_tokens": 0.00002,
+          "languages": ["en"],
+          "use_cases": ["english_content", "general_purpose"]
+        },
+        "jina-embeddings-v2-small-en": {
+          "name": "jina-embeddings-v2-small-en",
+          "dimension": 512,
+          "description": "Compact English embedding model for fast inference",
+          "max_sequence_length": 8192,
+          "recommended": false,
+          "tags": ["fast", "compact", "english"],
+          "cost_per_1k_tokens": 0.00001,
+          "languages": ["en"], 
+          "use_cases": ["fast_inference", "cost_sensitive"]
+        },
+        "jina-embeddings-v3": {
+          "name": "jina-embeddings-v3",
+          "dimension": 1024,
+          "description": "Latest multilingual embedding model with improved performance",
+          "max_sequence_length": 8192,
+          "recommended": true,
+          "tags": ["latest", "multilingual", "high_performance"],
+          "cost_per_1k_tokens": 0.00005,
+          "languages": ["multilingual"],
+          "use_cases": ["multilingual_content", "latest_features"]
+        },
+        "jina-colbert-v1-en": {
+          "name": "jina-colbert-v1-en",
+          "dimension": 128,
+          "description": "ColBERT-style model for efficient retrieval",
+          "max_sequence_length": 8192,
+          "recommended": false,
+          "tags": ["colbert", "retrieval", "efficient"],
+          "cost_per_1k_tokens": 0.00001,
+          "languages": ["en"],
+          "use_cases": ["efficient_retrieval", "colbert_ranking"]
+        },
+        "jina-clip-v1": {
+          "name": "jina-clip-v1",
+          "dimension": 768,
+          "description": "Multimodal CLIP model for text and image embeddings",
+          "max_sequence_length": 8192,
+          "recommended": false,
+          "tags": ["multimodal", "clip", "experimental"],
+          "cost_per_1k_tokens": 0.00003,
+          "languages": ["en"],
+          "use_cases": ["image_text_search", "multimodal"]
+        }
+      }
+    },
+    "openai": {
+      "name": "OpenAI",
+      "type": "cloud", 
+      "description": "OpenAI embedding models",
+      "api_key_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1/embeddings",
+      "models": {
+        "text-embedding-ada-002": {
+          "name": "text-embedding-ada-002",
+          "dimension": 1536,
+          "description": "Most capable embedding model from OpenAI",
+          "max_sequence_length": 8191,
+          "recommended": true,
+          "tags": ["openai", "general"],
+          "cost_per_1k_tokens": 0.0001,
+          "languages": ["multilingual"],
+          "use_cases": ["general_purpose", "openai_ecosystem"]
+        },
+        "text-embedding-3-small": {
+          "name": "text-embedding-3-small",
+          "dimension": 1536,
+          "description": "Smaller, faster embedding model from OpenAI",
+          "max_sequence_length": 8191,
+          "recommended": false,
+          "tags": ["openai", "fast"],
+          "cost_per_1k_tokens": 0.00002,
+          "languages": ["multilingual"],
+          "use_cases": ["cost_effective", "faster_inference"]
+        },
+        "text-embedding-3-large": {
+          "name": "text-embedding-3-large", 
+          "dimension": 3072,
+          "description": "Most powerful embedding model from OpenAI",
+          "max_sequence_length": 8191,
+          "recommended": false,
+          "tags": ["openai", "powerful"],
+          "cost_per_1k_tokens": 0.00013,
+          "languages": ["multilingual"],
+          "use_cases": ["high_accuracy", "complex_tasks"]
+        }
+      }
+    }
+  },
+  "default_providers": {
+    "development": "ollama",
+    "production": "jina"
+  },
+  "recommended_models": {
+    "general_purpose": ["nomic-embed-text", "jina-embeddings-v2-base-en", "bge-base"],
+    "high_performance": ["jina-embeddings-v3", "bge-large", "text-embedding-ada-002"],
+    "fast_inference": ["all-minilm", "jina-embeddings-v2-small-en"],
+    "multilingual": ["bge-large", "jina-embeddings-v3", "text-embedding-ada-002"],
+    "cost_effective": ["nomic-embed-text", "jina-embeddings-v2-small-en", "text-embedding-3-small"]
+  }
+} 

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PlusCircle, Edit, Trash2, Eye, Search, XCircle, Loader2, AlertTriangle, Upload, Download } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Eye, Search, XCircle, Loader2, AlertTriangle, Upload, Download, LayoutGrid, List } from 'lucide-react';
 import { AnnotationSchemaRead } from '@/client/models';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
@@ -15,7 +15,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
-import { transformApiToFormData } from '@/lib/annotations/service';
+import { adaptSchemaReadToSchemaFormData as transformApiToFormData } from '@/lib/annotations/adapters';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 // Interface for export dialog state
 interface ExportDialogState {
@@ -30,19 +33,22 @@ const AnnotationSchemaManager: React.FC = () => {
         schemas,
         loadSchemas,
         createSchema,
-        deleteSchema,
+        archiveSchema,
+        restoreSchema,
         isLoadingSchemas,
         error: schemasError
     } = useAnnotationSystem();
     const { toast } = useToast();
 
     const [searchTerm, setSearchTerm] = useState('');
+    const [showArchived, setShowArchived] = useState(false);
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorMode, setEditorMode] = useState<'create' | 'edit' | 'watch'>('create');
     const [selectedSchema, setSelectedSchema] = useState<AnnotationSchemaRead | null>(null);
     const [schemaToDelete, setSchemaToDelete] = useState<AnnotationSchemaRead | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedSchemaIds, setSelectedSchemaIds] = useState<Set<number>>(new Set());
     const [exportDialogState, setExportDialogState] = useState<ExportDialogState>({
@@ -51,14 +57,15 @@ const AnnotationSchemaManager: React.FC = () => {
       defaultFilename: '',
       currentFilename: ''
     });
+    const [isBulkArchiveDialogOpen, setIsBulkArchiveDialogOpen] = useState(false);
 
     useEffect(() => {
       setSelectedSchemaIds(new Set());
     }, [schemas]);
 
     useEffect(() => {
-        loadSchemas();
-    }, [loadSchemas]);
+        loadSchemas({ includeArchived: showArchived });
+    }, [loadSchemas, showArchived]);
 
     const handleOpenEditor = (mode: 'create' | 'edit' | 'watch', schema?: AnnotationSchemaRead) => {
         setEditorMode(mode);
@@ -73,6 +80,7 @@ const AnnotationSchemaManager: React.FC = () => {
 
     const handleSaveSuccess = (savedSchema: AnnotationSchemaRead) => {
         handleCloseEditor();
+        loadSchemas({ force: true });
     };
 
     const handleDeleteClick = (schema: AnnotationSchemaRead) => {
@@ -83,20 +91,60 @@ const AnnotationSchemaManager: React.FC = () => {
         if (!schemaToDelete) return;
         setIsDeleting(true);
         try {
-            await deleteSchema(schemaToDelete.id);
-            toast({ title: "Schema Deleted", description: `Schema "${schemaToDelete.name}" deleted successfully.`, variant: "default" });
-            setSelectedSchemaIds(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(schemaToDelete.id);
-                return newSet;
-            });
+            await archiveSchema(schemaToDelete.id);
             setSchemaToDelete(null);
+            // The optimistic update in the hook handles the UI change
         } catch (error: any) {
-            console.error("Error deleting schema:", error);
-            const errorMsg = error.body?.detail || "Could not delete schema.";
-            toast({ title: "Delete Failed", description: errorMsg, variant: "destructive" });
+            const errorMsg = error.body?.detail || "Could not archive schema.";
+            toast({ title: "Archive Failed", description: errorMsg, variant: "destructive" });
         } finally {
             setIsDeleting(false);
+        }
+    };
+
+    const handleBulkArchive = async () => {
+        const idsToArchive = Array.from(selectedSchemaIds);
+        if (idsToArchive.length === 0) return;
+
+        toast({
+            title: "Archiving Schemas",
+            description: `Attempting to archive ${idsToArchive.length} schemas...`,
+        });
+
+        const results = await Promise.allSettled(
+            idsToArchive.map(id => archiveSchema(id))
+        );
+
+        const successfulArchives = results.filter(r => r.status === 'fulfilled').length;
+        const failedArchives = results.length - successfulArchives;
+
+        if (failedArchives > 0) {
+            toast({
+                title: "Bulk Archive Partially Failed",
+                description: `${successfulArchives} schemas archived. ${failedArchives} failed. See console for details.`,
+                variant: "destructive",
+            });
+            results.forEach(result => {
+                if (result.status === 'rejected') {
+                }
+            });
+        } else {
+            toast({
+                title: "Bulk Archive Successful",
+                description: `${successfulArchives} schemas have been archived.`,
+            });
+        }
+
+        setSelectedSchemaIds(new Set()); // Clear selection after operation
+        setIsBulkArchiveDialogOpen(false); // Close dialog
+    };
+
+    const handleRestoreClick = async (schema: AnnotationSchemaRead) => {
+        try {
+            await restoreSchema(schema.id);
+        } catch (error: any) {
+            const errorMsg = error.body?.detail || "Could not restore schema.";
+            toast({ title: "Restore Failed", description: errorMsg, variant: "destructive" });
         }
     };
 
@@ -143,7 +191,6 @@ const AnnotationSchemaManager: React.FC = () => {
                     throw new Error(`Creation via hook failed for schema '${importedSchema.name || 'Unnamed'}'`);
                 }
               } catch (individualError: any) {
-                console.error('Error importing individual schema:', individualError);
                 errorCount++;
                 toast({ title: 'Import Error (Individual)', description: `Failed to import schema '${importedSchema.name || 'Unnamed'}': ${individualError.message}`, variant: 'destructive' });
               }
@@ -156,7 +203,6 @@ const AnnotationSchemaManager: React.FC = () => {
             });
 
           } catch (error: any) {
-            console.error('Error processing imported file:', error);
             toast({ title: 'Import Failed', description: `Error parsing or processing file: ${error.message}`, variant: 'destructive' });
           } finally {
             setIsImporting(false);
@@ -224,7 +270,6 @@ const AnnotationSchemaManager: React.FC = () => {
             closeExportDialog();
             setSelectedSchemaIds(new Set());
         } catch (error) {
-            console.error("Export failed:", error);
             toast({ title: 'Export Failed', description: 'Could not generate export file.', variant: 'destructive' });
         }
     };
@@ -267,7 +312,13 @@ const AnnotationSchemaManager: React.FC = () => {
     return (
         <div className="flex flex-col h-full p-4 bg-muted/10">
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-                <h2 className="text-xl font-semibold">Manage Annotation Schemas</h2>
+                <div className="flex items-center gap-4">
+                    <h2 className="text-xl font-semibold">Manage Annotation Schemas</h2>
+                    <ToggleGroup type="single" value={viewMode} onValueChange={(value) => value && setViewMode(value as any)} size="sm">
+                        <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
+                        <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
+                    </ToggleGroup>
+                </div>
                 <div className="flex items-center gap-2 flex-wrap">
                     <div className="relative w-48 sm:w-64">
                        <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -278,6 +329,16 @@ const AnnotationSchemaManager: React.FC = () => {
                            onChange={(e) => setSearchTerm(e.target.value)}
                            className="pl-8 h-9"
                        />
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <Checkbox
+                            id="show-archived"
+                            checked={showArchived}
+                            onCheckedChange={(checked) => setShowArchived(!!checked)}
+                        />
+                        <Label htmlFor="show-archived" className="text-sm font-medium whitespace-nowrap">
+                            Show Archived
+                        </Label>
                     </div>
                     <Button size="sm" variant="outline" onClick={handleImportClick} disabled={isImporting}>
                         {isImporting ? (
@@ -299,6 +360,12 @@ const AnnotationSchemaManager: React.FC = () => {
                         <PlusCircle className="h-4 w-4 mr-2" />
                         Create Schema
                     </Button>
+                    <div className="flex items-center gap-2 border-l pl-2 ml-2">
+                      <Button size="sm" variant="destructive" onClick={() => setIsBulkArchiveDialogOpen(true)} disabled={numSelected === 0}>
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Archive ({numSelected})
+                      </Button>
+                    </div>
                 </div>
             </div>
 
@@ -314,11 +381,11 @@ const AnnotationSchemaManager: React.FC = () => {
                     <XCircle className="h-10 w-10 text-destructive mb-2"/>
                     <p className="text-destructive font-medium">Error loading schemas</p>
                     <p className="text-xs text-destructive/80 text-center mt-1">{schemasError}</p>
-                    <Button variant="outline" size="sm" onClick={() => loadSchemas()} className="mt-4">Retry</Button>
+                    <Button variant="outline" size="sm" onClick={() => loadSchemas({ includeArchived: showArchived })} className="mt-4">Retry</Button>
                 </div>
             )}
 
-            {!isLoadingSchemas && !schemasError && (
+            {!isLoadingSchemas && !schemasError && viewMode === 'list' && (
                  <div className="flex-grow overflow-hidden border rounded-lg bg-card">
                     <ScrollArea className="h-full">
                        <Table>
@@ -346,15 +413,21 @@ const AnnotationSchemaManager: React.FC = () => {
                                       <TableRow 
                                           key={schema.id}
                                           data-state={selectedSchemaIds.has(schema.id) ? "selected" : ""}
+                                          className={cn(!schema.is_active && "bg-muted/50 text-muted-foreground")}
                                       >
                                           <TableCell className="px-2">
+                                            <div className="flex items-center h-full">
                                               <Checkbox
                                                   checked={selectedSchemaIds.has(schema.id)}
                                                   onCheckedChange={(checked) => handleRowSelect(schema.id, !!checked)}
                                                   aria-label="Select row"
                                               />
+                                            </div>
                                           </TableCell>
-                                          <TableCell className="font-medium truncate" title={schema.name}>{schema.name}</TableCell>
+                                          <TableCell className="font-medium truncate" title={schema.name}>
+                                            {schema.name}
+                                            {!schema.is_active && <Badge variant="outline" className="ml-2">Archived</Badge>}
+                                          </TableCell>
                                           <TableCell className="text-muted-foreground text-sm max-w-sm truncate" title={schema.description || undefined}>{schema.description || '-'}</TableCell>
                                           <TableCell className="text-center text-sm">{Object.keys((schema.output_contract as any)?.properties || {}).length}</TableCell>
                                           <TableCell className="text-center text-sm">{(schema as any).annotation_count ?? '-'}</TableCell>
@@ -366,14 +439,20 @@ const AnnotationSchemaManager: React.FC = () => {
                                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditor('watch', schema)} title="View">
                                                       <Eye className="h-4 w-4" />
                                                   </Button>
-                                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditor('edit', schema)} title="Edit">
-                                                      <Edit className="h-4 w-4" />
-                                                  </Button>
-                                                   <AlertDialogTrigger asChild>
-                                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClick(schema)} title="Delete">
-                                                          <Trash2 className="h-4 w-4" />
+                                                  {schema.is_active ? (
+                                                    <>
+                                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditor('edit', schema)} title="Edit">
+                                                          <Edit className="h-4 w-4" />
                                                       </Button>
-                                                   </AlertDialogTrigger>
+                                                       <AlertDialogTrigger asChild>
+                                                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClick(schema)} title="Archive">
+                                                              <Trash2 className="h-4 w-4" />
+                                                          </Button>
+                                                       </AlertDialogTrigger>
+                                                    </>
+                                                  ) : (
+                                                    <Button variant="ghost" size="sm" onClick={() => handleRestoreClick(schema)}>Restore</Button>
+                                                  )}
                                               </div>
                                           </TableCell>
                                       </TableRow>
@@ -390,24 +469,47 @@ const AnnotationSchemaManager: React.FC = () => {
                     </ScrollArea>
                  </div>
             )}
+            
+            {!isLoadingSchemas && !schemasError && viewMode === 'grid' && (
+                <ScrollArea className="flex-grow">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {filteredSchemas.map(schema => (
+                            <SchemaCard
+                                key={schema.id}
+                                schema={schema}
+                                isSelected={selectedSchemaIds.has(schema.id)}
+                                onSelect={handleRowSelect}
+                                onOpenEditor={handleOpenEditor}
+                                onDeleteClick={handleDeleteClick}
+                                onRestoreClick={handleRestoreClick}
+                            />
+                        ))}
+                    </div>
+                     {filteredSchemas.length === 0 && (
+                        <div className="col-span-full h-48 flex items-center justify-center text-muted-foreground">
+                             {schemas.length === 0 ? "No annotation schemas created yet." : "No schemas match your search."}
+                        </div>
+                     )}
+                </ScrollArea>
+            )}
 
             <AnnotationSchemaEditor
                 key={selectedSchema?.id || 'create'}
                 show={isEditorOpen}
                 mode={editorMode}
                 schemeId={selectedSchema?.id}
-                onSave={handleSaveSuccess}
                 onClose={handleCloseEditor}
-                defaultValues={selectedSchema ? transformApiToFormData(selectedSchema) : undefined}
+                defaultValues={selectedSchema}
             />
 
             <AlertDialog open={!!schemaToDelete} onOpenChange={(open) => !open && setSchemaToDelete(null)}>
               <AlertDialogContent>
                   <AlertDialogHeader>
-                      <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                      <AlertDialogTitle>Are you sure you want to archive this schema?</AlertDialogTitle>
                       <AlertDialogDescription>
-                          This action cannot be undone. This will permanently delete the annotation schema
-                           <span className="font-semibold"> "{schemaToDelete?.name}"</span> and potentially associated results (depending on backend cascade behavior).
+                          This will hide the schema from the default list and prevent it from being used in new runs.
+                          You can restore it later. It will NOT delete existing annotations.
+                           <span className="font-semibold block mt-2"> "{schemaToDelete?.name}"</span>
                       </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -418,7 +520,30 @@ const AnnotationSchemaManager: React.FC = () => {
                           className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       >
                           {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4"/>}
-                           Delete Schema
+                           Archive Schema
+                      </AlertDialogAction>
+                  </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog open={isBulkArchiveDialogOpen} onOpenChange={setIsBulkArchiveDialogOpen}>
+              <AlertDialogContent>
+                  <AlertDialogHeader>
+                      <AlertDialogTitle>Archive Multiple Schemas?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                          You are about to archive {selectedSchemaIds.size} selected schema(s). This will hide them from the default list and prevent them from being used in new runs.
+                          <br /><br />
+                          This action can be reversed by viewing archived schemas and restoring them individually.
+                      </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                          onClick={handleBulkArchive}
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                           <Trash2 className="mr-2 h-4 w-4"/>
+                           Archive Schemas
                       </AlertDialogAction>
                   </AlertDialogFooter>
               </AlertDialogContent>
@@ -465,5 +590,81 @@ const AnnotationSchemaManager: React.FC = () => {
      </AlertDialog>
  );
  
+interface SchemaCardProps {
+    schema: AnnotationSchemaRead;
+    isSelected: boolean;
+    onSelect: (id: number, checked: boolean) => void;
+    onOpenEditor: (mode: 'create' | 'edit' | 'watch', schema?: AnnotationSchemaRead) => void;
+    onDeleteClick: (schema: AnnotationSchemaRead) => void;
+    onRestoreClick: (schema: AnnotationSchemaRead) => void;
+}
+
+const SchemaCard: React.FC<SchemaCardProps> = ({
+    schema,
+    isSelected,
+    onSelect,
+    onOpenEditor,
+    onDeleteClick,
+    onRestoreClick,
+}) => {
+    return (
+        <Card className={cn(
+            "flex flex-col transition-all", 
+            !schema.is_active && "bg-muted/50 text-muted-foreground",
+            isSelected && "border-primary ring-1 ring-primary"
+        )}>
+            <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
+                <div className="flex-1 space-y-1">
+                    <CardTitle className="text-base truncate" title={schema.name}>
+                        {schema.name}
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground h-8 overflow-hidden">
+                        {schema.description || "No description."}
+                    </p>
+                </div>
+                <Checkbox
+                    checked={isSelected}
+                    onCheckedChange={(checked) => onSelect(schema.id, !!checked)}
+                    aria-label="Select schema"
+                />
+            </CardHeader>
+            <CardContent className="flex-grow space-y-2 text-xs">
+                 {!schema.is_active && <Badge variant="outline">Archived</Badge>}
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Fields:</span>
+                    <span>{Object.keys((schema.output_contract as any)?.properties || {}).length}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Annotations:</span>
+                    <span>{(schema as any).annotation_count?? 'N/A'}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-muted-foreground">Updated:</span>
+                    <span>{schema.updated_at ? formatDistanceToNow(new Date(schema.updated_at), { addSuffix: true }) : '-'}</span>
+                </div>
+            </CardContent>
+            <CardFooter className="flex justify-end gap-1 p-2">
+                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenEditor('watch', schema)} title="View">
+                    <Eye className="h-4 w-4" />
+                </Button>
+                {schema.is_active ? (
+                <>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenEditor('edit', schema)} title="Edit">
+                        <Edit className="h-4 w-4" />
+                    </Button>
+                    <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/10" onClick={() => onDeleteClick(schema)} title="Archive">
+                            <Trash2 className="h-4 w-4" />
+                        </Button>
+                    </AlertDialogTrigger>
+                </>
+                ) : (
+                <Button variant="ghost" size="sm" onClick={() => onRestoreClick(schema)}>Restore</Button>
+                )}
+            </CardFooter>
+        </Card>
+    );
+};
+
  export default AnnotationSchemaManagerWrapper;
 

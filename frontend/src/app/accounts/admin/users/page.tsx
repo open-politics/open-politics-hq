@@ -63,7 +63,6 @@ export default withAdminAuth(function UserManagementPage() {
           email,
           password,
           full_name: fullName || undefined,
-          is_active: true,
           is_superuser: false,
         },
       });

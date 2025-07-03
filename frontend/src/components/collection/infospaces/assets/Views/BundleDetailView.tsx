@@ -467,7 +467,7 @@ export default function BundleDetailView({
             selectedAssetId={selectedAssetId}
             highlightAssetIdOnOpen={highlightAssetId}
             onEdit={(asset: AssetRead) => console.log('Edit asset:', asset)}
-            schemes={[]}
+            schemas={[]}
             onLoadIntoRunner={onLoadIntoRunner}
           />
         </div>

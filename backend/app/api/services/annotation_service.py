@@ -308,6 +308,49 @@ class AnnotationService:
         
         return list(self.session.exec(query))
     
+    def get_annotations_for_run(
+        self,
+        run_id: int,
+        user_id: int,
+        infospace_id: int,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[Annotation]:
+        """
+        Get all annotations for a specific run.
+        
+        Args:
+            run_id: ID of the run
+            user_id: ID of the user requesting the annotations
+            infospace_id: ID of the infospace
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            
+        Returns:
+            List of annotations
+            
+        Raises:
+            ValueError: If validation fails
+        """
+        logger.info(f"Service: Getting annotations for run {run_id}")
+
+        # Validate infospace access
+        validate_infospace_access(self.session, infospace_id, user_id)
+
+        # Optional: Validate run exists and belongs to infospace
+        run = self.session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != infospace_id:
+            raise ValueError("Run not found in this infospace.")
+
+        query = (
+            select(Annotation)
+            .where(Annotation.run_id == run_id)
+            .offset(skip)
+            .limit(limit)
+        )
+        annotations = self.session.exec(query).all()
+        return list(annotations)
+    
     def update_annotation(
         self,
         annotation_id: int,
@@ -569,9 +612,6 @@ class AnnotationService:
         if existing_schema:
             raise ValueError(f"AnnotationSchema with name '{name}' and version '{version}' already exists in infospace {infospace_id}")
 
-        # TODO: Add validation for output_contract using jsonschema library if complex validation needed
-        # For now, relying on Pydantic structure in API layer and basic checks here if any.
-        
         db_schema = AnnotationSchema(
             name=name,
             description=description,
@@ -637,10 +677,16 @@ class AnnotationService:
         # The actual target asset IDs will be resolved by the task from configuration
         # Here we just ensure the input is valid.
 
+        run_config = run_in.configuration or {}
+        if run_in.target_asset_ids:
+            run_config['target_asset_ids'] = run_in.target_asset_ids
+        if run_in.target_bundle_id:
+            run_config['target_bundle_id'] = run_in.target_bundle_id
+
         db_run = AnnotationRun(
             name=run_in.name,
             description=run_in.description,
-            configuration=run_in.configuration or {},
+            configuration=run_config,
             status=RunStatus.PENDING,
             infospace_id=infospace_id,
             user_id=user_id,

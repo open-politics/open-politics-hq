@@ -10,12 +10,14 @@ import { InfospaceRowData } from '@/components/collection/infospaces/tables/work
 import { PlusCircle, Upload } from 'lucide-react';
 import { InfospaceRead } from '@/client/models';
 import { toast } from 'sonner';
+import useAuth from '@/hooks/useAuth';
 
 interface InfospaceManagerProps {
   activeInfospace: InfospaceRead | null;
 }
 
 export default function InfospaceManager({ activeInfospace }: InfospaceManagerProps) {
+  const { user } = useAuth();
   const {
     createInfospace,
     importInfospace,
@@ -40,11 +42,16 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
   };
 
   const handleCreateInfospace = async (name: string, description: string, icon: string, systemPrompt: string) => {
+    if (!user) {
+      toast.error("User not authenticated.");
+      return;
+    }
     try {
       const newWs = await createInfospace({
         name,
         description,
         icon,
+        owner_id: user.id,
       });
       setIsCreateOverlayOpen(false);
       if (newWs) {

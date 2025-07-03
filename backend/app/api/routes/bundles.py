@@ -162,28 +162,26 @@ def remove_asset_from_bundle(
         raise HTTPException(status_code=404, detail="Failed to remove asset from bundle. Asset may not be in bundle or access denied.")
     return updated_bundle
 
-@router.get("/bundles/{bundle_id}/assets", response_model=List[AssetRead])
+@router.get("/infospaces/{infospace_id}/bundles/{bundle_id}/assets", response_model=List[AssetRead])
 def get_assets_in_bundle(
     bundle_id: int,
+    infospace_id: int,
+    service: BundleService = Depends(deps.get_bundle_service),
+    current_user = Depends(deps.get_current_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
-) -> List[Asset]:
-    """Get assets for a bundle."""
-    bundle = db.get(Bundle, bundle_id)
-    if not bundle:
-        raise HTTPException(status_code=404, detail="Bundle not found")
-    validate_infospace_access(db, bundle.infospace_id, current_user.id)
-
-    return service.get_assets_in_bundle(
+):
+    """
+    Get all assets within a specific bundle.
+    """
+    assets = service.get_assets_for_bundle(
         bundle_id=bundle_id,
-        infospace_id=bundle.infospace_id,
+        infospace_id=infospace_id,
         user_id=current_user.id,
         skip=skip,
         limit=limit
     )
+    return assets
 
 @router.get("/assets/{asset_id}", response_model=AssetRead)
 def get_asset(

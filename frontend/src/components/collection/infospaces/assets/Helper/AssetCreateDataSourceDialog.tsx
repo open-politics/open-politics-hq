@@ -21,6 +21,8 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { AssetRead } from '@/client/models';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { Progress } from '@/components/ui/progress';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 
 interface CreateAssetDialogProps {
@@ -135,13 +137,17 @@ const getStatusColor = (status?: string) => {
 export default function CreateAssetDialog({ open, onClose, mode, initialFocus, existingBundleId, existingBundleName }: CreateAssetDialogProps) {
   const { createAsset, isLoading: storeIsLoading, error: storeError, fetchAssets } = useAssetStore();
   const { activeInfospace } = useInfospaceStore();
-  const { addAssetToBundle, fetchBundles } = useBundleStore();
+  const { bundles, fetchBundles: fetchBundlesFromStore, addAssetToBundle, fetchBundles } = useBundleStore();
   
   const [bundleTitle, setBundleTitle] = useState('');
   const [items, setItems] = useState<BundleItem[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   
+  // Destination state
+  const [destination, setDestination] = useState<'individual' | 'new_bundle' | 'existing_bundle'>(mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle'));
+  const [selectedBundleId, setSelectedBundleId] = useState<number | string | undefined>(existingBundleId);
+
   // Adding new items state
   const urlInputRef = React.useRef<HTMLInputElement>(null);
   const [newUrl, setNewUrl] = useState('');
@@ -149,6 +155,27 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
   const [newTextTitle, setNewTextTitle] = useState('');
   const [useBackgroundProcessing, setUseBackgroundProcessing] = useState(false);
   const [backgroundTasks, setBackgroundTasks] = useState<any[]>([]);
+
+  // Fetch bundles when dialog opens
+  useEffect(() => {
+    if (open && activeInfospace?.id) {
+        fetchBundlesFromStore(activeInfospace.id);
+    }
+  }, [open, activeInfospace?.id, fetchBundlesFromStore]);
+
+  // Sync state with props on open
+  useEffect(() => {
+    if (open) {
+      const newDestination = mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle');
+      setDestination(newDestination);
+      setSelectedBundleId(existingBundleId);
+      if (mode === 'bundle' && existingBundleId) {
+          setBundleTitle(existingBundleName || '');
+      } else {
+          setBundleTitle('');
+      }
+    }
+  }, [mode, existingBundleId, existingBundleName, open]);
 
   useEffect(() => {
     if (open && initialFocus === 'url') {
@@ -166,7 +193,10 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     setUploadProgress(null);
     setUseBackgroundProcessing(false);
     setBackgroundTasks([]);
-  }, []);
+    // Reset destination based on initial mode
+    setDestination(mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle'));
+    setSelectedBundleId(existingBundleId);
+  }, [mode, existingBundleId]);
 
   const handleClose = () => {
     if (uploadProgress && uploadProgress.phase !== 'complete' && uploadProgress.phase !== 'error') {
@@ -287,18 +317,26 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
 
   // Auto-generate bundle title when items change (for file uploads in bundle mode)
   useEffect(() => {
-    if (mode === 'bundle' && !existingBundleId && items.length > 0 && !bundleTitle.trim()) {
+    if (destination === 'new_bundle' && items.length > 0 && !bundleTitle.trim()) {
       const autoTitle = generateBundleTitle(items);
       setBundleTitle(autoTitle);
     }
-  }, [items, mode, existingBundleId, bundleTitle, generateBundleTitle]);
+  }, [items, destination, bundleTitle, generateBundleTitle]);
 
   const validateForm = (): boolean => {
     setFormError(null);
-    if (mode === 'bundle' && !existingBundleId && !bundleTitle.trim() && items.length > 0) {
+    if (destination === 'new_bundle' && !bundleTitle.trim() && items.length > 0) {
       // Auto-generate title if empty for bundle mode
       const autoTitle = generateBundleTitle(items);
       setBundleTitle(autoTitle);
+    }
+    if (destination === 'new_bundle' && !bundleTitle.trim()) {
+      setFormError('Please provide a title for the new bundle.');
+      return false;
+    }
+    if (destination === 'existing_bundle' && !selectedBundleId) {
+      setFormError('Please select a bundle to add to.');
+      return false;
     }
     if (items.length === 0) {
       setFormError('Please add at least one item.');
@@ -333,7 +371,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
       // Mark all items as uploading
       setItems(prev => prev.map(item => ({ ...item, status: 'uploading' as const })));
 
-      if (mode === 'individual') {
+      if (destination === 'individual') {
         await handleIndividualModeParallel();
       } else {
         await handleBundleModeParallel();
@@ -568,9 +606,10 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     let targetBundleId: number;
     let targetBundleName: string;
 
-    if (existingBundleId) {
-      targetBundleId = existingBundleId;
-      targetBundleName = existingBundleName!;
+    if (destination === 'existing_bundle' && selectedBundleId) {
+      targetBundleId = typeof selectedBundleId === 'string' ? parseInt(selectedBundleId, 10) : selectedBundleId;
+      const selectedBundle = bundles.find(b => b.id === targetBundleId);
+      targetBundleName = selectedBundle?.name || 'Existing Bundle';
     } else {
       // Create the bundle first
       const { BundlesService } = await import('@/client/services');
@@ -1097,17 +1136,22 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
       <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>
-            {existingBundleId ? `Upload to Bundle: ${existingBundleName}` : mode === 'individual' ? 'Create Individual Assets' : 'Create New Bundle'}
+            {destination === 'existing_bundle'
+              ? `Upload to Bundle: ${bundles.find(b => b.id === (typeof selectedBundleId === 'string' ? parseInt(selectedBundleId) : selectedBundleId))?.name || '...'}`
+              : destination === 'new_bundle'
+                ? 'Create New Bundle'
+                : 'Upload & Create Assets'
+            }
           </DialogTitle>
           <DialogDescription asChild>
             <div>
-              {existingBundleId 
-                ? `Add files, URLs, and text content to the existing bundle "${existingBundleName}".`
-                : mode === 'individual'
-                  ? 'Upload files, scrape URLs, or create text content as individual assets. Each item will be processed independently.'
+              {destination === 'existing_bundle'
+                ? `Add files, URLs, and text content to the selected bundle.`
+                : destination === 'individual'
+                  ? 'Upload files, scrape URLs, or create text content. Each item will be processed and saved as a separate asset.'
                   : (
                     <div className="space-y-1">
-                      <div>Create a bundle with multiple files, URLs, and text content.</div>
+                      <div>Create a new bundle with multiple files, URLs, and text content.</div>
                       <div className="text-xs text-muted-foreground">
                         💡 Tip: Add all related files to one bundle instead of creating separate bundles for each file.
                       </div>
@@ -1119,22 +1163,6 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
         </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4 flex-1 overflow-hidden flex flex-col">
-          {!existingBundleId && mode === 'bundle' && (
-            <div className="space-y-2 p-1">
-              <Label htmlFor="bundle-title">
-                Bundle Title
-                <span className="text-xs text-muted-foreground ml-2">(auto-generated for file uploads)</span>
-              </Label>
-              <Input
-                id="bundle-title"
-                value={bundleTitle}
-                onChange={(e) => setBundleTitle(e.target.value)}
-                placeholder={items.length > 0 ? generateBundleTitle(items) : "e.g., Research Documents Collection"}
-                disabled={storeIsLoading || isUploading}
-              />
-            </div>
-          )}
-
           {uploadProgress && renderUploadProgress()}
 
           {!uploadProgress && (
@@ -1148,7 +1176,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
           <div className="space-y-3 flex-1 overflow-hidden flex flex-col">
             <div className="flex items-center justify-between">
               <Label>
-                {mode === 'individual' ? 'Items to Upload' : `Bundle Contents`} ({items.length} items)
+                Items to Upload ({items.length} items)
               </Label>
               {itemTypeCounts.length > 0 && (
                 <div className="flex gap-1">
@@ -1165,26 +1193,75 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               )}
             </div>
             
-            {/* Helpful message for single items in bundle mode */}
-            {items.length === 1 && mode === 'bundle' && !existingBundleId && (
-              <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg p-2 flex items-center gap-2">
-                <span>💡</span>
-                <span>Consider adding more related files to create a comprehensive bundle instead of a single-file bundle.</span>
-              </div>
-            )}
-            
-            {/* Helpful message for individual mode */}
-            {mode === 'individual' && items.length > 0 && (
-              <div className="text-xs text-muted-foreground bg-green-50 border border-green-200 rounded-lg p-2 flex items-center gap-2">
-                <span>ℹ️</span>
-                <span>Each item (file, URL, or text) will be created as a separate, independent asset. Use "Create Bundle" if you want to group related content together.</span>
-              </div>
-            )}
-            
             <div className="border rounded-lg p-4 flex-1 overflow-hidden">
               {renderItemsList()}
             </div>
           </div>
+
+          {/* Destination Selector */}
+          {!uploadProgress && items.length > 0 && (
+            <div className="space-y-3 pt-4 border-t">
+              <Label className="font-semibold">Destination</Label>
+              <RadioGroup value={destination} onValueChange={(value) => setDestination(value as any)} className="space-y-2">
+                <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
+                  <RadioGroupItem value="individual" id="dest-individual" />
+                  <Label htmlFor="dest-individual" className="font-normal cursor-pointer">
+                    Create individual assets
+                    <p className="text-xs text-muted-foreground">Each item will be a separate asset in the infospace.</p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
+                  <RadioGroupItem value="new_bundle" id="dest-new" />
+                  <Label htmlFor="dest-new" className="font-normal cursor-pointer">
+                    Create a new bundle
+                    <p className="text-xs text-muted-foreground">Group all items together in a new bundle.</p>
+                  </Label>
+                </div>
+                {destination === 'new_bundle' && (
+                  <div className="pl-8 pb-2">
+                    <Label htmlFor="bundle-title" className="text-xs font-medium text-muted-foreground">Bundle Title</Label>
+                    <Input
+                      id="bundle-title"
+                      value={bundleTitle}
+                      onChange={(e) => setBundleTitle(e.target.value)}
+                      placeholder={items.length > 0 ? generateBundleTitle(items) : "e.g., Research Documents Collection"}
+                      disabled={storeIsLoading || isUploading}
+                      className="mt-1"
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
+                  <RadioGroupItem value="existing_bundle" id="dest-existing" disabled={!bundles || bundles.length === 0} />
+                  <Label htmlFor="dest-existing" className={cn("font-normal cursor-pointer", (!bundles || bundles.length === 0) && "text-muted-foreground cursor-not-allowed")}>
+                    Add to existing bundle
+                    <p className="text-xs text-muted-foreground">Add all items to a bundle that already exists.</p>
+                  </Label>
+                </div>
+                {destination === 'existing_bundle' && (
+                  <div className="pl-8 pb-2">
+                    <Select
+                      value={selectedBundleId?.toString()}
+                      onValueChange={(value) => setSelectedBundleId(parseInt(value))}
+                      disabled={!bundles || bundles.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={bundles.length > 0 ? "Select a bundle" : "No bundles available"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bundles.map((bundle) => (
+                          <SelectItem key={bundle.id} value={bundle.id.toString()}>
+                            {bundle.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </RadioGroup>
+            </div>
+          )}
 
           {formError && (
             <Alert variant="destructive">
@@ -1222,12 +1299,12 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               ) : storeIsLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {mode === 'individual' ? 'Uploading...' : existingBundleId ? 'Uploading...' : 'Creating Bundle...'}
+                  {'Processing...'}
                 </>
-              ) : mode === 'individual' ? (
+              ) : destination === 'individual' ? (
                 `Upload ${items.length} Item${items.length !== 1 ? 's' : ''}`
-              ) : existingBundleId ? (
-                `Upload to Bundle (${items.length} items)`
+              ) : destination === 'existing_bundle' ? (
+                `Add to Bundle (${items.length} items)`
               ) : (
                 `Create Bundle (${items.length} items)`
               )}

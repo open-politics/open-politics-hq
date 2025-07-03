@@ -21,5 +21,4 @@ RUN apk add --no-cache bash
 EXPOSE 3000
 
 # Command to run the app in development mode
-CMD ["bun", "run", "dev", "--turbo"]
-# CMD ["bun", "run", "dev"]
+CMD ["bun", "run", "next", "dev", "--turbo"]

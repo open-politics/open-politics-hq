@@ -3,539 +3,41 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, History, Play, Loader2, ListChecks, Star, ChevronUp, ChevronDown, Plus, Settings2, BookOpen, Eye, Search, XCircle, Repeat, HelpCircle } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useToast } from '@/components/ui/use-toast';
 import { cn } from "@/lib/utils";
-import { useRunHistoryStore, RunHistoryItem } from '@/zustand_stores/storeRunHistory';
-import { useFavoriteRunsStore, FavoriteRun } from '@/zustand_stores/storeFavoriteRuns';
-import { ClassificationSchemeRead, DataRecordRead, DataSourceRead, ClassificationJobRead, EnhancedClassificationResultRead } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead } from '@/client/models';
 import { Label } from '@/components/ui/label';
-import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Progress } from "@/components/ui/progress";
-import { useClassificationSystem } from '@/hooks/useClassificationSystem';
-import { FormattedClassificationResult } from '@/lib/classification/types';
-import { SchemePreview } from '@/components/collection/infospaces/classifications/schemaCreation/SchemePreview';
-import { transformApiToFormData } from '@/lib/classification/service';
-import ClassificationSchemeEditor from './ClassificationSchemeEditor';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { Switch } from "@/components/ui/switch";
-
-// --- Sub-components ---
-
-const FavoriteRunsDisplay: React.FC<{
-  runs: FavoriteRun[];
-  activeRunId: number | null;
-  onSelectRun: (runId: number, runName: string, runDescription?: string) => void;
-}> = ({ runs, activeRunId, onSelectRun }) => {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="whitespace-nowrap">
-          <Star className="h-4 w-4 mr-2 fill-yellow-400 text-yellow-400" />
-          <span className="hidden sm:inline">Favorites</span> ({runs.length})
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="center" className="w-80 p-0">
-        <div className="p-3">
-          <h4 className="font-medium text-center mb-2">Favorite Runs</h4>
-          <ScrollArea className="max-h-60">
-            <div className="space-y-2">
-              {runs.length > 0 ? (
-                runs.map(run => (
-                  <div
-                    key={run.id}
-                    className={cn(
-                      "p-2 rounded border cursor-pointer hover:bg-muted/50 transition-colors",
-                      activeRunId === run.id && "bg-muted border-primary"
-                    )}
-                    onClick={() => onSelectRun(run.id, run.name, run.description)}
-                  >
-                    <div className="font-medium text-sm">{run.name}</div>
-                    <div className="flex gap-2 mt-1 text-xs text-muted-foreground">
-                      <div>{run.timestamp}</div>
-                      <div>•</div>
-                      <div>{run.documentCount} docs</div>
-                      <div>•</div>
-                      <div>{run.schemeCount} schemes</div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-4 text-muted-foreground text-sm">
-                  No favorite runs yet
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-};
-
-const RunHistoryPanel: React.FC<{
-  runs: RunHistoryItem[];
-  activeRunId?: number | null;
-  onSelectRun: (runId: number, runName: string, runDescription?: string) => void;
-  onToggleFavorite?: (run: RunHistoryItem) => void;
-  favoriteRunIds?: number[];
-}> = ({ runs, activeRunId, onSelectRun, onToggleFavorite, favoriteRunIds = [] }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-
-  // Filter runs based on search term
-  const filteredRuns = useMemo(() => {
-    return runs.filter(run =>
-      run.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [runs, searchTerm]);
-
-  // Sort runs based on criteria
-  const sortedRuns = useMemo(() => {
-    return [...filteredRuns].sort((a, b) => {
-      if (sortBy === 'date') {
-        // Attempt to parse potentially varied date formats
-        const parseDate = (ts: string): number => {
-          try {
-            // Handle "Month Day, Year at HH:MM:SS AM/PM" format from date-fns 'PPp'
-            const date = new Date(ts.replace(' at ', ' '));
-            if (!isNaN(date.getTime())) return date.getTime();
-          } catch (e) { /* ignore parsing errors */ }
-          // Fallback for ISO strings or other formats Date can parse
-          try {
-            const date = new Date(ts);
-            if (!isNaN(date.getTime())) return date.getTime();
-          } catch (e) { /* ignore parsing errors */ }
-          return 0; // Fallback if parsing fails completely
-        };
-        const timeA = parseDate(a.timestamp);
-        const timeB = parseDate(b.timestamp);
-        if (timeA === 0 || timeB === 0) return 0; // Don't sort if parsing failed
-
-        return sortOrder === 'asc'
-          ? timeA - timeB
-          : timeB - timeA;
-      } else {
-        return sortOrder === 'asc'
-          ? a.name.localeCompare(b.name)
-          : b.name.localeCompare(a.name);
-      }
-    });
-  }, [filteredRuns, sortBy, sortOrder]);
-
-  // Find the active run
-  const activeRun = useMemo(() => {
-    return runs.find(run => run.id === activeRunId);
-  }, [runs, activeRunId]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 mb-4">
-        <Input
-          placeholder="Search runs..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="flex-1"
-        />
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="icon">
-              <Settings2 className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-56 p-3">
-            <div className="space-y-2">
-              <h4 className="font-medium text-sm">Sort Options</h4>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs">Sort by</Label>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant={sortBy === 'date' ? 'default' : 'outline'}
-                    onClick={() => setSortBy('date')}
-                    className="flex-1 h-8"
-                  >
-                    Date
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={sortBy === 'name' ? 'default' : 'outline'}
-                    onClick={() => setSortBy('name')}
-                    className="flex-1 h-8"
-                  >
-                    Name
-                  </Button>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs">Order</Label>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant={sortOrder === 'asc' ? 'default' : 'outline'}
-                    onClick={() => setSortOrder('asc')}
-                    className="flex-1 h-8"
-                  >
-                    Ascending
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={sortOrder === 'desc' ? 'default' : 'outline'}
-                    onClick={() => setSortOrder('desc')}
-                    className="flex-1 h-8"
-                  >
-                    Descending
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-
-      <ScrollArea className="flex-1">
-        {sortedRuns.length > 0 ? (
-          <div className="space-y-2">
-            {sortedRuns.map((run) => {
-               // Check for recurring task ID - be more explicit about type check
-               const config = run.configuration as any; // Keep casting if type isn't precise
-               const recurringTaskIdValue: unknown = config?.recurring_task_id; // Use unknown first
-
-               // Explicitly check if it's a number
-               const isRecurring = typeof recurringTaskIdValue === 'number';
-               const recurringTaskIdNumber = isRecurring ? recurringTaskIdValue : null; // Store the number or null
-
-               return (
-                 <div
-                   key={run.id}
-                   className={cn(
-                     "p-3 rounded-md border cursor-pointer hover:bg-muted/50 transition-colors",
-                     activeRunId === run.id && "bg-muted border-primary"
-                   )}
-                   onClick={() => onSelectRun(run.id, run.name, run.description)}
-                 >
-                   <div className="flex items-center justify-between">
-                     {/* Wrap name and potential icon in a div for alignment */}
-                     <div className="flex items-center gap-1.5">
-                       <span className="font-medium truncate" title={run.name}>{run.name}</span>
-                       {/* Add Icon and Tooltip if recurring */}
-                       {isRecurring && ( // Use the boolean flag derived from the type check
-                         <TooltipProvider delayDuration={100}>
-                           <Tooltip>
-                             <TooltipTrigger asChild>
-                               {/* Icon acts as the trigger */}
-                               <Repeat className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                             </TooltipTrigger>
-                             <TooltipContent>
-                               {/* Render only if it's confirmed to be a number */}
-                               <p>Recurring Run (Task ID: {recurringTaskIdNumber})</p>
-                             </TooltipContent>
-                           </Tooltip>
-                         </TooltipProvider>
-                       )}
-                     </div>
-                     {/* Favorite Button */}
-                     {onToggleFavorite && (
-                       <Button
-                         variant="ghost"
-                         size="icon"
-                         onClick={(e) => {
-                           e.stopPropagation();
-                           onToggleFavorite(run);
-                         }}
-                         className="h-6 w-6"
-                       >
-                         {(favoriteRunIds ?? []).includes(run.id) ? (
-                           <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                         ) : (
-                           <Star className="h-4 w-4" />
-                         )}
-                       </Button>
-                     )}
-                   </div>
-                   <div className="text-sm text-muted-foreground mt-1">
-                     {run.timestamp}
-                   </div>
-                   <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
-                     <div>{run.documentCount} documents</div>
-                     <div>{run.schemeCount} schemes</div>
-                   </div>
-                 </div>
-               );
-             })}
-          </div>
-        ) : runs.length === 0 && !searchTerm ? ( // Adjusted condition for clarity
-          <div className="text-center py-8 text-muted-foreground">
-            No run history available
-          </div>
-        ) : (
-          <div className="text-center py-8 text-muted-foreground">
-            No runs match your search
-          </div>
-        )}
-      </ScrollArea>
-    </div>
-  );
-};
-
-function RunHistoryDialog({
-  isOpen,
-  onClose,
-  activeRunId,
-  onSelectRun
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  activeRunId: number | null;
-  onSelectRun: (runId: number, runName: string, runDescription?: string) => void
-}) {
-  const { runs, isLoading, fetchRunHistory } = useRunHistoryStore();
-  const { favoriteRuns, addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
-  const { activeInfospace } = useInfospaceStore();
-  const intervalRef = useRef<NodeJS.Timeout | null>(null); // Ref for the fetch interval
-
-  // Get favorite run IDs
-  const favoriteRunIds = useMemo(() => {
-    return favoriteRuns.map(run => run.id);
-  }, [favoriteRuns]);
-
-  // Memoized toggle handler
-  const handleToggleFavoriteRun = useCallback((run: RunHistoryItem) => {
-    const InfospaceId = activeInfospace?.id || '';
-    if (isFavorite(run.id)) {
-      removeFavoriteRun(run.id);
-    } else {
-      addFavoriteRun({
-        id: run.id,
-        name: run.name,
-        timestamp: run.timestamp,
-        documentCount: run.documentCount || 0,
-        schemeCount: run.schemeCount || 0,
-        InfospaceId: String(InfospaceId),
-        description: run.description
-      });
-    }
-  }, [activeInfospace?.id, isFavorite, addFavoriteRun, removeFavoriteRun]);
-
-  // Manual refresh handler
-  const handleManualRefresh = useCallback(() => {
-      if (activeInfospace?.id) {
-        const InfospaceId = activeInfospace.id;
-        if (!isNaN(InfospaceId)) {
-          fetchRunHistory(InfospaceId);
-        }
-      }
-  }, [activeInfospace?.id, fetchRunHistory]);
-
-  // Simplified handleOpenChange
-  const handleOpenChange = (open: boolean) => {
-    if (!open) {
-       onClose();
-    }
-    // Fetching logic is handled by the useEffect hook.
-  };
-
-  // useEffect for initial and periodic history fetching
-  useEffect(() => {
-    const currentInfospaceId = activeInfospace?.id;
-
-    const fetchData = async () => {
-      // Re-check conditions inside the fetch function/interval callback
-      // Use Zustand's getState to get the latest values non-reactively
-      const latestInfospaceId = useInfospaceStore.getState().activeInfospace?.id;
-      const latestIsLoading = useRunHistoryStore.getState().isLoading;
-      const InfospaceIdNum = typeof latestInfospaceId === 'number' ? latestInfospaceId : parseInt(latestInfospaceId || '', 10);
-
-      // Ensure the dialog is still open, Infospace hasn't changed, it's a valid ID, and not already loading
-      if (useRunHistoryStore.getState().runs && // Check if dialog state is still open via proxy (runs exist)
-          latestInfospaceId === currentInfospaceId &&
-          !isNaN(InfospaceIdNum) &&
-          !latestIsLoading) {
-        try {
-          await fetchRunHistory(InfospaceIdNum);
-        } catch (error) {
-          // Handle fetch errors silently or log to a proper service
-        }
-      }
-    };
-
-    if (isOpen && currentInfospaceId && !isNaN(currentInfospaceId)) {
-      // Initial fetch when dialog opens
-      fetchData();
-
-      // Clear any existing interval before setting a new one
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-
-      // Set up interval for periodic fetching
-      intervalRef.current = setInterval(fetchData, 5000); // Fetch every 5 seconds
-    } else {
-      // If dialog is closed or Infospace is invalid, clear interval
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }
-
-    // Cleanup function: Clears interval when the component unmounts or dependencies change
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-    // Dependencies: Effect runs when dialog opens/closes or Infospace changes
-  }, [isOpen, activeInfospace?.id, fetchRunHistory]);
-
-  return (
-    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[600px] h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Run History</DialogTitle>
-          <DialogDescription>
-            Select a previous run to load its results into the runner
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="flex-1 overflow-hidden py-4">
-          {isLoading && runs.length === 0 ? ( // Show loading only on initial load or if runs are empty
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <span className="ml-2">Loading run history...</span>
-            </div>
-          ) : (
-            <RunHistoryPanel
-              runs={runs}
-              activeRunId={activeRunId}
-              onSelectRun={onSelectRun}
-              favoriteRunIds={favoriteRunIds}
-              onToggleFavorite={handleToggleFavoriteRun}
-            />
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Close</Button>
-          <Button
-            variant="default"
-            onClick={handleManualRefresh}
-            disabled={isLoading}
-            className="mr-auto"
-          >
-            <History className="h-4 w-4 mr-2" />
-            Refresh History
-            {isLoading && <Loader2 className="h-4 w-4 ml-2 animate-spin" />}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// --- NEW: Document Selector Component ---
-interface DocumentSelectorForRunProps {
-  allDataSources: DataSourceRead[];
-  selectedDocIds: number[];
-  onToggleDoc: (docId: number) => void;
-  onSelectAll: (selectAll: boolean) => void;
-}
-
-const DocumentSelectorForRun: React.FC<DocumentSelectorForRunProps> = ({
-  allDataSources,
-  selectedDocIds,
-  onToggleDoc,
-  onSelectAll,
-}) => {
-  const [searchTerm, setSearchTerm] = useState('');
-
-  const filteredDocuments = useMemo(() => {
-    return allDataSources.filter(source =>
-      (source.name ?? '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [allDataSources, searchTerm]);
-
-  const handleSelectAllClick = (checked: boolean | string) => {
-    onSelectAll(checked === true);
-  };
-
-  return (
-    <div className="flex flex-col space-y-3">
-      <div className="relative">
-        <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Filter Data Sources..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-8 h-9"
-        />
-      </div>
-      <div className="flex items-center">
-        <Checkbox
-          id="select-all-docs"
-          checked={selectedDocIds.length === filteredDocuments.length && filteredDocuments.length > 0}
-          onCheckedChange={(checked) => onSelectAll(checked === true)}
-        />
-        <Label htmlFor="select-all-docs" className="ml-2 text-sm font-medium">
-          Select All ({filteredDocuments.length})
-        </Label>
-      </div>
-      <ScrollArea className="h-[200px] border rounded-md p-2">
-        <div className="space-y-1">
-          {filteredDocuments.map((doc) => (
-            <div key={doc.id} className="flex items-center justify-between text-sm p-1.5 hover:bg-muted/50 rounded">
-              <div className="flex items-center space-x-2 overflow-hidden">
-                <Checkbox
-                  id={`doc-${doc.id}`}
-                  checked={selectedDocIds.includes(doc.id)}
-                  onCheckedChange={() => onToggleDoc(doc.id)}
-                  className="shrink-0"
-                />
-                <Label htmlFor={`doc-${doc.id}`} className="truncate cursor-pointer" title={doc.name ?? `DataSource ${doc.id}`}>
-                  {doc.name ?? `DataSource ${doc.id}`}
-                </Label>
-              </div>
-            </div>
-          ))}
-          {filteredDocuments.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center italic py-4">No data sources found.</p>
-          )}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-};
+import { Tooltip, TooltipProvider } from '@/components/ui/tooltip';
+import { Switch } from '@/components/ui/switch';
+import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
+import { AnnotationRunParams } from '@/lib/annotations/types';
+import { SchemePreview } from './schemaCreation/SchemePreview';
+import AnnotationSchemaEditor from './AnnotationSchemaEditor';
+import AssetSelector from '../assets/AssetSelector';
+import { toast } from 'sonner';
 
 // --- NEW: Scheme Selector Component ---
 interface SchemeSelectorForRunProps {
-  allSchemes: ClassificationSchemeRead[];
+  allSchemes: AnnotationSchemaRead[];
   selectedSchemeIds: number[];
   onToggleScheme: (schemeId: number) => void;
-  onSelectAll: (selectAll: boolean) => void;
-  onPreviewScheme: (scheme: ClassificationSchemeRead) => void;
+  onPreviewScheme: (scheme: AnnotationSchemaRead) => void;
+  onOpenSchemeEditor: () => void;
 }
 
 const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
   allSchemes,
   selectedSchemeIds,
   onToggleScheme,
-  onSelectAll,
   onPreviewScheme,
+  onOpenSchemeEditor,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const areAllSelected = allSchemes.length > 0 && selectedSchemeIds.length === allSchemes.length;
 
   const filteredSchemes = useMemo(() => {
     return allSchemes.filter(scheme =>
@@ -544,559 +46,392 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
   }, [allSchemes, searchTerm]);
 
   return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">Select Schemes for Run</h4>
-         <TooltipProvider delayDuration={100}>
-           <Tooltip>
-             <TooltipTrigger asChild>
-               <Checkbox
-                 id="select-all-schemes-run"
-                 checked={areAllSelected}
-                 onCheckedChange={(checked) => onSelectAll(!!checked)}
-                 aria-label="Select all schemes for run"
-               />
-             </TooltipTrigger>
-             <TooltipContent><p>Select/Deselect All</p></TooltipContent>
-           </Tooltip>
-         </TooltipProvider>
-      </div>
-      <Input
-        placeholder="Search schemes..."
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        className="h-8"
-      />
-      <ScrollArea className="h-72 border rounded-md p-2">
-        {filteredSchemes.length > 0 ? (
-          <div className="space-y-2">
-            {filteredSchemes.map(scheme => (
-              <div key={scheme.id} className="flex items-center space-x-2 group">
-                <Checkbox
-                  id={`run-scheme-${scheme.id}`}
-                  checked={selectedSchemeIds.includes(scheme.id)}
-                  onCheckedChange={() => onToggleScheme(scheme.id)}
-                />
-                <label
-                  htmlFor={`run-scheme-${scheme.id}`}
-                  className="text-sm font-medium leading-none flex-1 truncate cursor-pointer"
-                  title={scheme.name}
-                >
-                  {scheme.name}
-                </label>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => onPreviewScheme(scheme)}
-                >
-                  <Eye className="h-4 w-4 text-muted-foreground" />
-                </Button>
-              </div>
-            ))}
+    <div className="flex flex-col h-full border rounded-md bg-background">
+      <div className="flex-none p-3 border-b">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-grow">
+            <Input
+                placeholder="Filter schemes..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-9"
+            />
           </div>
-        ) : (
-          <div className="text-center text-muted-foreground text-sm py-4">No schemes match search.</div>
-        )}
+          <Button variant="ghost" size="sm" onClick={onOpenSchemeEditor}>
+            <Plus className="h-4 w-4 mr-1" />
+            New
+          </Button>
+        </div>
+      </div>
+      <ScrollArea className="flex-1 overflow-hidden">
+        <div className="px-4 pb-2">
+        <div className="space-y-2">
+          {allSchemes.length > 0 ? filteredSchemes.map(scheme => (
+            <div key={scheme.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50">
+              <input 
+                type="checkbox" 
+                id={`scheme-${scheme.id}`} 
+                checked={selectedSchemeIds.includes(scheme.id)} 
+                onChange={() => onToggleScheme(scheme.id)}
+                className="flex-shrink-0"
+              />
+              <Label 
+                htmlFor={`scheme-${scheme.id}`} 
+                className="flex-1 truncate cursor-pointer text-sm leading-relaxed"
+              >
+                {scheme.name}
+              </Label>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8 flex-shrink-0" 
+                onClick={() => onPreviewScheme(scheme)}
+              >
+                <Eye className="h-4 w-4" />
+              </Button>
+            </div>
+          )) : <p className="text-xs text-muted-foreground text-center p-4">No schemes available. Please create one.</p>}
+        </div>
+        </div>
       </ScrollArea>
-      <div className="text-xs text-muted-foreground pt-1">{selectedSchemeIds.length} of {allSchemes.length} selected</div>
     </div>
   );
 };
 
 // --- MODIFIED: Props interface ---
-interface ClassificationRunnerDockProps {
-  allDataSources: DataSourceRead[];
-  allSchemes: ClassificationSchemeRead[];
-  onCreateJob: (
-    dataSourceIds: number[], 
-    schemeIds: number[], 
-    name?: string, 
-    description?: string,
-    thinking_budget_override?: number | null,
-    enable_image_analysis_override?: boolean
-  ) => Promise<void>;
-  onLoadJob: (jobId: number, jobName: string, jobDescription?: string) => void;
-  activeJobId: number | null;
-  isCreatingJob: boolean;
-  onClearJob: () => void;
+interface AnnotationRunnerDockProps {
+  allAssets: AssetRead[];
+  allSchemes: AnnotationSchemaRead[];
+  onCreateRun: (params: AnnotationRunParams) => Promise<void>;
+  activeRunId: number | null;
+  isCreatingRun: boolean;
+  onClearRun: () => void;
 }
 
-export default function ClassificationRunnerDock({
-  allDataSources,
+export default function AnnotationRunnerDock({
+  allAssets,
   allSchemes,
-  onCreateJob,
-  onLoadJob,
-  activeJobId,
-  isCreatingJob,
-  onClearJob,
-}: ClassificationRunnerDockProps) {
-  const { activeInfospace } = useInfospaceStore();
-  const { favoriteRuns } = useFavoriteRunsStore();
-  const { runs: runHistoryStore } = useRunHistoryStore();
-
-  // --- Local State for Dock ---
-  const [selectedDataSourceIds, setSelectedDataSourceIds] = useState<number[]>([]);
+  onCreateRun,
+  activeRunId,
+  isCreatingRun,
+  onClearRun,
+}: AnnotationRunnerDockProps) {
+  
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [selectedAssetItems, setSelectedAssetItems] = useState<Set<string>>(new Set());
   const [selectedSchemeIds, setSelectedSchemeIds] = useState<number[]>([]);
-  const [newJobName, setNewJobName] = useState<string>('');
-  const [newJobDescription, setNewJobDescription] = useState<string>('');
-  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [newRunName, setNewRunName] = useState<string>('');
+  const [newRunDescription, setNewRunDescription] = useState<string>('');
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
-  const [previewScheme, setPreviewScheme] = useState<ClassificationSchemeRead | null>(null);
-  const { toast } = useToast();
+  const [previewScheme, setPreviewScheme] = useState<AnnotationSchemaRead | null>(null);
+  const [isSchemeEditorOpen, setIsSchemeEditorOpen] = useState(false);
+  const [csvRowProcessing, setCsvRowProcessing] = useState<boolean>(true);
+  const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
 
-  // --- NEW: State for Advanced Job Settings --- 
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [enableThinking, setEnableThinking] = useState<boolean>(false);
-  const [enableImageAnalysisOverride, setEnableImageAnalysisOverride] = useState<boolean | undefined>(undefined);
-  // --- END NEW --- 
-
-  // Auto-load logic refs (similar to old dock)
-  const initialLoadAttemptedRef = useRef(false);
-  const attemptedInfospaceIdRef = useRef<number | null>(null); // Use number for ID
-
-  // Memoized Favorite Runs for current Infospace
-  const currentFavoriteRuns = useMemo(() => {
-    const InfospaceIdNum = activeInfospace?.id;
-    if (InfospaceIdNum === undefined || InfospaceIdNum === null) return [];
-    return favoriteRuns.filter(run => Number(run.InfospaceId) === InfospaceIdNum); // Ensure comparison is number vs number
-  }, [favoriteRuns, activeInfospace?.id]);
-
-  // --- Auto-loading last favorite run effect (similar to old dock) ---
-  const handleLoadJobInternal = useCallback((jobId: number, name: string, desc?: string) => {
-      onLoadJob(jobId, name, desc);
-      setIsHistoryDialogOpen(false); // Close dialog if open
-      // Optionally expand the dock or give feedback
-  }, [onLoadJob]);
-
-  useEffect(() => {
-      const currentInfospaceIdNum = activeInfospace?.id;
-
-      if (currentInfospaceIdNum !== attemptedInfospaceIdRef.current) {
-          // Infospace changed, reset auto-load flag.
-          initialLoadAttemptedRef.current = false;
-          attemptedInfospaceIdRef.current = currentInfospaceIdNum ?? null;
-      }
-
-      if (currentInfospaceIdNum === undefined || currentInfospaceIdNum === null) {
-          return;
-      }
-
-      if (!initialLoadAttemptedRef.current) {
-          if (activeJobId === null) {
-              // Initial check: No job active. Mark auto-load attempted.
-              initialLoadAttemptedRef.current = true;
-
-              if (favoriteRuns.length > 0) {
-                  const InfospaceFavorites = favoriteRuns.filter(run => Number(run.InfospaceId) === currentInfospaceIdNum);
-                  if (InfospaceFavorites.length > 0) {
-                      const parseDate = (ts: string): number => {
-                         try { const date = new Date(ts.replace(' at ', ' ')); if (!isNaN(date.getTime())) return date.getTime(); } catch (e) {}
-                         try { const date = new Date(ts); if (!isNaN(date.getTime())) return date.getTime(); } catch (e) {}
-                         return 0;
-                      };
-                      const sortedFavorites = [...InfospaceFavorites].sort((a, b) => parseDate(b.timestamp) - parseDate(a.timestamp));
-                      const lastFavorite = sortedFavorites[0];
-                      // Use timeout to ensure it runs after initial render settles
-                      const timer = setTimeout(() => {
-                          // Re-check activeJobId inside timeout
-                          if (useInfospaceStore.getState().activeInfospace?.id === currentInfospaceIdNum && activeJobId === null) {
-                              handleLoadJobInternal(lastFavorite.id, lastFavorite.name, lastFavorite.description);
-                          }
-                      }, 150);
-                      return () => clearTimeout(timer);
-                  }
-              }
-          } else {
-              // Initial check: Job active. Mark auto-load bypassed.
-              initialLoadAttemptedRef.current = true;
-          }
-      }
-  }, [activeInfospace?.id, favoriteRuns, activeJobId, handleLoadJobInternal]); // Added activeJobId dependency
-
-  // --- Click handler for starting a job ---
   const handleRunClick = async () => {
-    if (selectedDataSourceIds.length === 0 || selectedSchemeIds.length === 0) {
-      toast({
-        title: "Missing Selection",
-        description: "Please select data sources and schemes for the job.",
-        variant: "default"
-      });
+    if (selectedAssetItems.size === 0) {
+      toast.error("Please select at least one asset to annotate.");
+      return;
+    }
+    if (selectedSchemeIds.length === 0) {
+      toast.error("Please select at least one schema to use for annotation.");
       return;
     }
 
-    // --- NEW: Prepare Job Params with Overrides --- 
-    const budgetValueForParam = enableThinking ? 1024 : 0; // Calculate from local state
-    const jobParams = {
-        datasourceIds: selectedDataSourceIds,
-        schemeIds: selectedSchemeIds,
-        name: newJobName || undefined,
-        description: newJobDescription || undefined,
-        thinking_budget_override: budgetValueForParam, // Pass the calculated budget
-        enable_image_analysis_override: enableImageAnalysisOverride
+    const finalAssetIds = new Set<number>();
+    selectedAssetItems.forEach(item => {
+      if (item.startsWith('asset-')) {
+        const assetId = parseInt(item.replace('asset-', ''));
+        if (!isNaN(assetId)) {
+          finalAssetIds.add(assetId);
+        }
+      }
+    });
+
+    const configuration: Record<string, any> = {};
+    configuration.justification_mode = "SCHEMA_DEFAULT";
+    configuration.csv_row_processing = csvRowProcessing;
+    
+    const runParams: AnnotationRunParams = {
+        assetIds: Array.from(finalAssetIds),
+        bundleId: null, 
+        schemaIds: selectedSchemeIds,
+        name: newRunName || `Run - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
+        description: newRunDescription || undefined,
+        configuration: {
+          ...configuration,
+        },
     };
-    // --- END NEW --- 
 
-    // Pass the constructed jobParams to onCreateJob
-    await onCreateJob(jobParams.datasourceIds, jobParams.schemeIds, jobParams.name, jobParams.description, jobParams.thinking_budget_override, jobParams.enable_image_analysis_override);
-
-    // Optionally clear inputs after starting
-    setNewJobName('');
-    setNewJobDescription('');
-    // Optionally clear advanced settings overrides
-    setEnableThinking(false);
-    setEnableImageAnalysisOverride(undefined);
-    // Decide whether to clear selections
-    // setSelectedDataSourceIds([]);
-    // setSelectedSchemeIds([]);
+    await onCreateRun(runParams);
+    setIsExpanded(false);
+    setNewRunName('');
+    setNewRunDescription('');
   };
 
-  // --- Handlers for the selectors ---
-  const handleDataSourceToggle = (id: number) => {
-    setSelectedDataSourceIds(prev =>
-      prev.includes(id) ? prev.filter(dsId => dsId !== id) : [...prev, id]
+  const handleSchemeToggle = (id: number) => setSelectedSchemeIds(prev => prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]);
+  const handlePreviewSchemeClick = (scheme: AnnotationSchemaRead) => { setPreviewScheme(scheme); setIsPreviewDialogOpen(true); };
+  const handleCloseSchemeEditor = async () => { setIsSchemeEditorOpen(false); await refreshSchemasFromHook({ force: true }); };
+
+  // Compute actual asset count (excluding bundles)
+  const actualAssetCount = useMemo(() => {
+    return Array.from(selectedAssetItems).filter(item => item.startsWith('asset-')).length;
+  }, [selectedAssetItems]);
+
+  // Compute CSV processing info
+  const csvProcessingInfo = useMemo(() => {
+    const selectedAssetIds = Array.from(selectedAssetItems)
+      .filter(item => item.startsWith('asset-'))
+      .map(item => parseInt(item.replace('asset-', '')))
+      .filter(id => !isNaN(id));
+      
+    const csvAssets = allAssets.filter(asset => 
+      selectedAssetIds.includes(asset.id) && asset.kind === 'csv'
     );
-  };
+    
+    // Calculate total rows estimate from source metadata OR child assets
+    const totalRowsEstimate = csvAssets.reduce((total, asset) => {
+      // First try to get from source metadata (most efficient)
+      const metadataRowCount = asset.source_metadata?.row_count || 
+                               asset.source_metadata?.rows_processed || 
+                               asset.source_metadata?.row_count_processed;
+      
+      if (metadataRowCount && typeof metadataRowCount === 'number' && metadataRowCount > 0) {
+        return total + metadataRowCount;
+      }
+      
+      // Fallback: count actual CSV_ROW children in allAssets
+      const csvRowChildren = allAssets.filter(childAsset => 
+        childAsset.parent_asset_id === asset.id && childAsset.kind === 'csv_row'
+      );
+      
+      return total + csvRowChildren.length;
+    }, 0);
+    
+    return {
+      csvAssetCount: csvAssets.length,
+      totalRowsEstimate
+    };
+  }, [selectedAssetItems, allAssets]);
 
-  const handleSchemeToggle = (id: number) => {
-    setSelectedSchemeIds(prev =>
-      prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]
-    );
-  };
-
-  const handleSelectAllDataSources = (selectAll: boolean) => {
-    setSelectedDataSourceIds(selectAll ? allDataSources.map(d => d.id) : []);
-  };
-
-  const handleSelectAllSchemes = (selectAll: boolean) => {
-    setSelectedSchemeIds(selectAll ? allSchemes.map(s => s.id) : []);
-  };
-
-  const handlePreviewSchemeClick = (scheme: ClassificationSchemeRead) => {
-    setPreviewScheme(scheme);
-    setIsPreviewDialogOpen(true);
-  };
-
-  const [isSchemeEditorOpen, setIsSchemeEditorOpen] = useState(false);
-  const [schemeEditorMode, setSchemeEditorMode] = useState<'create' | 'edit' | 'watch'>('create');
-  const [schemeToEdit, setSchemeToEdit] = useState<ClassificationSchemeRead | null>(null);
-
-  // Hook to load schemes if needed by the editor or selectors
-  const { loadSchemes: refreshSchemesFromHook } = useClassificationSystem();
-
-  // --- Handler to open the scheme editor ---
-  const handleOpenSchemeEditor = (mode: 'create' | 'edit' | 'watch', scheme?: ClassificationSchemeRead) => {
-    setSchemeEditorMode(mode);
-    setSchemeToEdit(scheme || null);
-    setIsSchemeEditorOpen(true);
-  };
-
-  // --- Handler after scheme editor closes (e.g., refresh list) ---
-  const handleCloseSchemeEditor = async () => {
-    setIsSchemeEditorOpen(false);
-    setSchemeToEdit(null);
-    // Refresh schemes list after potential creation/edit
-    await refreshSchemesFromHook(true); // Force refresh
-  };
+  // Reset CSV row processing when no CSV assets are selected
+  useEffect(() => {
+    if (csvProcessingInfo.csvAssetCount === 0) {
+      setCsvRowProcessing(true); // Reset to default
+    }
+  }, [csvProcessingInfo.csvAssetCount]);
 
   return (
     <TooltipProvider>
-      {/* Floating Dock container */}
       <div className={cn(
-        "fixed bottom-4 left-1/2 transform -translate-x-1/2",
-        "flex flex-col",
-        "w-auto max-w-[95vw] lg:max-w-[1000px]",
-        "border bg-card text-card-foreground rounded-lg shadow-lg",
-        "z-40 transition-all duration-200" // Increased z-index
+        "fixed bottom-4 left-1/2 transform -translate-x-1/2 flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-xl border",
+        isExpanded 
+          ? "w-auto min-w-[1000px] max-w-[900px] shadow-lg hover:shadow-xl"
+          : "w-auto min-w-[600px] max-w-[95vw] lg:max-w-[1500px] shadow-2xl ring-1 ring-primary/20" 
       )}>
-        {/* Dock Header - Make clickable */}
-        <div
-          className="flex items-center justify-between px-4 py-2 border-b cursor-pointer hover:bg-muted/50" // Added cursor-pointer and hover
-          onClick={() => setIsExpanded(!isExpanded)} // Toggle on header click
-        >
-          <div className="flex items-center gap-2">
-            <ListChecks className="h-4 w-4 text-primary" />
-            <h3 className="text-sm font-medium">Classification Job Runner</h3>
-            {activeJobId && (
-              <Badge variant="outline" className="ml-2 text-xs">
-                Job #{activeJobId} Loaded
+        <div className="flex items-center justify-between px-6 py-4  cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl" onClick={() => setIsExpanded(!isExpanded)}>
+          <div className="flex items-center gap-4">
+            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+              <ListChecks className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold">Annotation Runner</h3>
+              <p className="text-sm text-muted-foreground">
+                {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
+              </p>
+            </div>
+            {activeRunId && (
+              <Badge variant="secondary" className="ml-2 text-sm bg-primary/10 text-primary border-primary/20">
+                Run #{activeRunId}
               </Badge>
             )}
           </div>
-          {/* Keep the button for explicit toggle indication, but header is also clickable */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }} // Prevent header click from double-toggling
-          >
-            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </Button>
-        </div>
-
-        {/* Dock Content - Expandable */}
-        <div className={cn(
-          "grid grid-cols-1 gap-4 p-4",
-           isExpanded ? "max-h-[80vh] overflow-y-auto opacity-100" : "max-h-0 opacity-0 overflow-hidden p-0"
-        )}>
-          {/* Row 1: History & Favorites */}
-          <div className="flex items-center gap-2 justify-end">
-              {/* <Label className="text-sm font-medium whitespace-nowrap">Model:</Label> */}
-              {/* <ProviderSelector className="flex-1" /> */} {/* Re-add if needed */}
-              <Button
-                variant="outline"
-                onClick={() => setIsHistoryDialogOpen(true)}
-                size="sm"
-                className="whitespace-nowrap"
-              >
-                <History className="h-4 w-4 sm:mr-2" />
-                <span className="hidden sm:inline">Load Job</span> {/* Updated text */}
-              </Button>
-
-              {currentFavoriteRuns.length > 0 && (
-                <FavoriteRunsDisplay
-                  runs={currentFavoriteRuns}
-                  activeRunId={activeJobId} // Pass activeJobId
-                  onSelectRun={handleLoadJobInternal} // Use internal handler
-                />
-              )}
-          </div>
-
-          {/* Row 2: Job Configuration */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Left side: Job metadata */}
-            <div className="space-y-3">
-              <div className="w-full">
-                <Label htmlFor="new-job-name-dock" className="text-xs font-medium">Job Name (Optional)</Label>
-                <Input
-                  id="new-job-name-dock"
-                  placeholder={`Job - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`}
-                  value={newJobName}
-                  onChange={(e) => setNewJobName(e.target.value)}
-                  className="h-9 text-sm"
-                />
-              </div>
-
-              <div className="w-full">
-                <Label htmlFor="new-job-description-dock" className="text-xs font-medium">Description (Optional)</Label>
-                <Textarea
-                  id="new-job-description-dock"
-                  placeholder="Purpose of this classification job..."
-                  value={newJobDescription}
-                  onChange={(e) => setNewJobDescription(e.target.value)}
-                  className="h-20 text-sm resize-none"
-                />
-              </div>
-            </div>
-
-            {/* Right side: Start Button */}
-            <div className="flex flex-col justify-end gap-3">
-              <div className="flex flex-col items-end">
-                <Button
-                  variant="default"
-                  onClick={handleRunClick}
-                  disabled={isCreatingJob || selectedDataSourceIds.length === 0 || selectedSchemeIds.length === 0}
-                  className="w-full md:w-auto"
-                  size="default"
-                >
-                  {isCreatingJob ? (
-                    <div className="flex items-center justify-center">
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      <span>Creating Job...</span>
-                    </div>
-                  ) : (
-                    <>
-                      <Play className="h-4 w-4 mr-2" />
-                      Create & Start Job
-                    </>
-                  )}
-                </Button>
-                 {/* Re-add Progress Bar if needed */}
-                 {/* {isCreatingJob && classificationProgress && classificationProgress.total > 0 && (
-                   <Progress value={(classificationProgress.current / classificationProgress.total) * 100} className="mt-2 h-2 w-full md:w-[200px]" />
-                 )} */}
-              </div>
-            </div>
-          </div>
-
-          {/* --- NEW: Advanced Settings Collapsible --- */}
-          <Collapsible open={showAdvancedSettings} onOpenChange={setShowAdvancedSettings} className="mt-2 border-t pt-3">
-            <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-xs w-full justify-start text-muted-foreground hover:text-foreground">
-                    {showAdvancedSettings ? <ChevronUp className="h-3.5 w-3.5 mr-1" /> : <ChevronDown className="h-3.5 w-3.5 mr-1" />}
-                    Advanced Job Settings (Overrides)
-                </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-3 pl-4 space-y-4">
-                {/* Thinking Budget Override - REPLACED with Switch */}
-                <div className="flex items-center space-x-3">
-                    <Switch 
-                        id="enable-thinking-switch"
-                        checked={enableThinking}
-                        onCheckedChange={setEnableThinking}
-                        className="data-[state=checked]:bg-green-600"
-                    />
-                    <Label htmlFor="enable-thinking-switch" className="text-xs font-medium flex items-center cursor-pointer">
-                        Enable Thinking for Explanations
-                        <TooltipProvider delayDuration={100}>
-                           <Tooltip>
-                              <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1.5 cursor-help" /></TooltipTrigger>
-                              <TooltipContent><p className="text-xs max-w-xs">Turns on the model's reasoning process to generate justifications (if requested by the scheme). Uses a default budget (e.g., 1024 tokens). Turning off explicitly disables thinking (budget 0).</p></TooltipContent>
-                           </Tooltip>
-                        </TooltipProvider>
-                    </Label>
-                </div>
-                {/* Image Analysis Override */}
-                <div className="flex items-center space-x-3">
-                    <Switch 
-                        id="image-analysis-override-switch"
-                        checked={enableImageAnalysisOverride === true} // Checked only if explicitly true
-                        onCheckedChange={(checked) => setEnableImageAnalysisOverride(checked ? true : (enableImageAnalysisOverride === undefined ? false : undefined))} // Cycle true -> false -> undefined
-                        className="data-[state=checked]:bg-blue-600"
-                    />
-                    <Label htmlFor="image-analysis-override-switch" className="text-xs font-medium flex items-center cursor-pointer">
-                        Enable Image Analysis
-                        <TooltipProvider delayDuration={100}>
-                           <Tooltip>
-                              <TooltipTrigger asChild><HelpCircle className="h-3 w-3 ml-1 cursor-help" /></TooltipTrigger>
-                              <TooltipContent><p className="text-xs max-w-xs">Override whether image analysis (e.g., for bounding boxes) is enabled. Click to cycle: On / Off / Inherit from scheme.</p></TooltipContent>
-                           </Tooltip>
-                        </TooltipProvider>
-                    </Label>
-                    <Badge variant={enableImageAnalysisOverride === true ? "default" : enableImageAnalysisOverride === false ? "destructive" : "outline"} className="ml-auto text-xs">
-                        {enableImageAnalysisOverride === true ? "On" : enableImageAnalysisOverride === false ? "Off" : "Inherit"}
-                    </Badge>
-                </div>
-            </CollapsibleContent>
-          </Collapsible>
-          {/* --- END NEW --- */}
-
-          {/* Row 3: Document and Scheme Selection */}
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
-                <div className="flex flex-col overflow-hidden">
-                  {/* TODO: Replace with card-based selector */}
-                  <DocumentSelectorForRun
-                      allDataSources={allDataSources}
-                      selectedDocIds={selectedDataSourceIds}
-                      onToggleDoc={handleDataSourceToggle}
-                      onSelectAll={handleSelectAllDataSources}
-                  />
-                </div>
-                <div className="flex flex-col overflow-hidden">
-                  {/* TODO: Replace with card-based selector */}
-                  <SchemeSelectorForRun
-                      allSchemes={allSchemes}
-                      selectedSchemeIds={selectedSchemeIds}
-                      onToggleScheme={handleSchemeToggle}
-                      onSelectAll={handleSelectAllSchemes}
-                      onPreviewScheme={handlePreviewSchemeClick} // Keep preview
-                  />
-                     <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleOpenSchemeEditor('create')}
-                        className="h-7 px-2 text-xs"
-                     >
-                        <Plus className="h-3.5 w-3.5 mr-1"/> Create New
-                     </Button>
-                </div>
-           </div>
-        </div>
-
-        {/* Compact View - When collapsed */}
-        <div className={cn(
-          "flex items-center justify-between px-4 py-2",
-           isExpanded ? "max-h-0 opacity-0 overflow-hidden p-0" : "max-h-[50px] opacity-100" // Corrected visibility logic
-        )}>
           <div className="flex items-center gap-3">
-             {/* Clear Button - Fix onClick */}
-            {activeJobId !== null && (
-                 <Tooltip>
-                   <TooltipTrigger asChild>
-                      <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 text-muted-foreground hover:text-destructive"
-                          onClick={(e) => { e.stopPropagation(); onClearJob(); }} // Call onClearJob directly
-                      >
-                          <XCircle className="h-3.5 w-3.5" />
-                      </Button>
-                   </TooltipTrigger>
-                   <TooltipContent>
-                       <p>Clear Loaded Job</p>
-                   </TooltipContent>
-                 </Tooltip>
-             )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => { e.stopPropagation(); setIsHistoryDialogOpen(true); }} // Stop propagation
-                  className="h-8"
-                >
-                  <History className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent><p>Load previous job</p></TooltipContent>
-            </Tooltip>
-             <Button
-              variant="default"
-              onClick={(e) => { e.stopPropagation(); handleRunClick(); }} // Stop propagation
-              disabled={isCreatingJob || selectedDataSourceIds.length === 0 || selectedSchemeIds.length === 0}
-              size="sm"
-              className="h-8"
+            {activeRunId && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={(e) => { e.stopPropagation(); onClearRun(); }}
+                className="h-8 px-3 hover:bg-destructive/10 hover:text-destructive"
+              >
+                <XCircle className="h-4 w-4 mr-1.5" />
+                Clear
+              </Button>
+            )}
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-8 w-8 p-0 hover:bg-muted/50" 
+              onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
             >
-              {isCreatingJob ? (<Loader2 className="h-3.5 w-3.5 animate-spin" />) : (<Play className="h-3.5 w-3.5" />)}
-              {!isCreatingJob && <span className="ml-1.5">Create Job</span>}
+              {isExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronUp className="h-4 w-4" />
+              )}
             </Button>
           </div>
-          {/* Make sure the expand button in compact view also stops propagation */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
-          >
-            <ChevronUp className="h-4 w-4" />
-          </Button>
         </div>
+
+        {isExpanded && (
+          <div className="p-6 max-h-[75vh] overflow-y-auto">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="new-job-name-dock" className="text-sm font-medium">Run Name</Label>
+                      <Input 
+                        id="new-job-name-dock" 
+                        placeholder="Enter a descriptive name..." 
+                        value={newRunName} 
+                        onChange={(e) => setNewRunName(e.target.value)}
+                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="new-job-description-dock" className="text-sm font-medium">Description</Label>
+                      <Textarea 
+                        id="new-job-description-dock" 
+                        placeholder="Optional description for this run..." 
+                        value={newRunDescription} 
+                        onChange={(e) => setNewRunDescription(e.target.value)}
+                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 min-h-[80px] resize-none"
+                      />
+                    </div>
+                    {/* CSV Row Processing Configuration */}
+                    {csvProcessingInfo.csvAssetCount > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="csv-row-processing"
+                            checked={csvRowProcessing}
+                            onCheckedChange={setCsvRowProcessing}
+                          />
+                          <Label htmlFor="csv-row-processing" className="text-sm font-medium cursor-pointer">
+                            Process CSV Rows Individually
+                          </Label>
+                        </div>
+                        <p className="text-xs text-muted-foreground ml-6">
+                          {csvRowProcessing 
+                            ? `Process each row as a separate asset (~${csvProcessingInfo.totalRowsEstimate} rows)`
+                            : `Process CSV files as complete documents (${csvProcessingInfo.csvAssetCount} files)`
+                          }
+                        </p>
+                      </div>
+                    )}
+                </div>
+                <div className="flex flex-col justify-end space-y-4">
+                    <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
+                      <h4 className="text-sm font-medium text-muted-foreground">Run Summary</h4>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-blue-500 shadow-sm"></div>
+                            <span className="text-sm font-medium">Assets Selected</span>
+                          </div>
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                            {actualAssetCount}
+                          </Badge>
+                        </div>
+                        {csvProcessingInfo.csvAssetCount > 0 && (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
+                              <span className="text-sm font-medium">
+                                {csvRowProcessing ? 'CSV Rows to Process' : 'CSV Files to Process'}
+                              </span>
+                            </div>
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                              {csvRowProcessing ? `~${csvProcessingInfo.totalRowsEstimate}` : csvProcessingInfo.csvAssetCount}
+                            </Badge>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-purple-500 shadow-sm"></div>
+                            <span className="text-sm font-medium">Schemes Selected</span>
+                          </div>
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                            {selectedSchemeIds.length}
+                          </Badge>
+                        </div>
+                        {csvProcessingInfo.csvAssetCount > 0 && (
+                          <div className="mt-3 p-2 rounded-md bg-blue-50 border border-blue-200">
+                            <div className="flex items-start gap-2">
+                              <div className="w-4 h-4 rounded-full bg-blue-500 shadow-sm mt-0.5 flex-shrink-0"></div>
+                              <div className="text-xs text-blue-700">
+                                <p className="font-medium mb-1">
+                                  {csvRowProcessing ? 'CSV Row Processing Enabled' : 'CSV File Processing'}
+                                </p>
+                                <p>
+                                  {csvRowProcessing 
+                                    ? `${csvProcessingInfo.csvAssetCount} CSV file${csvProcessingInfo.csvAssetCount > 1 ? 's' : ''} will be expanded to process individual rows (~${csvProcessingInfo.totalRowsEstimate} total rows).`
+                                    : `${csvProcessingInfo.csvAssetCount} CSV file${csvProcessingInfo.csvAssetCount > 1 ? 's' : ''} will be processed as complete documents.`
+                                  }
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <Button 
+                      onClick={handleRunClick} 
+                      disabled={isCreatingRun || selectedAssetItems.size === 0 || selectedSchemeIds.length === 0}
+                      className="h-12 font-medium transition-all duration-200 disabled:opacity-50 text-base"
+                      size="lg"
+                    >
+                        {isCreatingRun ? (
+                          <>
+                            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                            Creating Run...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-5 w-5 mr-2" />
+                            Create & Start Run
+                          </>
+                        )}
+                    </Button>
+                </div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 border-t pt-6 mt-6">
+                <div className="flex flex-col h-[400px]">
+                  <h3 className="text-sm font-semibold text-foreground mb-3 px-1">Select Assets to Annotate</h3>
+                  <div className="flex-1 min-h-0">
+                    <AssetSelector selectedItems={selectedAssetItems} onSelectionChange={setSelectedAssetItems} />
+                  </div>
+                </div>
+                <div className="flex flex-col h-[400px]">
+                  <h3 className="text-sm font-semibold text-foreground mb-3 px-1">Choose Annotation Schemes</h3>
+                  <div className="flex-1 min-h-0">
+                    <SchemeSelectorForRun allSchemes={allSchemes} selectedSchemeIds={selectedSchemeIds} onToggleScheme={handleSchemeToggle} onPreviewScheme={handlePreviewSchemeClick} onOpenSchemeEditor={() => setIsSchemeEditorOpen(true)} />
+                  </div>
+                </div>
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* Dialogs (remain outside the dock) */}
-      <RunHistoryDialog
-        isOpen={isHistoryDialogOpen}
-        onClose={() => setIsHistoryDialogOpen(false)}
-        activeRunId={activeJobId} // Pass activeJobId
-        onSelectRun={handleLoadJobInternal} // Pass internal handler
-      />
-
-      {/* Scheme Preview Dialog */}
       <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
-         <DialogContent className="max-w-2xl">
-           <DialogHeader>
-             <DialogTitle>Scheme Preview: {previewScheme?.name}</DialogTitle>
-           </DialogHeader>
-           <ScrollArea className="max-h-[70vh] p-1">
-              {/* Use SchemePreview component */}
-             {previewScheme && <SchemePreview scheme={transformApiToFormData(previewScheme)} />}
-           </ScrollArea>
-           <DialogFooter>
-             <Button variant="outline" onClick={() => setIsPreviewDialogOpen(false)}>Close</Button>
-           </DialogFooter>
-         </DialogContent>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Schema Preview: {previewScheme?.name}</DialogTitle>
+            <DialogDescription>
+              Review the schema structure before running annotations.
+            </DialogDescription>
+          </DialogHeader>
+          {previewScheme && (
+            <div className="mt-4">
+              <SchemePreview scheme={previewScheme} />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPreviewDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
-
-      {/* Scheme Editor Dialog */}
-       <ClassificationSchemeEditor
-           key={schemeToEdit?.id || 'create-scheme'} // Use key for re-rendering
-           show={isSchemeEditorOpen}
-           mode={schemeEditorMode}
-           defaultValues={schemeToEdit}
-           onClose={handleCloseSchemeEditor}
-       />
-
+      <AnnotationSchemaEditor show={isSchemeEditorOpen} onClose={handleCloseSchemeEditor} mode={'create'} defaultValues={null} />
     </TooltipProvider>
   );
 }

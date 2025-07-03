@@ -52,6 +52,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import AssetDetailViewCsv from './AssetDetailViewCsv';
 import AssetDetailViewPdf from './AssetDetailViewPdf';
 import AssetDetailViewTextBlock from './AssetDetailViewTextBlock';
+// import MboxViewer from './viewers/MboxViewer';
+// import CsvViewer from './viewers/CsvViewer';
+// import useSpecializedView from '@/hooks/useSpecializedView';
 
 // Define Sort Direction type
 type SortDirection = 'asc' | 'desc' | null;
@@ -66,7 +69,7 @@ interface EditState {
 
 interface AssetDetailViewProps {
   onEdit: (item: AssetRead) => void;
-  schemes: any[]; // Placeholder for classification schemes
+  schemas: any[]; // Placeholder for classification schemes
   selectedAssetId: number | null;
   highlightAssetIdOnOpen: number | null;
   onLoadIntoRunner?: (jobId: number, jobName: string) => void;
@@ -74,7 +77,7 @@ interface AssetDetailViewProps {
 
 const AssetDetailView = ({
   onEdit,
-  schemes,
+  schemas,
   selectedAssetId,
   highlightAssetIdOnOpen,
   onLoadIntoRunner
@@ -117,6 +120,10 @@ const AssetDetailView = ({
 
   const { activeInfospace } = useInfospaceStore();
   const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset } = useAssetStore();
+  // const { data: specializedViewData, loading: isLoadingSpecializedView, error: specializedViewError } = useSpecializedView(asset);
+  const specializedViewData = null;
+  const isLoadingSpecializedView = false;
+  const specializedViewError = null;
 
   const fetchingRef = useRef(false);
   const currentAssetIdRef = useRef<number | null>(null);
@@ -313,14 +320,20 @@ const AssetDetailView = ({
   }, [selectedAssetId]);
 
   useEffect(() => {
+    // This effect synchronizes the view based on a requested highlighted child asset.
     if (highlightAssetIdOnOpen && childAssets.length > 0) {
       const assetToSelect = childAssets.find(c => c.id === highlightAssetIdOnOpen);
-      if (assetToSelect && selectedChildAsset?.id !== highlightAssetIdOnOpen) {
+      if (assetToSelect) {
+        // When a child is highlighted, select it and switch to the children tab.
         setSelectedChildAsset(assetToSelect);
-        // Remove automatic tab switching - let users manually switch to children tab if needed
+        if (activeTab !== 'children') {
+          setActiveTab('children');
+        }
       }
+      // If the asset isn't found in the current children, do nothing and wait.
     }
-  }, [highlightAssetIdOnOpen, childAssets, selectedChildAsset]);
+    // REMOVED: The automatic switch back to content tab that was preventing manual tab switching
+  }, [highlightAssetIdOnOpen, childAssets]); // REMOVED: activeTab dependency to prevent loops
 
   // Cleanup blob URLs on unmount
   useEffect(() => {
@@ -370,6 +383,27 @@ const AssetDetailView = ({
       loadCSV();
     }, [blobPath]);
 
+    const lines = useMemo(() => csvContent ? csvContent.split('\n').filter(line => line.trim()) : [], [csvContent]);
+
+    const delimiter = useMemo(() => {
+      if (asset?.source_metadata?.delimiter) {
+        return asset.source_metadata.delimiter as string;
+      }
+
+      const potentialDelimiters = [';', ',', '\t', '|'];
+      const lineSample = lines.slice(0, 5);
+      if (lineSample.length === 0) return ',';
+
+      for (const d of potentialDelimiters) {
+        const counts = lineSample.map(l => l.split(d).length);
+        const firstCount = counts[0];
+        if (firstCount > 1 && counts.every(c => c === firstCount)) {
+          return d;
+        }
+      }
+      return ','; // Default delimiter
+    }, [lines, asset?.source_metadata]);
+
     if (isLoading) {
       return (
         <div className={cn("flex items-center justify-center p-8", className)}>
@@ -397,8 +431,6 @@ const AssetDetailView = ({
       );
     }
 
-    // Parse CSV content
-    const lines = csvContent.split('\n').filter(line => line.trim());
     if (lines.length === 0) {
       return (
         <div className={cn("flex items-center justify-center p-8 text-muted-foreground", className)}>
@@ -426,7 +458,7 @@ const AssetDetailView = ({
             // Toggle quote state
             inQuotes = !inQuotes;
           }
-        } else if (char === ',' && !inQuotes) {
+        } else if (char === delimiter && !inQuotes) {
           // Field separator
           result.push(currentField.trim());
           currentField = '';
@@ -445,62 +477,64 @@ const AssetDetailView = ({
     const dataRows = rows.slice(1);
 
     return (
-      <div className={cn("h-full flex flex-col", className)}>
+      <div className={cn("h-full flex flex-col w-full max-w-full", className)}>
         <div className="flex-none p-2 bg-muted/30 border-b">
           <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold">{title}</h4>
-            <Badge variant="outline" className="text-xs">
+            <h4 className="text-sm font-semibold truncate">{title}</h4>
+            <Badge variant="outline" className="text-xs flex-shrink-0">
               {dataRows.length} rows × {headers.length} columns
             </Badge>
           </div>
         </div>
         
-        <ScrollArea className="flex-1">
-          <div className="overflow-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead className="bg-muted/50 sticky top-0">
-                <tr>
-                  {headers.map((header, index) => (
-                    <th key={index} className="px-2 py-1 text-left font-medium text-xs">
+        <div className="flex-1 overflow-auto w-full min-w-0">
+          <table className="w-full text-sm border-collapse table-fixed">
+            <thead className="bg-muted/50 sticky top-0">
+              <tr>
+                {headers.map((header, index) => (
+                  <th key={index} className="px-2 py-1 text-left font-medium text-xs">
+                    <div className="truncate" title={header || `Column ${index + 1}`}>
                       {header || `Column ${index + 1}`}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {dataRows.slice(0, 100).map((row, rowIndex) => {
-                  const matchingChild = childAssets.find(child => child.part_index === rowIndex);
-                  return (
-                    <tr 
-                      key={rowIndex} 
-                      className="hover:bg-primary/10 cursor-pointer"
-                      onClick={() => {
-                        if (matchingChild) {
-                          onRowClick(matchingChild);
-                        } else {
-                          toast.warning(`Could not find a corresponding asset for row ${rowIndex + 2}. It might still be processing or not exist.`);
-                        }
-                      }}
-                    >
-                      {headers.map((_, colIndex) => (
-                        <td key={colIndex} className="px-2 py-1 text-xs max-w-[200px] truncate">
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dataRows.slice(0, 100).map((row, rowIndex) => {
+                const matchingChild = childAssets.find(child => child.part_index === rowIndex);
+                return (
+                  <tr 
+                    key={rowIndex} 
+                    className="hover:bg-primary/10 cursor-pointer"
+                    onClick={() => {
+                      if (matchingChild) {
+                        onRowClick(matchingChild);
+                      } else {
+                        toast.warning(`Could not find a corresponding asset for row ${rowIndex + 2}. It might still be processing or not exist.`);
+                      }
+                    }}
+                  >
+                    {headers.map((_, colIndex) => (
+                      <td key={colIndex} className="px-2 py-1 text-xs">
+                        <div className="max-w-[150px] truncate" title={row[colIndex] || ''}>
                           {row[colIndex] || ''}
-                        </td>
-                      ))}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {dataRows.length > 100 && (
-              <div className="p-4 text-center text-muted-foreground text-sm">
-                Showing first 100 rows of {dataRows.length} total rows.
-                <br />
-                <span className="text-xs">Use the "CSV Rows" tab to browse individual rows as sub-assets.</span>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {dataRows.length > 100 && (
+            <div className="p-4 text-center text-muted-foreground text-sm">
+              Showing first 100 rows of {dataRows.length} total rows.
+              <br />
+              <span className="text-xs">Use the "CSV Rows" tab to browse individual rows as sub-assets.</span>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -553,7 +587,7 @@ const AssetDetailView = ({
     return <img src={imageSrc} alt={alt} className={className} />;
   };
 
-  const AuthenticatedPDF = ({ blobPath, title, className }: { blobPath: string; title: string; className?: string }) => {
+  const AuthenticatedPDF = ({ blobPath, title, className, pageNumber }: { blobPath: string; title: string; className?: string; pageNumber?: number }) => {
     const [pdfSrc, setPdfSrc] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
@@ -561,7 +595,7 @@ const AssetDetailView = ({
 
     useEffect(() => {
       const loadPDF = async () => {
-        console.log(`[AuthenticatedPDF] Loading PDF from blobPath: ${blobPath}`);
+        console.log(`[AuthenticatedPDF] Loading PDF from blobPath: ${blobPath}${pageNumber ? ` (page ${pageNumber})` : ''}`);
         setIsLoading(true);
         setHasError(false);
         setErrorMessage('');
@@ -569,8 +603,16 @@ const AssetDetailView = ({
         try {
           const blobUrl = await fetchMediaBlob(blobPath);
           if (blobUrl) {
-            console.log(`[AuthenticatedPDF] Successfully created blob URL: ${blobUrl}`);
-            setPdfSrc(blobUrl);
+            // Add page fragment if pageNumber is specified
+            const pdfUrlWithPage = pageNumber ? `${blobUrl}#page=${pageNumber}` : blobUrl;
+            console.log(`[AuthenticatedPDF] Successfully created blob URL: ${pdfUrlWithPage}`);
+            
+            // Force reload of iframe when page changes
+            if (pageNumber) {
+              console.log(`[AuthenticatedPDF] Navigating to page ${pageNumber} in PDF`);
+            }
+            
+            setPdfSrc(pdfUrlWithPage);
           } else {
             console.error(`[AuthenticatedPDF] Failed to create blob URL for: ${blobPath}`);
             setHasError(true);
@@ -591,10 +633,10 @@ const AssetDetailView = ({
       return () => {
         if (pdfSrc) {
           console.log(`[AuthenticatedPDF] Cleaning up blob URL: ${pdfSrc}`);
-          URL.revokeObjectURL(pdfSrc);
+          URL.revokeObjectURL(pdfSrc.split('#')[0]); // Remove fragment before revoking
         }
       };
-    }, [blobPath]);
+    }, [blobPath, pageNumber]);
 
     if (isLoading) {
       return (
@@ -628,11 +670,12 @@ const AssetDetailView = ({
     return (
       <div className={cn("relative w-full h-full", className)}>
         <iframe 
+          key={`pdf-${blobPath}-${pageNumber || 'default'}`}
           src={pdfSrc} 
           title={title}
           className="w-full h-full border-0"
           style={{ minHeight: '400px' }}
-          onLoad={() => console.log(`[AuthenticatedPDF] PDF iframe loaded successfully`)}
+          onLoad={() => console.log(`[AuthenticatedPDF] PDF iframe loaded successfully${pageNumber ? ` for page ${pageNumber}` : ''}`)}
           onError={(e) => {
             console.error(`[AuthenticatedPDF] PDF iframe error:`, e);
             setHasError(true);
@@ -844,7 +887,9 @@ const AssetDetailView = ({
 
   const renderTextDisplay = (text: string | null) => (
     <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
-      {text || <span className="text-muted-foreground italic">No text content available.</span>}
+      <div className="whitespace-pre-wrap break-words w-full max-w-full">
+        {text || <span className="text-muted-foreground italic">No text content available.</span>}
+      </div>
     </ScrollArea>
   );
 
@@ -888,7 +933,14 @@ const AssetDetailView = ({
   };
 
   const handleChildAssetClick = (childAsset: AssetRead) => {
+    console.log(`[AssetDetailView] Page clicked: Asset ID ${childAsset.id}, part_index: ${childAsset.part_index}, calculated page: ${(childAsset.part_index || 0) + 1}`);
+    
     setSelectedChildAsset(selectedChildAsset?.id === childAsset.id ? null : childAsset);
+    
+    // If clicking a child asset from the content tab previews, switch to children tab
+    if (activeTab === 'content' && childAsset) {
+      setActiveTab('children');
+    }
   };
 
   const handleReprocessAsset = async (useCustomOptions: boolean = false) => {
@@ -1079,22 +1131,70 @@ const AssetDetailView = ({
             <Layers className="h-3 w-3 mr-1" />
             {childAssets.length} PDF Pages
           </Badge>
-          <Button variant="outline" size="sm" onClick={() => setActiveTab('children')}>
-            <Eye className="h-4 w-4 mr-2" />
-            View Pages
-          </Button>
+          <span className="text-xs text-muted-foreground">
+            Click a page preview or use the "PDF Pages" tab to view details
+          </span>
         </div>
-        <div className="grid grid-cols-3 gap-2 mt-2">
-          {childAssets.slice(0, 3).map((childAsset, index) => (
-            <div key={childAsset.id} className="rounded p-2 hover:bg-muted/50 cursor-pointer text-xs" onClick={() => handleChildAssetClick(childAsset)}>
-              <div className="flex items-center gap-1">
-                <FileText className="h-3 w-3" />
-                <span>Page {index + 1}</span>
-              </div>
-              {childAsset.text_content && <p className="truncate text-muted-foreground mt-1">{childAsset.text_content.substring(0, 50)}...</p>}
-            </div>
+        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {childAssets.slice(0, 6).map((childAsset, index) => (
+            <Card
+              key={childAsset.id}
+              className={cn(
+                "cursor-pointer transition-all hover:shadow-lg group relative",
+                selectedChildAsset?.id === childAsset.id && "ring-2 ring-primary shadow-lg"
+              )}
+              onClick={() => handleChildAssetClick(childAsset)}
+            >
+              <CardContent className="p-0">
+                {/* Page Preview Placeholder */}
+                <div className="aspect-[3/4] rounded-t-lg overflow-hidden bg-muted/20 flex flex-col items-center justify-center relative">
+                  {/* PDF Page Preview - Show blob content if available */}
+                  {childAsset.blob_path ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                      <FileText className="h-8 w-8 mb-2" />
+                      <span className="text-xs font-medium">Page {(childAsset.part_index || 0) + 1}</span>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                      <FileText className="h-8 w-8 mb-2 opacity-50" />
+                      <span className="text-xs">Page {(childAsset.part_index || 0) + 1}</span>
+                    </div>
+                  )}
+                  
+                  {/* Selection indicator */}
+                  {selectedChildAsset?.id === childAsset.id && (
+                    <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1">
+                      <Eye className="h-3 w-3" />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Page Info */}
+                <div className="p-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge variant="secondary" className="text-xs">
+                      Page {(childAsset.part_index || 0) + 1}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      ID: {childAsset.id}
+                    </span>
+                  </div>
+                  
+                  {/* Text preview - truncated */}
+                  {childAsset.text_content && (
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                      {childAsset.text_content.substring(0, 60)}...
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           ))}
-          {childAssets.length > 3 && <div className="rounded p-2 text-xs text-muted-foreground flex items-center justify-center">+{childAssets.length - 3} more</div>}
+          {childAssets.length > 6 && (
+            <div className="rounded p-2 text-xs text-muted-foreground flex items-center justify-center border border-dashed border-muted">
+              +{childAssets.length - 6} more pages
+            </div>
+          )}
         </div>
       </div>
     )}
@@ -1417,23 +1517,23 @@ const CsvOverviewContent = ({ asset, renderEditableField, AuthenticatedCSV, hasC
     };
 
     return (
-      <div className="p-4 bg-muted/30 h-full flex flex-col">
+      <div className="p-4 bg-muted/30 h-full flex flex-col w-full max-w-full min-w-0">
           <h3 className="text-lg font-semibold mb-3 flex items-center"><FileSpreadsheet className="h-5 w-5 mr-2 text-primary" />CSV File Overview</h3>
-          <div className="space-y-2 mb-4 text-sm">
+          <div className="space-y-2 mb-4 text-sm w-full max-w-full">
               {renderEditableField(asset, 'title')}
               <p><strong>Kind:</strong> {asset.kind}</p>
               <p><strong>ID:</strong> {asset.id}</p>
-              <p><strong>Filename:</strong> {String(asset.source_metadata?.filename)}</p>
+              <p className="min-w-0"><strong>Filename:</strong> <span className="break-all">{String(asset.source_metadata?.filename)}</span></p>
               <p><strong>Total Rows:</strong> {String(asset.source_metadata?.row_count)}</p>
-              {asset.blob_path && <p><strong>File Path:</strong> {asset.blob_path}</p>}
+              {asset.blob_path && <p className="min-w-0"><strong>File Path:</strong> <span className="break-all text-xs">{asset.blob_path}</span></p>}
               {renderEditableField(asset, 'event_timestamp')}
           </div>
           {asset.blob_path && typeof asset.blob_path === 'string' ? (
-              <div className="flex-1 bg-background rounded overflow-hidden">
+              <div className="flex-1 bg-background rounded overflow-hidden w-full max-w-full min-w-0">
                   <AuthenticatedCSV 
                     blobPath={asset.blob_path} 
                     title={asset.title || 'CSV File'} 
-                    className="w-full h-full border-0"
+                    className="w-full h-full border-0 max-w-full"
                     childAssets={childAssets}
                     onRowClick={handleRowSelect}
                   />
@@ -1444,55 +1544,35 @@ const CsvOverviewContent = ({ asset, renderEditableField, AuthenticatedCSV, hasC
                   <div className="text-center"><p>No CSV file content available</p><p className="text-xs">Content may be available in individual row assets</p></div>
               </div>
           )}
-          {hasChildren && (
-              <div className="mt-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                      <Badge variant="secondary" className="text-xs"><FileSpreadsheet className="h-3 w-3 mr-1" />{childAssets.length} CSV Rows</Badge>
-                      <div className="flex gap-2">
-                          <Button variant="default" size="sm" onClick={() => handleReprocessAsset(false)} disabled={isReprocessing} className="h-7 px-3">{isReprocessing ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Auto-Processing...</> : <><RefreshCw className="h-3 w-3 mr-1" />Auto Reprocess</>}</Button>
-                          <Button variant="outline" size="sm" onClick={() => setIsReprocessDialogOpen(true)} disabled={isReprocessing} className="h-7 px-3"><Settings className="h-3 w-3 mr-1" />Custom Options</Button>
-                      </div>
-                  </div>
-                  <div className="space-y-1">
-                      <h4 className="text-sm font-medium">Sample Rows:</h4>
-                      {childAssets.slice(0, 3).map((childAsset: AssetRead, index: number) => (
-                          <div key={childAsset.id} className="rounded p-2 hover:bg-muted/50 cursor-pointer text-xs" onClick={() => { handleRowSelect(childAsset); }}>
-                              <div className="flex items-center gap-2">
-                                  <span className="font-semibold">Row {index + 1}:</span>
-                                  {childAsset.text_content && <span className="truncate text-muted-foreground">{childAsset.text_content.substring(0, 100)}...</span>}
-                              </div>
-                          </div>
-                      ))}
-                      {childAssets.length > 3 && <div className="text-xs text-muted-foreground">+{childAssets.length - 3} more rows (view in Rows tab)</div>}
-                  </div>
-              </div>
-          )}
+
           {!hasChildren && asset.kind === 'csv' && (
-            <div className="mt-4 p-3 bg-yellow-50 border-yellow-200 rounded">
+            <div className="mt-4 p-3 bg-yellow-50 border-yellow-200 rounded w-full max-w-full">
               <div className="flex items-center gap-2 mb-2">
-                <AlertCircle className="h-4 w-4 text-yellow-600" />
+                <AlertCircle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
                 <h4 className="text-sm font-medium text-yellow-800">No CSV rows found</h4>
               </div>
-              <div className="text-xs text-yellow-700 space-y-1">
+              <div className="text-xs text-yellow-700 space-y-1 w-full max-w-full">
                 <p>This CSV file has no child row assets. This usually means:</p>
                 <ul className="list-disc list-inside ml-2 space-y-1">
                   <li>Wrong delimiter detected (your CSV uses semicolons ";" but commas "," were expected)</li>
                   <li>The header row is not at the expected position</li>
                   <li>Processing failed during initial upload</li>
                 </ul>
-                <div className="mt-3 p-2 bg-yellow-100 border-yellow-300 rounded text-xs">
+                <div className="mt-3 p-2 bg-yellow-100 border-yellow-300 rounded text-xs w-full max-w-full">
                   <div className="font-semibold mb-1">Debug Info:</div>
-                  <div>Child assets array length: {childAssets.length}</div>
-                  <div>Is loading children: {isLoadingChildren ? 'Yes' : 'No'}</div>
-                  <div>Children error: {childrenError || 'None'}</div>
-                  <div>Has children computed: {hasChildren ? 'Yes' : 'No'}</div>
-                  <div>Is hierarchical asset: {isHierarchicalAsset ? 'Yes' : 'No'}</div>
-                  <div>Asset ID: {asset.id}</div>
-                  <div>Active tab: {activeTab}</div>
-                  <div>Refresh trigger: {refreshTrigger}</div>
-                  <button onClick={() => { console.log('=== DEBUG STATE ==='); console.log('childAssets:', childAssets); console.log('hasChildren:', hasChildren); console.log('isLoadingChildren:', isLoadingChildren); console.log('childrenError:', childrenError); console.log('isHierarchicalAsset:', isHierarchicalAsset); console.log('refreshTrigger:', refreshTrigger); fetchChildren(asset.id, asset); }} className="mt-2 px-2 py-1 bg-blue-100 border-blue-300 rounded hover:bg-blue-200 text-blue-800">🔍 Debug & Refetch</button>
+                  <div className="space-y-1 break-words">
+                    <div>Child assets array length: {childAssets.length}</div>
+                    <div>Is loading children: {isLoadingChildren ? 'Yes' : 'No'}</div>
+                    <div className="min-w-0">Children error: <span className="break-all">{childrenError || 'None'}</span></div>
+                    <div>Has children computed: {hasChildren ? 'Yes' : 'No'}</div>
+                    <div>Is hierarchical asset: {isHierarchicalAsset ? 'Yes' : 'No'}</div>
+                    <div>Asset ID: {asset.id}</div>
+                    <div>Active tab: {activeTab}</div>
+                    <div>Refresh trigger: {refreshTrigger}</div>
+                  </div>
+                  <button onClick={() => { console.log('=== DEBUG STATE ==='); console.log('childAssets:', childAssets); console.log('hasChildren:', hasChildren); console.log('isLoadingChildren:', isLoadingChildren); console.log('childrenError:', childrenError); console.log('isHierarchicalAsset:', isHierarchicalAsset); console.log('refreshTrigger:', refreshTrigger); fetchChildren(asset.id, asset); }} className="mt-2 px-2 py-1 bg-blue-100 border-blue-300 rounded hover:bg-blue-200 text-blue-800 text-xs">🔍 Debug & Refetch</button>
                 </div>
-                <div className="flex gap-2 mt-3">
+                <div className="flex flex-wrap gap-2 mt-3">
                   <Button variant="outline" size="sm" onClick={() => handleReprocessAsset(false)} disabled={isReprocessing} className="h-7 px-2 text-xs bg-blue-100 border-blue-300 hover:bg-blue-200">{isReprocessing ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Processing...</> : <><RefreshCw className="h-3 w-3 mr-1" />Auto Reprocess</>}</Button>
                   <Button variant="outline" size="sm" onClick={() => setIsReprocessDialogOpen(true)} disabled={isReprocessing} className="h-7 px-2 text-xs bg-orange-100 border-orange-300 hover:bg-orange-200"><Settings className="h-3 w-3 mr-1" />Custom Options</Button>
                 </div>
@@ -1500,9 +1580,9 @@ const CsvOverviewContent = ({ asset, renderEditableField, AuthenticatedCSV, hasC
             </div>
           )}
           {asset.source_metadata && Object.keys(asset.source_metadata).length > 0 && (
-              <div className="mt-3 pt-3 border-t">
+              <div className="mt-3 pt-3 border-t w-full max-w-full">
                   <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">File Metadata</h4>
-                  <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32">{JSON.stringify(asset.source_metadata, null, 2)}</pre>
+                  <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32 w-full break-all whitespace-pre-wrap">{JSON.stringify(asset.source_metadata, null, 2)}</pre>
               </div>
           )}
       </div>
@@ -1538,87 +1618,32 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
 
   // --- Render functions ---
   const renderContent = () => {
-    if (!asset) {
-      return <div className="p-4 text-center text-muted-foreground">Asset details not loaded.</div>;
-    }
-
-    // Check if we should use a specialized full-view component instead of inline content
-    const useSpecializedView = (kind: string) => {
-      // Use specialized components for complex assets or when they provide better UX
-      // For now, we will render overview content in the 'content' tab for all assets,
-      // and use the 'children' tab for detailed child asset views.
-      return false;
-    };
-
-    // Use specialized full-view components for better experience
-    if (useSpecializedView(asset.kind)) {
-      switch (asset.kind) {
-        // This block is now unused due to useSpecializedView returning false,
-        // but kept for potential future use.
-        case 'csv':
-          return (
-            <AssetDetailViewCsv
-              asset={asset}
-              childAssets={childAssets}
-              isLoadingChildren={isLoadingChildren}
-              childrenError={childrenError}
-              onChildAssetSelect={setSelectedChildAsset}
-              selectedChildAsset={selectedChildAsset}
-              highlightedAssetId={highlightAssetIdOnOpen}
-            />
-          );
-        default:
-          break;
-      }
-    }
-
-    // Use inline content renderers for simpler asset types
-    const rendererProps = {
-      asset,
-      renderEditableField,
-      AuthenticatedImage,
-      AuthenticatedPDF,
-      AuthenticatedVideo,
-      AuthenticatedAudio,
-      AuthenticatedCSV,
-      hasChildren,
-      childAssets,
-      setActiveTab,
-      handleChildAssetClick,
-      isReprocessing,
-      handleReprocessAsset,
-      setIsReprocessDialogOpen,
-      setSelectedChildAsset,
-      isLoadingChildren,
-      childrenError,
-      isHierarchicalAsset,
-      refreshTrigger,
-      fetchChildren,
-      renderTextDisplay,
-    };
+    if (!asset) return <div className="p-8 text-center text-muted-foreground">No asset selected.</div>;
+    if (isLoadingAsset) return <div className="p-8 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading asset...</div>;
+    if (assetError) return <div className="p-8 text-red-600 text-center">{assetError}</div>;
 
     switch (asset.kind) {
       case 'article':
-        return <ArticleAssetContent {...rendererProps} />;
+        return <ArticleAssetContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} renderTextDisplay={renderTextDisplay} />;
       case 'image':
-        return <ImageAssetContent {...rendererProps} />;
+        return <ImageAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedImage={AuthenticatedImage} />;
       case 'pdf':
-        return <PdfAssetContent {...rendererProps} />;
+        return <PdfAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedPDF={AuthenticatedPDF} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} />;
       case 'video':
-        return <VideoAssetContent {...rendererProps} />;
+        return <VideoAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedVideo={AuthenticatedVideo} />;
       case 'audio':
-        return <AudioAssetContent {...rendererProps} />;
+        return <AudioAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedAudio={AuthenticatedAudio} />;
       case 'web':
-        return <WebContent {...rendererProps} />;
+        return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} />;
       case 'csv':
-        return <CsvOverviewContent {...rendererProps} />;
+        return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} AuthenticatedCSV={AuthenticatedCSV} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} refreshTrigger={refreshTrigger} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} />;
       default:
-        return <DefaultAssetContent {...rendererProps} />;
+        return <DefaultAssetContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} />;
     }
   };
 
   const renderChildAssets = () => {
-    if (isLoadingChildren) {
+    if (isLoadingChildren && childAssets.length === 0) {
       return (
         <div className="flex items-center justify-center h-32">
           <Loader2 className="h-6 w-6 animate-spin mr-2" />
@@ -1842,7 +1867,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                             )}
                           </div>
                           {childAsset.text_content && (
-                            <p className="text-xs text-muted-foreground mt-2 truncate">
+                            <p className="text-xs text-muted-foreground mt-2 break-words max-w-full overflow-hidden">
                               {childAsset.text_content}
                             </p>
                           )}
@@ -1901,7 +1926,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                       )}
                     </div>
                     {childAsset.text_content && (
-                      <p className="text-xs text-muted-foreground mt-2 truncate">
+                      <p className="text-xs text-muted-foreground mt-2 break-words max-w-full overflow-hidden">
                         {childAsset.text_content}
                       </p>
                     )}
@@ -1929,8 +1954,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     {childAsset.text_content && (
                       <div className="mt-2">
                         <strong className="text-xs">Full Content:</strong>
-                        <ScrollArea className="h-24 mt-1 p-2 bg-muted/50 rounded text-xs">
-                          {childAsset.text_content}
+                        <ScrollArea className="h-24 mt-1 p-2 bg-muted/50 rounded text-xs max-w-full overflow-hidden">
+                          <div className="break-words whitespace-pre-wrap max-w-full">{childAsset.text_content}</div>
         </ScrollArea>
                       </div>
                     )}
@@ -1938,7 +1963,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     {childAsset.source_metadata && Object.keys(childAsset.source_metadata).length > 0 && (
                       <div className="mt-2">
                         <strong className="text-xs">Metadata:</strong>
-                        <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto max-h-20 mt-1">
+                        <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto max-h-20 mt-1 break-words max-w-full">
                           {JSON.stringify(childAsset.source_metadata, null, 2)}
                         </pre>
                       </div>
@@ -1949,6 +1974,214 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
             </Card>
           ))}
         </div>
+      </div>
+    );
+  };
+
+  // New PDF-specific children rendering function
+  const renderPdfChildAssets = () => {
+    if (isLoadingChildren && childAssets.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-32">
+          <Loader2 className="h-6 w-6 animate-spin mr-2" />
+          <span>Loading PDF pages...</span>
+        </div>
+      );
+    }
+
+    if (childrenError) {
+      return (
+        <Alert variant="destructive" className="m-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error Loading PDF Pages</AlertTitle>
+          <AlertDescription>{childrenError}</AlertDescription>
+        </Alert>
+      );
+    }
+
+    if (!hasChildren) {
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          No PDF pages found for this document.
+        </div>
+      );
+    }
+
+    // Sort pages by part_index to ensure correct order
+    const sortedPages = [...filteredChildAssets].sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
+    
+    // Debug logging
+    console.log('[PDF Pages] Child assets data:', {
+      total: childAssets.length,
+      filtered: filteredChildAssets.length,
+      sorted: sortedPages.length,
+      pageData: sortedPages.map(page => ({
+        id: page.id,
+        title: page.title,
+        part_index: page.part_index,
+        calculated_page: (page.part_index || 0) + 1
+      }))
+    });
+
+    return (
+      <div className="space-y-4">
+        {/* Search and stats header */}
+        <div className="flex items-center gap-2 sticky top-0 bg-background z-10 pb-2">
+          <div className="relative flex-grow max-w-md">
+            <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search PDF pages..."
+              value={childSearchTerm}
+              onChange={(e) => setChildSearchTerm(e.target.value)}
+              className="pl-8 h-9"
+            />
+          </div>
+          <Badge variant="outline">
+            {sortedPages.length} pages
+          </Badge>
+        </div>
+
+        {/* PDF Pages Grid - Compact thumbnails */}
+        <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+          {sortedPages.map((pageAsset, index) => (
+            <Card
+              key={pageAsset.id}
+              className={cn(
+                "cursor-pointer transition-all hover:shadow-lg group relative",
+                selectedChildAsset?.id === pageAsset.id && "ring-2 ring-primary shadow-lg"
+              )}
+              onClick={() => handleChildAssetClick(pageAsset)}
+            >
+              <CardContent className="p-0">
+                {/* Page Preview Placeholder */}
+                <div className="aspect-[4/3] rounded-t-lg overflow-hidden bg-muted/20 flex flex-col items-center justify-center relative">
+                  {/* PDF Page Preview - Show blob content if available */}
+                  {pageAsset.blob_path ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                      <FileText className="h-6 w-6 mb-1" />
+                      <span className="text-xs font-medium">Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}</span>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                      <FileText className="h-6 w-6 mb-1 opacity-50" />
+                      <span className="text-xs">Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}</span>
+                    </div>
+                  )}
+                  
+                  {/* Selection indicator */}
+                  {selectedChildAsset?.id === pageAsset.id && (
+                    <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1">
+                      <Eye className="h-3 w-3" />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Page Info */}
+                <div className="p-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge variant="secondary" className="text-xs">
+                      Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      ID: {pageAsset.id}
+                    </span>
+                  </div>
+                  
+                  {/* Text preview - truncated */}
+                  {pageAsset.text_content && (
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                      {pageAsset.text_content.substring(0, 60)}...
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Selected Page Detailed View */}
+        {selectedChildAsset && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileText className="h-5 w-5 text-red-600" />
+                PDF Page {((selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'Unknown'))} Details
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-auto"
+                  onClick={() => {
+                    // Open parent PDF with specific page in new tab
+                    if (asset?.blob_path) {
+                      const pageNum = (selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 1);
+                      const viewUrl = `/api/v1/files/stream/${encodeURIComponent(asset.blob_path)}#page=${pageNum}`;
+                      window.open(viewUrl, '_blank');
+                    } else {
+                      // Fallback: switch to content tab
+                      setActiveTab('content');
+                    }
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Open Page in New Tab
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Page Text Content */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-sm">Extracted Text Content</h4>
+                {selectedChildAsset.text_content ? (
+                  <ScrollArea className="h-96 w-full border rounded-lg p-4 bg-background">
+                    <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                      {selectedChildAsset.text_content}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="h-96 w-full border rounded-lg flex items-center justify-center bg-muted/10">
+                    <div className="text-center text-muted-foreground">
+                      <Type className="h-8 w-8 mx-auto mb-2" />
+                      <p className="text-sm">No text content extracted</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Page Metadata */}
+              <div className="pt-4 border-t">
+                <h4 className="font-semibold text-sm mb-3">Page Information</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div className="space-y-2">
+                    <div><strong>Page Number:</strong> {(selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'Unknown')}</div>
+                    <div><strong>Asset ID:</strong> {selectedChildAsset.id}</div>
+                    <div><strong>UUID:</strong> <code className="text-xs">{selectedChildAsset.uuid}</code></div>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedChildAsset.created_at && (
+                      <div><strong>Created:</strong> {format(new Date(selectedChildAsset.created_at), "PPp")}</div>
+                    )}
+                    {selectedChildAsset.event_timestamp && (
+                      <div><strong>Event Time:</strong> {format(new Date(selectedChildAsset.event_timestamp), "PPp")}</div>
+                    )}
+                    {selectedChildAsset.text_content && (
+                      <div><strong>Text Length:</strong> {selectedChildAsset.text_content.length.toLocaleString()} characters</div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Source Metadata */}
+                {selectedChildAsset.source_metadata && Object.keys(selectedChildAsset.source_metadata).length > 0 && (
+                  <div className="mt-4">
+                    <strong className="text-sm">Page Metadata:</strong>
+                    <pre className="text-xs bg-muted/50 p-3 rounded mt-2 overflow-auto max-h-32">
+                      {JSON.stringify(selectedChildAsset.source_metadata, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     );
   };
@@ -2063,6 +2296,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                       selectedChildAsset={selectedChildAsset}
                       highlightedAssetId={highlightAssetIdOnOpen}
                     />
+                  ) : asset.kind === 'pdf' ? (
+                    renderPdfChildAssets()
                   ) : (
                     renderChildAssets()
                   )}
@@ -2184,8 +2419,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-        </div>
-      );
-    }
+    </div>
+  );
+};
 
 export default AssetDetailView;

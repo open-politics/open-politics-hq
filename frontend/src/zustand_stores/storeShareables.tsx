@@ -14,11 +14,43 @@ import {
   // For now, let's assume it has at least 'id' and 'resource_type'
   // Update: The backend returns a more complex object, let's use a generic 'Record<string, any>' for now
   // and let the consumer (storeDataSources) pick what it needs.
+  AssetKind,
 } from '../client'; // Assuming client is index.ts in src/client
 import { OpenAPI } from '../client'; // Added import for OpenAPI.BASE
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import { ApiError } from '@/client/core/ApiError';
+
+// --- New Frontend-specific types for the Public View ---
+export interface AssetPreview {
+  id: number;
+  title: string;
+  kind: AssetKind;
+  created_at: string;
+  updated_at: string;
+  text_content?: string | null;
+  blob_path?: string | null;
+  source_metadata?: { [key: string]: any } | null;
+  children?: AssetPreview[];
+  is_container: boolean;
+}
+
+export interface BundlePreview {
+  id: number;
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  assets: AssetPreview[];
+}
+
+export interface SharedResourcePreview {
+  resource_type: ResourceType;
+  name: string;
+  description?: string;
+  content: AssetPreview | BundlePreview;
+}
+// ---------------------------------------------------------
 
 // Utility for file download
 const triggerDownload = (blob: Blob, filename: string) => {
@@ -38,7 +70,7 @@ export interface SingleImportSuccess {
   resource_type: ResourceType; // Ensure this matches the backend key
   imported_resource_id: number;
   imported_resource_name: string;
-  Infospace_id: number;
+  target_infospace_id: number;
   // Allow other properties as the backend might return more.
   [key: string]: any;
 }
@@ -66,7 +98,7 @@ export interface BatchReport { // Represents the content of the 'batch_summary' 
 export interface BatchImportSummary { // This is the top-level response for a batch import
   message: string;
   batch_summary: BatchReport; // Nested structure matching backend
-  Infospace_id: number;
+  target_infospace_id: number;
 }
 
 interface ShareableState {
@@ -90,7 +122,10 @@ interface ShareableState {
 
   exportResource: (resourceType: ResourceType, resourceId: number, infospaceId: number) => Promise<void>;
   exportResourcesBatch: (resourceType: ResourceType, resourceIds: number[], infospaceId: number) => Promise<void>;
+  exportMixedBatch: (infospaceId: number, assetIds: number[], bundleIds: number[]) => Promise<void>;
   importResource: (file: File, infospaceId?: number) => Promise<SingleImportSuccess | BatchImportSummary | null>;
+  importResourceFromToken: (token: string, infospaceId: number) => Promise<SingleImportSuccess | null>;
+  viewSharedResource: (token: string) => Promise<SharedResourcePreview | null>;
 }
 
 export const useShareableStore = create<ShareableState>((set, get) => ({
@@ -222,38 +257,58 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
 
   exportResource: async (resourceType, resourceId, infospaceId) => {
     set({ isLoading: true, error: null });
-    try {
-      const exportPayload: Body_shareables_export_resource = { resource_type: resourceType, resource_id: resourceId };
-      const response = await ShareablesService.exportResource({ infospaceId: infospaceId, formData: exportPayload });
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      const error = "Authentication token not found.";
+      set({ error, isLoading: false });
+      toast.error(error);
+      throw new Error(error);
+    }
 
-      if (response instanceof Blob) {
-        let filename = `${resourceType}_${resourceId}_export.zip`; // Default
-        if (response.type === 'application/json') {
-          filename = `${resourceType}_${resourceId}_export.json`;
-        } else if (response.type === 'application/zip') {
-           filename = `${resourceType}_${resourceId}_export.zip`;
+    try {
+      const formData = new FormData();
+      formData.append('resource_type', resourceType);
+      formData.append('resource_id', String(resourceId));
+
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/${infospaceId}/export`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorDetail = `Export failed with status: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorDetail = errorBody.detail || errorDetail;
+        } catch (e) {
+          errorDetail = `${errorDetail} - ${response.statusText}`;
         }
-        // Potentially, the Content-Disposition header might provide a filename from the server
-        // This would require the actual fetch response, not just the parsed body.
-        // For now, we construct it.
-        triggerDownload(response, filename);
-      } else if (typeof response === 'object' && response !== null) {
-        // If it's not a Blob, but a parsed object, assume it's JSON content.
-        // This handles cases where the client auto-parses application/json.
-        console.log('Export response was not a Blob, but an object. Assuming JSON content.', response);
-        const jsonString = JSON.stringify(response, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        triggerDownload(blob, `${resourceType}_${resourceId}_export.json`);
-      } else {
-        // If it's neither a Blob nor a parsed object we can stringify
-        console.error('Export response is not a Blob and not a recognized object. Further handling needed.', response);
-        throw new Error('Export failed: Unexpected response type or format.');
+        throw new Error(errorDetail);
       }
+      
+      const blob = await response.blob();
+      let filename = `${resourceType}_${resourceId}_export`;
+      if (blob.type === 'application/json') {
+          filename += '.json';
+      } else if (blob.type === 'application/zip') {
+          filename += '.zip';
+      } else {
+         // Fallback for generic binary data
+         filename += '.zip';
+      }
+      
+      triggerDownload(blob, filename);
       set({ isLoading: false });
+
     } catch (err) {
       console.error("Export resource error:", err);
       const message = err instanceof Error ? err.message : `Failed to export ${resourceType}`;
       set({ error: message, isLoading: false });
+      toast.error(message);
+      throw err;
     }
   },
 
@@ -270,7 +325,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
         return;
       }
 
-      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/${infospaceId}/export-batch`, {
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/export-batch/${infospaceId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -315,6 +370,48 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     }
   },
   
+  exportMixedBatch: async (infospaceId: number, assetIds: number[], bundleIds: number[]) => {
+    set({ isLoading: true, error: null });
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      const error = "Authentication token not found.";
+      set({ error, isLoading: false });
+      toast.error(error);
+      throw new Error(error);
+    }
+    try {
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/export-mixed-batch/${infospaceId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ asset_ids: assetIds, bundle_ids: bundleIds }),
+      });
+
+      if (!response.ok) {
+        let errorDetail = `Mixed export failed with status: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorDetail = errorBody.detail || errorDetail;
+        } catch (e) {
+          errorDetail = `${errorDetail} - ${response.statusText}`;
+        }
+        throw new Error(errorDetail);
+      }
+
+      const blob = await response.blob();
+      triggerDownload(blob, `mixed_export_${new Date().toISOString()}.zip`);
+      set({ isLoading: false });
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Failed to perform mixed export`;
+      set({ error: message, isLoading: false });
+      toast.error(message);
+      throw err;
+    }
+  },
+
   importResource: async (file: File, infospaceId?: number): Promise<SingleImportSuccess | BatchImportSummary | null> => {
     set({ isLoading: true, error: null });
     try {
@@ -352,6 +449,84 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
       set({ error: detailedMessage, isLoading: false }); // Set the more detailed message to store's error state
       toast.error(`Import error: ${detailedMessage}`); // Toast with the detailed message
       
+      return null;
+    }
+  },
+
+  importResourceFromToken: async (token: string, infospaceId: number): Promise<SingleImportSuccess | null> => {
+    set({ isLoading: true, error: null });
+    const authToken = localStorage.getItem("access_token");
+    if (!authToken) {
+      const error = "Authentication token not found.";
+      set({ error, isLoading: false });
+      toast.error(error);
+      throw new Error(error);
+    }
+
+    try {
+      const body = { target_infospace_id: infospaceId };
+
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/import-from-token/${token}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        let errorDetail = `Import from token failed with status: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorDetail = errorBody.detail || errorDetail;
+        } catch (e) {
+          errorDetail = `${errorDetail} - ${response.statusText}`;
+        }
+        throw new Error(errorDetail);
+      }
+
+      const result = await response.json() as SingleImportSuccess;
+      set({ isLoading: false });
+      return result;
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Failed to import from token`;
+      set({ error: message, isLoading: false });
+      toast.error(message);
+      throw err;
+    }
+  },
+
+  viewSharedResource: async (token) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/view/${token}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        let errorDetail = `Failed to fetch view with status: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorDetail = errorBody.detail || errorDetail;
+        } catch (e) {
+          errorDetail = `${errorDetail} - ${response.statusText}`;
+        }
+        throw new Error(errorDetail);
+      }
+
+      const result = await response.json() as SharedResourcePreview;
+      set({ isLoading: false });
+      return result;
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Failed to fetch shared view`;
+      set({ error: message, isLoading: false });
+      toast.error(message);
       return null;
     }
   },

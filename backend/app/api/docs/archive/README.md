@@ -44,6 +44,7 @@ Create **one extensible platform** where investigators can:
 | **AssetChunk**     | A piece of an `Asset` (e.g., text segment, image region) used for embedding and fine-grained analysis.                                       | `id`, `asset_id`, `chunk_index`, `text_content`, `embedding` (Vector), `embedding_model`            |
 | **AnnotationSchema** | Defines an `output_contract` (JSONSchema) and `instructions` for an annotation task. Supports hierarchical structure (e.g., `document`, `per_image`). **Can optionally include `field_specific_justification_configs` to control auto-generation of justifications per field (enable/disable, custom prompts).** | `id`, `name`, `output_contract` (JSON), `instructions` (Text), `version`, `infospace_id`, `field_specific_justification_configs` (JSON) |
 | **AnnotationRun**  | An execution of `AnnotationSchema`(s) over target(s). `configuration` includes media flags (e.g., `include_images`), LLM thinking controls (e.g., `thinking_config`), **and `justification_mode` (e.g., "NONE", "SCHEMA_DEFAULT", "ALL_WITH_GLOBAL_PROMPT") to control system-driven field justifications.** | `id`, `name`, `configuration` (JSON - includes model, media flags, thinking controls, `justification_mode`, `default_justification_prompt`), `status` (enum), `infospace_id`, `target_schemas` (link) |
+| **EmbeddingModel**  | ✅ **NEW** Registry of available embedding models with their specifications (provider, dimensions, performance metrics). | `id`, `name`, `provider` (enum: OLLAMA/JINA/OPENAI), `dimension`, `description`, `config` (JSON), `is_active`, `max_sequence_length`, `embedding_time_ms` |
 | **Annotation**     | The result of applying an `AnnotationSchema` to an `Asset` (or `AssetChunk`) within an `AnnotationRun`. **`value` field contains all data from LLM, including any system-appended `fieldName_justification` fields if auto-justification was active.** | `id`, `uuid`, `asset_id`, `schema_id`, `run_id`, `value` (JSON), `status` (enum), `region` (JSON), `links` (JSON), `event_timestamp`, `infospace_id` |
 | **Justification**  | Structured explanation. **Primarily used to store an optional, global `_thinking_trace` (overall LLM reasoning) from the provider, linked to a parent/document `Annotation`. Field-specific justifications are now part of `Annotation.value`.** Evidence payload supports `thinking_trace`, `text_spans`, `image_regions`, `audio_segments`. | `id`, `annotation_id`, `field_name` (mostly for `_thinking_trace`), `reasoning`, `evidence_payload` (JSON), `model_name`    |
 | **Bundle**         | Analyst-curated, mutable collection of `Asset`s.                                                                                          | `id`, `uuid`, `name`, `description`, `infospace_id`, `assets` (link)                              |
@@ -109,9 +110,45 @@ The annotation engine is designed for flexibility, power, and user-friendliness,
 -   **Core Adapter Examples:**
     *   **`label_distribution_adapter`:** Counts unique values in a specified `Annotation.value.<field_key>` (or `Asset.<attribute>`). Handles lists, top-N grouping.
     *   **`time_series_aggregation_adapter`:** Aggregates data (count, sum, avg of a numeric `Annotation.value.<field_key>`) over time buckets (day, week, month). Timestamp source is configurable (e.g., `Asset.event_timestamp`, `Annotation.timestamp`, specific `Annotation.value.<timestamp_field>`). Can split by `Asset.source_id`.
-    *   **`alerting_adapter`:** (New) Takes an `AnnotationRun` ID and a list of conditions. Analyzes `Annotation.value` fields and generates a list of alerts if conditions are met. This replaces rigid, built-in alerting with a flexible analysis tool.
+    *   **`alerting_adapter`:** Takes an `AnnotationRun` ID and a list of conditions. Analyzes `Annotation.value` fields and generates a list of alerts if conditions are met. This replaces rigid, built-in alerting with a flexible analysis tool.
+    *   **`graph_aggregator_adapter`:** ✅ **NEW** Aggregates individual graph fragments from Knowledge Graph Extractor annotations into a single, cohesive graph for visualization. Outputs react-flow compatible JSON with entity deduplication, frequency analysis, and connectivity metrics.
     *   **`entity_extraction_adapter`:** (Hypothetical) Could use an NER model via `ClassificationProvider` or aggregate pre-extracted entities from `Annotation.value` fields.
     *   **`geocoding_adapter`:** Takes `Annotation.value.<location_field>` strings, geocodes them, potentially creating new "GeocodedLocation" `Annotation`s or updating `Asset`s.
+
+## 🆕 Embedding & Vector Search System
+
+The system now includes comprehensive embedding and vector search capabilities:
+
+### **Embedding Infrastructure**
+*   **Variable Dimension Support:** Each embedding model automatically creates its own pgvector table with the correct dimensions 
+*   **Provider System:** Pluggable embedding providers (Ollama, Jina AI, future: OpenAI)
+*   **Model Registry:** `EmbeddingModel` tracks available models, dimensions, and performance metrics
+*   **Smart Chunking:** `AssetChunk` supports both JSON storage and native pgvector operations
+
+### **Supported Providers & Models**
+
+**🔹 Ollama (Local):**
+*   `nomic-embed-text` (768 dims) - High-performance text embeddings
+*   `mxbai-embed-large` (1024 dims) - Optimized for retrieval 
+*   `all-minilm` (384 dims) - Fast and compact
+
+**🔹 Jina AI (Cloud):**
+*   `jina-embeddings-v2-base-en` (768 dims) - Balanced performance
+*   `jina-embeddings-v3` (1024 dims) - Latest multilingual model
+
+### **API Endpoints (`/api/v1/embeddings/`)**
+*   `GET /models` - List available embedding models
+*   `POST /models` - Register new embedding model  
+*   `POST /generate` - Generate embeddings for asset chunks
+*   `POST /search` - Vector similarity search
+*   `POST /embed-text` - Single text embedding utility
+*   `GET /models/{id}/stats` - Model usage statistics
+
+### **Technical Architecture**
+*   **Dynamic Tables:** Each `(provider, model, dimension)` combination gets its own optimized pgvector table
+*   **Native Performance:** Direct pgvector operations (`<->`, `<=>`, `<#>`) for maximum speed
+*   **Backward Compatibility:** Legacy `embedding_legacy` column maintained during transition
+*   **Interactive Selection:** UI can dynamically choose models and dimensions
 -   **Flexibility:** The power of this engine lies in its ability to operate on user-defined fields from `Annotation.value`, allowing analysis to be tailored to the specifics of the data and the investigation. This makes advanced, conditional alerting a standard feature of the analysis engine.
 
 ### 3.4 Search Capabilities

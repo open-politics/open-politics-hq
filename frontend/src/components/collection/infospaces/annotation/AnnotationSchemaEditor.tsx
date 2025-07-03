@@ -1,48 +1,60 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
-import { useClassificationSystem } from "@/hooks/useClassificationSystem";
-import { FieldConfig, SCHEME_TYPE_OPTIONS, SchemeFormData, FieldType, DictKeyDefinition } from "@/lib/classification/types";
+import { useAnnotationSystem } from "@/hooks/useAnnotationSystem";
+import { 
+  AnnotationSchemaFormData,
+  SchemaSection,
+  AdvancedSchemeField,
+  ADVANCED_SCHEME_TYPE_OPTIONS,
+  JsonSchemaType
+} from "@/lib/annotations/types";
 import { useTutorialStore } from "@/zustand_stores/storeTutorial";
 import { Switch } from "@/components/ui/switch";
-import ClassificationSchemeCard from "./ClassificationSchemeCard";
+import AnnotationSchemaCard from "./AnnotationSchemaCard";
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Trash2, PlusCircle, GripVertical, AlertCircle, Info, AlertTriangle } from 'lucide-react';
-import { ClassificationSchemeRead } from '@/client';
-import { adaptSchemeReadToSchemeFormData, adaptSchemeFormDataToSchemeCreate } from '@/lib/classification/adapters';
+import { Trash2, PlusCircle, Info, AlertTriangle, FileJson, FileText, Image, Mic, Video } from 'lucide-react';
+import { AnnotationSchemaRead, AnnotationSchemaUpdate } from '@/client';
+import { adaptSchemaReadToSchemaFormData, adaptSchemaFormDataToSchemaCreate } from '@/lib/annotations/adapters';
 import { useToast } from "@/components/ui/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+import { nanoid } from 'nanoid';
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
+import { Checkbox } from "@/components/ui/checkbox";
 
-interface ClassificationSchemeEditorProps {
+interface AnnotationSchemaEditorProps {
   show: boolean;
   onClose: () => void;
   schemeId?: number;
   mode: 'create' | 'edit' | 'watch';
-  defaultValues?: ClassificationSchemeRead | null;
+  defaultValues?: AnnotationSchemaRead | null;
 }
 
-const defaultSchemeFormData: SchemeFormData = {
+const defaultSchemeFormData: AnnotationSchemaFormData = {
   name: '',
   description: '',
-  fields: [],
-  model_instructions: '',
-  // validation_rules: {}
+  instructions: '',
+  structure: [{
+      id: nanoid(),
+      name: 'document',
+      fields: []
+  }],
 };
 
 // --- Main Editor Component ---
-const ClassificationSchemeEditor: React.FC<ClassificationSchemeEditorProps> = ({
+const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
   show,
   onClose,
   schemeId,
@@ -50,72 +62,133 @@ const ClassificationSchemeEditor: React.FC<ClassificationSchemeEditorProps> = ({
   defaultValues = null,
 }) => {
   const { activeInfospace } = useInfospaceStore();
-  const { createScheme, updateScheme, isLoadingSchemes, error: apiError, loadSchemes } = useClassificationSystem();
+  const { createSchema, updateScheme, isLoadingSchemas, error: apiError, loadSchemas } = useAnnotationSystem();
   const { showSchemaBuilderTutorial, toggleSchemaBuilderTutorial } = useTutorialStore();
   const { toast } = useToast();
 
-  // --- State Management with useState ---
-  const [formData, setFormData] = useState<SchemeFormData>(defaultSchemeFormData);
+  const [formData, setFormData] = useState<AnnotationSchemaFormData>(defaultSchemeFormData);
   const [formErrors, setFormErrors] = useState<Record<string, string | string[]>>({});
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // Adapt ClassificationSchemeRead to SchemeFormData when defaultValues change
+  // --- Structure Manipulation Handlers ---
+  const handleAddSection = (sectionName: SchemaSection['name']) => {
+      if (formData.structure.some(s => s.name === sectionName)) {
+          toast({ title: "Section exists", description: `A section for '${sectionName}' already exists.`, variant: "default" });
+          return;
+      }
+      const newSection: SchemaSection = {
+          id: nanoid(),
+          name: sectionName,
+          fields: []
+      };
+      setFormData(prev => ({
+          ...prev,
+          structure: [...prev.structure, newSection]
+      }));
+      setSelectedNodeId(newSection.id);
+  };
+
+  const handleRemoveSection = (sectionId: string) => {
+    setFormData(prev => ({
+        ...prev,
+        structure: prev.structure.filter(s => s.id !== sectionId)
+    }));
+    // If the selected node was in the removed section, deselect it
+    if(selectedNodeId === sectionId || formData.structure.find(s => s.id === sectionId)?.fields.some(f => f.id === selectedNodeId)) {
+        setSelectedNodeId(null);
+    }
+  };
+
+  const handleAddField = (sectionId: string) => {
+      const newField: AdvancedSchemeField = {
+          id: nanoid(),
+          name: `new_field_${nanoid(4)}`,
+          type: 'string',
+          required: false
+      };
+      setFormData(prev => ({
+          ...prev,
+          structure: prev.structure.map(s => 
+              s.id === sectionId ? { ...s, fields: [...s.fields, newField] } : s
+          )
+      }));
+      setSelectedNodeId(newField.id);
+  };
+
+  const handleRemoveField = (sectionId: string, fieldId: string) => {
+      setFormData(prev => ({
+          ...prev,
+          structure: prev.structure.map(s => 
+              s.id === sectionId ? { ...s, fields: s.fields.filter(f => f.id !== fieldId) } : s
+          )
+      }));
+      if (selectedNodeId === fieldId) {
+          setSelectedNodeId(null);
+      }
+  };
+
+  // Adapt ClassificationSchemeRead to the new FormData structure
   useEffect(() => {
     if (mode === 'create') {
-        setFormData(defaultSchemeFormData);
+        const initialField = { id: nanoid(), name: 'summary', type: 'string' as JsonSchemaType, description: 'A summary of the document.', required: true };
+        const initialStructure = {
+            id: nanoid(),
+            name: 'document' as const,
+            fields: [ initialField ]
+        };
+        setFormData({
+            name: '',
+            description: '',
+            instructions: '',
+            structure: [initialStructure],
+        });
+        setSelectedNodeId(initialField.id); // Select the first field by default
     } else if (mode === 'edit' || mode === 'watch') {
         if (defaultValues) {
-            console.log("Adapting default values (SchemeRead) to form data:", defaultValues);
-            const adaptedData = adaptSchemeReadToSchemeFormData(defaultValues);
-            console.log("Adapted form data:", adaptedData);
-            setFormData(adaptedData);
+            try {
+                const adaptedData = adaptSchemaReadToSchemaFormData(defaultValues);
+                setFormData(adaptedData);
+                // Select the first field if available
+                if (adaptedData.structure.length > 0 && adaptedData.structure[0].fields.length > 0) {
+                    setSelectedNodeId(adaptedData.structure[0].fields[0].id);
+                }
+            } catch (error) {
+                toast({ title: "Error", description: "Failed to load schema data for editing.", variant: "destructive" });
+                setFormData(defaultSchemeFormData);
+            }
         } else {
-             console.warn("Edit/Watch mode but no defaultValues provided.");
              setFormData(defaultSchemeFormData);
         }
     }
-  }, [defaultValues, mode]);
+  }, [defaultValues, mode, toast]);
 
-  // Simple validation function (can be expanded)
+  // Validation for the new structure
   const validateForm = (): boolean => {
       const errors: Record<string, string | string[]> = {};
       let isValid = true;
-
+      
       if (!formData.name.trim()) {
           errors.name = "Scheme name cannot be empty";
           isValid = false;
       }
-      if (!formData.fields || formData.fields.length === 0) {
-          errors.fields = "At least one field is required";
+      
+      if(formData.structure.length === 0) {
+          errors.structure = "At least one section is required";
+          isValid = false;
+      } else if (formData.structure.every(s => s.fields.length === 0)) {
+          errors.structure = "At least one field in one section is required";
           isValid = false;
       } else {
-          const fieldErrors: string[] = [];
-          formData.fields.forEach((field, index) => {
-              if (!field.name.trim()) {
-                  fieldErrors[index] = `Field ${index + 1} name cannot be empty`;
-                  isValid = false;
-              }
-              // Add more specific field validation here if needed (e.g., scale for int)
-              if (field.type === 'int') {
-                  if (field.config.scale_min === undefined || field.config.scale_min === null || field.config.scale_max === undefined || field.config.scale_max === null || field.config.scale_min >= field.config.scale_max) {
-                     fieldErrors[index] = (fieldErrors[index] ? fieldErrors[index] + "; " : "") + `Field '${field.name}': Integer fields require Scale Min < Scale Max.`;
-                     isValid = false;
+          // Validate field names are not empty
+          for (const section of formData.structure) {
+              for (const field of section.fields) {
+                  if (!field.name.trim()) {
+                      errors.structure = "All fields must have a name";
+                      isValid = false;
+                      break;
                   }
               }
-              if (field.type === 'List[str]' && field.config.is_set_of_labels) {
-                   if (!field.config.labels || field.config.labels.length < 2 || field.config.labels.some(l => !l.trim())) {
-                       fieldErrors[index] = (fieldErrors[index] ? fieldErrors[index] + "; " : "") + `Field '${field.name}': Multiple Choice requires at least 2 non-empty labels.`;
-                       isValid = false;
-                   }
-              }
-              if (field.type === 'List[Dict[str, any]]') {
-                   if (!field.config.dict_keys || field.config.dict_keys.length < 1 || field.config.dict_keys.some(k => !k.name.trim())) {
-                       fieldErrors[index] = (fieldErrors[index] ? fieldErrors[index] + "; " : "") + `Field '${field.name}': Complex Structure requires at least one non-empty key definition.`;
-                       isValid = false;
-                   }
-              }
-          });
-          if (fieldErrors.some(e => e)) { // Check if any field has an error
-              errors.fields = fieldErrors;
+              if (!isValid) break;
           }
       }
       
@@ -123,603 +196,451 @@ const ClassificationSchemeEditor: React.FC<ClassificationSchemeEditorProps> = ({
       return isValid;
   };
 
-  // Handle form submission
   const handleSubmit = async (event: React.FormEvent) => {
-      event.preventDefault(); // Prevent default form submission
+      event.preventDefault();
       const isValid = validateForm();
-      console.log(`[handleSubmit] Mode: ${mode}, Scheme ID: ${schemeId}, Is Valid: ${isValid}`); // Add detailed log
-      // Condition to exit early:
+      
       if (!activeInfospace?.id || mode === 'watch' || !isValid) {
-          console.log(`[handleSubmit] Exiting early. Infospace: ${!!activeInfospace?.id}, Mode: ${mode}, Is Valid: ${isValid}`); // Log exit reason
           return;
       }
 
-      console.log("Submitting form data:", formData); // This logs successfully
-      setFormErrors({}); // Clear previous errors before submit attempt
+      setFormErrors({});
 
       try {
-          let response: ClassificationSchemeRead | null = null;
-          // REMOVED: dataToSend reconstruction
-          // const dataToSend: SchemeFormData = { ... };
-
+          let response: AnnotationSchemaRead | null = null;
+          
           if (mode === 'create') {
-              response = await createScheme(formData); // Pass formData directly
-              toast({ title: "Scheme Created", description: `Scheme \"${response?.name}\" created successfully.`, variant: "default" });
+              response = await createSchema(formData);
+              toast({ title: "Schema Created", description: `Schema "${response?.name}" created successfully.`, variant: "default" });
           } else if (mode === 'edit' && schemeId) {
-              response = await updateScheme(schemeId, formData); // Pass formData directly
-              toast({ title: "Scheme Updated", description: `Scheme \"${response?.name}\" updated successfully.`, variant: "default" });
+              const updateData: AnnotationSchemaUpdate = adaptSchemaFormDataToSchemaCreate(formData);
+              response = await updateScheme(schemeId, updateData); 
+              toast({ title: "Schema Updated", description: `Schema "${response?.name}" updated successfully.`, variant: "default" });
           }
-          await loadSchemes(true); // Force refresh scheme list
+          
+          await loadSchemas({ force: true }); // Force refresh schema list
           onClose(); // Close dialog on success
       } catch (error: any) { 
-          console.error("Error saving classification scheme:", error);
           const errorMsg = error.message || apiError || "An unexpected error occurred while saving.";
-          setFormErrors({ submit: errorMsg }); // Set a general submit error
+          setFormErrors({ submit: errorMsg });
           toast({ title: "Save Failed", description: errorMsg, variant: "destructive" });
       }
   };
 
   const title = {
-    create: "Create New Classification Scheme",
-    edit: `Edit: ${formData.name || 'Scheme'}`,
-    watch: `View: ${formData.name || 'Scheme'}`
+    create: "Create New Annotation Schema",
+    edit: `Edit: ${formData.name || 'Schema'}`,
+    watch: `View: ${formData.name || 'Schema'}`
   }[mode];
 
-  // --- Field Type Change Logic --- 
-  const handleFieldTypeChange = (fieldIndex: number, newType: FieldType) => {
-      const currentField = formData.fields[fieldIndex];
-      const newConfig: FieldConfig = {}; // Reset config for new type
-
-      if (newType === 'int') {
-          newConfig.scale_min = 0;
-          newConfig.scale_max = 10;
-      } else if (newType === 'List[str]') {
-          newConfig.is_set_of_labels = false;
-          newConfig.labels = [];
-      } else if (newType === 'List[Dict[str, any]]') {
-          newConfig.dict_keys = [{ name: 'key1', type: 'str' }]; // Default key
-      }
-
-      // Update the specific field with the new type and config
-      const newFields = formData.fields.map((field, index) =>
-          index === fieldIndex ? { ...field, type: newType, config: newConfig } : field
-      );
-      setFormData(prev => ({ ...prev, fields: newFields }));
-  };
-
-  // --- Update Specific Field Value ---
-  const updateField = (fieldIndex: number, key: keyof SchemeFormData['fields'][number], value: any) => {
-      const newFields = formData.fields.map((field, index) =>
-          index === fieldIndex ? { ...field, [key]: value } : field
-      );
-      setFormData(prev => ({ ...prev, fields: newFields }));
-  };
-
-  // --- Update Specific Config Value ---
-   const updateConfig = (fieldIndex: number, configKey: keyof FieldConfig, value: any) => {
-        const newFields = formData.fields.map((field, index) => {
-            if (index === fieldIndex) {
-                return {
-                    ...field,
-                    config: {
-                        ...field.config,
-                        [configKey]: value,
-                    },
-                };
-            }
-            return field;
-        });
-        setFormData(prev => ({ ...prev, fields: newFields }));
-    };
-
   return (
-    <ClassificationSchemeCard
+    <AnnotationSchemaCard
       show={show}
       onClose={onClose}
       title={title}
       mode={mode}
-      width="w-[900px]" // Increased width
-      height="h-[80vh]"
+      width="w-[95vw] max-w-[1400px]" // Greatly increased width for 3-panel layout
+      height="h-[90vh]"
       className="border-2 border-schemes"
     >
-      <div className="space-y-6">
-        {mode !== 'watch' && (
-          <div className="flex items-center justify-end space-x-2">
-            <label className="text-sm text-muted-foreground">Show Tutorial</label>
-            <Switch
-              checked={showSchemaBuilderTutorial}
-              onCheckedChange={toggleSchemaBuilderTutorial}
-              disabled={isLoadingSchemes} 
-            />
-          </div>
-        )}
-
-        {/* Use standard form element */}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* General Scheme Info */} 
-          <div className="space-y-4 p-4 border rounded-lg bg-card">
-              <h3 className="text-lg font-medium border-b pb-2">Scheme Details</h3>
-              {/* Name Field */}
-              <div>
-                  <Label htmlFor="scheme-name">Name</Label>
-                  <Input
-                      id="scheme-name"
-                      value={formData.name}
-                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="e.g., Sentiment Analysis"
-                      disabled={isLoadingSchemes || mode === 'watch'}
-                      aria-invalid={!!formErrors.name}
-                  />
-                  {formErrors.name && <p className="text-xs text-red-500 mt-1">{formErrors.name as string}</p>}
-              </div>
-              {/* Description Field */}
-              <div>
-                  <Label htmlFor="scheme-description">Description (Optional)</Label>
-                  <Textarea
-                      id="scheme-description"
-                      value={formData.description || ''}
-                      onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                      placeholder="Describe the purpose and output of this scheme"
-                      rows={2}
-                      disabled={isLoadingSchemes || mode === 'watch'}
-                  />
-              </div>
-              {/* Model Instructions Field */}
-              <div>
-                  <Label htmlFor="model-instructions">Model Instructions (Optional)</Label>
-                  <Textarea
-                     id="model-instructions"
-                     value={formData.model_instructions || ''}
-                     onChange={(e) => setFormData(prev => ({ ...prev, model_instructions: e.target.value }))}
-                     placeholder="Provide specific instructions for the AI model (e.g., focus on certain aspects, desired output format hints)"
-                     rows={3}
-                     disabled={isLoadingSchemes || mode === 'watch'}
-                     className="text-sm font-mono"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                     <Info className="h-3 w-3 shrink-0"/>
-                     These instructions are passed directly to the classification model.
-                   </p>
-              </div>
-          </div>
-
-          {/* --- NEW: Global Scheme Settings --- */}
-          <div className="space-y-4 p-4 border rounded-lg bg-card">
-              <h3 className="text-lg font-medium border-b pb-2">Global AI Settings</h3>
-              {/* Request Justifications Globally */}
-              <div className="flex items-center justify-between">
-                  <Label htmlFor="request-justifications-globally" className="flex flex-col space-y-1">
-                      <span>Request Justifications Globally</span>
-                      <span className="text-xs font-normal text-muted-foreground">If enabled, justification will be requested for all applicable fields unless overridden at the field level.</span>
-                  </Label>
-                  <Switch
-                      id="request-justifications-globally"
-                      checked={formData.request_justifications_globally ?? false}
-                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, request_justifications_globally: checked }))}
-                      disabled={isLoadingSchemes || mode === 'watch'}
-                  />
-              </div>
-              {/* Default Thinking Budget */}
-              <div>
-                  <Label htmlFor="default-thinking-budget">Default Thinking Budget (Tokens)</Label>
-                  <Input
-                      id="default-thinking-budget"
-                      type="number"
-                      value={formData.default_thinking_budget === null || formData.default_thinking_budget === undefined ? '' : formData.default_thinking_budget}
-                      onChange={(e) => setFormData(prev => ({ ...prev, default_thinking_budget: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
-                      placeholder="e.g., 1024 (0 to disable for all, empty for provider default)"
-                      disabled={isLoadingSchemes || mode === 'watch'}
-                  />
-                   <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                     <Info className="h-3 w-3 shrink-0"/>
-                     Budget for AI reasoning. Overrides provider defaults if set. Field-specific requests may still apply.
-                   </p>
-              </div>
-               {/* Enable Image Analysis Globally */}
-              <div className="flex items-center justify-between">
-                  <Label htmlFor="enable-image-analysis-globally" className="flex flex-col space-y-1">
-                      <span>Enable Image Analysis Globally</span>
-                      <span className="text-xs font-normal text-muted-foreground">If enabled, this scheme can process images, and fields can request bounding boxes.</span>
-                  </Label>
-                  <Switch
-                      id="enable-image-analysis-globally"
-                      checked={formData.enable_image_analysis_globally ?? false}
-                      onCheckedChange={(checked) => setFormData(prev => ({ ...prev, enable_image_analysis_globally: checked }))}
-                      disabled={isLoadingSchemes || mode === 'watch'}
-                  />
-              </div>
-          </div>
-          {/* --- END NEW: Global Scheme Settings --- */}
-
-          {/* Fields Section */} 
-          <div className="space-y-4">
-              <h3 className="text-lg font-medium border-b pb-2">Fields</h3>
-              {/* Display general fields error */}
-              {typeof formErrors.fields === 'string' && <p className="text-sm text-red-500 mt-1">{formErrors.fields}</p>} 
-              
-              {/* Iterate over formData.fields */} 
-              {formData.fields.map((item, index) => (
-                  <div key={index} className="mb-4 relative bg-card p-4 border rounded-lg shadow-sm">
-                     {/* Field Controls */} 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {/* Field Name */} 
-                        <div>
-                            <Label htmlFor={`fields.${index}.name`}>Field Name</Label>
-                            <Input
-                                id={`fields.${index}.name`}
-                                value={item.name}
-                                onChange={(e) => updateField(index, 'name', e.target.value)}
-                                placeholder="e.g., sentiment_score"
-                                disabled={isLoadingSchemes || mode === 'watch'}
-                                aria-invalid={!!(formErrors.fields && Array.isArray(formErrors.fields) && formErrors.fields[index])} // Check if error exists for this index
-                            />
-                             {/* Display specific field error string */}
-                             {formErrors.fields && Array.isArray(formErrors.fields) && formErrors.fields[index] && <p className="text-xs text-red-500 mt-1">{formErrors.fields[index]}</p>} 
-                        </div>
-                        {/* Field Type */} 
-                        <div>
-                            <Label htmlFor={`fields.${index}.type`}>Type</Label>
-                            <Select
-                                value={item.type}
-                                onValueChange={(value) => handleFieldTypeChange(index, value as FieldType)}
-                                disabled={isLoadingSchemes || mode === 'watch'}
-                            >
-                                <SelectTrigger id={`fields.${index}.type`}>
-                                    <SelectValue placeholder="Select type..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {SCHEME_TYPE_OPTIONS.map((opt) => (
-                                        <SelectItem key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        {/* Field Description */} 
-                        <div className="md:col-span-3">
-                            <Label htmlFor={`fields.${index}.description`}>Description (Optional)</Label>
-                            <Textarea
-                                id={`fields.${index}.description`}
-                                value={item.description || ''}
-                                onChange={(e) => updateField(index, 'description', e.target.value)}
-                                placeholder="Describe what this field represents"
-                                rows={1}
-                                className="text-sm"
-                                disabled={isLoadingSchemes || mode === 'watch'}
-                            />
-                        </div>
+        <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-4 h-full w-full">
+          {/* Panel 1: Left - Schema Details */}
+          <div className="w-full md:w-1/4 lg:w-1/5 border-r pr-4 flex flex-col gap-4">
+              <ScrollArea className="flex-1">
+                <div className="space-y-4">
+                    <h3 className="text-lg font-medium">Schema Details</h3>
+                    <div>
+                        <Label htmlFor="scheme-name">Name</Label>
+                        <Input
+                            id="scheme-name"
+                            value={formData.name}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                            placeholder="e.g., Threat Assessment Report"
+                            disabled={isLoadingSchemas || mode === 'watch'}
+                        />
+                         {formErrors.name && <p className="text-xs text-red-500 mt-1">{formErrors.name as string}</p>}
                     </div>
-
-                    {/* Type-Specific Config */} 
-                    <FieldConfigEditor 
-                        fieldIndex={index} 
-                        config={item.config}
-                        fieldType={item.type} 
-                        updateConfig={updateConfig}
-                        disabled={isLoadingSchemes || mode === 'watch'}
-                        errors={Array.isArray(formErrors.fields) ? formErrors.fields[index] : undefined}
-                     />
-
-                    {/* --- NEW: Per-Field AI Settings --- */}
-                    <div className="mt-3 space-y-3 pt-3 border-t border-dashed">
-                        <div className="flex items-center justify-between">
-                            <Label htmlFor={`fields.${index}.request_justification`} className="text-xs flex items-center">
-                                Request Justification for this Field
-                                <TooltipProvider delayDuration={100}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Info className="h-3 w-3 ml-1.5 text-muted-foreground cursor-help"/>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p className="text-xs max-w-xs">Overrides global setting. If null, inherits from global.</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                            </Label>
-                            <Select
-                                value={item.request_justification === null ? 'inherit' : (item.request_justification ? 'yes' : 'no')}
-                                onValueChange={(value) => {
-                                    let val: boolean | null = null;
-                                    if (value === 'yes') val = true;
-                                    else if (value === 'no') val = false;
-                                    updateField(index, 'request_justification', val);
-                                }}
-                                disabled={isLoadingSchemes || mode === 'watch'}
-                            >
-                                <SelectTrigger id={`fields.${index}.request_justification`} className="h-7 w-[100px] text-xs">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="inherit">Inherit</SelectItem>
-                                    <SelectItem value="yes">Yes</SelectItem>
-                                    <SelectItem value="no">No</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        {(item.type === 'str' || item.type === 'List[str]') && formData.enable_image_analysis_globally && (
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor={`fields.${index}.request_bounding_boxes`} className="text-xs flex items-center">
-                                    Request Bounding Boxes for this Field
-                                    <TooltipProvider delayDuration={100}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Info className="h-3 w-3 ml-1.5 text-muted-foreground cursor-help"/>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p className="text-xs max-w-xs">Only if image analysis is globally enabled and field value might come from image.</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                </Label>
-                                <Switch
-                                    id={`fields.${index}.request_bounding_boxes`}
-                                    checked={item.request_bounding_boxes ?? false}
-                                    onCheckedChange={(checked) => updateField(index, 'request_bounding_boxes', checked)}
-                                    disabled={isLoadingSchemes || mode === 'watch'}
-                                />
-                            </div>
-                        )}
-
-                        {item.type === 'List[str]' && item.config.is_set_of_labels && (
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor={`fields.${index}.use_enum_for_labels`} className="text-xs flex items-center">
-                                    Use Strict Choices (Enum for AI)
-                                    <TooltipProvider delayDuration={100}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Info className="h-3 w-3 ml-1.5 text-muted-foreground cursor-help"/>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p className="text-xs max-w-xs">More reliable for predefined lists, but less flexible.</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                </Label>
-                                <Switch
-                                    id={`fields.${index}.use_enum_for_labels`}
-                                    checked={item.use_enum_for_labels ?? false}
-                                    onCheckedChange={(checked) => updateField(index, 'use_enum_for_labels', checked)}
-                                    disabled={isLoadingSchemes || mode === 'watch'}
-                                />
-                            </div>
-                        )}
+                    <div>
+                        <Label htmlFor="scheme-description">Description</Label>
+                        <Textarea
+                            id="scheme-description"
+                            value={formData.description}
+                            onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                            placeholder="Describe the schema's purpose"
+                            rows={3}
+                            disabled={isLoadingSchemas || mode === 'watch'}
+                        />
                     </div>
-                    {/* --- END NEW: Per-Field AI Settings --- */}
-
-                     {/* Remove Field Button */} 
-                    {mode !== 'watch' && (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="absolute bottom-2 right-2 h-7 w-7 text-muted-foreground hover:text-red-500 hover:bg-destructive/10"
-                            onClick={() => {
-                                const newFields = formData.fields.filter((_, i) => i !== index);
-                                setFormData(prev => ({ ...prev, fields: newFields }));
-                            }}
-                            disabled={isLoadingSchemes || formData.fields.length <= 1} 
-                            title="Remove Field"
-                        >
-                            <Trash2 className="h-4 w-4" />
-                        </Button>
-                    )}
-                  </div>
-              ))}
-
+                    <div>
+                        <Label htmlFor="model-instructions">Instructions</Label>
+                        <Textarea
+                           id="model-instructions"
+                           value={formData.instructions || ''}
+                           onChange={(e) => setFormData(prev => ({ ...prev, instructions: e.target.value }))}
+                           placeholder="High-level instructions for the AI model..."
+                           rows={5}
+                           disabled={isLoadingSchemas || mode === 'watch'}
+                           className="text-sm font-mono"
+                        />
+                    </div>
+                </div>
+              </ScrollArea>
               {mode !== 'watch' && (
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => {
-                       setFormData(prev => ({ 
-                           ...prev, 
-                           fields: [...(prev.fields ?? []), { name: `field_${(prev.fields?.length ?? 0) + 1}`, type: 'str' as FieldType, description: '', config: {} }] 
-                       }));
-                    }} 
-                    disabled={isLoadingSchemes}
-                  >
-                      <PlusCircle className="h-4 w-4 mr-2" />
-                      Add Field
-                  </Button>
+                <div className="flex justify-end gap-3 pt-4 border-t">
+                    <Button type="button" variant="outline" onClick={onClose} disabled={isLoadingSchemas}>Cancel</Button>
+                    <Button type="submit" disabled={isLoadingSchemas}>
+                        {isLoadingSchemas ? 'Saving...' : (mode === 'create' ? 'Create Schema' : 'Update Schema')}
+                    </Button>
+                </div>
               )}
           </div>
 
-           {/* Global Submit/API Error Display */} 
-           {formErrors.submit && (
-                <Alert variant="destructive">
+          {/* Panel 2: Center - Schema Structure */}
+          <div className="w-full md:w-1/2 lg:w-2/5 border-r pr-4 flex flex-col">
+             <div className="flex-shrink-0">
+                <h3 className="text-lg font-medium mb-2">Schema Structure</h3>
+                <p className="text-xs text-muted-foreground mb-4">Define sections and fields for the AI. Select an item to edit its properties.</p>
+             </div>
+             <ScrollArea className="flex-1 pr-2">
+                <div className="space-y-4">
+                    {formData.structure.map((section, sectionIndex) => (
+                        <div key={section.id} className={cn(
+                            "p-3 rounded-lg border",
+                            selectedNodeId === section.id ? "border-blue-500 bg-blue-500/5" : "border-border"
+                        )}>
+                            <div 
+                                className="flex items-center justify-between cursor-pointer"
+                                onClick={() => setSelectedNodeId(section.id)}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <FileJson className="h-4 w-4 text-muted-foreground" />
+                                    <span className="font-medium capitalize">{section.name}</span>
+                                </div>
+                                <Button 
+                                    type="button" 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-6 w-6"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRemoveSection(section.id);
+                                    }}
+                                    disabled={section.name === 'document'}
+                                >
+                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-red-500"/>
+                                </Button>
+                            </div>
+                            <div className="mt-3 space-y-2 pl-4 border-l ml-2">
+                                {section.fields.map((field, fieldIndex) => (
+                                    <div 
+                                        key={field.id}
+                                        className={cn(
+                                            "flex items-center justify-between p-2 rounded-md cursor-pointer group",
+                                            selectedNodeId === field.id ? "bg-primary/10" : "hover:bg-muted/50"
+                                        )}
+                                        onClick={() => setSelectedNodeId(field.id)}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm">{field.name}</span>
+                                            {field.required && <span className="text-red-500 text-xs">*</span>}
+                                        </div>
+                                        <div className="flex items-center">
+                                            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-sm mr-2">{field.type}</span>
+                                            <Trash2 
+                                                className="h-3.5 w-3.5 text-muted-foreground/50 opacity-0 group-hover:opacity-100 hover:text-red-500"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRemoveField(section.id, field.id);
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                                 <Button 
+                                    type="button" 
+                                    variant="outline" 
+                                    size="sm"
+                                    className="mt-2"
+                                    onClick={() => handleAddField(section.id)}
+                                >
+                                    <PlusCircle className="h-3 w-3 mr-1.5" />
+                                    Add Field
+                                </Button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                {formErrors.structure && <p className="text-xs text-red-500 mt-1">{formErrors.structure as string}</p>}
+             </ScrollArea>
+             <div className="pt-2 border-t mt-2">
+                <Select onValueChange={(value: SchemaSection['name']) => {
+                    if(value) handleAddSection(value);
+                }} value="">
+                    <SelectTrigger className="h-8 text-xs text-muted-foreground">
+                        <SelectValue placeholder="Add another section..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="per_image" className="text-xs"><Image className="h-3 w-3 mr-2 inline-block"/>per_image</SelectItem>
+                        <SelectItem value="per_audio" className="text-xs"><Mic className="h-3 w-3 mr-2 inline-block"/>per_audio</SelectItem>
+                        <SelectItem value="per_video" className="text-xs"><Video className="h-3 w-3 mr-2 inline-block"/>per_video</SelectItem>
+                    </SelectContent>
+                </Select>
+             </div>
+          </div>
+
+          {/* Panel 3: Right - Properties Inspector */}
+          <div className="w-full md:w-1/4 lg:w-2/5">
+             <h3 className="text-lg font-medium mb-2">Properties</h3>
+             <p className="text-xs text-muted-foreground mb-4">Configure the selected section or field.</p>
+             <ScrollArea className="h-full pr-2">
+                 <PropertyInspector 
+                    selectedNodeId={selectedNodeId}
+                    formData={formData}
+                    onFormChange={setFormData}
+                    disabled={isLoadingSchemas || mode === 'watch'}
+                 />
+             </ScrollArea>
+          </div>
+
+          {/* Global Submit/API Error Display */} 
+          {formErrors.submit && (
+                <Alert variant="destructive" className="absolute bottom-4 left-4 right-4">
                     <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Error Saving Scheme</AlertTitle>
+                    <AlertTitle>Error Saving Schema</AlertTitle>
                     <AlertDescription>{formErrors.submit as string}</AlertDescription>
                 </Alert>
             )}
-
-          {/* Actions */} 
-          {mode !== 'watch' && (
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                  <Button type="button" variant="outline" onClick={onClose} disabled={isLoadingSchemes}>Cancel</Button>
-                  <Button type="submit" disabled={isLoadingSchemes}> 
-                      {isLoadingSchemes ? 'Saving...' : (mode === 'create' ? 'Create Scheme' : 'Update Scheme')}
-                  </Button>
-              </div>
-          )}
         </form>
-      </div>
-    </ClassificationSchemeCard>
+    </AnnotationSchemaCard>
   );
 };
 
-// --- Field Config Sub-Component (Using useState approach) ---
-interface FieldConfigEditorProps {
-  fieldIndex: number;
-  config: FieldConfig;
-  fieldType: FieldType | undefined;
-  updateConfig: (fieldIndex: number, configKey: keyof FieldConfig, value: any) => void;
-  disabled?: boolean;
-  errors?: string;
-}
+// --- Property Inspector Component ---
+const PropertyInspector: React.FC<{
+    selectedNodeId: string | null;
+    formData: AnnotationSchemaFormData;
+    onFormChange: (data: AnnotationSchemaFormData) => void;
+    disabled: boolean;
+}> = ({ selectedNodeId, formData, onFormChange, disabled }) => {
 
-const FieldConfigEditor: React.FC<FieldConfigEditorProps> = ({ fieldIndex, config, fieldType, updateConfig, disabled, errors }) => {
+    const { node, section, field } = React.useMemo(() => {
+        if (!selectedNodeId) return { node: null, section: null, field: null };
 
-  // Helper to handle updates to list items (labels, dict_keys)
-  const handleListItemChange = (listKey: 'labels' | 'dict_keys', itemIndex: number, itemValue: string | Partial<DictKeyDefinition>) => {
-      const currentList = config?.[listKey] ?? []; // Safely access config property
-      const newList = [...currentList];
-      if (listKey === 'labels' && typeof itemValue === 'string') {
-          newList[itemIndex] = itemValue;
-      } else if (listKey === 'dict_keys' && typeof itemValue === 'object') {
-          newList[itemIndex] = { ...(newList[itemIndex] as DictKeyDefinition), ...itemValue };
-      }
-      updateConfig(fieldIndex, listKey, newList);
-  };
+        for (const sec of formData.structure) {
+            if (sec.id === selectedNodeId) {
+                return { node: 'section', section: sec, field: null };
+            }
+            for (const fld of sec.fields) {
+                if (fld.id === selectedNodeId) {
+                    return { node: 'field', section: sec, field: fld };
+                }
+            }
+        }
+        return { node: null, section: null, field: null };
+    }, [selectedNodeId, formData]);
+    
+    const handleFieldUpdate = (update: Partial<AdvancedSchemeField>) => {
+        if (!section || !field) return;
 
-  const handleAddItem = (listKey: 'labels' | 'dict_keys') => {
-      const currentList = config?.[listKey] ?? []; // Safely access config property
-      let newItem: string | DictKeyDefinition;
-      if (listKey === 'labels') {
-          newItem = '';
-      } else { // dict_keys
-          newItem = { name: `key${currentList.length + 1}`, type: 'str' };
-      }
-      updateConfig(fieldIndex, listKey, [...currentList, newItem]);
-  };
-
-   const handleRemoveItem = (listKey: 'labels' | 'dict_keys', itemIndex: number) => {
-        const currentList = config?.[listKey] ?? []; // Safely access config property
-        const newList = currentList.filter((_, idx) => idx !== itemIndex);
-        updateConfig(fieldIndex, listKey, newList);
+        const updatedField = { ...field, ...update };
+        const newStructure = formData.structure.map(s => {
+            if (s.id === section.id) {
+                return {
+                    ...s,
+                    fields: s.fields.map(f => f.id === field.id ? updatedField : f)
+                };
+            }
+            return s;
+        });
+        onFormChange({ ...formData, structure: newStructure });
     };
 
-  if (fieldType === 'int') {
-    return (
-      <div className="mt-3 pl-4 border-l-2 border-blue-200 space-y-3">
-         <p className="text-xs font-medium text-blue-600">Number Configuration</p>
-          <div className="grid grid-cols-2 gap-3">
-              <div>
-                  <Label htmlFor={`fields.${fieldIndex}.config.scale_min`}>Scale Min</Label>
-                  <Input
-                      id={`fields.${fieldIndex}.config.scale_min`}
-                      type="number"
-                      value={config?.scale_min ?? ''}
-                      onChange={(e) => updateConfig(fieldIndex, 'scale_min', e.target.valueAsNumber)}
-                      disabled={disabled}
-                  />
-              </div>
-              <div>
-                  <Label htmlFor={`fields.${fieldIndex}.config.scale_max`}>Scale Max</Label>
-                  <Input
-                      id={`fields.${fieldIndex}.config.scale_max`}
-                      type="number"
-                      value={config?.scale_max ?? ''}
-                      onChange={(e) => updateConfig(fieldIndex, 'scale_max', e.target.valueAsNumber)}
-                      disabled={disabled}
-                  />
-              </div>
-          </div>
-           {/* Display error string */} 
-           {errors && errors.includes('Scale') && <p className="text-xs text-red-500 mt-1">{errors}</p>} 
-      </div>
-    );
-  } else if (fieldType === 'List[str]') {
-    return (
-      <div className="mt-3 pl-4 border-l-2 border-green-200 space-y-3">
-         <p className="text-xs font-medium text-green-600">Multiple Choice / List Configuration</p>
-          <div className="flex items-center space-x-2">
-               <Checkbox
-                   id={`fields.${fieldIndex}.config.is_set_of_labels`}
-                   checked={config?.is_set_of_labels ?? false}
-                   onCheckedChange={(checked) => updateConfig(fieldIndex, 'is_set_of_labels', !!checked)}
-                   disabled={disabled}
-               />
-              <Label htmlFor={`fields.${fieldIndex}.config.is_set_of_labels`} className="text-sm">
-                  Use predefined list of choices (Multiple Choice)?
-              </Label>
-          </div>
+    const handleTypeChange = (value: string) => {
+        if (!section || !field) return;
+        
+        const update: Partial<AdvancedSchemeField> = {};
+        
+        if (value.startsWith('array_')) {
+            update.type = 'array';
+            const itemType = value.split('_')[1] as JsonSchemaType;
+            update.items = { type: itemType };
+            if (itemType === 'object') {
+                update.items.properties = [];
+            }
+        } else {
+            update.type = value as JsonSchemaType;
+            delete update.items; // Remove items if not an array
+        }
+        
+        if (update.type === 'object') {
+            update.properties = field.properties || [];
+        } else {
+            delete update.properties;
+        }
 
-          {config?.is_set_of_labels && (
-              <div className="space-y-2">
-                  <Label>Choices (Labels)</Label>
-                   {/* Display error string */} 
-                   {errors && errors.includes('label') && <p className="text-xs text-red-500">{errors}</p>} 
-                   {(config.labels ?? []).map((labelValue, labelIndex) => ( // Use config.labels
-                      <div key={labelIndex} className="flex items-center gap-2">
-                           <Input
-                              id={`fields.${fieldIndex}.config.labels.${labelIndex}`}
-                              value={labelValue} // Access label value directly
-                              onChange={(e) => handleListItemChange('labels', labelIndex, e.target.value)} // Use handler
-                              placeholder={`Choice ${labelIndex + 1}`}
-                              className="flex-1 h-8 text-sm"
-                              disabled={disabled}
-                           />
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-500" onClick={() => handleRemoveItem('labels', labelIndex)} disabled={disabled || (config.labels?.length ?? 0) <= 2}><Trash2 className="h-4 w-4" /></Button>
-                      </div>
-                  ))}
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => handleAddItem('labels')}
-                    disabled={disabled}
-                  >
-                      <PlusCircle className="h-3 w-3 mr-1" /> Add Choice
-                  </Button>
-              </div>
-          )}
-      </div>
-    );
-  } else if (fieldType === 'List[Dict[str, any]]') {
-      return (
-          <div className="mt-3 pl-4 border-l-2 border-purple-200 space-y-3">
-              <p className="text-xs font-medium text-purple-600">Complex Structure Configuration</p>
-              <Label>Define Keys for Structure</Label>
-              {/* Display error string */} 
-              {errors && errors.includes('key') && <p className="text-xs text-red-500">{errors}</p>} 
-              <div className="space-y-2">
-                  {(config.dict_keys ?? []).map((keyItem, keyIndex) => ( // Use config.dict_keys
-                      <div key={keyIndex} className="flex items-center gap-2 p-2 border rounded bg-muted/20">
-                           <Input
-                              id={`fields.${fieldIndex}.config.dict_keys.${keyIndex}.name`}
-                              value={keyItem.name} // Access key name
-                              onChange={(e) => handleListItemChange('dict_keys', keyIndex, { name: e.target.value })} // Use handler
-                              placeholder="Key Name (e.g., entity)"
-                              className="flex-1 h-8 text-sm"
-                              disabled={disabled}
-                           />
-                           <Select 
-                                value={keyItem.type} // Access key type
-                                onValueChange={(value) => handleListItemChange('dict_keys', keyIndex, { type: value as any })} // Use handler
+        handleFieldUpdate(update);
+    }
+    
+    const getTypeValue = (): string => {
+        if(field?.type === 'array' && field.items) {
+            return `array_${field.items.type}`;
+        }
+        return field?.type || 'string';
+    }
+
+    if (!node) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-center p-4 border border-dashed rounded-lg bg-muted/30">
+                <FileJson className="h-10 w-10 text-muted-foreground mb-2" />
+                <h4 className="font-semibold">Nothing Selected</h4>
+                <p className="text-sm text-muted-foreground">Select a section or field from the structure panel to see its properties.</p>
+            </div>
+        );
+    }
+    
+    if (node === 'section' && section) {
+        return (
+             <div className="space-y-4 p-4 border rounded-lg bg-card">
+                <div className="flex items-center gap-2">
+                    <FileJson className="h-5 w-5 text-muted-foreground" />
+                    <h3 className="text-lg font-medium capitalize">{section.name}</h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                    {section.name === 'document' 
+                        ? 'This section defines the fields to be extracted from the main document content (e.g., the text of an article).'
+                        : `This section defines fields to be extracted from each individual ${section.name.replace('per_', '')} associated with the main document.`
+                    }
+                </p>
+             </div>
+        );
+    }
+    
+    if (node === 'field' && field) {
+        return (
+            <div className="space-y-4">
+                <div className="space-y-2">
+                    <Label htmlFor="field-name">Field Name</Label>
+                    <Input 
+                        id="field-name"
+                        value={field.name}
+                        onChange={(e) => handleFieldUpdate({ name: e.target.value })}
+                        placeholder="e.g., summary"
+                        disabled={disabled}
+                    />
+                </div>
+                <div className="space-y-2">
+                    <Label htmlFor="field-desc">Description</Label>
+                    <Textarea 
+                        id="field-desc"
+                        value={field.description || ''}
+                        onChange={(e) => handleFieldUpdate({ description: e.target.value })}
+                        placeholder="A hint for the AI of what to extract."
+                        rows={3}
+                        disabled={disabled}
+                        className="text-sm"
+                    />
+                </div>
+                 <div className="space-y-2">
+                    <Label htmlFor="field-type">Type</Label>
+                    <Select 
+                        value={getTypeValue()}
+                        onValueChange={handleTypeChange}
+                        disabled={disabled}
+                    >
+                        <SelectTrigger id="field-type">
+                            <SelectValue placeholder="Select a type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {ADVANCED_SCHEME_TYPE_OPTIONS.map(opt => (
+                                <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                <div className="flex items-center space-x-2 pt-3">
+                    <Switch
+                        id="field-required"
+                        checked={field.required}
+                        onCheckedChange={(checked) => handleFieldUpdate({ required: checked })}
+                        disabled={disabled}
+                    />
+                    <Label htmlFor="field-required" className="cursor-pointer">Required Field</Label>
+                </div>
+
+                {/* --- Type-Specific Config --- */}
+                {field.type === 'string' && (
+                    <div className="space-y-2 pt-2 border-t mt-3">
+                         <Label htmlFor="field-enum">Allowed Values (Optional)</Label>
+                         <Textarea
+                            id="field-enum"
+                            value={(field.enum || []).join('\n')}
+                            onChange={(e) => handleFieldUpdate({ enum: e.target.value.split('\n').filter(v => v) })}
+                            placeholder="One value per line to restrict choices"
+                            rows={3}
+                            disabled={disabled}
+                            className="text-sm"
+                         />
+                         <p className="text-xs text-muted-foreground">If you add values here, the AI will be forced to choose one of them.</p>
+                    </div>
+                )}
+                {(field.type === 'object' || (field.type === 'array' && field.items?.type === 'object')) && (
+                    <div className="space-y-2 pt-2 border-t mt-3">
+                        <Label>Sub-fields</Label>
+                        <div className="p-3 border border-dashed rounded-lg text-center">
+                            <p className="text-sm text-muted-foreground">Recursive field definition is not yet implemented.</p>
+                        </div>
+                    </div>
+                )}
+
+
+                {/* --- Justification --- */}
+                <Accordion type="single" collapsible className="w-full">
+                  <AccordionItem value="justification">
+                    <AccordionTrigger>Justification</AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-2">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="justification-enabled"
+                                checked={field.justification?.enabled ?? false}
+                                onCheckedChange={(checked) => handleFieldUpdate({ justification: { ...field.justification, enabled: !!checked }})}
                                 disabled={disabled}
-                            >
-                                <SelectTrigger className="w-[100px] h-8 text-xs">
-                                    <SelectValue placeholder="Type" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="str" className="text-xs">Text</SelectItem>
-                                    <SelectItem value="int" className="text-xs">Integer</SelectItem>
-                                    <SelectItem value="float" className="text-xs">Decimal</SelectItem>
-                                    <SelectItem value="bool" className="text-xs">Yes/No</SelectItem>
-                                </SelectContent>
-                            </Select>
-                           <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-red-500" onClick={() => handleRemoveItem('dict_keys', keyIndex)} disabled={disabled || (config.dict_keys?.length ?? 0) <= 1}><Trash2 className="h-4 w-4" /></Button>
-                      </div>
-                  ))}
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => handleAddItem('dict_keys')}
-                    disabled={disabled}
-                  >
-                      <PlusCircle className="h-3 w-3 mr-1" /> Add Key
-                  </Button>
-              </div>
-          </div>
-      );
-  }
+                            />
+                            <Label htmlFor="justification-enabled" className="cursor-pointer leading-none">
+                                Request justification for this field
+                            </Label>
+                        </div>
+                        {field.justification?.enabled && (
+                            <div className="space-y-2">
+                                <Label htmlFor="justification-prompt">Custom Prompt (Optional)</Label>
+                                <Textarea
+                                    id="justification-prompt"
+                                    value={field.justification.custom_prompt || ''}
+                                    onChange={(e) => handleFieldUpdate({ justification: { enabled: field.justification?.enabled ?? true, custom_prompt: e.target.value }})}
+                                    placeholder="e.g., Explain step-by-step how you arrived at this summary."
+                                    rows={3}
+                                    disabled={disabled}
+                                    className="text-sm"
+                                />
+                            </div>
+                        )}
+                        <div className="flex-shrink-0 h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                            {field.provider?.includes('anthropic') && <img src="/anthropic-logo.png" className="h-6 w-6" alt="Anthropic logo" />}
+                            {field.provider?.includes('openai') && <img src="/openai-logo.png" className="h-6 w-6" alt="OpenAI logo" />}
+                            {field.provider?.includes('google') && <img src="/google-logo.png" className="h-5 w-5" alt="Google logo" />}
+                            {field.provider?.includes('groq') && <img src="/groq-logo.png" className="h-5 w-5" alt="Groq logo" />}
+                            {field.provider?.includes('together') && <img src="/together-logo.png" className="h-5 w-5" alt="Together AI logo" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-900 truncate">{field.model_name}</p>
+                        </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+            </div>
+        )
+    }
 
-  return null; // No config needed for 'str' type
-};
+    return null;
+}
 
-export default ClassificationSchemeEditor; 
+export default AnnotationSchemaEditor; 

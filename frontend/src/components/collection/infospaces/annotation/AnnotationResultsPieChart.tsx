@@ -10,9 +10,9 @@ import {
   ResponsiveContainer,
   TooltipProps
 } from 'recharts';
-import { AnnotationSchemaRead, AssetRead, SourceRead } from '@/client/models';
-import { FormattedAnnotation, FieldType } from '@/lib/annotations/types';
-import { getTargetKeysForScheme } from '@/lib/annotations/utils';
+import { AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { FormattedAnnotation } from '@/lib/annotations/types';
+import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,8 +24,14 @@ import AnnotationResultDisplay from './AnnotationResultDisplay';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
-import { DocumentResults } from './AnnotationResultsChart';
-import type { GroupedDataPoint } from './AnnotationResultsChart';
+import { GroupedDataPoint } from './AnnotationResultsChart';
+
+// Define a generic SourceRead type to satisfy the linter
+type SourceRead = {
+  id: number;
+  name: string;
+  [key: string]: any;
+};
 
 const PIE_COLORS = [
   '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8',
@@ -48,6 +54,7 @@ interface AnnotationResultsPieChartProps {
   selectedSourceIds?: number[];
   aggregateSourcesDefault?: boolean;
   onDataSourceSelectionChange?: (ids: number[]) => void;
+  analysisData?: any[] | null;
 }
 
 interface PieDataPoint {
@@ -67,6 +74,88 @@ interface SelectedSliceDetails {
   pointForDialog: GroupedDataPoint;
 }
 
+// Helper function to get field definition from hierarchical schema
+const getFieldDefinitionFromSchema = (schema: AnnotationSchemaRead, fieldKey: string): any => {
+    if (!schema.output_contract) return null;
+    
+    const properties = (schema.output_contract as any).properties;
+    if (!properties) return null;
+    
+    // Handle hierarchical paths like "document.topics"
+    const keys = fieldKey.split('.');
+    let currentSchema = properties;
+    
+    for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        
+        if (currentSchema[key]) {
+            if (i === keys.length - 1) {
+                // Last key - return the field definition
+                return currentSchema[key];
+            } else {
+                // Navigate deeper
+                if (currentSchema[key].type === 'object' && currentSchema[key].properties) {
+                    currentSchema = currentSchema[key].properties;
+                } else if (currentSchema[key].type === 'array' && 
+                          currentSchema[key].items?.type === 'object' && 
+                          currentSchema[key].items.properties) {
+                    currentSchema = currentSchema[key].items.properties;
+                } else {
+                    return null;
+                }
+            }
+        } else {
+            return null;
+        }
+    }
+    
+    return null;
+};
+
+const DocumentResults: React.FC<{
+  selectedPoint: GroupedDataPoint;
+  results: FormattedAnnotation[];
+  schemas: AnnotationSchemaRead[];
+  assets?: AssetRead[];
+  sources?: SourceRead[];
+  highlightValue?: string | null;
+}> = ({ selectedPoint, results, schemas, assets, sources, highlightValue }) => {
+  const relevantAssetIds = Array.from(selectedPoint.sourceDocuments.values()).flat();
+
+  return (
+    <div className="p-4 space-y-4">
+      <h3 className="font-bold">{selectedPoint.schemeName}: "{selectedPoint.valueString}" ({selectedPoint.totalCount} results)</h3>
+      {relevantAssetIds.map((assetId: number) => {
+        const asset = assets?.find(a => a.id === assetId);
+        if (!asset) return null;
+
+        const assetResults = results.filter(r =>
+          r.asset_id === assetId && r.schema_id === schemas.find(s => s.name === selectedPoint.schemeName)?.id
+        );
+        const relevantSchema = schemas.find(s => s.name === selectedPoint.schemeName);
+        if (!relevantSchema) return null;
+
+        return (
+          <div key={asset.id} className="border-t pt-4">
+            <AssetLink assetId={asset.id} className="font-semibold hover:underline">
+              {asset.title || `Asset #${asset.id}`}
+            </AssetLink>
+            <div className="mt-2 pl-4 border-l-2">
+              <AnnotationResultDisplay
+                result={assetResults}
+                schema={[relevantSchema]}
+                compact={false}
+                useTabs={false}
+                highlightValue={highlightValue}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   results,
   schemas,
@@ -74,6 +163,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   sources,
   selectedSourceIds = [],
   aggregateSourcesDefault = true,
+  analysisData = null,
 }) => {
   const [selectedSchemaId, setSelectedSchemaId] = useState<number | null>(null);
   const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(null);
@@ -97,18 +187,11 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
 
   const fieldOptions = useMemo(() => {
     if (!selectedSchemaId) return [];
-    const schema = schemas.find(s => s.id === selectedSchemaId);
-    if (!schema) return [];
-    
-    const properties = (schema.output_contract as any)?.properties || {};
-    return Object.entries(properties)
-      .filter(([key, value]: [string, any]) => 
-        value.type === 'string' || value.type === 'integer' || value.type === 'boolean' || (value.type === 'array' && value.items?.type === 'string')
-      )
-      .map(([key, value]: [string, any]) => ({
-        value: key,
-        label: `${value.title || key} (${value.type})`,
-      }));
+    const targetKeys = getTargetKeysForScheme(selectedSchemaId, schemas);
+    return targetKeys.map(tk => ({
+      value: tk.key,
+      label: `${tk.name} (${tk.type})`,
+    }));
   }, [selectedSchemaId, schemas]);
 
   const sourceNameMap = useMemo(() => {
@@ -138,12 +221,30 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
     pieDataMap: Record<string | number, PieDataPoint[]>;
     groupedForOtherSliceMap: Record<string | number, PieDataPoint[] | undefined>;
   } => {
+    if (analysisData) {
+        // If analysisData is provided, use it directly
+        const allCategories = analysisData.sort((a, b) => b.value - a.value);
+        if (selectedMaxSlices === Infinity || allCategories.length <= selectedMaxSlices) {
+            pieDataMap['aggregated'] = allCategories;
+            groupedForOtherSliceMap['aggregated'] = undefined;
+        } else if (allCategories.length > selectedMaxSlices && selectedMaxSlices > 0) {
+            const topN = allCategories.slice(0, selectedMaxSlices - 1);
+            const others = allCategories.slice(selectedMaxSlices - 1);
+            const otherSum = others.reduce((acc, curr) => acc + curr.value, 0);
+            pieDataMap['aggregated'] = [...topN, { name: 'Other', value: otherSum }];
+            groupedForOtherSliceMap['aggregated'] = others;
+        } else {
+            pieDataMap['aggregated'] = allCategories;
+            groupedForOtherSliceMap['aggregated'] = undefined;
+        }
+        return { pieDataMap, groupedForOtherSliceMap };
+    }
+
     if (!selectedSchemaId || !selectedFieldKey || results.length === 0) return { pieDataMap: {}, groupedForOtherSliceMap: {} };
     const schema = schemas.find(s => s.id === selectedSchemaId);
     if (!schema) return { pieDataMap: {}, groupedForOtherSliceMap: {} };
     
-    const properties = (schema.output_contract as any)?.properties || {};
-    const fieldDefinition = properties[selectedFieldKey];
+    const fieldDefinition = getFieldDefinitionFromSchema(schema, selectedFieldKey);
     if (!fieldDefinition) return { pieDataMap: {}, groupedForOtherSliceMap: {} };
 
     const newPieDataMap: Record<string | number, PieDataPoint[]> = {};
@@ -153,7 +254,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
       const counts: Record<string, number> = {};
       targetResults.forEach(result => {
         if (result.schema_id === selectedSchemaId) {
-          let valueForField: any = (result.value as any)?.[selectedFieldKey!];
+          const valueForField: any = getAnnotationFieldValue(result.value, selectedFieldKey!);
           
           let categoryName: string;
           if (valueForField === null || valueForField === undefined) {
@@ -198,12 +299,8 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
     };
 
     if (aggregateSources || !selectedSourceIds || selectedSourceIds.length < 2 || !sources || sources.length === 0) {
-      const relevantResults = results.filter(result => {
-        if (!selectedSourceIds || selectedSourceIds.length === 0) return true;
-        const asset = assetsMap.get(result.asset_id);
-        return asset && typeof asset.source_id === 'number' && selectedSourceIds.includes(asset.source_id);
-      });
-      processResultsForTarget(relevantResults, 'aggregated');
+      // Use all results for annotation analysis, consistent with bar chart behavior
+      processResultsForTarget(results, 'aggregated');
     } else {
       selectedSourceIds.forEach(dsId => {
         const sourceAndSchemeSpecificResults = results.filter(result => {
@@ -221,7 +318,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
       });
     }
     return { pieDataMap: newPieDataMap, groupedForOtherSliceMap: newGroupedForOtherSliceMap };
-  }, [results, selectedSchemaId, selectedFieldKey, schemas, selectedMaxSlices, aggregateSources, selectedSourceIds, assetsMap, sources]);
+  }, [results, selectedSchemaId, selectedFieldKey, schemas, selectedMaxSlices, aggregateSources, selectedSourceIds, assetsMap, sources, analysisData]);
 
   const handlePieSliceClick = useCallback((data: any, index: number, targetKey: string | number) => {
     const currentPieData = pieDataMap[targetKey];
@@ -232,7 +329,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
     const clickedSliceName = currentPieData[index].name;
     const schema = schemas.find(s => s.id === selectedSchemaId);
     if (!schema) return;
-    const fieldDefinition = (schema.output_contract as any)?.properties?.[selectedFieldKey];
+    const fieldDefinition = getFieldDefinitionFromSchema(schema, selectedFieldKey);
     if (!fieldDefinition) return;
 
     let documentsInSlice: FormattedAnnotation[] = [];
@@ -245,7 +342,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
         const matchesSource = targetKey === 'aggregated' || (asset && asset.source_id === targetKey);
         if (!matchesSource || result.schema_id !== selectedSchemaId) return false;
         
-        let valueForField: any = (result.value as any)?.[selectedFieldKey!];
+        const valueForField: any = getAnnotationFieldValue(result.value, selectedFieldKey!);
         
         let categoryName: string;
         if (valueForField === null || valueForField === undefined) {
@@ -267,7 +364,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
         const matchesSource = targetKey === 'aggregated' || (asset && asset.source_id === targetKey);
         if (!matchesSource || result.schema_id !== selectedSchemaId) return false;
         
-        let valueForField: any = (result.value as any)?.[selectedFieldKey!];
+        const valueForField: any = getAnnotationFieldValue(result.value, selectedFieldKey!);
         
         let categoryName: string;
         if (valueForField === null || valueForField === undefined) {
@@ -380,6 +477,36 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
       </div>
     );
   };
+
+  if (analysisData) {
+    // Render only the chart when analysisData is provided, no controls.
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={pieDataMap['aggregated'] || []}
+            cx="50%"
+            cy="50%"
+            labelLine={false}
+            outerRadius="80%"
+            fill="#8884d8"
+            dataKey="value"
+            nameKey="name"
+            isAnimationActive={false}
+          >
+            {(pieDataMap['aggregated'] || []).map((entry, index) => (
+              <Cell 
+                key={`cell-${index}`} 
+                fill={PIE_COLORS[index % PIE_COLORS.length]} 
+              />
+            ))}
+          </Pie>
+          <RechartsTooltip content={<CustomTooltipContent />} />
+          <Legend content={renderCustomLegend} />
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  }
 
   if (schemas.length === 0) {
     return <div className="p-4 text-center text-muted-foreground">No annotation schemas available to build a chart.</div>;

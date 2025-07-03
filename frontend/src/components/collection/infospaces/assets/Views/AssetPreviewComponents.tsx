@@ -40,7 +40,8 @@ export const CompactWebPreview: React.FC<CompactWebPreviewProps> = ({ asset, cla
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch media: ${response.status} ${response.statusText}`);
+        console.warn(`Failed to fetch media: ${response.status} ${response.statusText}`);
+        return null;
       }
 
       const blob = await response.blob();
@@ -187,7 +188,8 @@ export const CompactImagePreview: React.FC<CompactImagePreviewProps> = ({ asset,
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch media: ${response.status} ${response.statusText}`);
+        console.warn(`Failed to fetch media: ${response.status} ${response.statusText}`);
+        return null;
       }
 
       const blob = await response.blob();

@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,Message,ReprocessOptions,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRead,AnnotationsOut,AnnotationUpdate,BundleCreate,BundleRead,BundleUpdate,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,Body_filestorage_file_upload,FileUploadResponse,InfospaceCreate,InfospaceRead,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_shareables_export_resource,Body_shareables_import_resource,DatasetPackageSummary,ExportBatchRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
+import type { AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,Message,ReprocessOptions,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRead,AnnotationsOut,AnnotationUpdate,AnalysisAdapterRead,BundleCreate,BundleRead,BundleUpdate,AssetChunkRead,ChunkAssetRequest,ChunkAssetsRequest,ChunkingResultResponse,ChunkingStatsResponse,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,EmbeddingGenerateRequest,EmbeddingModelCreate,EmbeddingModelRead,EmbeddingProvider,EmbeddingSearchRequest,EmbeddingSearchResponse,EmbeddingStatsResponse,Body_filestorage_file_upload,FileUploadResponse,InfospaceCreate,InfospaceRead,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_shareables_export_resource,Body_shareables_import_resource,DatasetPackageSummary,ExportBatchRequest,ExportMixedBatchRequest,ImportFromTokenRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SharedResourcePreview,UpdatePassword,UserCreate,UserCreateOpen,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,Request,MostRelevantEntitiesRequest,SearchType,ArticleResponse } from './models';
 
 export type AssetsData = {
         CreateAsset: {
@@ -329,85 +329,52 @@ runId: number
                 };
     }
 
-export type AnnotationSchemesData = {
-        CreateAnnotationSchema: {
-                    infospaceId: number
-requestBody: AnnotationSchemaCreate
-                    
-                };
-ListAnnotationSchemas: {
-                    /**
- * Include counts of annotations using this schema
- */
-includeCounts?: boolean
-infospaceId: number
-limit?: number
-skip?: number
-                    
-                };
-CreateAnnotationSchema1: {
-                    infospaceId: number
-requestBody: AnnotationSchemaCreate
-                    
-                };
-ListAnnotationSchemas1: {
-                    /**
- * Include counts of annotations using this schema
- */
-includeCounts?: boolean
-infospaceId: number
-limit?: number
-skip?: number
-                    
-                };
-GetAnnotationSchema: {
-                    /**
- * Include counts of annotations using this schema
- */
-includeCounts?: boolean
-infospaceId: number
-schemaId: number
-                    
-                };
-UpdateAnnotationSchema: {
-                    infospaceId: number
-requestBody: AnnotationSchemaUpdate
-schemaId: number
-                    
-                };
-DeleteAnnotationSchema: {
-                    infospaceId: number
-schemaId: number
-                    
-                };
-    }
-
 export type AnnotationSchemasData = {
         CreateAnnotationSchema: {
-                    infospaceId: number
+                    /**
+ * The ID of the infospace
+ */
+infospaceId: number
 requestBody: AnnotationSchemaCreate
                     
                 };
 ListAnnotationSchemas: {
                     /**
+ * Include archived (inactive) schemas
+ */
+includeArchived?: boolean
+/**
  * Include counts of annotations using this schema
  */
 includeCounts?: boolean
+/**
+ * The ID of the infospace
+ */
 infospaceId: number
 limit?: number
 skip?: number
                     
                 };
 CreateAnnotationSchema1: {
-                    infospaceId: number
+                    /**
+ * The ID of the infospace
+ */
+infospaceId: number
 requestBody: AnnotationSchemaCreate
                     
                 };
 ListAnnotationSchemas1: {
                     /**
+ * Include archived (inactive) schemas
+ */
+includeArchived?: boolean
+/**
  * Include counts of annotations using this schema
  */
 includeCounts?: boolean
+/**
+ * The ID of the infospace
+ */
 infospaceId: number
 limit?: number
 skip?: number
@@ -418,17 +385,31 @@ GetAnnotationSchema: {
  * Include counts of annotations using this schema
  */
 includeCounts?: boolean
+/**
+ * The ID of the infospace
+ */
 infospaceId: number
 schemaId: number
                     
                 };
 UpdateAnnotationSchema: {
-                    infospaceId: number
+                    /**
+ * The ID of the infospace
+ */
+infospaceId: number
 requestBody: AnnotationSchemaUpdate
 schemaId: number
                     
                 };
 DeleteAnnotationSchema: {
+                    /**
+ * The ID of the infospace
+ */
+infospaceId: number
+schemaId: number
+                    
+                };
+RestoreAnnotationSchema: {
                     infospaceId: number
 schemaId: number
                     
@@ -554,14 +535,15 @@ RetrySingleAnnotation1: {
 infospaceId: number
                     
                 };
-RetryFailedAnnotations: {
-                    infospaceId: number
-runId: number
-                    
-                };
-RetryFailedAnnotations1: {
-                    infospaceId: number
-runId: number
+    }
+
+export type AnalysisAdaptersData = {
+        ExecuteAnalysisAdapter: {
+                    /**
+ * The registered name of the adapter
+ */
+adapterName: string
+requestBody: Record<string, unknown>
                     
                 };
     }
@@ -603,6 +585,7 @@ bundleId: number
                 };
 GetAssetsInBundle: {
                     bundleId: number
+infospaceId: number
 limit?: number
 skip?: number
                     
@@ -615,6 +598,37 @@ TransferBundle: {
                     bundleId: number
 copy?: boolean
 targetInfospaceId: number
+                    
+                };
+    }
+
+export type ChunkingData = {
+        ChunkSingleAsset: {
+                    assetId: number
+requestBody: ChunkAssetRequest
+                    
+                };
+ChunkMultipleAssets: {
+                    requestBody: ChunkAssetsRequest
+                    
+                };
+GetAssetChunks: {
+                    assetId: number
+                    
+                };
+RemoveAssetChunks: {
+                    assetId: number
+                    
+                };
+GetChunkingStatistics: {
+                    /**
+ * Filter by specific asset
+ */
+assetId?: number | null
+/**
+ * Filter by infospace
+ */
+infospaceId?: number | null
                     
                 };
     }
@@ -702,6 +716,42 @@ infospaceId: number
  * Share token for the dataset
  */
 shareToken: string
+                    
+                };
+    }
+
+export type EmbeddingsData = {
+        ListEmbeddingModels: {
+                    /**
+ * Only return active models
+ */
+activeOnly?: boolean
+                    
+                };
+CreateEmbeddingModel: {
+                    requestBody: EmbeddingModelCreate
+                    
+                };
+GetEmbeddingModelStats: {
+                    modelId: number
+                    
+                };
+GenerateEmbeddings: {
+                    requestBody: EmbeddingGenerateRequest
+                    
+                };
+SimilaritySearch: {
+                    requestBody: EmbeddingSearchRequest
+                    
+                };
+EmbedText: {
+                    modelName: string
+provider: EmbeddingProvider
+text: string
+                    
+                };
+DeactivateEmbeddingModel: {
+                    modelId: number
                     
                 };
     }
@@ -860,6 +910,10 @@ AccessSharedResource: {
                     token: string
                     
                 };
+ViewSharedResource: {
+                    token: string
+                    
+                };
 GetSharingStats: {
                     infospaceId: number
                     
@@ -879,8 +933,32 @@ ExportResourcesBatch: {
 requestBody: ExportBatchRequest
                     
                 };
+ExportMixedBatch: {
+                    infospaceId: number
+requestBody: ExportMixedBatchRequest
+                    
+                };
+StreamSharedAssetFile: {
+                    assetId: number
+token: string
+                    
+                };
+DownloadSharedBundle: {
+                    token: string
+                    
+                };
+DownloadSharedAssetFile: {
+                    assetId: number
+token: string
+                    
+                };
 ViewDatasetPackageSummary: {
                     token: string
+                    
+                };
+ImportResourceFromToken: {
+                    requestBody: ImportFromTokenRequest
+token: string
                     
                 };
     }
@@ -2615,201 +2693,6 @@ requestBody,
 
 }
 
-export class AnnotationSchemesService {
-
-	/**
-	 * Create Annotation Schema
-	 * Create a new Annotation Schema.
-	 * @returns AnnotationSchemaRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createAnnotationSchema(data: AnnotationSchemesData['CreateAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
-		const {
-infospaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
-			path: {
-				infospace_id: infospaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Annotation Schemas
-	 * Retrieve Annotation Schemas for the infospace.
-	 * @returns AnnotationSchemasOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listAnnotationSchemas(data: AnnotationSchemesData['ListAnnotationSchemas']): CancelablePromise<AnnotationSchemasOut> {
-		const {
-infospaceId,
-skip = 0,
-limit = 100,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
-			path: {
-				infospace_id: infospaceId
-			},
-			query: {
-				skip, limit, include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Create Annotation Schema
-	 * Create a new Annotation Schema.
-	 * @returns AnnotationSchemaRead Successful Response
-	 * @throws ApiError
-	 */
-	public static createAnnotationSchema1(data: AnnotationSchemesData['CreateAnnotationSchema1']): CancelablePromise<AnnotationSchemaRead> {
-		const {
-infospaceId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
-			path: {
-				infospace_id: infospaceId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * List Annotation Schemas
-	 * Retrieve Annotation Schemas for the infospace.
-	 * @returns AnnotationSchemasOut Successful Response
-	 * @throws ApiError
-	 */
-	public static listAnnotationSchemas1(data: AnnotationSchemesData['ListAnnotationSchemas1']): CancelablePromise<AnnotationSchemasOut> {
-		const {
-infospaceId,
-skip = 0,
-limit = 100,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
-			path: {
-				infospace_id: infospaceId
-			},
-			query: {
-				skip, limit, include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Annotation Schema
-	 * Retrieve a specific Annotation Schema by its ID.
-	 * @returns AnnotationSchemaRead Successful Response
-	 * @throws ApiError
-	 */
-	public static getAnnotationSchema(data: AnnotationSchemesData['GetAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
-		const {
-infospaceId,
-schemaId,
-includeCounts = true,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
-			path: {
-				infospace_id: infospaceId, schema_id: schemaId
-			},
-			query: {
-				include_counts: includeCounts
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Update Annotation Schema
-	 * Update an Annotation Schema.
-	 * @returns AnnotationSchemaRead Successful Response
-	 * @throws ApiError
-	 */
-	public static updateAnnotationSchema(data: AnnotationSchemesData['UpdateAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
-		const {
-infospaceId,
-schemaId,
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'PATCH',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
-			path: {
-				infospace_id: infospaceId, schema_id: schemaId
-			},
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Delete Annotation Schema
-	 * Delete an annotation schema.
- * 
- * Args:
- * current_user: The current user
- * infospace_id: ID of the infospace
- * schema_id: ID of the schema to delete
- * session: Database session
- * 
- * Raises:
- * HTTPException: If schema not found or user lacks access
-	 * @returns void Successful Response
-	 * @throws ApiError
-	 */
-	public static deleteAnnotationSchema(data: AnnotationSchemesData['DeleteAnnotationSchema']): CancelablePromise<void> {
-		const {
-infospaceId,
-schemaId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'DELETE',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
-			path: {
-				infospace_id: infospaceId, schema_id: schemaId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
 export class AnnotationSchemasService {
 
 	/**
@@ -2825,7 +2708,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -2849,15 +2732,16 @@ infospaceId,
 skip = 0,
 limit = 100,
 includeCounts = true,
+includeArchived = false,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/',
 			path: {
 				infospace_id: infospaceId
 			},
 			query: {
-				skip, limit, include_counts: includeCounts
+				skip, limit, include_counts: includeCounts, include_archived: includeArchived
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2878,7 +2762,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -2902,15 +2786,16 @@ infospaceId,
 skip = 0,
 limit = 100,
 includeCounts = true,
+includeArchived = false,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas',
 			path: {
 				infospace_id: infospaceId
 			},
 			query: {
-				skip, limit, include_counts: includeCounts
+				skip, limit, include_counts: includeCounts, include_archived: includeArchived
 			},
 			errors: {
 				422: `Validation Error`,
@@ -2932,7 +2817,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
 			path: {
 				infospace_id: infospaceId, schema_id: schemaId
 			},
@@ -2959,7 +2844,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'PATCH',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
 			path: {
 				infospace_id: infospaceId, schema_id: schemaId
 			},
@@ -2973,27 +2858,42 @@ requestBody,
 
 	/**
 	 * Delete Annotation Schema
-	 * Delete an annotation schema.
- * 
- * Args:
- * current_user: The current user
- * infospace_id: ID of the infospace
- * schema_id: ID of the schema to delete
- * session: Database session
- * 
- * Raises:
- * HTTPException: If schema not found or user lacks access
-	 * @returns void Successful Response
+	 * Archive an annotation schema by setting it to inactive (soft delete).
+ * This is a non-destructive operation.
+	 * @returns AnnotationSchemaRead Successful Response
 	 * @throws ApiError
 	 */
-	public static deleteAnnotationSchema(data: AnnotationSchemasData['DeleteAnnotationSchema']): CancelablePromise<void> {
+	public static deleteAnnotationSchema(data: AnnotationSchemasData['DeleteAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
 		const {
 infospaceId,
 schemaId,
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
-			url: '/api/v1/annotation_schemes/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
+			path: {
+				infospace_id: infospaceId, schema_id: schemaId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Restore Annotation Schema
+	 * Restores an archived (soft-deleted) annotation schema.
+	 * @returns AnnotationSchemaRead Successful Response
+	 * @throws ApiError
+	 */
+	public static restoreAnnotationSchema(data: AnnotationSchemasData['RestoreAnnotationSchema']): CancelablePromise<AnnotationSchemaRead> {
+		const {
+infospaceId,
+schemaId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}/restore',
 			path: {
 				infospace_id: infospaceId, schema_id: schemaId
 			},
@@ -3521,46 +3421,41 @@ annotationId,
 		});
 	}
 
+}
+
+export class AnalysisAdaptersService {
+
 	/**
-	 * Retry Failed Annotations
-	 * Triggers a retry of all failed annotations in a run.
-	 * @returns Message Successful Response
+	 * List Analysis Adapters
+	 * List all active and available analysis adapters.
+	 * @returns AnalysisAdapterRead Successful Response
 	 * @throws ApiError
 	 */
-	public static retryFailedAnnotations(data: AnnotationsData['RetryFailedAnnotations']): CancelablePromise<Message> {
-		const {
-infospaceId,
-runId,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/retry_failed',
-			path: {
-				infospace_id: infospaceId, run_id: runId
-			},
-			errors: {
-				422: `Validation Error`,
-			},
+	public static listAnalysisAdapters(): CancelablePromise<Array<AnalysisAdapterRead>> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/analysis/analysis/adapters',
 		});
 	}
 
 	/**
-	 * Retry Failed Annotations
-	 * Triggers a retry of all failed annotations in a run.
-	 * @returns Message Successful Response
+	 * Execute Analysis Adapter
+	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static retryFailedAnnotations1(data: AnnotationsData['RetryFailedAnnotations1']): CancelablePromise<Message> {
+	public static executeAnalysisAdapter(data: AnalysisAdaptersData['ExecuteAnalysisAdapter']): CancelablePromise<Record<string, unknown>> {
 		const {
-infospaceId,
-runId,
+adapterName,
+requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/retry_failed',
+			url: '/api/v1/analysis/analysis/{adapter_name}/execute',
 			path: {
-				infospace_id: infospaceId, run_id: runId
+				adapter_name: adapterName
 			},
+			body: requestBody,
+			mediaType: 'application/json',
 			errors: {
 				422: `Validation Error`,
 			},
@@ -3740,21 +3635,22 @@ assetId,
 
 	/**
 	 * Get Assets In Bundle
-	 * Get assets for a bundle.
+	 * Get all assets within a specific bundle.
 	 * @returns AssetRead Successful Response
 	 * @throws ApiError
 	 */
 	public static getAssetsInBundle(data: BundlesData['GetAssetsInBundle']): CancelablePromise<Array<AssetRead>> {
 		const {
 bundleId,
+infospaceId,
 skip = 0,
 limit = 100,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/bundles/bundles/{bundle_id}/assets',
+			url: '/api/v1/bundles/infospaces/{infospace_id}/bundles/{bundle_id}/assets',
 			path: {
-				bundle_id: bundleId
+				bundle_id: bundleId, infospace_id: infospaceId
 			},
 			query: {
 				skip, limit
@@ -3807,6 +3703,123 @@ copy = true,
 			},
 			query: {
 				target_infospace_id: targetInfospaceId, copy
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class ChunkingService {
+
+	/**
+	 * Chunk Single Asset
+	 * Chunk a single asset into text chunks.
+	 * @returns ChunkingResultResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static chunkSingleAsset(data: ChunkingData['ChunkSingleAsset']): CancelablePromise<ChunkingResultResponse> {
+		const {
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/chunking/assets/{asset_id}/chunk',
+			path: {
+				asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Chunk Multiple Assets
+	 * Chunk multiple assets based on filters.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static chunkMultipleAssets(data: ChunkingData['ChunkMultipleAssets']): CancelablePromise<Record<string, unknown>> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/chunking/assets/chunk-batch',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Asset Chunks
+	 * Get all chunks for a specific asset.
+	 * @returns AssetChunkRead Successful Response
+	 * @throws ApiError
+	 */
+	public static getAssetChunks(data: ChunkingData['GetAssetChunks']): CancelablePromise<Array<AssetChunkRead>> {
+		const {
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/chunking/assets/{asset_id}/chunks',
+			path: {
+				asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Remove Asset Chunks
+	 * Remove all chunks for an asset.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static removeAssetChunks(data: ChunkingData['RemoveAssetChunks']): CancelablePromise<unknown> {
+		const {
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/chunking/assets/{asset_id}/chunks',
+			path: {
+				asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Chunking Statistics
+	 * Get chunking statistics.
+	 * @returns ChunkingStatsResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static getChunkingStatistics(data: ChunkingData['GetChunkingStatistics'] = {}): CancelablePromise<ChunkingStatsResponse> {
+		const {
+assetId,
+infospaceId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/chunking/stats',
+			query: {
+				asset_id: assetId, infospace_id: infospaceId
 			},
 			errors: {
 				422: `Validation Error`,
@@ -4075,6 +4088,176 @@ conflictStrategy = 'skip',
 			},
 			query: {
 				share_token: shareToken, include_content: includeContent, include_results: includeResults, conflict_strategy: conflictStrategy
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
+export class EmbeddingsService {
+
+	/**
+	 * List Embedding Models
+	 * List all available embedding models.
+	 * @returns EmbeddingModelRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listEmbeddingModels(data: EmbeddingsData['ListEmbeddingModels'] = {}): CancelablePromise<Array<EmbeddingModelRead>> {
+		const {
+activeOnly = true,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/embeddings/models',
+			query: {
+				active_only: activeOnly
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Embedding Model
+	 * Create a new embedding model.
+	 * @returns EmbeddingModelRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createEmbeddingModel(data: EmbeddingsData['CreateEmbeddingModel']): CancelablePromise<EmbeddingModelRead> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/embeddings/models',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Available Models
+	 * Get available models from the current embedding provider.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getAvailableModels(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/embeddings/models/available',
+		});
+	}
+
+	/**
+	 * Get Embedding Model Stats
+	 * Get statistics for an embedding model.
+	 * @returns EmbeddingStatsResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static getEmbeddingModelStats(data: EmbeddingsData['GetEmbeddingModelStats']): CancelablePromise<EmbeddingStatsResponse> {
+		const {
+modelId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/embeddings/models/{model_id}/stats',
+			path: {
+				model_id: modelId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Generate Embeddings
+	 * Generate embeddings for a list of asset chunks.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static generateEmbeddings(data: EmbeddingsData['GenerateEmbeddings']): CancelablePromise<unknown> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/embeddings/generate',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Similarity Search
+	 * Perform similarity search using embeddings.
+	 * @returns EmbeddingSearchResponse Successful Response
+	 * @throws ApiError
+	 */
+	public static similaritySearch(data: EmbeddingsData['SimilaritySearch']): CancelablePromise<EmbeddingSearchResponse> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/embeddings/search',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Embed Text
+	 * Generate embedding for a single text (utility endpoint).
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static embedText(data: EmbeddingsData['EmbedText']): CancelablePromise<unknown> {
+		const {
+text,
+modelName,
+provider,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/embeddings/embed-text',
+			query: {
+				text, model_name: modelName, provider
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Deactivate Embedding Model
+	 * Deactivate an embedding model (soft delete).
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static deactivateEmbeddingModel(data: EmbeddingsData['DeactivateEmbeddingModel']): CancelablePromise<unknown> {
+		const {
+modelId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'DELETE',
+			url: '/api/v1/embeddings/models/{model_id}',
+			path: {
+				model_id: modelId
 			},
 			errors: {
 				422: `Validation Error`,
@@ -4753,7 +4936,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/shareables/shareables/{infospace_id}/links',
+			url: '/api/v1/shareables/{infospace_id}/links',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -4779,7 +4962,7 @@ resourceId,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/shareables/shareables/{infospace_id}/links',
+			url: '/api/v1/shareables/{infospace_id}/links',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -4804,7 +4987,7 @@ token,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/shareables/shareables/links/{token}',
+			url: '/api/v1/shareables/links/{token}',
 			path: {
 				token
 			},
@@ -4827,7 +5010,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'PUT',
-			url: '/api/v1/shareables/shareables/links/{link_id}',
+			url: '/api/v1/shareables/links/{link_id}',
 			path: {
 				link_id: linkId
 			},
@@ -4851,7 +5034,7 @@ linkId,
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
-			url: '/api/v1/shareables/shareables/links/{link_id}',
+			url: '/api/v1/shareables/links/{link_id}',
 			path: {
 				link_id: linkId
 			},
@@ -4873,7 +5056,30 @@ token,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/shareables/shareables/access/{token}',
+			url: '/api/v1/shareables/access/{token}',
+			path: {
+				token
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * View Shared Resource
+	 * Provides a read-only, public view of a shared resource (Asset or Bundle).
+ * This endpoint is unauthenticated and relies on the link's validity.
+	 * @returns SharedResourcePreview Successful Response
+	 * @throws ApiError
+	 */
+	public static viewSharedResource(data: ShareablesData['ViewSharedResource']): CancelablePromise<SharedResourcePreview> {
+		const {
+token,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/view/{token}',
 			path: {
 				token
 			},
@@ -4895,7 +5101,7 @@ infospaceId,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/shareables/shareables/{infospace_id}/stats',
+			url: '/api/v1/shareables/{infospace_id}/stats',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -4919,7 +5125,7 @@ formData,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/shareables/shareables/{infospace_id}/export',
+			url: '/api/v1/shareables/{infospace_id}/export',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -4944,7 +5150,7 @@ formData,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/shareables/shareables/import/{target_infospace_id}',
+			url: '/api/v1/shareables/import/{target_infospace_id}',
 			path: {
 				target_infospace_id: targetInfospaceId
 			},
@@ -4969,7 +5175,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/shareables/shareables/{infospace_id}/export-batch',
+			url: '/api/v1/shareables/export-batch/{infospace_id}',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -4980,6 +5186,102 @@ requestBody,
 				403: `Forbidden (e.g., permission denied for one or more resources)`,
 				422: `Validation Error`,
 				500: `Internal Server Error`,
+			},
+		});
+	}
+
+	/**
+	 * Export Mixed Batch
+	 * Export a mix of assets and bundles to a single ZIP archive.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static exportMixedBatch(data: ShareablesData['ExportMixedBatch']): CancelablePromise<any> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/export-mixed-batch/{infospace_id}',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Stream Shared Asset File
+	 * Stream the file blob associated with a publicly shared asset.
+ * Access is validated via the share token.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static streamSharedAssetFile(data: ShareablesData['StreamSharedAssetFile']): CancelablePromise<unknown> {
+		const {
+token,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/stream/{token}/{asset_id}',
+			path: {
+				token, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Download Shared Bundle
+	 * Download all assets within a publicly shared bundle as a ZIP archive.
+ * Access is validated via the share token.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static downloadSharedBundle(data: ShareablesData['DownloadSharedBundle']): CancelablePromise<any> {
+		const {
+token,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/download-bundle/{token}',
+			path: {
+				token
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Download Shared Asset File
+	 * Download the file blob associated with a publicly shared asset.
+ * Access is validated via the share token.
+	 * @returns any Successful Response
+	 * @throws ApiError
+	 */
+	public static downloadSharedAssetFile(data: ShareablesData['DownloadSharedAssetFile']): CancelablePromise<any> {
+		const {
+token,
+assetId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/shareables/download/{token}/{asset_id}',
+			path: {
+				token, asset_id: assetId
+			},
+			errors: {
+				422: `Validation Error`,
 			},
 		});
 	}
@@ -4997,10 +5299,35 @@ token,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/shareables/shareables/view_dataset_package_summary/{token}',
+			url: '/api/v1/shareables/view_dataset_package_summary/{token}',
 			path: {
 				token
 			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Import Resource From Token
+	 * Import a shared resource into the current user's specified infospace.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static importResourceFromToken(data: ShareablesData['ImportResourceFromToken']): CancelablePromise<unknown> {
+		const {
+token,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/shareables/import-from-token/{token}',
+			path: {
+				token
+			},
+			body: requestBody,
+			mediaType: 'application/json',
 			errors: {
 				422: `Validation Error`,
 			},
@@ -6211,7 +6538,7 @@ export class ScoresService {
 		const {
 entity,
 timeframeFrom = '2000-01-01',
-timeframeTo = '2025-06-08',
+timeframeTo = '2025-06-25',
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',

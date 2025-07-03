@@ -1,14 +1,14 @@
 import { create } from 'zustand';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 // import { useDocumentStore } from '@/zustand_stores/storeDocuments'; // Replaced with DataSource store
-import { useDataSourceStore } from '@/zustand_stores/storeAssets'; // Import DataSource store
+import { useAssetStore } from '@/zustand_stores/storeAssets'; // Import Asset store
 import { CoreContentModel } from '@/lib/content';
-import { DataSourceType } from '@/client/models'; // Import DataSourceType
+import { AssetKind } from '@/client/models';
 import { toast } from '@/components/ui/use-toast';
 
 
 // --- Redefine State for DataSource-based Bookmarking --- //
-// We no longer store bookmarks locally. The existence of a corresponding DataSource
+// We no longer store bookmarks locally. The existence of a corresponding Asset/DataSource
 // indicates a bookmark. We track pending operations.
 
 type BookmarkState = {
@@ -22,23 +22,17 @@ type BookmarkState = {
   isOperationPending: (identifier: string) => 'add' | 'remove' | false;
 };
 
-// Helper to find DataSource by URL (or other identifier) - might need refinement
-// This might be inefficient if there are many DataSources.
-// Consider adding a backend endpoint to find DataSource by origin URL.
-const findDataSourceByIdentifier = (identifier: string, dataSources: any[]): number | null => {
-  const found = dataSources.find(ds => {
-    // Check origin_details for URL or text content match
-    if (ds.type === "url_list" || ds.type === "text_block") {
-      // Assuming the identifier is the URL for URL_LIST
-      if (ds.type === "url_list" && Array.isArray(ds.origin_details?.urls) && ds.origin_details.urls.includes(identifier)) {
-        return true;
-      }
-      // Assuming the identifier is the text content hash or similar for TEXT_BLOCK
-      // This part needs a reliable way to identify the text block source.
-      // For now, let's focus on URL based identification.
-      // if (ds.type === DataSourceType.TEXT_BLOCK && ds.origin_details?.original_hash === identifier) return true;
+// Helper to find Asset by URL (or other identifier)
+const findAssetByIdentifier = (identifier: string, assets: any[]): number | null => {
+  const found = assets.find(asset => {
+    // Check for URL match in source_identifier or source_metadata
+    if (asset.source_identifier === identifier) {
+      return true;
     }
-    // Add logic for other types if needed
+    if (asset.source_metadata?.url === identifier) {
+      return true;
+    }
+    // Add more robust checks if necessary
     return false;
   });
   return found ? found.id : null;
@@ -49,7 +43,7 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
   pendingOperations: {},
 
   addBookmark: async (item, InfospaceId) => {
-    const identifier = item.url; // Use URL as the primary identifier for now
+    const identifier = item.url; // Use URL as the primary identifier
     if (!identifier) {
       console.error('Cannot add bookmark: Missing URL identifier.');
       toast({ title: "Error", description: "Cannot bookmark item without a URL.", variant: "destructive" });
@@ -59,50 +53,26 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
     set((state) => ({ pendingOperations: { ...state.pendingOperations, [identifier]: 'add' } }));
 
     try {
-      const { createDataSource } = useDataSourceStore.getState();
+      const { createAsset } = useAssetStore.getState();
 
-      // Determine DataSource Type and prepare origin_details
-      let dataSourceType: DataSourceType;
-      let originDetails: Record<string, any> = {};
-
-      if (item.url) {
-        dataSourceType = "url_list";
-        originDetails = { urls: [item.url] };
-      } else if (item.text_content) {
-        // If no URL but text content exists, treat as TEXT_BLOCK
-        dataSourceType = "text_block";
-        originDetails = { text_content: item.text_content };
-        // TODO: Consider adding a hash or other unique identifier for text blocks
-      } else {
-        throw new Error('Cannot determine DataSource type: Requires URL or text_content.');
-      }
-
-      // Prepare FormData for createDataSource
-      // Note: The API expects FormData fields, not a single formData object
+      // We are creating an asset of kind 'web' when bookmarking a URL
       const formData = new FormData();
-      formData.append('name', item.title || `Imported Item - ${new Date().toISOString()}`);
-      formData.append('type', dataSourceType);
-      formData.append('origin_details', JSON.stringify(originDetails));
-      // No file is uploaded in this case
+      formData.append('title', item.title || `Bookmarked: ${identifier}`);
+      formData.append('kind', 'web');
+      formData.append('source_identifier', identifier);
 
-      // We need the InfospaceId for the API call, but createDataSource in the store
-      // currently reads it from useInfospaceStore.getState(). We might need to adjust
-      // createDataSource or ensure the active Infospace is correctly set.
-      // Assuming createDataSource handles the Infospace context internally for now.
-      const newDataSource = await createDataSource(formData);
+      const result = await createAsset(formData);
 
-      if (newDataSource) {
-        console.log('Bookmark added as DataSource:', newDataSource);
+      if (result?.assets && result.assets.length > 0) {
+        console.log('Bookmark added as Asset:', result.assets[0]);
         toast({ title: "Item Imported", description: `"${item.title || identifier}" imported successfully.`, variant: "default" });
       } else {
-        // createDataSource should throw or return null on failure
-        throw new Error('Failed to create DataSource for bookmark.');
+        throw new Error('Failed to create Asset for bookmark.');
       }
 
     } catch (error) {
-      console.error('Error adding bookmark as DataSource:', error);
+      console.error('Error adding bookmark as Asset:', error);
       toast({ title: "Import Failed", description: error instanceof Error ? error.message : "Could not import item.", variant: "destructive" });
-      // Rethrow or handle as needed
     } finally {
       set((state) => {
         const newPending = { ...state.pendingOperations };
@@ -121,40 +91,31 @@ export const useBookMarkStore = create<BookmarkState>((set, get) => ({
     set((state) => ({ pendingOperations: { ...state.pendingOperations, [identifier]: 'remove' } }));
 
     try {
-      // Get DataSources for the current Infospace to find the one to delete
-      // This relies on useDataSourceStore having the current list
-      const { dataSources, deleteDataSource } = useDataSourceStore.getState();
+      const { assets, deleteAsset, fetchAssets } = useAssetStore.getState();
       const { activeInfospace } = useInfospaceStore.getState();
 
-      // Ensure we are operating within the correct Infospace context
       if (!activeInfospace || activeInfospace.id !== InfospaceId) {
         throw new Error('Infospace context mismatch or missing active Infospace.');
       }
-
-      const dataSourceIdToDelete = findDataSourceByIdentifier(identifier, dataSources);
-
-      if (!dataSourceIdToDelete) {
-        // If not found locally, maybe it exists but wasn't fetched?
-        // For now, assume local state is sufficient or deletion fails gracefully.
-        console.warn(`DataSource for identifier "${identifier}" not found in local state.`);
-        toast({ title: "Not Found", description: "Could not find the imported item to remove.", variant: "default" });
-         // Still remove from pending ops
-         set((state) => {
-           const newPending = { ...state.pendingOperations };
-           delete newPending[identifier];
-           return { pendingOperations: newPending };
-         });
-        return; 
+      
+      // Ensure assets are loaded before trying to find one
+      if (assets.length === 0) {
+        await fetchAssets();
       }
 
-      // Call deleteDataSource from the store
-      await deleteDataSource(dataSourceIdToDelete);
+      const assetIdToDelete = findAssetByIdentifier(identifier, useAssetStore.getState().assets);
 
-      console.log(`DataSource ${dataSourceIdToDelete} deleted for bookmark identifier ${identifier}`);
-      toast({ title: "Item Removed", description: `Item removed successfully.`, variant: "default" });
+      if (!assetIdToDelete) {
+        console.warn(`Asset for identifier "${identifier}" not found in local state.`);
+        toast({ title: "Not Found", description: "Could not find the imported item to remove.", variant: "default" });
+      } else {
+        await deleteAsset(assetIdToDelete);
+        console.log(`Asset ${assetIdToDelete} deleted for bookmark identifier ${identifier}`);
+        toast({ title: "Item Removed", description: `Item removed successfully.`, variant: "default" });
+      }
 
     } catch (error) {
-      console.error(`Error removing bookmark (DataSource) for identifier ${identifier}:`, error);
+      console.error(`Error removing bookmark (Asset) for identifier ${identifier}:`, error);
        toast({ title: "Removal Failed", description: error instanceof Error ? error.message : "Could not remove item.", variant: "destructive" });
     } finally {
       set((state) => {

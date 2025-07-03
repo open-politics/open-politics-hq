@@ -1,94 +1,180 @@
 "use client";
 
 import { useAnnotationRunStore } from "@/zustand_stores/useAnnotationRunStore";
-import { CreateAnnotationRun } from "@/components/collection/infospaces/annotation/CreateAnnotationRun";
-import { AnnotationRunList } from "@/components/collection/infospaces/annotation/AnnotationRunList";
-import { AnnotationRunDetails } from "@/components/collection/infospaces/annotation/AnnotationRunDetails";
-import { useEffect, useState } from "react";
-import { AnnotationRunRead, AnnotationRunCreate } from "@/client/models";
+import AnnotationRunner from "@/components/collection/infospaces/annotation/AnnotationRunner";
+import AnnotationRunnerDock from "@/components/collection/infospaces/annotation/AnnotationRunnerDock";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { AnnotationRunRead, AnnotationRunCreate, AnnotationSchemaRead, AssetRead, AnnotationRead } from "@/client/models";
 import { toast } from "sonner";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
+import { useAnnotationSystem } from "@/hooks/useAnnotationSystem";
+import { useAssetStore } from "@/zustand_stores/storeAssets";
+import { AnnotationsService } from "@/client/services";
+import { adaptEnhancedAnnotationToFormattedAnnotation } from "@/lib/annotations/adapters";
+import { FormattedAnnotation, AnnotationRunParams } from "@/lib/annotations/types";
+import { motion } from "framer-motion";
 
 export default function AnnotationRunnerPage() {
+  const { activeInfospace } = useInfospaceStore();
+  
   const {
     runs,
-    isLoading,
-    error,
-    actions: { fetchAnnotationRuns, addAnnotationRun, deleteAnnotationRun },
-  } = useAnnotationRunStore();
-  
-  const { activeInfospace } = useInfospaceStore();
-  const [activeRun, setActiveRun] = useState<AnnotationRunRead | null>(null);
+    loadRuns,
+    deleteRun,
+    activeRun,
+    setActiveRun,
+    isLoadingRuns,
+    createRun,
+    isCreatingRun,
+    error: runError,
+    schemas,
+    loadSchemas,
+  } = useAnnotationSystem({ autoLoadRuns: true });
+
+  const { assets, fetchAssets: fetchAllAssets } = useAssetStore();
+
+  const [runResults, setRunResults] = useState<FormattedAnnotation[]>([]);
+  const [isLoadingResults, setIsLoadingResults] = useState(false);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (activeInfospace?.id) {
-      fetchAnnotationRuns(activeInfospace.id);
+      loadSchemas();
+      fetchAllAssets();
     }
-  }, [activeInfospace, fetchAnnotationRuns]);
+  }, [activeInfospace?.id, loadSchemas, fetchAllAssets]);
 
-  const handleCreateRun = async (runData: Omit<AnnotationRunCreate, 'schema_ids' | 'target_asset_ids' | 'target_bundle_id'>) => {
-    if (!activeInfospace?.id) {
-        toast.error("Cannot create run without an active infospace context.");
-        return;
+  const fetchRunResults = useCallback(async (runId: number) => {
+    if (!activeInfospace?.id) return;
+    setIsLoadingResults(true);
+    try {
+        const response = await AnnotationsService.getRunResults({
+            infospaceId: activeInfospace.id,
+            runId: runId,
+            limit: 5000,
+        });
+        const formatted = response.map(r => adaptEnhancedAnnotationToFormattedAnnotation(r));
+        setRunResults(formatted);
+    } catch (e: any) {
+        toast.error("Failed to load run results.", { description: e.body?.detail || e.message });
+    } finally {
+        setIsLoadingResults(false);
     }
-    // This is a placeholder for a more complex run creation logic
-    const placeholderRunData: AnnotationRunCreate = {
-        ...runData,
-        schema_ids: [],
-        target_asset_ids: [],
+  }, [activeInfospace?.id]);
+
+  useEffect(() => {
+    if (activeRun?.id) {
+      fetchRunResults(activeRun.id);
+    } else {
+      setRunResults([]);
     }
-    const newRun = await addAnnotationRun(activeInfospace.id, placeholderRunData);
+  }, [activeRun?.id, fetchRunResults]);
+  
+  useEffect(() => {
+    const checkStatus = async () => {
+      if (activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
+        console.log(`Polling status for run ${activeRun.id}... Status: ${activeRun.status}`);
+        // We need to reload the run object itself to get status updates
+        loadRuns(); 
+      } else {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        if(activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
+            fetchRunResults(activeRun.id);
+        }
+      }
+    };
+
+    if (activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
+      if (!pollIntervalRef.current) {
+        pollIntervalRef.current = setInterval(checkStatus, 5000);
+      }
+    } else {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [activeRun, fetchRunResults, loadRuns]);
+
+  const handleSelectRunFromHistory = (runId: number) => {
+    const runToLoad = runs.find(r => r.id === runId);
+    if (runToLoad) {
+      setActiveRun(runToLoad);
+    }
+  };
+
+  const handleCreateRun = async (params: AnnotationRunParams) => {
+    const newRun = await createRun(params);
     if (newRun) {
       setActiveRun(newRun);
     }
   };
 
-  const handleSelectRun = (run: AnnotationRunRead | null) => {
-    setActiveRun(run);
+  const clearActiveRun = () => {
+    setActiveRun(null);
   };
-
-  const handleDeleteRun = (runId: number) => {
-    if (activeInfospace?.id) {
-        deleteAnnotationRun(activeInfospace.id, runId);
-        if(activeRun?.id === runId) {
-            setActiveRun(null);
+  
+  const allSources = useMemo(() => {
+    const sourcesMap = new Map();
+    assets.forEach(asset => {
+        if(asset.source_id && !sourcesMap.has(asset.source_id)) {
+            sourcesMap.set(asset.source_id, {id: asset.source_id, name: `Source ${asset.source_id}`})
         }
-    }
-  };
-
-  const runsArray: AnnotationRunRead[] = Object.values(runs);
-
+    });
+    return Array.from(sourcesMap.values());
+  }, [assets]);
+  
   return (
-    <div className="flex h-full">
-      <div className="w-1/3 border-r p-4 overflow-y-auto">
-        <h2 className="text-lg font-bold mb-4">Annotation Runs</h2>
-        <CreateAnnotationRun
-          isCreating={isLoading}
-          onCreate={handleCreateRun}
+    <div className="flex flex-col h-full bg-background overflow-auto bg-primary-950 relative">
+      {/* Blurred green rectangle background */}
+      <motion.div
+        className="fixed rounded-lg blur-[150px] opacity-30 dark:opacity-15"
+        style={{
+          backgroundColor: 'var(--dot-color-2)',
+          width: '60vw',
+          height: '40vh',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 1,
+          pointerEvents: 'none',
+        }}
+      />
+      
+      <div className="flex-1 pb-40 relative z-10">
+        <AnnotationRunner
+            allRuns={runs}
+            isLoadingRuns={isLoadingRuns}
+            onSelectRun={handleSelectRunFromHistory}
+            allSchemas={schemas}
+            allSources={allSources}
+            activeRun={activeRun}
+            isProcessing={isLoadingResults || activeRun?.status === 'running' || activeRun?.status === 'pending'}
+            results={runResults}
+            assets={assets}
+            onClearRun={clearActiveRun}
+            onRunWithNewAssets={(template) => { /* Logic to be implemented if needed */ }}
         />
-        <AnnotationRunList
-          runs={runsArray}
-          selectedRun={activeRun}
-          onSelectRun={handleSelectRun}
-          onDeleteRun={handleDeleteRun}
-          isLoading={isLoading}
-        />
+        {runError && <p className="text-red-500 mt-4 text-center">{runError}</p>}
       </div>
-      <div className="w-2/3 p-4 overflow-y-auto">
-        {activeRun ? (
-          <AnnotationRunDetails
-            run={{...activeRun, configuration: activeRun.configuration || {}}}
-            isPolling={false} // Polling logic needs to be re-implemented if required
-            onRetry={() => {console.log("Retry not implemented yet")}}
-            isRetrying={false}
-          />
-        ) : (
-          <div className="text-center text-gray-500 mt-8">
-            Select a run to view its details
-          </div>
-        )}
-        {error && <p className="text-red-500 mt-4">{error}</p>}
-      </div>
+      
+      <AnnotationRunnerDock 
+        allAssets={assets}
+        allSchemes={schemas}
+        onCreateRun={handleCreateRun}
+        activeRunId={activeRun?.id || null}
+        isCreatingRun={isCreatingRun}
+        onClearRun={clearActiveRun}
+      />
     </div>
   );
 } 

@@ -157,6 +157,16 @@ class AppSettings(BaseSettings):
     GEOSPATIAL_PROVIDER_TYPE: Literal["opol", "nominatim"] = Field(default="opol", env="GEOSPATIAL_PROVIDER_TYPE")
     NOMINATIM_DOMAIN: Optional[str] = Field(default="nominatim.openstreetmap.org", env="NOMINATIM_DOMAIN")
 
+    # --- Embedding Provider ---
+    EMBEDDING_PROVIDER_TYPE: Literal["ollama", "jina", "openai"] = Field(default="ollama", env="EMBEDDING_PROVIDER_TYPE")
+    # Ollama embedding settings
+    OLLAMA_EMBEDDING_MODEL: str = Field(default="nomic-embed-text", env="OLLAMA_EMBEDDING_MODEL")
+    # Jina AI embedding settings  
+    JINA_API_KEY: Optional[str] = Field(default=None, env="JINA_API_KEY")
+    JINA_EMBEDDING_MODEL: str = Field(default="jina-embeddings-v2-base-en", env="JINA_EMBEDDING_MODEL")
+    # OpenAI embedding settings (for future use)
+    OPENAI_EMBEDDING_MODEL: str = Field(default="text-embedding-ada-002", env="OPENAI_EMBEDDING_MODEL")
+
     # --- Celery / Redis ---
     CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/0", env="CELERY_BROKER_URL")
     CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/0", env="CELERY_RESULT_BACKEND")
