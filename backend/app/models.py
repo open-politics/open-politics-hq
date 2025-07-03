@@ -1,4 +1,4 @@
-"""OSINT Kernel – canonical data model (models.py)
+""" Core Model
 =================================================
 """
 
@@ -71,12 +71,6 @@ class RunStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     COMPLETED_WITH_ERRORS = "completed_with_errors"
-    MONITORING = "monitoring"
-
-
-class RunMode(str, enum.Enum):
-    ONE_TIME = "one_time"
-    MONITORING = "monitoring"
 
 
 class ResultStatus(str, enum.Enum):
@@ -120,12 +114,6 @@ class SourceStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class ScheduleStatus(str, enum.Enum):
-    ACTIVE = "active"
-    PAUSED = "paused"
-    INACTIVE = "inactive" # Completed for run_once, or manually disabled
-
-
 class ProcessingStatus(str, enum.Enum):
     """Status for asset processing (creating child assets)."""
     READY = "ready"           # No processing needed or completed
@@ -167,6 +155,7 @@ class User(SQLModel, table=True):
     runs: List["AnnotationRun"] = Relationship(back_populates="user")
     annotations: List["Annotation"] = Relationship(back_populates="user")
     sources: List["Source"] = Relationship(back_populates="user")
+    tasks: List["Task"] = Relationship(back_populates="user")
     analysis_adapters_created: List["AnalysisAdapter"] = Relationship(back_populates="creator")
 
 
@@ -215,10 +204,8 @@ class Source(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     name: str
-    kind: str  # search, api, scrape, upload
-    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    schedule: Optional[str] = Field(default=None, description="Cron string or 'run_once'")
-    schedule_status: ScheduleStatus = Field(default=ScheduleStatus.INACTIVE)
+    kind: str  # rss, api, scrape, upload, search
+    details: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
     status: SourceStatus = SourceStatus.PENDING
     source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
@@ -229,14 +216,12 @@ class Source(SQLModel, table=True):
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
-    target_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")
     
     # Import/export lineage
     imported_from_uuid: Optional[str] = Field(default=None, index=True)
-
+    
     infospace: Optional[Infospace] = Relationship(back_populates="sources")
     user: Optional[User] = Relationship(back_populates="sources")
-    target_bundle: Optional["Bundle"] = Relationship(sa_relationship_kwargs={'foreign_keys': '[Source.target_bundle_id]'})
 
     assets: List["Asset"] = Relationship(back_populates="source")
 
@@ -420,10 +405,6 @@ class RunSchemaLink(SQLModel, table=True):
     run_id: Optional[int] = Field(foreign_key="annotationrun.id", primary_key=True)
     schema_id: Optional[int] = Field(foreign_key="annotationschema.id", primary_key=True)
 
-class AnnotationRunSourceLink(SQLModel, table=True):
-    run_id: int = Field(foreign_key="annotationrun.id", primary_key=True)
-    source_id: int = Field(foreign_key="source.id", primary_key=True)
-
 class AnnotationRun(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
@@ -431,12 +412,6 @@ class AnnotationRun(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     status: RunStatus = RunStatus.PENDING
-    
-    # New fields for analysis workbench concept
-    run_mode: RunMode = Field(default=RunMode.ONE_TIME)
-    view_config: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
-    last_processed_timestamp: Optional[datetime] = Field(default=None)
-
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
     started_at: Optional[datetime] = Field(default=None)
@@ -457,7 +432,6 @@ class AnnotationRun(SQLModel, table=True):
     user: Optional[User] = Relationship(back_populates="runs")
 
     target_schemas: List["AnnotationSchema"] = Relationship(link_model=RunSchemaLink)
-    target_sources: List["Source"] = Relationship(link_model=AnnotationRunSourceLink)
     annotations: List["Annotation"] = Relationship(back_populates="run")
 
 # ───────────────────────────────────────────────────────── Annotation Results ──── #
@@ -522,7 +496,33 @@ class Justification(SQLModel, table=True):
         Index("ix_justification_annotation_field", "annotation_id", "field_name"),
     )
 
-# ─────────────────────────────────────────────────────────────── Packages ──── #
+# ─────────────────────────────────────────────────────────────── Tasks ──── #
+
+class Task(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    type: TaskType
+    schedule: str  # cron syntax, or 'on_event:asset_created' etc.
+    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    status: TaskStatus = TaskStatus.PAUSED
+    is_enabled: bool = Field(default=True)
+
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+
+    last_run_at: Optional[datetime] = None
+    last_successful_run_at: Optional[datetime] = None
+    last_run_status: Optional[str] = Field(default=None)
+    last_run_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    consecutive_failure_count: int = Field(default=0)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+
+    infospace: Optional[Infospace] = Relationship(back_populates="tasks")
+    user: Optional[User] = Relationship(back_populates="tasks")
+
+# ───────────────────────────────────────────────────────────── Packages ──── #
 
 class Package(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

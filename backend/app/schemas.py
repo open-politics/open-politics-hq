@@ -23,12 +23,12 @@ from .models import (
     PermissionLevel,
     ResultStatus,
     RunStatus,
-    RunMode,
+    TaskStatus,
+    TaskType,
     ResourceType,
     AnnotationSchemaTargetLevel,
     Modality,
     ProcessingStatus,
-    ScheduleStatus,
 )
 
 # ────────────────────────────────────────────── User & Auth ──── #
@@ -128,26 +128,22 @@ class InfospacesOut(SQLModel):
 class SourceBase(SQLModel):
     name: str
     kind: str
-    configuration: Dict[str, Any] = {}
-    schedule: Optional[str] = None
+    details: Dict[str, Any] = {}
 
 class SourceCreate(SourceBase):
-    target_bundle_id: Optional[int] = None
+    pass
 
 class SourceUpdate(SQLModel):
     name: Optional[str] = None
     kind: Optional[str] = None
-    configuration: Optional[Dict[str, Any]] = None
-    schedule: Optional[str] = None
-    schedule_status: Optional[ScheduleStatus] = None
+    details: Optional[Dict[str, Any]] = None
 
 class SourceRead(SourceBase):
     id: int
     uuid: str
     infospace_id: int
     user_id: int
-    status: str # This is the execution status
-    schedule_status: ScheduleStatus
+    status: str
     created_at: datetime
     updated_at: datetime
     error_message: Optional[str]
@@ -305,14 +301,11 @@ class AnnotationRunBase(SQLModel):
     configuration: Dict[str, Any] = {}
     include_parent_context: bool = False
     context_window: int = 0
-    run_mode: RunMode = RunMode.ONE_TIME
-    view_config: Optional[Dict[str, Any]] = {}
 
 class AnnotationRunCreate(AnnotationRunBase):
     schema_ids: List[int]
     target_asset_ids: Optional[List[int]] = None
     target_bundle_id: Optional[int] = None
-    target_source_ids: Optional[List[int]] = None
 
 class AnnotationRunUpdate(SQLModel):
     name: Optional[str] = None
@@ -320,8 +313,6 @@ class AnnotationRunUpdate(SQLModel):
     configuration: Optional[Dict[str, Any]] = None
     include_parent_context: Optional[bool] = None
     context_window: Optional[int] = None
-    run_mode: Optional[RunMode] = None
-    view_config: Optional[Dict[str, Any]] = None
 
 class AnnotationRunRead(AnnotationRunBase):
     id: int
@@ -336,7 +327,6 @@ class AnnotationRunRead(AnnotationRunBase):
     error_message: Optional[str]
     annotation_count: Optional[int] = None
     schema_ids: Optional[List[int]] = None
-    target_source_ids: Optional[List[int]] = None
 
 class AnnotationRunsOut(SQLModel):
     data: List[AnnotationRunRead]
@@ -395,6 +385,34 @@ class JustificationRead(JustificationBase):
     id: int
     annotation_id: int
     created_at: datetime
+
+# ─────────────────────────────────────────────── Task ──── #
+
+class TaskBase(SQLModel):
+    name: str
+    type: TaskType
+    schedule: str
+    configuration: Dict[str, Any] = {}
+
+class TaskCreate(TaskBase):
+    pass
+
+class TaskUpdate(SQLModel):
+    name: Optional[str] = None
+    type: Optional[TaskType] = None
+    schedule: Optional[str] = None
+    configuration: Optional[Dict[str, Any]] = None
+    status: Optional[TaskStatus] = None
+    is_enabled: Optional[bool] = None
+
+class TaskRead(TaskBase):
+    id: int
+    infospace_id: int
+    status: TaskStatus
+    last_run_at: Optional[datetime]
+    consecutive_failure_count: int
+
+# ─────────────────────────────────────── Search Tasks ──── #
 
 # ───────────────────────────────────────────── Package ──── #
 
@@ -478,6 +496,10 @@ SearchHistoryOut = SearchHistoryRead # Alias for route consistency
 
 class SearchHistoriesOut(SQLModel):
     data: List[SearchHistoryRead]
+    count: int
+
+class TasksOut(SQLModel): # For listing multiple tasks
+    data: List[TaskRead]
     count: int
 
 # --- New Models for Provider Discovery ---
