@@ -342,6 +342,26 @@ class AnnotationService:
         if not run or run.infospace_id != infospace_id:
             raise ValueError("Run not found in this infospace.")
 
+        # DEBUG: Check run's target schemas
+        logger.info(f"DEBUG: Run {run_id} has {len(run.target_schemas) if run.target_schemas else 0} target schemas")
+        if run.target_schemas:
+            for schema in run.target_schemas:
+                logger.info(f"DEBUG: Run {run_id} target schema: ID={schema.id}, Name='{schema.name}'")
+        
+        # DEBUG: Check total annotations in database for this run
+        total_annotations_query = select(func.count(Annotation.id)).where(Annotation.run_id == run_id)
+        total_count = self.session.exec(total_annotations_query).one()
+        logger.info(f"DEBUG: Total annotations in DB for run {run_id}: {total_count}")
+        
+        # DEBUG: Check annotations by schema ID for this run
+        schema_breakdown_query = select(
+            Annotation.schema_id, 
+            func.count(Annotation.id).label('count')
+        ).where(Annotation.run_id == run_id).group_by(Annotation.schema_id)
+        schema_breakdown = self.session.exec(schema_breakdown_query).all()
+        for schema_id, count in schema_breakdown:
+            logger.info(f"DEBUG: Run {run_id} has {count} annotations for schema_id {schema_id}")
+
         query = (
             select(Annotation)
             .where(Annotation.run_id == run_id)
@@ -349,6 +369,8 @@ class AnnotationService:
             .limit(limit)
         )
         annotations = self.session.exec(query).all()
+        
+        logger.info(f"DEBUG: Returning {len(annotations)} annotations for run {run_id}")
         return list(annotations)
     
     def update_annotation(

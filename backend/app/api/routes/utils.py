@@ -164,6 +164,7 @@ async def get_providers() -> ProviderListResponse:
             provider_name="gemini_native",
             models=[
                 ProviderModel(name="gemini-2.5-flash", description="Google's most capable model."),
+                ProviderModel(name="gemini-2.5-flash-lite-preview-06-17", description="A smaller, faster model."),
             ]
         ),
         ProviderInfo(

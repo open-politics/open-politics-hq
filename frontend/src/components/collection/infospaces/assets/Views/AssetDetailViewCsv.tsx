@@ -378,7 +378,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     const columnNames = Object.keys(rowData);
 
     return (
-      <Card className="mt-4 border-primary/50">
+      <Card className="mt-4 border-primary/50 max-w-5xl mx-auto">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2">

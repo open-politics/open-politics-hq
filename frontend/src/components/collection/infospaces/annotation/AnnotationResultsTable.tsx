@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, Fragment, startTransition, useRef } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -27,13 +27,12 @@ import { AnnotationSchemaRead, AnnotationRead, AssetRead } from '@/client/models
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import AssetLink from '../assets/Helper/AssetLink';
 import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';
-import { ResultFilter } from './AnnotationResultFilters';
-import { checkFilterMatch, getTargetKeysForScheme } from '@/lib/annotations/utils';
+import { ResultFilter } from './AnnotationFilterControls';
+import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition } from '@/lib/annotations/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search } from 'lucide-react';
-import { getTargetFieldDefinition } from './AnnotationResultFilters';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal } from 'lucide-react';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -50,10 +49,10 @@ import { Input } from "@/components/ui/input";
 import { DataTable } from "@/components/collection/infospaces/tables/data-table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { AnnotationResultStatus } from '@/lib/annotations/types';
+import { AnnotationResultStatus, FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle } from 'lucide-react';
-import { FormattedAnnotation } from '@/lib/annotations/types';
+import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
@@ -76,6 +75,40 @@ export interface ResultWithSourceInfo extends FormattedAnnotation {
   source_id?: number;
 }
 
+// Time filtering utility function (copied from AnnotationResultsChart.tsx)
+const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
+  if (!timeAxisConfig) return null;
+
+  switch (timeAxisConfig.type) {
+    case 'default':
+      return new Date(result.timestamp);
+    case 'schema':
+      if (result.schema_id === timeAxisConfig.schemaId && timeAxisConfig.fieldKey) {
+        const fieldValue = getAnnotationFieldValue(result.value, timeAxisConfig.fieldKey);
+        if (fieldValue && (typeof fieldValue === 'string' || fieldValue instanceof Date)) {
+          try {
+            return new Date(fieldValue);
+          } catch {
+            return null;
+          }
+        }
+      }
+      return null;
+    case 'event':
+      const asset = assetsMap.get(result.asset_id);
+      if (asset?.event_timestamp) {
+        try {
+          return new Date(asset.event_timestamp);
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    default:
+      return new Date(result.timestamp);
+  }
+};
+
 interface AnnotationResultsTableProps {
   results: ResultWithSourceInfo[];
   schemas: AnnotationSchemaRead[];
@@ -90,6 +123,24 @@ interface AnnotationResultsTableProps {
   retryingResultId?: number | null;
   excludedRecordIds: Set<number>;
   onToggleRecordExclusion: (recordId: number) => void;
+  // NEW: Table configuration settings
+  initialTableConfig?: {
+    columnVisibility?: Record<string, boolean>;
+    sorting?: Array<{ id: string; desc: boolean }>;
+    pagination?: {
+      pageIndex: number;
+      pageSize: number;
+    };
+    globalFilter?: string;
+    expanded?: Record<string, boolean>;
+    selectedFieldsPerScheme?: Record<number, string[]>;
+  };
+  onTableConfigChange?: (config: any) => void;
+  // NEW: Time frame filtering
+  timeAxisConfig?: TimeAxisConfig | null;
+  // NEW: Variable splitting
+  variableSplittingConfig?: VariableSplittingConfig | null;
+  onVariableSplittingChange?: (config: VariableSplittingConfig | null) => void;
 }
 
 // --- UTILITY FUNCTIONS (Keep existing helpers like getHeaderClassName) --- //
@@ -143,21 +194,50 @@ export function AnnotationResultsTable({
   retryingResultId,
   excludedRecordIds,
   onToggleRecordExclusion,
+  initialTableConfig,
+  onTableConfigChange,
+  // NEW props
+  timeAxisConfig = null,
+  variableSplittingConfig = null,
+  onVariableSplittingChange,
 }: AnnotationResultsTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = useState({});
-  const [rowSelection, setRowSelection] = useState({});
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 20,
+  const [sorting, setSorting] = useState<SortingState>(() => {
+    if (initialTableConfig?.sorting) {
+      return initialTableConfig.sorting.map(s => ({ id: s.id, desc: s.desc }));
+    }
+    return [];
   });
-  const [globalFilter, setGlobalFilter] = useState('');
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState(() => {
+    if (initialTableConfig?.columnVisibility) {
+      return initialTableConfig.columnVisibility;
+    }
+    // Initially hide timestamp and source name for better space utilization
+    return {
+      'resultsMap': false, // Hide timestamp by default
+      'sourceName': false, // Hide source name by default
+      'splitValue': false, // Hide split value by default
+    };
+  });
+  const [rowSelection, setRowSelection] = useState({});
+  const [pagination, setPagination] = useState<PaginationState>(() => {
+    if (initialTableConfig?.pagination) {
+      return initialTableConfig.pagination;
+    }
+    return {
+      pageIndex: 0,
+      pageSize: 10, // Start with smaller default for better panel performance
+    };
+  });
+  const [globalFilter, setGlobalFilter] = useState(initialTableConfig?.globalFilter || '');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(initialTableConfig?.expanded || {});
   const { activeInfospace } = useInfospaceStore();
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
 
   const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
+    if (initialTableConfig?.selectedFieldsPerScheme) {
+      return initialTableConfig.selectedFieldsPerScheme;
+    }
     const initialState: Record<number, string[]> = {};
     schemas.forEach(schema => {
         const targetKeys = getTargetKeysForScheme(schema.id, schemas);
@@ -166,23 +246,204 @@ export function AnnotationResultsTable({
     return initialState;
   });
 
+  // Defer state updates to avoid setState during render
   useEffect(() => {
-    setSelectedFieldsPerScheme(prev => {
-      const newState: Record<number, string[]> = {};
-      schemas.forEach(schema => {
-        const targetKeys = getTargetKeysForScheme(schema.id, schemas);
-        const keys = targetKeys.map(tk => tk.key);
-        newState[schema.id] = prev[schema.id] ?? keys;
+    // Use startTransition to defer this update
+    startTransition(() => {
+      setSelectedFieldsPerScheme(prev => {
+        const newState: Record<number, string[]> = {};
+        schemas.forEach(schema => {
+          const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+          const keys = targetKeys.map(tk => tk.key);
+          newState[schema.id] = prev[schema.id] ?? keys;
+        });
+        return newState;
       });
-      return newState;
     });
   }, [schemas]);
 
+  // Track if this is the initial render to avoid calling onTableConfigChange on mount
+  const isInitialRender = useRef(true);
+  const previousConfigRef = useRef<any>(null);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced function to notify parent of config changes
+  const debouncedConfigUpdate = useCallback((config: any) => {
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
+    }
+    
+    updateTimeoutRef.current = setTimeout(() => {
+      if (onTableConfigChange) {
+        onTableConfigChange(config);
+      }
+    }, 500); // Increased debounce to 500ms to reduce rapid updates
+  }, [onTableConfigChange]);
+
+  // Notify parent component when table configuration changes (but not on initial render)
+  useEffect(() => {
+    if (isInitialRender.current) {
+      isInitialRender.current = false;
+      console.log('Table config initial render, storing config');
+      // Store initial config for comparison
+      previousConfigRef.current = {
+        columnVisibility,
+        sorting: sorting.map(s => ({ id: s.id, desc: s.desc })),
+        pagination,
+        globalFilter,
+        expanded,
+        selectedFieldsPerScheme,
+      };
+      return;
+    }
+
+    const config = {
+      columnVisibility,
+      sorting: sorting.map(s => ({ id: s.id, desc: s.desc })),
+      pagination,
+      globalFilter,
+      expanded,
+      selectedFieldsPerScheme,
+    };
+    
+    // Only call if config actually changed (more stable comparison)
+    const prevConfig = previousConfigRef.current;
+    let hasChanged = false;
+    
+    if (!prevConfig) {
+      hasChanged = true;
+    } else {
+      // Check each property more carefully
+      hasChanged = 
+        config.globalFilter !== prevConfig.globalFilter ||
+        config.pagination.pageIndex !== prevConfig.pagination.pageIndex ||
+        config.pagination.pageSize !== prevConfig.pagination.pageSize ||
+        config.sorting.length !== prevConfig.sorting.length ||
+        config.sorting.some((sort, i) => 
+          !prevConfig.sorting[i] || 
+          sort.id !== prevConfig.sorting[i].id || 
+          sort.desc !== prevConfig.sorting[i].desc
+        );
+        
+      // Only check complex objects if basic properties haven't changed
+      if (!hasChanged) {
+        try {
+          hasChanged = 
+            JSON.stringify(config.columnVisibility) !== JSON.stringify(prevConfig.columnVisibility) ||
+            JSON.stringify(config.expanded) !== JSON.stringify(prevConfig.expanded) ||
+            JSON.stringify(config.selectedFieldsPerScheme) !== JSON.stringify(prevConfig.selectedFieldsPerScheme);
+        } catch (error) {
+          // If JSON.stringify fails, assume changed to be safe
+          hasChanged = true;
+        }
+      }
+    }
+
+    if (hasChanged) {
+      previousConfigRef.current = { ...config }; // Deep copy to avoid reference issues
+      debouncedConfigUpdate(config);
+    }
+  }, [columnVisibility, sorting, pagination, globalFilter, expanded, selectedFieldsPerScheme, debouncedConfigUpdate]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (activeInfospace && schemas.length === 0) {
-      refreshSchemasFromHook();
+      // Defer this call to avoid render cycle issues
+      queueMicrotask(() => {
+        refreshSchemasFromHook();
+      });
     }
   }, [activeInfospace, schemas.length, refreshSchemasFromHook]);
+
+  // NEW: Apply time frame filtering and variable splitting
+  const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
+  
+  const timeFilteredResults = useMemo(() => {
+    if (!timeAxisConfig?.timeFrame?.enabled || !timeAxisConfig.timeFrame.startDate || !timeAxisConfig.timeFrame.endDate) {
+      return results;
+    }
+
+    const { startDate, endDate } = timeAxisConfig.timeFrame;
+    
+    // Ensure startDate and endDate are Date objects
+    const startDateObj = startDate instanceof Date ? startDate : new Date(startDate);
+    const endDateObj = endDate instanceof Date ? endDate : new Date(endDate);
+    
+    // Validate that the dates are valid
+    if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
+      console.warn('Invalid date range in timeAxisConfig:', { startDate, endDate });
+      return results; // Skip time filtering if dates are invalid
+    }
+    
+    // Create assetsMap locally to avoid dependency instability
+    const localAssetsMap = new Map(assets.map(asset => [asset.id, asset]));
+    
+    return results.filter(result => {
+      const timestamp = getTimestamp(result, localAssetsMap, timeAxisConfig);
+      if (!timestamp) return false;
+      
+      return timestamp >= startDateObj && timestamp <= endDateObj;
+    });
+  }, [
+    results, 
+    timeAxisConfig?.timeFrame?.enabled,
+    // Safe handling of date dependencies - convert to timestamps or use string representation
+    timeAxisConfig?.timeFrame?.startDate instanceof Date ? timeAxisConfig.timeFrame.startDate.getTime() : String(timeAxisConfig?.timeFrame?.startDate || ''),
+    timeAxisConfig?.timeFrame?.endDate instanceof Date ? timeAxisConfig.timeFrame.endDate.getTime() : String(timeAxisConfig?.timeFrame?.endDate || ''),
+    timeAxisConfig?.type,
+    timeAxisConfig?.schemaId,
+    timeAxisConfig?.fieldKey,
+    assets.map(a => a.id).sort().join(',') // FIXED: Use stable asset IDs instead of assetsMap
+  ]);
+
+  const processedResults = useMemo(() => {
+    if (variableSplittingConfig?.enabled) {
+      const splitResults = applySplittingToResults(timeFilteredResults, variableSplittingConfig);
+      return splitResults;
+    }
+    
+    return { all: timeFilteredResults };
+  }, [
+    timeFilteredResults, 
+    variableSplittingConfig?.enabled,
+    variableSplittingConfig?.schemaId,
+    variableSplittingConfig?.fieldKey,
+    variableSplittingConfig?.visibleSplits ? Array.from(variableSplittingConfig.visibleSplits).sort().join(',') : '',
+    variableSplittingConfig?.valueAliases ? JSON.stringify(variableSplittingConfig.valueAliases) : ''
+  ]);
+
+  // Use the appropriate results for table display
+  const resultsForTable = useMemo(() => {
+    if (variableSplittingConfig?.enabled && Object.keys(processedResults).length > 1) {
+      // Flatten all split results for table display with split identifiers
+      const flattenedResults: ResultWithSourceInfo[] = [];
+      Object.entries(processedResults).forEach(([splitValue, splitResults]) => {
+        splitResults.forEach(result => {
+          flattenedResults.push({
+            ...result,
+            // Add split value as metadata for display
+            splitValue: splitValue !== 'all' ? splitValue : undefined
+          } as ResultWithSourceInfo & { splitValue?: string });
+        });
+      });
+      return flattenedResults;
+    }
+    
+    const finalResults = processedResults.all || timeFilteredResults;
+    return finalResults;
+  }, [
+    processedResults, 
+    timeFilteredResults, 
+    variableSplittingConfig?.enabled
+  ]);
 
   type EnrichedAssetRecord = AssetRead & {
     sourceName: string | null;
@@ -191,10 +452,11 @@ export function AnnotationResultsTable({
     parentAssetId?: number; // Reference to parent asset for child rows
     hasChildren?: boolean; // Indicates if this asset has children
     children?: EnrichedAssetRecord[]; // Child assets for hierarchical display
+    splitValue?: string; // NEW: Split value when variable splitting is enabled
   };
 
   const tableData = useMemo((): EnrichedAssetRecord[] => {
-    if (!assets || !results) {
+    if (!assets || !resultsForTable) {
       return [];
     }
 
@@ -205,7 +467,7 @@ export function AnnotationResultsTable({
       }
     });
 
-    const resultsByAssetId = results.reduce((acc, result) => {
+    const resultsByAssetId = resultsForTable.reduce((acc, result) => {
         const assetId = result.asset_id;
         if (!acc[assetId]) acc[assetId] = [];
         acc[assetId].push(result);
@@ -247,6 +509,10 @@ export function AnnotationResultsTable({
         const isCSVParent = asset.kind === 'csv' && csvParentsWithChildren.has(asset.id);
         const isCSVChild = asset.kind === 'csv_row';
 
+        // NEW: Extract split value from the first result for this asset
+        const firstResult = assetResults[0] as ResultWithSourceInfo & { splitValue?: string };
+        const splitValue = firstResult?.splitValue;
+
         const enrichedRecord: EnrichedAssetRecord = {
           ...asset,
           sourceName: sourceInfo ? sourceInfo.name : 'Unknown Source',
@@ -255,6 +521,7 @@ export function AnnotationResultsTable({
           parentAssetId: asset.parent_asset_id || undefined,
           hasChildren: isCSVParent,
           children: [],
+          splitValue: splitValue, // NEW: Add split value
         };
 
         enrichedRecordsMap.set(asset.id, enrichedRecord);
@@ -302,7 +569,13 @@ export function AnnotationResultsTable({
     });
 
     return filteredRecords;
-  }, [results, filters, schemas, assets, sources]);
+  }, [
+    resultsForTable, 
+    filters.map(f => `${f.id}-${f.isActive}-${f.schemaId}-${f.fieldKey}-${f.operator}-${JSON.stringify(f.value)}`).join('|'), // FIXED: Stable filter representation
+    schemas.map(s => s.id).sort().join(','), // FIXED: Use stable schema IDs
+    assets.map(a => a.id).sort().join(','), // FIXED: Use stable asset IDs
+    sources.map(s => `${s.id}-${s.name}`).sort().join(',') // FIXED: Use stable source representation
+  ]);
 
   // Create flattened data for table display (including expanded children)
   const flattenedTableData = useMemo((): EnrichedAssetRecord[] => {
@@ -321,7 +594,7 @@ export function AnnotationResultsTable({
     });
     
     return flattened;
-  }, [tableData, expanded]);
+  }, [tableData, Object.keys(expanded).sort().join(',')]); // FIXED: Use stable representation of expanded state
 
   const columns = useMemo((): ColumnDef<EnrichedAssetRecord>[] => {
     const staticColumns: ColumnDef<EnrichedAssetRecord>[] = [
@@ -337,14 +610,17 @@ export function AnnotationResultsTable({
                 variant="ghost"
                 size="sm"
                 className="h-6 w-6 p-0"
-                                  onClick={(e) => {
-                    e.stopPropagation();
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Use startTransition for state updates
+                  startTransition(() => {
                     setExpanded(prev => {
                       const newExpanded = Object.assign({}, prev);
                       newExpanded[record.id.toString()] = !prev[record.id.toString()];
                       return newExpanded;
                     });
-                  }}
+                  });
+                }}
               >
                 {isExpanded ? (
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -356,9 +632,12 @@ export function AnnotationResultsTable({
           }
           return null;
         },
+        maxSize: 40,
+        minSize: 40,
         size: 40,
         enableSorting: false,
         enableHiding: false,
+        enableResizing: false,
       },
       {
         id: 'exclude',
@@ -381,7 +660,12 @@ export function AnnotationResultsTable({
             return (
               <Checkbox
                   checked={!!excludedRecordIds && excludedRecordIds.has(record.id)}
-                  onCheckedChange={() => onToggleRecordExclusion(record.id)}
+                  onCheckedChange={(checked) => {
+                    // Use queueMicrotask to defer this update
+                    queueMicrotask(() => {
+                      onToggleRecordExclusion(record.id);
+                    });
+                  }}
                   aria-label="Exclude this record from analysis"
                   className="ml-1 data-[state=checked]:bg-orange-600 data-[state=checked]:border-orange-700"
                   onClick={(e) => e.stopPropagation()}
@@ -390,39 +674,46 @@ export function AnnotationResultsTable({
           }
           return null;
         },
+        maxSize: 40,
+        minSize: 40,
         size: 40,
         enableSorting: false,
         enableHiding: false,
+        enableResizing: false,
       },
       {
         accessorKey: 'id',
         header: ({ column }) => (
-          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="px-1">
-            Asset ID
-            <ArrowUpDown className="ml-2 h-3.5 w-3.5" />
+          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="px-1 h-full w-full justify-start">
+            <span className="truncate">Asset ID</span>
+            <ArrowUpDown className="ml-1 h-3.5 w-3.5 flex-shrink-0" />
           </Button>
         ),
         cell: ({ row }) => {
           const record = row.original;
           return (
-            <div className={cn("pl-1 w-[60px] truncate flex items-center", record.isChildRow && "ml-4")}>
+            <div className={cn("pl-1 flex items-center min-w-0", record.isChildRow && "ml-2")}>
               {record.isChildRow && (
                 <div className="w-2 h-2 rounded-full bg-muted-foreground/40 mr-2 flex-shrink-0"></div>
               )}
               <AssetLink assetId={record.id}>
-                <div className="hover:underline cursor-pointer">{record.id}</div>
+                <div className="hover:underline cursor-pointer truncate min-w-0">{record.id}</div>
               </AssetLink>
             </div>
           );
         },
-        size: 120,
+        maxSize: 120,
+        minSize: 80,
+        size: 100,
+        enableResizing: true,
+        enableHiding: true,
       },
       {
         accessorKey: 'title',
         header: ({ column }) => (
-          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
-            Title
-            <ArrowUpDown className="ml-2 h-4 w-4" />
+          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="h-full w-full justify-start">
+            <span className="truncate">Title</span>
+            <ArrowUpDown className="ml-1 h-4 w-4 flex-shrink-0" />
           </Button>
         ),
         cell: ({ row }) => {
@@ -430,72 +721,117 @@ export function AnnotationResultsTable({
           return (
             <AssetLink assetId={record.id}>
               <div className={cn(
-                "font-medium max-w-[250px] truncate hover:underline cursor-pointer flex items-center",
-                record.isChildRow && "ml-4 text-sm"
+                "font-medium hover:underline cursor-pointer flex items-center min-w-0",
+                record.isChildRow && "ml-2 text-sm"
               )} title={record.title || 'No Title'}>
                 {record.isChildRow && (
                   <div className="w-2 h-2 rounded-full bg-muted-foreground/40 mr-2 flex-shrink-0"></div>
                 )}
-                {record.title || <span className="italic text-muted-foreground">No Title</span>}
+                <span className="truncate min-w-0">
+                  {record.title || <span className="italic text-muted-foreground">No Title</span>}
+                </span>
               </div>
             </AssetLink>
           );
         },
+        maxSize: 400,
+        minSize: 150,
         size: 250,
+        enableResizing: true,
+        enableHiding: true,
       },
       {
          accessorKey: 'sourceName',
          header: ({ column }) => (
-           <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
-             Source Name
-             <ArrowUpDown className="ml-2 h-4 w-4" />
+           <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="h-full w-full justify-start">
+             <span className="truncate">Source Name</span>
+             <ArrowUpDown className="ml-1 h-4 w-4 flex-shrink-0" />
            </Button>
          ),
          cell: ({ row }) => {
            const record = row.original;
            return (
-             <div className={cn("font-medium", record.isChildRow && "ml-4 text-sm")}>
+             <div className={cn("font-medium truncate min-w-0", record.isChildRow && "ml-2 text-sm")}>
                {record.sourceName}
              </div>
            );
          },
+         maxSize: 200,
+         minSize: 100,
          size: 150,
+         enableResizing: true,
+         enableHiding: true,
        },
     ];
 
-    const dynamicSchemaColumns: ColumnDef<EnrichedAssetRecord>[] = schemas.map(schema => ({
+    // NEW: Add split value column when variable splitting is enabled
+    const conditionalColumns: ColumnDef<EnrichedAssetRecord>[] = [];
+    
+    if (variableSplittingConfig?.enabled) {
+      conditionalColumns.push({
+        accessorKey: 'splitValue',
+        header: ({ column }) => (
+          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="h-full w-full justify-start">
+            <span className="truncate">Split Value</span>
+            <ArrowUpDown className="ml-1 h-4 w-4 flex-shrink-0" />
+          </Button>
+        ),
+        cell: ({ row }) => {
+          const record = row.original;
+          // Extract split value from the first result
+          const firstResult = Object.values(record.resultsMap)[0] as ResultWithSourceInfo & { splitValue?: string };
+          const splitValue = firstResult?.splitValue;
+          
+          return (
+            <div className={cn("font-medium truncate min-w-0", record.isChildRow && "ml-2 text-sm")}>
+              {splitValue || 'All'}
+            </div>
+          );
+        },
+        maxSize: 150,
+        minSize: 80,
+        size: 120,
+        enableResizing: true,
+        enableHiding: true,
+      });
+    }
+
+    const dynamicSchemaColumns: ColumnDef<EnrichedAssetRecord>[] = schemas.map((schema, index) => ({
       id: `schema_${schema.id}`,
+      meta: {
+        displayName: schema.name,
+      },
       header: ({ column }) => {
         const handleFieldToggle = (fieldKey: string) => {
-          setSelectedFieldsPerScheme(prev => {
-            const currentSelected = prev[schema.id] || [];
-            const isSelected = currentSelected.includes(fieldKey);
-            const newSelected = isSelected ? currentSelected.filter(key => key !== fieldKey) : [...currentSelected, fieldKey];
-            const targetKeys = getTargetKeysForScheme(schema.id, schemas);
-            const keys = targetKeys.map(tk => tk.key);
-            if (newSelected.length === 0 && keys.length > 0) {
-              return { ...prev, [schema.id]: [keys[0]] };
-            }
-            return { ...prev, [schema.id]: newSelected };
+          // Use startTransition for this state update
+          startTransition(() => {
+            setSelectedFieldsPerScheme(prev => {
+              const currentSelected = prev[schema.id] || [];
+              const isSelected = currentSelected.includes(fieldKey);
+              const newSelected = isSelected ? currentSelected.filter(key => key !== fieldKey) : [...currentSelected, fieldKey];
+              
+              // FIXED: Allow zero fields (this hides the schema column)
+              return { ...prev, [schema.id]: newSelected };
+            });
           });
         };
         const currentSelectedFields = selectedFieldsPerScheme[schema.id] || [];
         const availableFields = getTargetKeysForScheme(schema.id, schemas);
 
         return (
-          <div className="flex flex-col space-y-1">
-            <div className="flex items-center justify-between">
-               <span className="font-medium">{schema.name}</span>
+          <div className="flex flex-col space-y-1 min-w-0">
+            <div className="flex items-center justify-between min-w-0">
+               <span className="font-medium truncate flex-1" title={schema.name}>{schema.name}</span>
                <Popover>
                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1 opacity-60 hover:opacity-100">
+                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1 opacity-60 hover:opacity-100 flex-shrink-0">
                       <Settings2 className="h-3.5 w-3.5" />
                       <span className="sr-only">Configure Fields</span>
                     </Button>
                  </PopoverTrigger>
                  <PopoverContent className="w-56 p-0" align="start">
                     <div className="p-2 font-medium text-xs border-b">Show Fields:</div>
-                    <ScrollArea className="max-h-60 p-1">
+                    <ScrollArea className="max-h-60 overflow-y-auto p-1">
                       {availableFields.map(field => (
                         <div key={field.key} className="flex items-center space-x-2 px-2 py-1.5 text-xs">
                            <Checkbox
@@ -506,7 +842,7 @@ export function AnnotationResultsTable({
                            />
                            <Label
                               htmlFor={`field-header-toggle-${schema.id}-${field.key}`}
-                              className={cn("font-normal cursor-pointer", (currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)) && "opacity-50 cursor-not-allowed")}
+                              className={cn("font-normal cursor-pointer truncate", (currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)) && "opacity-50 cursor-not-allowed")}
                            >
                               {field.name} ({field.type})
                            </Label>
@@ -521,16 +857,21 @@ export function AnnotationResultsTable({
       },
       cell: ({ row }) => {
         const resultForThisCell = row.original.resultsMap[schema.id];
+        const fieldKeysToShow = selectedFieldsPerScheme[schema.id] || [];
+
+        // FIXED: Hide cell content when zero fields are selected
+        if (fieldKeysToShow.length === 0) {
+          return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">Hidden</div>;
+        }
 
         if (!resultForThisCell) {
             return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">N/A</div>;
         }
 
-        const fieldKeysToShow = selectedFieldsPerScheme[schema.id] || [];
         const isFailed = resultForThisCell.status === 'failure';
 
         return (
-          <div className={cn("relative h-full", isFailed && "border-l-2 border-destructive pl-1")}>
+          <div className={cn("relative h-full min-w-0", isFailed && "border-l-2 border-destructive pl-1")}>
             {isFailed && (
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
@@ -545,33 +886,50 @@ export function AnnotationResultsTable({
                 </Tooltip>
               </TooltipProvider>
             )}
-            <AnnotationResultDisplay
-              result={resultForThisCell}
-              schema={schema}
-              compact={false}
-              selectedFieldKeys={fieldKeysToShow}
-              maxFieldsToShow={undefined}
-              renderContext="default"
-            />
+            <div className="min-w-0 w-full">
+              <AnnotationResultDisplay
+                result={resultForThisCell}
+                schema={schema}
+                compact={false}
+                selectedFieldKeys={fieldKeysToShow}
+                maxFieldsToShow={undefined}
+                renderContext="default"
+              />
+            </div>
           </div>
         );
       },
+      // Make schema columns flexible based on content
+      maxSize: 300,
+      minSize: 120,
+      size: 200,
+      enableResizing: true,
+      enableHiding: true,
     }));
 
     const staticEndColumns: ColumnDef<EnrichedAssetRecord>[] = [
         {
            accessorKey: 'resultsMap',
-           header: 'Timestamp',
-           size: 120,
+           header: ({ column }) => (
+             <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="h-full w-full justify-start">
+               <span className="truncate">Timestamp</span>
+               <ArrowUpDown className="ml-1 h-4 w-4 flex-shrink-0" />
+             </Button>
+           ),
            cell: ({ row }) => {
              const firstResult = Object.values(row.original.resultsMap)[0];
              const timestamp = firstResult?.timestamp;
-             return <div className="text-xs w-[100px] truncate">{timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}</div>;
+             return <div className="text-xs truncate min-w-0">{timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}</div>;
            },
+           maxSize: 150,
+           minSize: 100,
+           size: 120,
+           enableResizing: true,
+           enableHiding: true,
         },
         {
           id: 'actions',
-          size: 50,
+          header: '',
           cell: ({ row }) => {
              const recordContext = row.original;
              const firstResult = Object.values(recordContext.resultsMap)[0];
@@ -624,26 +982,34 @@ export function AnnotationResultsTable({
                </DropdownMenu>
              );
           },
+          maxSize: 50,
+          minSize: 50,
+          size: 50,
+          enableSorting: false,
+          enableHiding: false,
+          enableResizing: false,
         },
     ];
 
     return [
         ...staticColumns,
+        ...conditionalColumns,
         ...dynamicSchemaColumns,
         ...staticEndColumns
     ];
   }, [
-      schemas, 
-      selectedFieldsPerScheme, 
-      onResultSelect, 
-      onResultAction, 
-      onResultDelete, 
-      onRetrySingleResult, 
+      schemas.map(s => s.id).sort().join(','), // FIXED: Use stable schema IDs instead of schemas array
+      JSON.stringify(selectedFieldsPerScheme), // FIXED: Use stable JSON representation
+      // FIXED: Don't depend on function props - they should be stable from parent or memoized
+      // onResultSelect, onResultAction, onResultDelete, onRetrySingleResult,
       retryingResultId,
-      excludedRecordIds,
-      onToggleRecordExclusion
+      excludedRecordIds ? Array.from(excludedRecordIds).sort().join(',') : '', // FIXED: Use stable representation of Set
+      // onToggleRecordExclusion,
+      Object.keys(expanded).sort().join(','), // FIXED: Use stable representation of expanded state
+      variableSplittingConfig?.enabled // Only track enabled state for column changes
   ]);
   
+  // Optimize table configuration to prevent automatic resets
   const table = useReactTable<EnrichedAssetRecord>({ 
     data: flattenedTableData,
     columns,
@@ -667,20 +1033,28 @@ export function AnnotationResultsTable({
     onPaginationChange: setPagination,
     onGlobalFilterChange: setGlobalFilter,
     onExpandedChange: (updater) => {
-      if (typeof updater === 'function') {
-        setExpanded(prev => {
-          const newState = updater(prev as ExpandedState);
-          return newState as Record<string, boolean>;
-        });
-      } else {
-        setExpanded(updater as Record<string, boolean>);
-      }
+      // Use startTransition for this state update
+      startTransition(() => {
+        if (typeof updater === 'function') {
+          setExpanded(prev => {
+            const newState = updater(prev as ExpandedState);
+            return newState as Record<string, boolean>;
+          });
+        } else {
+          setExpanded(updater as Record<string, boolean>);
+        }
+      });
     },
+    // Disable automatic pagination reset to prevent setState during render
+    autoResetPageIndex: false,
+    // Add these options to prevent automatic resets
+    autoResetExpanded: false,
+    autoResetAll: false,
   });
 
   return (
-    <div className="w-full">
-      <div className="flex items-center py-3">
+    <div className="w-full min-w-0 flex flex-col h-full">
+      <div className="flex items-center justify-between py-3 flex-shrink-0 gap-4">
          <div className="relative w-full max-w-sm">
            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
            <Input
@@ -690,75 +1064,143 @@ export function AnnotationResultsTable({
              className="pl-9 h-9"
            />
          </div>
+         
+         {/* Column Visibility Controls */}
+         <DropdownMenu>
+           <DropdownMenuTrigger asChild>
+             <Button variant="outline" size="sm" className="h-9 min-w-0">
+               <SlidersHorizontal className="h-4 w-4 mr-2" />
+               Columns
+             </Button>
+           </DropdownMenuTrigger>
+           <DropdownMenuContent align="end" className="w-[200px]">
+             <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
+             <DropdownMenuSeparator />
+                            <ScrollArea className="max-h-[300px]">
+                {table
+                  .getAllColumns()
+                  .filter(
+                    (column) =>
+                      column.getCanHide()
+                  )
+                  .map((column) => {
+                    const getDisplayName = (column: any) => {
+                      // Use meta displayName if available
+                      if (column.columnDef.meta?.displayName) {
+                        return column.columnDef.meta.displayName;
+                      }
+                      // Format column IDs to be more readable
+                      const id = column.id;
+                      if (id === 'id') return 'Asset ID';
+                      if (id === 'title') return 'Asset Title';
+                                              if (id === 'sourceName') return 'Source Name';
+                        if (id === 'splitValue') return 'Split Value';
+                        if (id === 'resultsMap') return 'Timestamp';
+                      if (id.startsWith('schema_')) return schemas.find(s => s.id === parseInt(id.replace('schema_', '')))?.name || id;
+                      return id.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                    };
+                    
+                    return (
+                      <DropdownMenuCheckboxItem
+                        key={column.id}
+                        className="capitalize"
+                        checked={column.getIsVisible()}
+                        onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                      >
+                        {getDisplayName(column)}
+                      </DropdownMenuCheckboxItem>
+                    )
+                  })}
+              </ScrollArea>
+           </DropdownMenuContent>
+         </DropdownMenu>
       </div>
-      <div className="rounded-md border">
-        <div className="overflow-x-auto"> 
-          <ScrollArea className="max-h-full"> 
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-card shadow-sm whitespace-nowrap">
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id} className="whitespace-nowrap" style={{ width: header.getSize() !== 150 ? `${header.getSize()}px` : undefined }}>
-                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows?.length ? (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow
-                      key={row.id}
-                      data-state={row.getIsSelected() && "selected"}
-                      className={cn(
-                        "cursor-pointer hover:bg-muted/30 transition-opacity", 
-                        !!excludedRecordIds && excludedRecordIds.has(row.original.id) && "opacity-50 bg-muted/10 hover:bg-muted/20",
-                        row.original.isChildRow && "bg-muted/5",
-                        row.original.hasChildren && "font-medium"
-                      )}
-                      onClick={() => {
-                        const record = row.original;
-                        
-                                                 if (record.hasChildren && record.children && record.children.length > 0) {
-                           // This is a CSV parent - toggle expansion
+      
+      <div className="rounded-md border min-w-0 flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-auto min-w-0"> 
+          <Table className="min-w-0 w-full">
+            <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead 
+                      key={header.id} 
+                      className="whitespace-nowrap p-2"
+                      style={{ 
+                        width: header.getSize() > 0 ? `${header.getSize()}px` : undefined,
+                        minWidth: header.column.columnDef.minSize ? `${header.column.columnDef.minSize}px` : undefined,
+                        maxWidth: header.column.columnDef.maxSize ? `${header.column.columnDef.maxSize}px` : undefined
+                      }}
+                    >
+                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows?.length ? (
+                table.getRowModel().rows.map((row) => (
+                  <TableRow
+                    key={row.id}
+                    data-state={row.getIsSelected() && "selected"}
+                    className={cn(
+                      "cursor-pointer hover:bg-muted/30 transition-opacity", 
+                      !!excludedRecordIds && excludedRecordIds.has(row.original.id) && "opacity-50 bg-muted/10 hover:bg-muted/20",
+                      row.original.isChildRow && "bg-muted/5",
+                      row.original.hasChildren && "font-medium"
+                    )}
+                    onClick={() => {
+                      const record = row.original;
+                      
+                      if (record.hasChildren && record.children && record.children.length > 0) {
+                         // This is a CSV parent - toggle expansion
+                         startTransition(() => {
                            setExpanded(prev => {
                              const newExpanded = Object.assign({}, prev);
                              newExpanded[record.id.toString()] = !prev[record.id.toString()];
                              return newExpanded;
                            });
-                         } else {
-                          // This is a child row or regular asset - show details if it has results
-                          const firstResult = Object.values(record.resultsMap)[0];
-                          if (firstResult && onResultSelect) {
-                             onResultSelect(firstResult);
-                          }
+                         });
+                       } else {
+                        // This is a child row or regular asset - show details if it has results
+                        const firstResult = Object.values(record.resultsMap)[0];
+                        if (firstResult && onResultSelect) {
+                           onResultSelect(firstResult);
                         }
-                      }}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id} style={{ width: cell.column.getSize() !== 150 ? `${cell.column.getSize()}px` : undefined }} className="h-full align-top">
-                          <div className="h-full flex flex-col">
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </div>
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={columns.length} className="h-24 text-center">
-                      {isLoading ? "Loading results..." : "No results found."}
-                    </TableCell>
+                      }
+                    }}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell 
+                        key={cell.id} 
+                        className="h-full align-top p-2 min-w-0"
+                        style={{ 
+                          width: cell.column.getSize() > 0 ? `${cell.column.getSize()}px` : undefined,
+                          minWidth: cell.column.columnDef.minSize ? `${cell.column.columnDef.minSize}px` : undefined,
+                          maxWidth: cell.column.columnDef.maxSize ? `${cell.column.columnDef.maxSize}px` : undefined
+                        }}
+                      >
+                        <div className="h-full flex flex-col min-w-0">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </div>
+                      </TableCell>
+                    ))}
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </ScrollArea>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={columns.length} className="h-24 text-center">
+                    {isLoading ? "Loading results..." : "No results found."}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </div>
       </div>
-      <div className="flex items-center justify-between space-x-2 py-4 flex-wrap gap-y-2">
+      
+      <div className="flex items-center justify-between space-x-2 py-4 flex-wrap gap-y-2 flex-shrink-0">
          <div className="flex items-center space-x-2">
            <p className="text-sm font-medium text-muted-foreground whitespace-nowrap">Rows per page</p>
            <Select
@@ -769,7 +1211,7 @@ export function AnnotationResultsTable({
                <SelectValue placeholder={table.getState().pagination.pageSize} />
              </SelectTrigger>
              <SelectContent side="top">
-               {[10, 25, 50, 100].map((pageSize) => (
+               {[5, 10, 25, 50].map((pageSize) => (
                  <SelectItem key={pageSize} value={`${pageSize}`} className="text-xs">
                    {pageSize}
                  </SelectItem>

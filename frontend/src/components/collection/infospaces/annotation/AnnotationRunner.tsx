@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard } from 'lucide-react';
 import {
   AnnotationSchemaRead,
   AssetRead,
@@ -23,7 +23,8 @@ import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';
 import { format } from 'date-fns';
-import { AnnotationResultFilters, ResultFilter, getTargetKeysForScheme } from './AnnotationResultFilters';
+import { ResultFilter, FilterSet } from './AnnotationFilterControls';
+import { getTargetKeysForScheme } from '@/lib/annotations/utils';
 import { checkFilterMatch, extractLocationString } from '@/lib/annotations/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -42,6 +43,7 @@ import { HelpCircle } from 'lucide-react';
 import useGeocode, { GeocodeResult } from '@/hooks/useGeocder';
 import type { GeocodeResult as GeocodeResultType } from '@/hooks/useGeocder';
 import AnnotationResultsMap, { MapPoint } from './AnnotationResultsMap';
+import { TextSpanHighlightProvider } from '@/contexts/TextSpanHighlightContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useAnnotationSettingsStore } from '@/zustand_stores/storeAnnotationSettings';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
@@ -52,7 +54,9 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { useAnnotationRunStore, PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
+import { DashboardToolbar } from './DashboardToolbar';
+import { PanelRenderer } from './PanelRenderer';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { AnnotationMapControls } from './AnnotationMapControls';
@@ -74,6 +78,8 @@ import AssetSelector from '../assets/AssetSelector';
 import AnnotationSchemaCard from './AnnotationSchemaCard';
 import AssetDetailProvider from '../assets/Views/AssetDetailProvider';
 import RunHistoryView from './AnnotationRunHistory';
+import { nanoid } from 'nanoid';
+import { Trash2 } from 'lucide-react';
 
 type SourceRead = any;
 
@@ -92,6 +98,8 @@ interface AnnotationRunnerProps {
   onClearRun: () => void;
   onRunWithNewAssets: (template: { schemaIds: number[], config: any, assetIds: number[] }) => void;
 }
+
+// --- Note: PanelRenderer is now imported from separate file ---
 
 export default function AnnotationRunner({
   allRuns,
@@ -112,69 +120,80 @@ export default function AnnotationRunner({
     retrySingleResult,
     isRetryingResultId,
     updateJob,
+    deleteRun,
   } = useAnnotationSystem();
   
   const isActuallyProcessing = isProcessingProp || isRetryingJob;
 
-  const [activeFilters, setActiveFilters] = useState<ResultFilter[]>([]);
-  const [filterLogicMode, setFilterLogicMode] = useState<FilterLogicMode>('and');
+  // State managed by Zustand now
+  const {
+    dashboardConfig,
+    isDashboardDirty,
+    setDashboardConfig,
+    updateDashboardConfig,
+    addPanel,
+    updatePanel,
+    removePanel,
+    compactLayout,
+    setDashboardDirty,
+    saveDashboardToBackend,
+    loadDashboardFromRun,
+    setActiveRun,
+  } = useAnnotationRunStore();
+  
+  const { activeInfospace } = useInfospaceStore();
+
+  // Initialize dashboard config when activeRun changes
+  useEffect(() => {
+    setActiveRun(activeRun); // This handles both activeRun and null cases
+  }, [activeRun, setActiveRun]);
+
+  // Auto-add initial table panel when run loads as completed
+  useEffect(() => {
+    if (activeRun && 
+        (activeRun.status === 'completed' || activeRun.status === 'completed_with_errors') &&
+        dashboardConfig && 
+        (!dashboardConfig.panels || dashboardConfig.panels.length === 0) &&
+        currentRunResults.length > 0) {
+      
+      // Add initial table panel with full width
+      const initialTablePanel = {
+        id: `table-${Date.now()}`,
+        type: 'table' as const,
+        name: 'Results Table',
+        description: 'Complete annotation results in tabular format',
+        gridPos: { x: 0, y: 0, w: 12, h: 4 },
+        filters: { logic: 'and' as const, rules: [] },
+        settings: {}
+      };
+
+      console.log('Auto-adding initial table panel for completed run:', activeRun.id);
+      addPanel(initialTablePanel);
+    }
+  }, [activeRun, dashboardConfig, currentRunResults, addPanel]);
+
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [selectedMapPointForDialog, setSelectedMapPointForDialog] = useState<MapPoint | null>(null);
-  const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
-  const [filteredGeocodedPoints, setFilteredGeocodedPoints] = useState<MapPoint[]>([]);
-  const [isLoadingGeocoding, setIsLoadingGeocoding] = useState(false);
-  const [geocodingError, setGeocodingError] = useState<string | null>(null);
-  const [currentMapLabelConfig, setCurrentMapLabelConfig] = useState<{ schemaId: number; fieldKey: string } | undefined>(undefined);
-  const [currentTimeAxisConfig, setCurrentTimeAxisConfig] = useState<TimeAxisConfig | null>(null);
-  const [initialMapControlsConfig, setInitialMapControlsConfig] = useState<{
-    geocodeSchemaId: number | null;
-    geocodeFieldKey: string | null;
-    labelSchemeId: number | null;
-    labelFieldKey: string | null;
-    showLabels: boolean;
-  }>({ geocodeSchemaId: null, geocodeFieldKey: null, labelSchemeId: null, labelFieldKey: null, showLabels: false });
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [isSchemesCollapsed, setIsSchemesCollapsed] = useState(false);
-
-  const [selectedDataSourceIdsForChart, setSelectedDataSourceIdsForChart] = useState<number[]>([]);
-  const [selectedTimeInterval, setSelectedTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>('day');
-
   const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
-
-  const [excludedRecordIdsSet, setExcludedRecordIdsSet] = useState<Set<number>>(new Set());
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
   const [viewingSchema, setViewingSchema] = useState<AnnotationSchemaRead | null>(null);
-
-  const { geocodeLocation, loading: isGeocodingSingle, error: geocodeSingleError } = useGeocode();
-  const { getCache, setCache } = useGeocodingCacheStore();
-  const { activeInfospace } = useInfospaceStore();
-
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isSchemasDialogOpen, setIsSchemasDialogOpen] = useState(false);
+  
   const runSchemes = useMemo(() => {
     const config = activeRun?.configuration as any;
-    
-    const schemeIds = (activeRun as any)?.schema_ids ||
-                   config?.schema_ids || 
-                   (activeRun as any)?.target_schema_ids ||
-                   [];
-    
-    if (!schemeIds || schemeIds.length === 0) {
-      return [];
-    }
-    
-    const foundSchemas = allSchemas.filter(s => schemeIds.includes(s.id));
-    
-    return foundSchemas;
+    const schemeIds = (activeRun as any)?.schema_ids || config?.schema_ids || (activeRun as any)?.target_schema_ids || [];
+    if (!schemeIds || schemeIds.length === 0) return [];
+    return allSchemas.filter(s => schemeIds.includes(s.id));
   }, [activeRun, allSchemas]);
 
-  const runDataSources = useMemo(() => {
-    return allSources;
-  }, [allSources]);
-
-  const formattedRunResults = currentRunResults;
+  const runDataSources = useMemo(() => allSources, [allSources]);
 
   const sourceStats = useMemo(() => {
     if (!currentRunAssets || currentRunAssets.length === 0 || !runDataSources) {
@@ -215,214 +234,6 @@ export default function AnnotationRunner({
     };
   }, [currentRunAssets, runDataSources]);
 
-  useEffect(() => {
-    if (runSchemes && runSchemes.length > 0) {
-      let defaultGeoSchemeId: number | null = null;
-      let defaultGeoFieldKey: string | null = null;
-      let defaultLabelSchemeId: number | null = null;
-      let defaultLabelFieldKey: string | null = null;
-      let shouldShowLabels = false;
-
-      const schemeToUseForGeo = runSchemes[0];
-
-      if (schemeToUseForGeo) {
-        const geoTargetKeys = getTargetKeysForScheme(schemeToUseForGeo.id, allSchemas);
-        const locationKey = geoTargetKeys.find(k => k.name.toLowerCase().includes('location') || k.name.toLowerCase().includes('address'));
-        
-        if(locationKey || geoTargetKeys.length > 0) {
-          defaultGeoSchemeId = schemeToUseForGeo.id;
-          defaultGeoFieldKey = locationKey?.key || (geoTargetKeys.length > 0 ? geoTargetKeys[0].key : null);
-          defaultLabelSchemeId = schemeToUseForGeo.id;
-          defaultLabelFieldKey = defaultGeoFieldKey;
-          shouldShowLabels = true;
-        }
-      }
-
-      setInitialMapControlsConfig({
-        geocodeSchemaId: defaultGeoSchemeId,
-        geocodeFieldKey: defaultGeoFieldKey,
-        labelSchemeId: defaultLabelSchemeId,
-        labelFieldKey: defaultLabelFieldKey,
-        showLabels: shouldShowLabels,
-      });
-    } else {
-      setInitialMapControlsConfig({ geocodeSchemaId: null, geocodeFieldKey: null, labelSchemeId: null, labelFieldKey: null, showLabels: false });
-    }
-  }, [runSchemes, allSchemas]);
-
-  useEffect(() => {
-    const initialDataSourceIds = runDataSources.map((ds: any) => ds.id);
-    setSelectedDataSourceIdsForChart(initialDataSourceIds);
-  }, [runDataSources]);
-
-  const generateGeocodingCacheKey = useCallback(() => {
-    if (!activeInfospace?.id || !activeRun?.id) return null;
-    return `${activeInfospace.id}-run-${activeRun.id}`;
-  }, [activeInfospace?.id, activeRun]);
-
-  const handleGeocodeRequest = useCallback(async (schemaIdStr: string, fieldKey: string) => {
-    if (!activeRun?.id || !schemaIdStr || !fieldKey || !currentRunResults) {
-      setGeocodedPoints([]);
-      setFilteredGeocodedPoints([]);
-      return;
-    }
-    const cacheKey = generateGeocodingCacheKey();
-    if (cacheKey) {
-        const cachedPoints = getCache(cacheKey);
-        if (cachedPoints) {
-            setGeocodedPoints(cachedPoints);
-            const activeEnabledFilters = activeFilters.filter(f => f.isActive);
-            if (activeEnabledFilters.length > 0) {
-              // Re-filter points from cache
-            } else {
-              setFilteredGeocodedPoints(cachedPoints);
-            }
-            return;
-        }
-    }
-    
-    setIsLoadingGeocoding(true);
-    setGeocodingError(null);
-    setGeocodedPoints([]);
-    setFilteredGeocodedPoints([]);
-
-    const schemaIdNum = parseInt(schemaIdStr, 10);
-    const locationStrings = new Set<string>();
-    currentRunResults.forEach(result => {
-      if (result.schema_id === schemaIdNum) {
-        const loc = extractLocationString(result.value, fieldKey);
-        if (loc) locationStrings.add(loc);
-      }
-    });
-
-    if (locationStrings.size === 0) {
-        setIsLoadingGeocoding(false);
-        return;
-    }
-
-    const geocodedData = new Map<string, GeocodeResultType | null>();
-    let errorsEncountered = false;
-    for (const locStr of locationStrings) {
-      try {
-        const result = await geocodeLocation(locStr);
-        geocodedData.set(locStr, result);
-      } catch (error: any) {
-        geocodedData.set(locStr, null);
-        errorsEncountered = true;
-      }
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    if (errorsEncountered) setGeocodingError("Some locations failed to geocode. See console for details.");
-
-    const pointsMap = new Map<string, MapPoint>();
-    currentRunResults.forEach(result => {
-      if (result.schema_id === schemaIdNum) {
-        const locStr = extractLocationString(result.value, fieldKey);
-        if (locStr) {
-          const geoResult = geocodedData.get(locStr);
-          if (geoResult?.latitude && geoResult?.longitude) {
-            const pointId = locStr;
-            let mapPoint = pointsMap.get(pointId);
-            if (!mapPoint) {
-              mapPoint = {
-                id: pointId,
-                locationString: locStr,
-                coordinates: { latitude: geoResult.latitude, longitude: geoResult.longitude },
-                documentIds: [],
-                bbox: geoResult.bbox,
-                type: geoResult.type
-              };
-              pointsMap.set(pointId, mapPoint);
-            }
-            if (!mapPoint.documentIds.includes(result.asset_id)) {
-              mapPoint.documentIds.push(result.asset_id);
-            }
-          }
-        }
-      }
-    });
-    const newPoints = Array.from(pointsMap.values());
-    setGeocodedPoints(newPoints);
-    if (cacheKey) setCache(cacheKey, newPoints);
-    setIsLoadingGeocoding(false);
-  }, [
-    activeRun?.id, currentRunResults, extractLocationString, geocodeLocation, generateGeocodingCacheKey, getCache, setCache, activeFilters, filterLogicMode, runSchemes
-  ]);
-
-  const toggleRecordExclusion = useCallback((recordId: number) => {
-    setExcludedRecordIdsSet(prevSet => {
-        const newSet = new Set(prevSet);
-        if (newSet.has(recordId)) {
-            newSet.delete(recordId);
-        } else {
-            newSet.add(recordId);
-        }
-        return newSet;
-    });
-  }, []);
-
-  const filteredResults = useMemo(() => {
-    const activeEnabledFilters = activeFilters.filter(f => f.isActive);
-    let resultsToFilter = currentRunResults;
-
-    if (activeEnabledFilters.length > 0) {
-      const resultsByAssetId = currentRunResults.reduce<Record<number, FormattedAnnotation[]>>((acc, result) => {
-        const assetId = result.asset_id;
-        if (!acc[assetId]) acc[assetId] = [];
-        acc[assetId].push(result);
-        return acc;
-      }, {});
-
-      const filteredAssetIds = Object.keys(resultsByAssetId)
-        .map(Number)
-        .filter(assetId => {
-          const assetResults = resultsByAssetId[assetId];
-          if (filterLogicMode === 'and') {
-            return activeEnabledFilters.every(filter => checkFilterMatch(filter, assetResults, runSchemes));
-          } else { // 'or'
-            return activeEnabledFilters.some(filter => checkFilterMatch(filter, assetResults, runSchemes));
-          }
-        });
-      resultsToFilter = currentRunResults.filter(result => filteredAssetIds.includes(result.asset_id));
-    }
-    
-    if (excludedRecordIdsSet.size > 0) {
-      return resultsToFilter.filter(result => !excludedRecordIdsSet.has(result.asset_id));
-    }
-    
-    return resultsToFilter;
-
-  }, [currentRunResults, activeFilters, filterLogicMode, runSchemes, excludedRecordIdsSet]);
-
-  useEffect(() => {
-    const filteredPoints = geocodedPoints.filter(point => {
-        const pointAssetIds = point.documentIds;
-        return pointAssetIds.some(assetId => !excludedRecordIdsSet.has(assetId));
-    });
-    setFilteredGeocodedPoints(filteredPoints);
-  }, [geocodedPoints, excludedRecordIdsSet]);
-
-  useEffect(() => {
-    setGeocodedPoints([]);
-    setFilteredGeocodedPoints([]);
-    setGeocodingError(null);
-    setIsLoadingGeocoding(false);
-  }, [activeRun?.id]);
-
-  const handleTableRowClick = (result: FormattedAnnotation) => {
-    setSelectedAssetId(result.asset_id);
-    setSelectedMapPointForDialog(null);
-    setIsResultDialogOpen(true);
-  };
-
-  const handleMapPointClick = (point: MapPoint) => {
-    if (point.documentIds && point.documentIds.length > 0) {
-      setSelectedAssetId(null);
-      setSelectedMapPointForDialog(point);
-      setIsResultDialogOpen(true);
-    }
-  };
-
   const handleEditClick = (field: 'name' | 'description') => {
     if (field === 'name') setIsEditingName(true);
     else setIsEditingDescription(true);
@@ -448,214 +259,23 @@ export default function AnnotationRunner({
     }
   };
 
-  const handleShareActiveJob = () => {
-    toast.info("Sharing not implemented yet.");
-  };
-  
-  const handleExportActiveJob = () => {
-    toast.info("Exporting not implemented yet.");
-  };
-
-  const renderResultsTabs = () => {
-    if (isActuallyProcessing) {
-      return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Run is processing...</span></div>;
-    }
-    // Show tabs even with no data to allow user to see and configure chart controls
-    const hasNoResults = !filteredResults || filteredResults.length === 0;
-    
-    if (hasNoResults && activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
-       return <div className="flex items-center justify-center h-64 text-muted-foreground">Load a run to view results.</div>;
-    }
-
-    return (
-       <Tabs defaultValue="table" className="w-full">
-         <TabsList className="grid w-full grid-cols-5 mb-2 border border-background! sticky top-0 z-10 bg-background/80 backdrop-blur">
-           <TabsTrigger value="chart"><BarChart3 className="h-4 w-4 mr-2" />Chart</TabsTrigger>
-           <TabsTrigger value="pie"><PieChartIcon className="h-4 w-4 mr-2" />Pie</TabsTrigger>
-           <TabsTrigger value="table"><TableIcon className="h-4 w-4 mr-2" />Table</TabsTrigger>
-           <TabsTrigger value="graph"><Network className="h-4 w-4 mr-2" />Graph</TabsTrigger>
-           <TabsTrigger value="map"><MapPin className="h-4 w-4 mr-2" />Map</TabsTrigger>
-         </TabsList>
-         <TabsContent value="chart">
-           <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             <div className="p-2 mb-2 border-b">
-                <AnnotationTimeAxisControls
-                  schemas={runSchemes}
-                  initialConfig={currentTimeAxisConfig}
-                  onTimeAxisConfigChange={setCurrentTimeAxisConfig}
-                />
-             </div>
-             <div className="flex items-center gap-4 p-2 mb-2 flex-wrap">
-               <Popover>
-                 <PopoverTrigger asChild>
-                   <Button variant="outline" size="sm" disabled={runDataSources.length === 0}>
-                     <SlidersHorizontal className="h-4 w-4 mr-2" />
-                     Sources ({selectedDataSourceIdsForChart.length} / {runDataSources.length})
-                   </Button>
-                 </PopoverTrigger>
-                 <PopoverContent className="w-64 p-0" align="start">
-                   <div className="p-2 font-medium text-xs border-b">Select Sources to Display</div>
-                   <ScrollArea className="max-h-60">
-                     <div className="p-2 space-y-1">
-                       {runDataSources.length > 0 ? (
-                         <>
-                           <div className="flex items-center space-x-2 px-1 py-1.5">
-                             <Checkbox
-                               id="chart-source-select-all"
-                               checked={selectedDataSourceIdsForChart.length === runDataSources.length}
-                               onCheckedChange={(checked) => {
-                                 setSelectedDataSourceIdsForChart(checked ? runDataSources.map(ds => ds.id) : []);
-                               }}
-                             />
-                             <Label htmlFor="chart-source-select-all" className="text-xs font-normal cursor-pointer flex-1">
-                               Select All ({runDataSources.length})
-                             </Label>
-                           </div>
-                           <Separator />
-                           {runDataSources.map(ds => (
-                             <div key={ds.id} className="flex items-center space-x-2 px-1 py-1.5">
-                               <Checkbox
-                                 id={`chart-source-${ds.id}`}
-                                 checked={selectedDataSourceIdsForChart.includes(ds.id)}
-                                 onCheckedChange={(checked) => {
-                                   setSelectedDataSourceIdsForChart(prev =>
-                                     checked
-                                       ? [...prev, ds.id]
-                                       : prev.filter(id => id !== ds.id)
-                                   );
-                                 }}
-                               />
-                               <Label htmlFor={`chart-source-${ds.id}`} className="text-xs font-normal cursor-pointer flex-1 truncate" title={ds.name ?? `Source ${ds.id}`}>
-                                 {ds.name ?? `Source ${ds.id}`}
-                               </Label>
-                             </div>
-                           ))}
-                         </>
-                       ) : (
-                         <div className="p-4 text-center text-xs text-muted-foreground">No sources in this run.</div>
-                       )}
-                     </div>
-                   </ScrollArea>
-                 </PopoverContent>
-               </Popover>
-
-               <div className="flex items-center gap-2">
-                 <Label htmlFor="chart-interval-select" className="text-sm whitespace-nowrap">Aggregate By:</Label>
-                 <Select
-                   value={selectedTimeInterval}
-                   onValueChange={(value: 'day' | 'week' | 'month' | 'quarter' | 'year') => setSelectedTimeInterval(value)}
-                 >
-                   <SelectTrigger id="chart-interval-select" className="w-[120px] h-9 text-sm">
-                     <SelectValue />
-                   </SelectTrigger>
-                   <SelectContent>
-                     <SelectItem value="day">Day</SelectItem>
-                     <SelectItem value="week">Week</SelectItem>
-                     <SelectItem value="month">Month</SelectItem>
-                     <SelectItem value="quarter">Quarter</SelectItem>
-                     <SelectItem value="year">Year</SelectItem>
-                   </SelectContent>
-                 </Select>
-               </div>
-             </div>
-             <AssetDetailProvider>
-               <AnnotationResultsChart
-                 results={filteredResults}
-                 schemas={runSchemes}
-                 sources={runDataSources}
-                 assets={currentRunAssets}
-                 timeAxisConfig={currentTimeAxisConfig}
-                 selectedDataSourceIds={selectedDataSourceIdsForChart}
-                 selectedTimeInterval={selectedTimeInterval}
-                 aggregateSourcesDefault={true}
-               />
-             </AssetDetailProvider>
-           </div>
-         </TabsContent>
-         <TabsContent value="pie">
-            <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                <AssetDetailProvider>
-                  <AnnotationResultsPieChart
-                      results={filteredResults}
-                      schemas={runSchemes}
-                      sources={runDataSources}
-                      selectedSourceIds={selectedDataSourceIdsForChart}
-                      assets={currentRunAssets}
-                  />
-                </AssetDetailProvider>
-            </div>
-         </TabsContent>
-         <TabsContent value="table">
-           <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-             <AssetDetailProvider>
-               <AnnotationResultsTable
-                 results={filteredResults as any}
-                 schemas={runSchemes}
-                 sources={runDataSources}
-                 assets={currentRunAssets}
-                 filters={activeFilters}
-                 onResultSelect={handleTableRowClick as any}
-                 onRetrySingleResult={retrySingleResult}
-                 retryingResultId={isRetryingResultId}
-                 excludedRecordIds={excludedRecordIdsSet}
-                 onToggleRecordExclusion={toggleRecordExclusion}
-               />
-             </AssetDetailProvider>
-           </div>
-         </TabsContent>
-         <TabsContent value="graph">
-           <div className="p-1 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60 overflow-hidden h-[600px] relative">
-             <AnnotationResultsGraph
-               results={filteredResults}
-               schemas={runSchemes}
-               assets={currentRunAssets}
-               activeRunId={activeRun?.id}
-               allSchemas={allSchemas}
-             />
-           </div>
-         </TabsContent>
-         <TabsContent value="map">
-            <AnnotationMapControls
-               schemas={allSchemas}
-               results={currentRunResults}
-               onGeocodeRequest={handleGeocodeRequest}
-               isLoadingGeocoding={isLoadingGeocoding}
-               geocodingError={geocodingError}
-               onMapLabelConfigChange={setCurrentMapLabelConfig}
-               initialSelectedGeocodeSchemaId={initialMapControlsConfig.geocodeSchemaId !== null ? String(initialMapControlsConfig.geocodeSchemaId) : null}
-               initialSelectedGeocodeField={initialMapControlsConfig.geocodeFieldKey}
-               initialMapLabelSchemaId={initialMapControlsConfig.labelSchemeId}
-               initialMapLabelFieldKey={initialMapControlsConfig.labelFieldKey}
-               initialShowMapLabels={initialMapControlsConfig.showLabels}
-            />
-            <div className="p-1 mt-2 rounded-lg bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60 overflow-hidden h-[600px] relative">
-              {isLoadingGeocoding ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
-              ) : filteredGeocodedPoints.length > 0 ? (
-                  <AnnotationResultsMap
-                      points={filteredGeocodedPoints}
-                      results={currentRunResults}
-                      schemas={allSchemas}
-                      labelConfig={currentMapLabelConfig ? { schemaId: currentMapLabelConfig.schemaId, fieldKey: currentMapLabelConfig.fieldKey } : undefined}
-                      onPointClick={handleMapPointClick}
-                  />
-              ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground p-4 text-center">
-                      {geocodedPoints.length > 0 ? 'No map points match the current filters.' : 'Geocode locations using the controls above to see the map.'}
-                  </div>
-              )}
-            </div>
-         </TabsContent>
-       </Tabs>
-    );
-  };
-
-  const isDetailsDialogOpen = isResultDialogOpen && (selectedAssetId !== null || selectedMapPointForDialog !== null);
-
   const closeDetailsDialog = () => {
     setIsResultDialogOpen(false);
     setSelectedAssetId(null);
     setSelectedMapPointForDialog(null);
+  };
+
+  const handleDeleteRun = async () => {
+    if (!activeRun) return;
+    try {
+      await deleteRun(activeRun.id);
+      setIsDeleteDialogOpen(false);
+      onClearRun(); // Clear the active run from parent component
+      toast.success(`Run "${activeRun.name}" deleted successfully.`);
+    } catch (error) {
+      console.error('Error deleting run:', error);
+      // Error toast is already handled by deleteRun hook
+    }
   };
 
   if (!activeRun) {
@@ -773,91 +393,157 @@ export default function AnnotationRunner({
                </Alert>
             )}
           </div>
-          <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRun?.id}>
-            <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Run
-          </Button>
-          <div className="w-full mt-2">
-             {sourceStats && (
-                  <Collapsible
-                      open={isSourceStatsOpen}
-                      onOpenChange={setIsSourceStatsOpen}
-                      className="w-full"
-                  >
-                      <CollapsibleTrigger asChild>
-                          <Button
-                              variant="ghost"
-                              className="flex justify-between items-center w-full px-2 py-1.5 text-xs h-auto hover:bg-muted/50"
-                          >
-                              <span className="text-muted-foreground">
-                                  Run Overview: Sources & Schemes
-                              </span>
-                              {isSourceStatsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                          </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="mt-2 px-1 pb-1 space-y-4">
-                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                               <div className="flex flex-col">
-                                   <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Source Distribution</h4>
-                                   <ScrollArea className="max-h-[200px] border rounded-md">
-                                       <Table className="text-xs">
-                                           <TableHeader className="sticky top-0 bg-muted/90">
-                                               <TableRow>
-                                                   <TableHead className="h-7 px-2">Source Name</TableHead>
-                                                   <TableHead className="h-7 px-2 text-right">Records</TableHead>
-                                                   <TableHead className="h-7 px-2 text-right">% of Total</TableHead>
-                                               </TableRow>
-                                           </TableHeader>
-                                           <TableBody>
-                                               {sourceStats.detailedStats.map(stat => (
-                                                   <TableRow key={stat.id} className="h-7">
-                                                       <TableCell className="px-2 py-1 font-medium truncate" title={stat.name}>{stat.name}</TableCell>
-                                                       <TableCell className="px-2 py-1 text-right">{stat.count}</TableCell>
-                                                       <TableCell className="px-2 py-1 text-right">{stat.percentage}</TableCell>
-                                                   </TableRow>
-                                               ))}
-                                           </TableBody>
-                                       </Table>
-                                   </ScrollArea>
-                                   <p className="text-xs text-muted-foreground mt-1 px-1">
-                                       Total: {sourceStats.totalRecords} records from {sourceStats.sourcesWithRecordsCount} sources
-                                       {sourceStats.sourcesWithRecordsCount !== sourceStats.totalSourcesInRun && ` (of ${sourceStats.totalSourcesInRun} targeted)`}
-                                   </p>
-                               </div>
-
-                               {activeRun && runSchemes.length > 0 && (
-                                   <div className="flex flex-col">
-                                         <h4 className="text-xs font-medium text-muted-foreground mb-1.5 px-1">Schemes Used</h4>
-                                         <ScrollArea className="max-h-[200px] border rounded-md p-1">
-                                                <div className="grid grid-cols-1 gap-3 p-1">
-                                                  {runSchemes.map(scheme => (
-                                                    <div key={scheme.id} className="border rounded-lg p-3 bg-card/50 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onClick={() => setViewingSchema(scheme)}>
-                                                      <SchemePreview scheme={scheme} />
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                         </ScrollArea>
-                                      </div>
-                                  )}
-                             </div>
-                        </CollapsibleContent>
-                    </Collapsible>
-               )}
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => setIsSchemasDialogOpen(true)}
+              disabled={!activeRun?.id || runSchemes.length === 0}
+            >
+              <LayoutDashboard className="h-4 w-4 mr-1" /> View Schemas ({runSchemes.length})
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => setIsDeleteDialogOpen(true)}
+              disabled={!activeRun?.id || isActuallyProcessing}
+            >
+              <Trash2 className="h-4 w-4 mr-1" /> Delete Run
+            </Button>
+            <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRun?.id}>
+              <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Run
+            </Button>
           </div>
-
         </div>
 
-        <div className="p-3 rounded-md bg-muted/10 space-y-3">
-          <AnnotationResultFilters
-            filters={activeFilters}
-            schemas={runSchemes}
-            onChange={setActiveFilters}
-            logicMode={filterLogicMode}
-            onLogicModeChange={setFilterLogicMode}
-          />
-        </div>
+        <DashboardToolbar
+          dashboardConfig={dashboardConfig}
+          isDirty={isDashboardDirty}
+          onSave={async () => {
+            if (activeRun && activeInfospace) {
+              await saveDashboardToBackend(activeInfospace.id, activeRun.id);
+            }
+          }}
+          onUpdateConfig={updateDashboardConfig}
+          onAddPanel={addPanel}
+          onCompactLayout={compactLayout}
+          activeRun={activeRun}
+          allSchemas={runSchemes}
+          allResults={currentRunResults}
+        />
 
-        <div className="mt-2">
-          {renderResultsTabs()}
+        <div className="mt-2 flex-1 min-h-0">
+          {isActuallyProcessing ? (
+            <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Run is processing...</span></div>
+          ) : !dashboardConfig ? (
+            <div className="flex items-center justify-center h-64 text-muted-foreground">Loading dashboard configuration...</div>
+          ) : (
+            /* Dynamic Grid Layout with Proper Positioning */
+            <div 
+              className="relative w-full overflow-hidden"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', // Use minmax for better responsive behavior
+                gap: 'clamp(0.5rem, 2vw, 1rem)', // Responsive gap
+                gridAutoRows: '150px', // Fixed height per grid unit - NO AUTO GROWTH!
+                minHeight: (() => {
+                  try {
+                    if (!dashboardConfig?.panels || dashboardConfig.panels.length === 0) {
+                      return '300px';
+                    }
+                    
+                    // Calculate the exact height needed for all panels
+                    const heights = dashboardConfig.panels
+                      .filter(p => p && p.gridPos && typeof p.gridPos.y === 'number' && typeof p.gridPos.h === 'number')
+                      .map(p => (p.gridPos.y || 0) + (p.gridPos.h || 0));
+                    
+                    if (heights.length === 0) {
+                      return '300px';
+                    }
+                    
+                    const maxHeight = Math.max(...heights);
+                    return `${Math.max(maxHeight, 2) * 150}px`;
+                  } catch (error) {
+                    console.warn('Error calculating grid height:', error);
+                    return '300px';
+                  }
+                })(),
+                // Ensure the grid can expand as needed
+                paddingBottom: '2rem'
+              }}
+            >
+              {(dashboardConfig?.panels || [])
+                .filter(panel => panel && panel.id && panel.gridPos) // Filter out invalid panels
+                .sort((a, b) => {
+                  // Sort by y position first, then x position for consistent rendering
+                  const aY = a.gridPos?.y || 0;
+                  const bY = b.gridPos?.y || 0;
+                  const aX = a.gridPos?.x || 0;
+                  const bX = b.gridPos?.x || 0;
+                  
+                  if (aY !== bY) {
+                    return aY - bY;
+                  }
+                  return aX - bX;
+                })
+                .map(panel => {
+                  // Defensive handling of panel properties
+                  const gridPos = panel.gridPos || { x: 0, y: 0, w: 6, h: 4 };
+                  const safeX = Math.max(0, Math.min(11, gridPos.x || 0));
+                  const safeY = Math.max(0, gridPos.y || 0);
+                  const safeW = Math.max(1, Math.min(12 - safeX, gridPos.w || 6));
+                  const safeH = Math.max(1, gridPos.h || 4);
+
+                  return (
+                    <div 
+                      key={panel.id}
+                      className={cn(
+                        "relative transition-all duration-200 ease-in-out overflow-hidden",
+                        // Responsive behavior for smaller screens
+                        "min-w-0 w-full h-full",
+                        // Stack panels on very small screens
+                        "max-sm:col-span-12"
+                      )}
+                      style={{
+                        gridColumn: `${safeX + 1} / span ${safeW}`,
+                        gridRow: `${safeY + 1} / span ${safeH}`,
+                        minHeight: `${safeH * 150}px`,
+                        maxHeight: `${safeH * 150}px`, // ENFORCE maximum height!
+                        height: `${safeH * 150}px`, // Explicit height constraint
+                        zIndex: 1
+                      }}
+                    >
+                      <PanelRenderer 
+                        panel={panel}
+                        allResults={currentRunResults}
+                        allSchemas={runSchemes}
+                        allSources={allSources}
+                        allAssets={currentRunAssets}
+                        onUpdatePanel={updatePanel}
+                        onRemovePanel={removePanel}
+                        onMapPointClick={(point) => {
+                          setSelectedMapPointForDialog(point);
+                          setIsResultDialogOpen(true);
+                        }}
+                        activeRunId={activeRun?.id}
+                      />
+                    </div>
+                  );
+                })
+              }
+              
+              {/* Empty State */}
+              {(!dashboardConfig?.panels || dashboardConfig.panels.length === 0) && (
+                <div className="col-span-12 row-span-2 flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg bg-gray-50/50">
+                  <div className="text-center text-gray-500">
+                    <LayoutDashboard className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <h3 className="text-lg font-medium mb-2">No Dashboard Panels</h3>
+                    <p className="text-sm">Use the toolbar above to add visualization panels to your dashboard.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -900,6 +586,64 @@ export default function AnnotationRunner({
         </DialogContent>
       </Dialog>
 
+    <Dialog open={isSchemasDialogOpen} onOpenChange={setIsSchemasDialogOpen}>
+      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Schemas Used in This Run</DialogTitle>
+          <DialogDescription>
+            This run uses {runSchemes.length} annotation schema{runSchemes.length !== 1 ? 's' : ''}. Click "View Details" to see the full schema definition.
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="flex-1 p-4">
+          {runSchemes.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <LayoutDashboard className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No schemas found for this run.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {runSchemes.map((schema) => (
+                <Card key={schema.id} className="p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-lg truncate">{schema.name}</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {schema.description || 'No description available'}
+                      </p>
+                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                        <span>ID: {schema.id}</span>
+                        <span>Created: {format(new Date(schema.created_at), 'MMM d, yyyy')}</span>
+                        {schema.updated_at && schema.updated_at !== schema.created_at && (
+                          <span>Updated: {format(new Date(schema.updated_at), 'MMM d, yyyy')}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setViewingSchema(schema);
+                          setIsSchemasDialogOpen(false);
+                        }}
+                      >
+                        View Details
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setIsSchemasDialogOpen(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <AnnotationSchemaCard
         show={!!viewingSchema}
         onClose={() => setViewingSchema(null)}
@@ -909,7 +653,7 @@ export default function AnnotationRunner({
         {viewingSchema && <SchemePreview scheme={viewingSchema} />}
     </AnnotationSchemaCard>
 
-    <Dialog open={isDetailsDialogOpen} onOpenChange={closeDetailsDialog}> 
+    <Dialog open={isResultDialogOpen} onOpenChange={closeDetailsDialog}> 
       <DialogContent className="max-w-[95vw] w-full max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Details</DialogTitle>
@@ -922,30 +666,32 @@ export default function AnnotationRunner({
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="min-w-0">
-            { selectedAssetId ? (
-              <AssetDetailView
-                  selectedAssetId={selectedAssetId}
-                  schemas={runSchemes}
-                  onLoadIntoRunner={() => {}}
-                  onEdit={() => {}}
-                  highlightAssetIdOnOpen={null}
-              />
-            ) : selectedMapPointForDialog ? (
-              <div className="space-y-4">
-                {selectedMapPointForDialog.documentIds.map(assetId => (
-                    <div key={assetId} className="pb-4 mb-4">
-                        <h3 className="text-lg font-semibold mb-2">Asset #{assetId}</h3>
-                         <AssetDetailView
-                            selectedAssetId={assetId}
-                            schemas={runSchemes}
-                            onLoadIntoRunner={() => {}}
-                            onEdit={() => {}}
-                            highlightAssetIdOnOpen={null}
-                         />
-                    </div>
-                ))}
-              </div>
-            ) : null}
+            <TextSpanHighlightProvider>
+              { selectedAssetId ? (
+                <AssetDetailView
+                    selectedAssetId={selectedAssetId}
+                    schemas={runSchemes}
+                    onLoadIntoRunner={() => {}}
+                    onEdit={() => {}}
+                    highlightAssetIdOnOpen={null}
+                />
+              ) : selectedMapPointForDialog ? (
+                <div className="space-y-4">
+                  {selectedMapPointForDialog.documentIds.map(assetId => (
+                      <div key={assetId} className="pb-4 mb-4">
+                          <h3 className="text-lg font-semibold mb-2">Asset #{assetId}</h3>
+                           <AssetDetailView
+                              selectedAssetId={assetId}
+                              schemas={runSchemes}
+                              onLoadIntoRunner={() => {}}
+                              onEdit={() => {}}
+                              highlightAssetIdOnOpen={null}
+                           />
+                      </div>
+                  ))}
+                </div>
+              ) : null}
+            </TextSpanHighlightProvider>
           </div>
         </div>
         <DialogFooter>
@@ -953,6 +699,26 @@ export default function AnnotationRunner({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Annotation Run</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to delete the run "{activeRun?.name}"? This will permanently delete the run and all its annotations. This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction 
+            onClick={handleDeleteRun}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            Delete Run
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     </div>
   );
 }

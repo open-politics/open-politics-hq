@@ -62,6 +62,67 @@ export default function AnnotationRunnerPage() {
     }
   }, [activeInfospace?.id]);
 
+  // Extract assets from run results to ensure we only show assets that have annotations
+  const runAssets = useMemo<AssetRead[]>(() => {
+    if (!runResults || runResults.length === 0) return [];
+    
+    const uniqueAssets = new Map<number, AssetRead>();
+    
+    runResults.forEach(annotation => {
+      if (annotation.asset_id) {
+        // Try to find the asset in the full assets list first
+        const fullAsset = assets.find(a => a.id === annotation.asset_id);
+        if (fullAsset) {
+          uniqueAssets.set(annotation.asset_id, fullAsset);
+        } else if (annotation.asset) {
+          // If not found in full assets, use the asset data from the annotation
+          const assetFromAnnotation: AssetRead = {
+            id: annotation.asset.id,
+            uuid: `asset-${annotation.asset.id}`, // FormattedAnnotation.asset doesn't have uuid
+            title: annotation.asset.title || `Asset ${annotation.asset.id}`,
+            kind: annotation.asset.kind as any, // Should be AssetKind from client models
+            text_content: annotation.asset.text_content || '',
+            created_at: annotation.asset.created_at,
+            updated_at: annotation.asset.created_at,
+            infospace_id: activeInfospace?.id || 0,
+            user_id: 0,
+            source_id: annotation.asset.source_id || 0,
+            parent_asset_id: annotation.asset.parent_asset_id || null,
+            part_index: null,
+            is_container: false,
+          };
+          uniqueAssets.set(annotation.asset_id, assetFromAnnotation);
+        } else {
+          // If no asset data available, create a minimal asset
+          const minimalAsset: AssetRead = {
+            id: annotation.asset_id,
+            uuid: `asset-${annotation.asset_id}`,
+            title: `Asset ${annotation.asset_id}`,
+            kind: 'text',
+            text_content: '',
+            created_at: annotation.timestamp || new Date().toISOString(),
+            updated_at: annotation.timestamp || new Date().toISOString(),
+            infospace_id: activeInfospace?.id || 0,
+            user_id: 0,
+            source_id: 0,
+            parent_asset_id: null,
+            part_index: null,
+            is_container: false,
+          };
+          uniqueAssets.set(annotation.asset_id, minimalAsset);
+        }
+      }
+    });
+    
+    console.log('[AnnotationRunnerPage] Extracted assets from annotations:', {
+      totalAnnotations: runResults.length,
+      uniqueAssets: uniqueAssets.size,
+      assetIds: Array.from(uniqueAssets.keys())
+    });
+    
+    return Array.from(uniqueAssets.values());
+  }, [runResults, assets, activeInfospace?.id]);
+
   useEffect(() => {
     if (activeRun?.id) {
       fetchRunResults(activeRun.id);
@@ -71,39 +132,35 @@ export default function AnnotationRunnerPage() {
   }, [activeRun?.id, fetchRunResults]);
   
   useEffect(() => {
-    const checkStatus = async () => {
-      if (activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
-        console.log(`Polling status for run ${activeRun.id}... Status: ${activeRun.status}`);
-        // We need to reload the run object itself to get status updates
-        loadRuns(); 
-      } else {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
-        if(activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
-            fetchRunResults(activeRun.id);
-        }
-      }
-    };
+    // Clear any existing interval first
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
 
+    // Only start polling if the run is actively processing
     if (activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
-      if (!pollIntervalRef.current) {
-        pollIntervalRef.current = setInterval(checkStatus, 5000);
-      }
+      const runId = activeRun.id; // Capture the run ID
+      const checkStatus = async () => {
+        await loadRuns(); 
+      };
+
+      // Start the polling interval
+      pollIntervalRef.current = setInterval(checkStatus, 5000);
     } else {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+      // Handle completed runs
+      if(activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
+          fetchRunResults(activeRun.id);
       }
     }
 
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, [activeRun, fetchRunResults, loadRuns]);
+  }, [activeRun?.id, activeRun?.status, loadRuns, fetchRunResults]);
 
   const handleSelectRunFromHistory = (runId: number) => {
     const runToLoad = runs.find(r => r.id === runId);
@@ -132,15 +189,31 @@ export default function AnnotationRunnerPage() {
     });
     return Array.from(sourcesMap.values());
   }, [assets]);
+
+  // Calculate the isProcessing state
+  const isProcessing = isLoadingResults || activeRun?.status === 'running' || activeRun?.status === 'pending';
   
   return (
     <div className="flex flex-col h-full bg-background overflow-auto bg-primary-950 relative">
-      {/* Blurred green rectangle background */}
+      {/* Blurred background - blue for light mode, green for dark mode */}
       <motion.div
         className="fixed rounded-lg blur-[150px] opacity-30 dark:opacity-15"
         style={{
-          backgroundColor: 'var(--dot-color-2)',
-          width: '60vw',
+          backgroundColor: 'var(--dot-color-1)', // Blue for light mode
+          width: '100vw',
+          height: '40vh',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 1,
+          pointerEvents: 'none',
+        }}
+      />
+      <motion.div
+        className="fixed rounded-lg blur-[150px] opacity-30 dark:opacity-15 hidden dark:block"
+        style={{
+          backgroundColor: 'var(--dot-color-2)', // Green for dark mode
+          width: '100vw',
           height: '40vh',
           left: '50%',
           top: '50%',
@@ -158,9 +231,9 @@ export default function AnnotationRunnerPage() {
             allSchemas={schemas}
             allSources={allSources}
             activeRun={activeRun}
-            isProcessing={isLoadingResults || activeRun?.status === 'running' || activeRun?.status === 'pending'}
+            isProcessing={isProcessing}
             results={runResults}
-            assets={assets}
+            assets={runAssets}
             onClearRun={clearActiveRun}
             onRunWithNewAssets={(template) => { /* Logic to be implemented if needed */ }}
         />

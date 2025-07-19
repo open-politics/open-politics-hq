@@ -1,6 +1,6 @@
 """Tasks for handling annotations."""
 import logging
-from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
 from celery import shared_task
 from sqlmodel import Session, select
@@ -23,7 +23,7 @@ from app.models import (
 from app.schemas import AnnotationCreate
 from app.core.db import engine
 from app.api.providers.factory import create_classification_provider, create_storage_provider
-from app.api.tasks.utils import create_pydantic_model_from_json_schema, make_python_identifier
+from app.api.tasks.utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
 from app.core.config import settings
 
 if TYPE_CHECKING:
@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 
 # Module-level provider cache to avoid recreating providers in the same worker process
 _provider_cache = {}
+
+# Configuration for parallel processing
+# These will be overridden by settings values
+DEFAULT_ANNOTATION_CONCURRENCY = 5  # Number of concurrent classification API calls
+MAX_ANNOTATION_CONCURRENCY = 20     # Maximum allowed concurrency
+
+def get_annotation_processing_config():
+    """Get annotation processing configuration from settings."""
+    try:
+        return {
+            'default_concurrency': settings.DEFAULT_ANNOTATION_CONCURRENCY,
+            'max_concurrency': settings.MAX_ANNOTATION_CONCURRENCY,
+            'parallel_enabled': settings.ENABLE_PARALLEL_ANNOTATION_PROCESSING
+        }
+    except AttributeError:
+        # Fallback to default values if settings not available
+        logger.warning("Annotation processing settings not found, using defaults")
+        return {
+            'default_concurrency': DEFAULT_ANNOTATION_CONCURRENCY,
+            'max_concurrency': MAX_ANNOTATION_CONCURRENCY,
+            'parallel_enabled': True
+        }
 
 def get_cached_provider(provider_type: str, settings_instance):
     """Get a cached provider instance or create a new one."""
@@ -334,9 +356,10 @@ def process_annotation_run(run_id: int) -> None:
     Process an annotation run using the new multi-modal engine. (sync wrapper)
     """
     logger.info(f"Task: Sync wrapper started for annotation run {run_id}")
+    
     try:
-        # Using asyncio.run() to execute the async task from a sync context
-        asyncio.run(_process_annotation_run_async(run_id))
+        # Use the helper function for proper event loop management
+        run_async_in_celery(_process_annotation_run_async, run_id)
     except Exception as e:
         logger.exception(f"Task: Critical unhandled error in async processing for run {run_id}: {e}")
         # If the async task fails with an unhandled exception, mark the run as FAILED.
@@ -353,6 +376,311 @@ def process_annotation_run(run_id: int) -> None:
             except Exception as db_exc:
                 logger.error(f"Task: Could not even update run {run_id} to FAILED status: {db_exc}")
         raise  # Re-raise the exception so Celery knows the task failed
+
+async def process_single_asset_schema(
+    asset: Asset,
+    schema_info: Dict[str, Any],
+    run: AnnotationRun,
+    run_config: Dict[str, Any],
+    classification_provider,
+    storage_provider_instance,
+    session: Session,
+    semaphore: Optional[asyncio.Semaphore] = None
+) -> Dict[str, Any]:
+    """
+    Process a single asset with a single schema.
+    
+    Args:
+        asset: The asset to process
+        schema_info: Schema information dict containing schema, structure, etc.
+        run: The annotation run
+        run_config: Run configuration
+        classification_provider: The classification provider instance
+        storage_provider_instance: Storage provider instance
+        session: Database session
+        semaphore: Optional semaphore for concurrency control
+    
+    Returns:
+        Dict with processing results including success status, annotations, justifications, and errors
+    """
+    if semaphore:
+        await semaphore.acquire()
+    
+    try:
+        schema = schema_info["schema"]
+        schema_structure = schema_info["schema_structure"]
+        OutputModelClass = schema_info["output_model_class"]
+        final_schema_instructions = schema_info["final_instructions"]
+        
+        result = {
+            "success": False,
+            "asset_id": asset.id,
+            "schema_id": schema.id,
+            "annotations": [],
+            "justifications": [],
+            "error": None
+        }
+        
+        try:
+            logger.debug(f"Task: Processing Asset {asset.id} with Schema {schema.id} for Run {run.id}")
+            
+            # Assemble multimodal context for this asset
+            text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
+                asset, run_config, session, storage_provider_instance
+            )
+            
+            full_provider_config_for_classify = {**run_config, **provider_specific_config}
+            # Pass thinking_config from run_config to provider_specific_config if not already there.
+            if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
+                provider_specific_config["thinking_config"] = run_config["thinking_config"]
+
+            logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
+
+            # Call the classification provider
+            provider_response_envelope = await classification_provider.classify(
+                text_content=text_content_for_provider,
+                output_model_class=OutputModelClass, 
+                instructions=final_schema_instructions,
+                provider_config=full_provider_config_for_classify
+            )
+            
+            # Demultiplex results to create annotations
+            created_annotations_for_asset = await demultiplex_results(
+                result=provider_response_envelope.get("data", provider_response_envelope),
+                schema_structure=schema_structure,
+                parent_asset=asset,
+                schema=schema,
+                run=run,
+                db=session
+            )
+            
+            result["annotations"] = created_annotations_for_asset
+            
+            # Handle _thinking_trace if present
+            thinking_trace_content = provider_response_envelope.get("_thinking_trace")
+            include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
+
+            if include_thoughts and thinking_trace_content:
+                # Find the parent document annotation
+                parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == asset.id), None)
+                if parent_doc_annotation:
+                    thinking_justification = Justification(
+                        annotation_id=None,  # Will be set after annotation is saved
+                        field_name="_thinking_trace",
+                        reasoning=thinking_trace_content,
+                        model_name=provider_response_envelope.get("_model_name", classification_provider.provider_name),
+                        evidence_payload={"trace_type": "provider_summary"}
+                    )
+                    result["justifications"] = [thinking_justification]
+                    result["parent_annotation_ref"] = parent_doc_annotation  # Reference for later ID assignment
+            
+            result["success"] = True
+            logger.debug(f"Task: Successfully processed Asset {asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
+            
+        except Exception as e_classify:
+            error_msg = f"Asset {asset.id}/Schema {schema.id} classification error: {str(e_classify)}"
+            logger.error(f"Task: Error classifying Asset {asset.id} with Schema {schema.id} for Run {run.id}: {e_classify}", exc_info=True)
+            
+            # Create a FAILED annotation for tracking
+            failed_ann = Annotation(
+                asset_id=asset.id,
+                schema_id=schema.id,
+                run_id=run.id,
+                value={"error": str(e_classify), "details": traceback.format_exc()},
+                status=ResultStatus.FAILED,
+                infospace_id=run.infospace_id,
+                user_id=run.user_id
+            )
+            result["annotations"] = [failed_ann]
+            result["error"] = error_msg
+            result["success"] = False
+        
+        return result
+        
+    finally:
+        if semaphore:
+            semaphore.release()
+
+async def process_assets_parallel(
+    assets_map: Dict[int, Asset],
+    validated_schemas: List[Dict[str, Any]],
+    run: AnnotationRun,
+    run_config: Dict[str, Any],
+    classification_provider,
+    storage_provider_instance,
+    session: Session,
+    concurrency_limit: int = DEFAULT_ANNOTATION_CONCURRENCY
+) -> Tuple[List[Annotation], List[Justification], List[str]]:
+    """
+    Process assets and schemas in parallel with controlled concurrency.
+    
+    Returns:
+        Tuple of (all_annotations, all_justifications, errors)
+    """
+    import asyncio
+    
+    # Create semaphore for concurrency control
+    semaphore = asyncio.Semaphore(concurrency_limit)
+    
+    # Create tasks for all asset-schema combinations
+    tasks = []
+    for schema_info in validated_schemas:
+        for asset_id, asset in assets_map.items():
+            task = process_single_asset_schema(
+                asset=asset,
+                schema_info=schema_info,
+                run=run,
+                run_config=run_config,
+                classification_provider=classification_provider,
+                storage_provider_instance=storage_provider_instance,
+                session=session,
+                semaphore=semaphore
+            )
+            tasks.append(task)
+    
+    logger.info(f"Task: Starting parallel processing of {len(tasks)} asset-schema combinations with concurrency limit {concurrency_limit}")
+    
+    # Process all tasks in parallel
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Collect results
+    all_created_annotations = []
+    all_created_justifications = []
+    errors_run_level = []
+    
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            # Task failed with exception
+            logger.error(f"Task: Parallel processing task {i} failed with exception: {result}", exc_info=True)
+            errors_run_level.append(f"Task {i} failed: {str(result)}")
+            continue
+        
+        if not isinstance(result, dict):
+            logger.error(f"Task: Unexpected result type from parallel task {i}: {type(result)}")
+            errors_run_level.append(f"Task {i} returned unexpected result type")
+            continue
+            
+        # Collect annotations
+        if result.get("annotations"):
+            all_created_annotations.extend(result["annotations"])
+        
+        # Collect justifications (need to handle annotation ID assignment)
+        if result.get("justifications") and result.get("parent_annotation_ref"):
+            for justification in result["justifications"]:
+                # The annotation reference will be updated with the actual ID after session.add_all
+                justification._parent_annotation_ref = result["parent_annotation_ref"]
+                all_created_justifications.append(justification)
+        
+        # Collect errors
+        if result.get("error"):
+            errors_run_level.append(result["error"])
+    
+    logger.info(f"Task: Parallel processing completed. Created {len(all_created_annotations)} annotations, {len(all_created_justifications)} justifications, {len(errors_run_level)} errors")
+    
+    return all_created_annotations, all_created_justifications, errors_run_level
+
+async def process_assets_sequential(
+    assets_map: Dict[int, Asset],
+    validated_schemas: List[Dict[str, Any]],
+    run: AnnotationRun,
+    run_config: Dict[str, Any],
+    classification_provider,
+    storage_provider_instance,
+    session: Session
+) -> Tuple[List[Annotation], List[Justification], List[str]]:
+    """
+    Process assets and schemas sequentially (fallback for when parallel processing is disabled).
+    
+    Returns:
+        Tuple of (all_annotations, all_justifications, errors)
+    """
+    all_created_annotations = []
+    all_created_justifications = []
+    errors_run_level = []
+    
+    logger.info(f"Task: Starting sequential processing of {len(assets_map)} assets with {len(validated_schemas)} schemas")
+    
+    for schema_info in validated_schemas:
+        schema = schema_info["schema"]
+        schema_structure = schema_info["schema_structure"]
+        OutputModelClass = schema_info["output_model_class"]
+        final_schema_instructions = schema_info["final_instructions"]
+
+        for asset_id, parent_asset in assets_map.items():
+            try:
+                logger.debug(f"Task: Sequentially processing Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}")
+                
+                # Assemble multimodal context for this asset
+                text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
+                    parent_asset, run_config, session, storage_provider_instance
+                )
+                
+                full_provider_config_for_classify = {**run_config, **provider_specific_config}
+                # Pass thinking_config from run_config to provider_specific_config if not already there.
+                if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
+                     provider_specific_config["thinking_config"] = run_config["thinking_config"]
+
+                logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
+
+                provider_response_envelope = await classification_provider.classify(
+                    text_content=text_content_for_provider,
+                    output_model_class=OutputModelClass, 
+                    instructions=final_schema_instructions,
+                    provider_config=full_provider_config_for_classify
+                )
+                
+                created_annotations_for_asset = await demultiplex_results(
+                    result=provider_response_envelope.get("data", provider_response_envelope),
+                    schema_structure=schema_structure,
+                    parent_asset=parent_asset,
+                    schema=schema,
+                    run=run,
+                    db=session
+                )
+                
+                all_created_annotations.extend(created_annotations_for_asset)
+                
+                # Handle _thinking_trace
+                thinking_trace_content = provider_response_envelope.get("_thinking_trace")
+                include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
+
+                if include_thoughts and thinking_trace_content:
+                    # Find the parent document annotation among created_annotations_for_asset
+                    parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == parent_asset.id), None)
+                    if parent_doc_annotation:
+                        thinking_justification = Justification(
+                            annotation_id=None,  # Will be set after annotation is saved
+                            field_name="_thinking_trace",
+                            reasoning=thinking_trace_content,
+                            model_name=provider_response_envelope.get("_model_name", classification_provider.provider_name),
+                            evidence_payload={"trace_type": "provider_summary"}
+                        )
+                        thinking_justification._parent_annotation_ref = parent_doc_annotation
+                        all_created_justifications.append(thinking_justification)
+                        logger.debug(f"Task: Created Justification object for _thinking_trace for Asset {parent_asset.id}, Run {run.id}.")
+                
+                logger.debug(f"Task: Successfully processed Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
+
+            except Exception as e_classify:
+                error_msg = f"Asset {parent_asset.id}/Schema {schema.id} classification error: {str(e_classify)}"
+                logger.error(f"Task: Error classifying Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}: {e_classify}", exc_info=True)
+                errors_run_level.append(error_msg)
+                
+                # Create a FAILED annotation for the parent asset
+                failed_ann = Annotation(
+                    asset_id=parent_asset.id,
+                    schema_id=schema.id,
+                    run_id=run.id,
+                    value={"error": str(e_classify), "details": traceback.format_exc()},
+                    status=ResultStatus.FAILED,
+                    infospace_id=run.infospace_id,
+                    user_id=run.user_id
+                )
+                all_created_annotations.append(failed_ann)
+    
+    logger.info(f"Task: Sequential processing completed. Created {len(all_created_annotations)} annotations, {len(all_created_justifications)} justifications, {len(errors_run_level)} errors")
+    
+    return all_created_annotations, all_created_justifications, errors_run_level
 
 async def _process_annotation_run_async(run_id: int) -> None:
     """
@@ -686,89 +1014,59 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 session.commit()
                 return
 
-            # OPTIMIZATION 4: Process schemas and assets more efficiently
-            for schema_info in validated_schemas:
-                schema = schema_info["schema"]
-                schema_structure = schema_info["schema_structure"]
-                OutputModelClass = schema_info["output_model_class"]
-                final_schema_instructions = schema_info["final_instructions"]
-
-                for asset_id, parent_asset in assets_map.items():
-                    try:
-                        # OPTIMIZATION 5: Reuse the same storage provider instance
-                        text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
-                            parent_asset, run_config, session, storage_provider_instance
-                        )
-                        
-                        full_provider_config_for_classify = {**run_config, **provider_specific_config}
-                        # Pass thinking_config from run_config to provider_specific_config if not already there.
-                        if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
-                             provider_specific_config["thinking_config"] = run_config["thinking_config"]
-
-                        logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
-
-                        provider_response_envelope = await classification_provider.classify(
-                            text_content=text_content_for_provider,
-                            output_model_class=OutputModelClass, 
-                            instructions=final_schema_instructions, # Use instructions with appended justification prompts
-                            provider_config=full_provider_config_for_classify # contains media_inputs and thinking_config
-                        )
-                        
-                        created_annotations_for_asset = await demultiplex_results(
-                            result=provider_response_envelope.get("data", provider_response_envelope), # Assuming data is under 'data' key or is the envelope itself
-                            schema_structure=schema_structure,
-                            parent_asset=parent_asset,
-                            schema=schema,
-                            run=run,
-                            db=session
-                        )
-                        
-                        session.add_all(created_annotations_for_asset) # Add to session
-                        session.flush() # Flush to get IDs for annotations
-
-                        all_created_annotations.extend(created_annotations_for_asset)
-                        
-                        # Handle _thinking_trace
-                        thinking_trace_content = provider_response_envelope.get("_thinking_trace")
-                        include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
-
-                        if include_thoughts and thinking_trace_content:
-                            # Find the parent document annotation among created_annotations_for_asset
-                            # It's the one directly linked to parent_asset.id
-                            parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == parent_asset.id), None)
-                            if parent_doc_annotation and parent_doc_annotation.id: # Ensure it exists and has an ID
-                                thinking_justification = Justification(
-                                    annotation_id=parent_doc_annotation.id,
-                                    field_name="_thinking_trace", # Special field name
-                                    reasoning=thinking_trace_content,
-                                    model_name=provider_response_envelope.get("_model_name", classification_provider.provider_name),
-                                    evidence_payload={"trace_type": "provider_summary"} # Optional: add more context
-                                )
-                                all_created_justifications.append(thinking_justification)
-                                logger.info(f"Task: Created Justification object for _thinking_trace for Annotation {parent_doc_annotation.id}, Run {run.id}.")
-                            else:
-                                logger.warning(f"Task: _thinking_trace received for Asset {parent_asset.id}, Run {run.id}, but parent document Annotation not found or has no ID. Cannot store trace.")
-                        
-                        logger.info(f"Task: Successfully processed Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
-
-                    except Exception as e_classify:
-                        logger.error(f"Task: Error classifying Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}: {e_classify}", exc_info=True)
-                        errors_run_level.append(f"Asset {parent_asset.id}/Schema {schema.id} classification error: {str(e_classify)}")
-                        # Optionally, create a FAILED annotation for the parent asset
-                        failed_ann = Annotation(
-                            asset_id=parent_asset.id,
-                            schema_id=schema.id,
-                            run_id=run.id,
-                            value={"error": str(e_classify), "details": traceback.format_exc()},
-                            status=ResultStatus.FAILED,
-                            infospace_id=run.infospace_id,
-                            user_id=run.user_id
-                        )
-                        all_created_annotations.append(failed_ann)
+            # OPTIMIZATION 4: Process schemas and assets with parallel or sequential processing
+            # Get processing configuration
+            processing_config = get_annotation_processing_config()
             
+            # Get concurrency limit from run config or use configured default
+            concurrency_limit = run_config.get("annotation_concurrency", processing_config['default_concurrency'])
+            concurrency_limit = min(concurrency_limit, processing_config['max_concurrency'])  # Cap at maximum
+            concurrency_limit = max(concurrency_limit, 1)  # Ensure at least 1
+            
+            # Check if parallel processing is enabled and feasible
+            parallel_enabled = processing_config['parallel_enabled'] and run_config.get("enable_parallel_processing", True)
+            
+            if parallel_enabled and len(assets_map) * len(validated_schemas) > 1:
+                logger.info(f"Task: Using parallel processing with concurrency limit of {concurrency_limit} for Run {run.id}")
+                
+                # Use parallel processing
+                all_created_annotations, all_created_justifications, errors_run_level = await process_assets_parallel(
+                    assets_map=assets_map,
+                    validated_schemas=validated_schemas,
+                    run=run,
+                    run_config=run_config,
+                    classification_provider=classification_provider,
+                    storage_provider_instance=storage_provider_instance,
+                    session=session,
+                    concurrency_limit=concurrency_limit
+                )
+            else:
+                logger.info(f"Task: Using sequential processing for Run {run.id} (parallel_enabled={parallel_enabled})")
+                
+                # Fallback to sequential processing
+                all_created_annotations, all_created_justifications, errors_run_level = await process_assets_sequential(
+                    assets_map=assets_map,
+                    validated_schemas=validated_schemas,
+                    run=run,
+                    run_config=run_config,
+                    classification_provider=classification_provider,
+                    storage_provider_instance=storage_provider_instance,
+                    session=session
+                )
+
             # After processing all assets and schemas:
             if all_created_annotations:
                 session.add_all(all_created_annotations)
+                session.flush()  # Flush to get annotation IDs
+                
+                # Now update justification annotation IDs
+                for justification in all_created_justifications:
+                    if hasattr(justification, '_parent_annotation_ref'):
+                        parent_annotation = justification._parent_annotation_ref
+                        if parent_annotation and parent_annotation.id:
+                            justification.annotation_id = parent_annotation.id
+                        delattr(justification, '_parent_annotation_ref')  # Clean up temporary reference
+            
             if all_created_justifications:
                 session.add_all(all_created_justifications)
             

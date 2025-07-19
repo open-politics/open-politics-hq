@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff } from 'lucide-react';
 import { AnnotationSchemaRead, AssetRead } from '@/client/models';
-import { FormattedAnnotation } from '@/lib/annotations/types';
+import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { AnalysisAdaptersService } from '@/client/services';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
@@ -29,6 +29,42 @@ import ReactFlow, {
   ReactFlowProvider,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
+import { getAnnotationFieldValue } from '@/lib/annotations/utils';
+
+// Time filtering utility function (copied from AnnotationResultsChart.tsx)
+const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
+  if (!timeAxisConfig) return null;
+
+  switch (timeAxisConfig.type) {
+    case 'default':
+      return new Date(result.timestamp);
+    case 'schema':
+      if (result.schema_id === timeAxisConfig.schemaId && timeAxisConfig.fieldKey) {
+        const fieldValue = getAnnotationFieldValue(result.value, timeAxisConfig.fieldKey);
+        if (fieldValue && (typeof fieldValue === 'string' || fieldValue instanceof Date)) {
+          try {
+            return new Date(fieldValue);
+          } catch {
+            return null;
+          }
+        }
+      }
+      return null;
+    case 'event':
+      const asset = assetsMap.get(result.asset_id);
+      if (asset?.event_timestamp) {
+        try {
+          return new Date(asset.event_timestamp);
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    default:
+      return new Date(result.timestamp);
+  }
+};
 
 // Types for graph data from backend
 interface GraphNode {
@@ -76,6 +112,14 @@ interface AnnotationResultsGraphProps {
   assets: AssetRead[];
   activeRunId?: number;
   allSchemas?: AnnotationSchemaRead[];
+  // NEW: Time frame filtering
+  timeAxisConfig?: TimeAxisConfig | null;
+  // NEW: Variable splitting
+  variableSplittingConfig?: VariableSplittingConfig | null;
+  onVariableSplittingChange?: (config: VariableSplittingConfig | null) => void;
+  // NEW: Settings persistence
+  onSettingsChange?: (settings: any) => void;
+  initialSettings?: any;
 }
 
 // Custom node component for entities
@@ -145,6 +189,12 @@ function AnnotationResultsGraphInner({
   assets,
   activeRunId,
   allSchemas,
+  // NEW props
+  timeAxisConfig = null,
+  variableSplittingConfig = null,
+  onVariableSplittingChange,
+  onSettingsChange,
+  initialSettings,
 }: AnnotationResultsGraphProps) {
   const { activeInfospace } = useInfospaceStore();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -161,6 +211,42 @@ function AnnotationResultsGraphInner({
   const [showDetailPanel, setShowDetailPanel] = useState(false);
   
   const { fitView } = useReactFlow();
+
+  // NEW: Apply time frame filtering and variable splitting
+  const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
+  
+  const timeFilteredResults = useMemo(() => {
+    if (!timeAxisConfig?.timeFrame?.enabled || !timeAxisConfig.timeFrame.startDate || !timeAxisConfig.timeFrame.endDate) {
+      return results;
+    }
+
+    const { startDate, endDate } = timeAxisConfig.timeFrame;
+    
+    return results.filter(result => {
+      const timestamp = getTimestamp(result, assetsMap, timeAxisConfig);
+      if (!timestamp) return false;
+      
+      return timestamp >= startDate && timestamp <= endDate;
+    });
+  }, [results, timeAxisConfig, assetsMap]);
+
+  const processedResults = useMemo(() => {
+    if (variableSplittingConfig?.enabled) {
+      return applySplittingToResults(timeFilteredResults, variableSplittingConfig);
+    }
+    return { all: timeFilteredResults };
+  }, [timeFilteredResults, variableSplittingConfig]);
+
+  // Use the appropriate results for graph generation
+  const resultsForGraph = useMemo(() => {
+    // For graph visualization, we typically want to combine all split results
+    // as the graph shows relationships across the entire dataset
+    const allResults: FormattedAnnotation[] = [];
+    Object.values(processedResults).forEach(splitResults => {
+      allResults.push(...splitResults);
+    });
+    return allResults.length > 0 ? allResults : timeFilteredResults;
+  }, [processedResults, timeFilteredResults]);
 
   // Find Knowledge Graph schemas - check both run schemas and all available schemas
   const graphSchemas = useMemo(() => {
@@ -852,6 +938,12 @@ export default function AnnotationResultsGraph({
   assets,
   activeRunId,
   allSchemas,
+  // NEW props
+  timeAxisConfig = null,
+  variableSplittingConfig = null,
+  onVariableSplittingChange,
+  onSettingsChange,
+  initialSettings,
 }: AnnotationResultsGraphProps) {
   return (
     <ReactFlowProvider>
@@ -861,6 +953,11 @@ export default function AnnotationResultsGraph({
         assets={assets}
         activeRunId={activeRunId}
         allSchemas={allSchemas}
+        timeAxisConfig={timeAxisConfig}
+        variableSplittingConfig={variableSplittingConfig}
+        onVariableSplittingChange={onVariableSplittingChange}
+        onSettingsChange={onSettingsChange}
+        initialSettings={initialSettings}
       />
     </ReactFlowProvider>
   );

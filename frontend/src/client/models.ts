@@ -55,9 +55,31 @@ export type AnnotationRunCreate = {
 	configuration?: Record<string, unknown>;
 	include_parent_context?: boolean;
 	context_window?: number;
+	views_config?: Array<Record<string, unknown>> | null;
 	schema_ids: Array<number>;
 	target_asset_ids?: Array<number> | null;
 	target_bundle_id?: number | null;
+};
+
+
+
+/**
+ * Preview model for shared annotation runs.
+ */
+export type AnnotationRunPreview = {
+	id: number;
+	uuid: string;
+	name: string;
+	description?: string | null;
+	status: RunStatus;
+	created_at: string;
+	updated_at: string;
+	completed_at?: string | null;
+	views_config?: Array<Record<string, unknown>> | null;
+	configuration?: Record<string, unknown>;
+	annotation_count?: number;
+	target_schemas?: Array<Record<string, unknown>>;
+	annotations?: Array<Record<string, unknown>>;
 };
 
 
@@ -68,6 +90,7 @@ export type AnnotationRunRead = {
 	configuration?: Record<string, unknown>;
 	include_parent_context?: boolean;
 	context_window?: number;
+	views_config?: Array<Record<string, unknown>> | null;
 	id: number;
 	uuid: string;
 	infospace_id: number;
@@ -90,6 +113,7 @@ export type AnnotationRunUpdate = {
 	configuration?: Record<string, unknown> | null;
 	include_parent_context?: boolean | null;
 	context_window?: number | null;
+	views_config?: Array<Record<string, unknown>> | null;
 };
 
 
@@ -377,7 +401,7 @@ export type BundlePreview = {
 	description?: string | null;
 	created_at: string;
 	updated_at: string;
-	assets?: Array<AssetPreview>;
+	assets: Array<AssetPreview>;
 };
 
 
@@ -893,7 +917,7 @@ export type SharedResourcePreview = {
 	resource_type: ResourceType;
 	name: string;
 	description?: string | null;
-	content: AssetPreview | BundlePreview;
+	content: AssetPreview | BundlePreview | AnnotationRunPreview;
 };
 
 

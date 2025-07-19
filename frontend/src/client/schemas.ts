@@ -276,6 +276,21 @@ export const $AnnotationRunCreate = {
 	type: 'number',
 	default: 0,
 },
+		views_config: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
+},
 		schema_ids: {
 	type: 'array',
 	contains: {
@@ -301,6 +316,104 @@ export const $AnnotationRunCreate = {
 }, {
 	type: 'null',
 }],
+},
+	},
+} as const;
+
+export const $AnnotationRunPreview = {
+	description: `Preview model for shared annotation runs.`,
+	properties: {
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		status: {
+	type: 'RunStatus',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		completed_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		views_config: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+		annotation_count: {
+	type: 'number',
+	default: 0,
+},
+		target_schemas: {
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+	default: [],
+},
+		annotations: {
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+	default: [],
 },
 	},
 } as const;
@@ -334,6 +447,21 @@ export const $AnnotationRunRead = {
 		context_window: {
 	type: 'number',
 	default: 0,
+},
+		views_config: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
 },
 		id: {
 	type: 'number',
@@ -458,6 +586,21 @@ export const $AnnotationRunUpdate = {
 	type: 'any-of',
 	contains: [{
 	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		views_config: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
 }, {
 	type: 'null',
 }],
@@ -1510,7 +1653,7 @@ export const $BundlePreview = {
 	contains: {
 		type: 'AssetPreview',
 	},
-	default: [],
+	isRequired: true,
 },
 	},
 } as const;
@@ -3170,6 +3313,8 @@ export const $SharedResourcePreview = {
 	type: 'AssetPreview',
 }, {
 	type: 'BundlePreview',
+}, {
+	type: 'AnnotationRunPreview',
 }],
 	isRequired: true,
 },

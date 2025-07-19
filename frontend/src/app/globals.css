@@ -323,7 +323,7 @@ svg:has(#shimmer) {
     rgba(139, 92, 246, 0.3) 100%
   );
   background-size: 400% 400%;
-  animation: shimmer-hover s ease-in-out infinite;
+  animation: shimmer-hover 1s ease-in-out infinite;
   z-index: -1;
 }
 

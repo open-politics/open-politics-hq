@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app/
 
-# Install Poetry
+# Install uv
 ENV UV_SYSTEM_PYTHON=1
 
 # Allow installing dev dependencies to run tests

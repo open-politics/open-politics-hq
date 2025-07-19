@@ -156,6 +156,17 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     try {
       const response = await AnnotationJobsService.listRuns({infospaceId: activeInfospace.id, limit: 1000 });
       setRuns(response.data);
+      
+      // Update activeRun if it exists in the updated runs
+      setActiveRun(prevActiveRun => {
+        if (prevActiveRun) {
+          const updatedActiveRun = response.data.find(run => run.id === prevActiveRun.id);
+          if (updatedActiveRun) {
+            return updatedActiveRun;
+          }
+        }
+        return prevActiveRun;
+      });
     } catch (e: any) {
       toast.error("Failed to load runs.", { description: e.body?.detail || e.message });
       setError(e.body?.detail || e.message);

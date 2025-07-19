@@ -14,41 +14,49 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
+export interface MapControlsConfig {
+  geocodeSource: { schemaId: number; fieldKey: string } | null;
+  labelSource: { schemaId: number; fieldKey: string } | null;
+  showLabels: boolean;
+}
+
 interface AnnotationMapControlsProps {
   schemas: AnnotationSchemaRead[];
-  results: FormattedAnnotation[];
-  onGeocodeRequest: (schemaId: string, fieldKey: string) => Promise<void>;
+  value: MapControlsConfig;
+  onChange: (newConfig: MapControlsConfig) => void;
+  onGeocodeRequest: () => void;
   isLoadingGeocoding: boolean;
   geocodingError: string | null;
-  onMapLabelConfigChange: (config: { schemaId: number; fieldKey: string } | undefined) => void;
-  initialSelectedGeocodeSchemaId?: string | null;
-  initialSelectedGeocodeField?: string | null;
-  initialMapLabelSchemaId?: number | null;
-  initialMapLabelFieldKey?: string | null;
-  initialShowMapLabels?: boolean;
 }
 
 export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
   schemas,
-  results,
+  value,
+  onChange,
   onGeocodeRequest,
   isLoadingGeocoding,
   geocodingError,
-  onMapLabelConfigChange,
-  initialSelectedGeocodeSchemaId = null,
-  initialSelectedGeocodeField = null,
-  initialMapLabelSchemaId = null,
-  initialMapLabelFieldKey = null,
-  initialShowMapLabels = false,
 }) => {
-  const [selectedGeocodeSchemaId, setSelectedGeocodeSchemaId] = useState<string | null>(initialSelectedGeocodeSchemaId);
-  const [selectedGeocodeField, setSelectedGeocodeField] = useState<string | null>(initialSelectedGeocodeField);
-  const [showMapLabels, setShowMapLabels] = useState<boolean>(initialShowMapLabels);
-  const [mapLabelSchemaId, setMapLabelSchemaId] = useState<number | null>(initialMapLabelSchemaId);
-  const [mapLabelFieldKey, setMapLabelFieldKey] = useState<string | null>(initialMapLabelFieldKey);
-  const initialGeocodeAttempted = useRef(false);
+  const { geocodeSource, labelSource, showLabels } = value;
 
-  // --- Derive options ---
+  // Local state to track current selections for better responsiveness
+  const [localGeocodeSource, setLocalGeocodeSource] = useState(geocodeSource);
+  const [localLabelSource, setLocalLabelSource] = useState(labelSource);
+  const [localShowLabels, setLocalShowLabels] = useState(showLabels);
+
+  // Update local state when value prop changes (important for shared/restored dashboards)
+  useEffect(() => {
+    setLocalGeocodeSource(geocodeSource);
+  }, [geocodeSource]);
+
+  useEffect(() => {
+    setLocalLabelSource(labelSource);
+  }, [labelSource]);
+
+  useEffect(() => {
+    setLocalShowLabels(showLabels);
+  }, [showLabels]);
+
   const geocodeSchemeOptions = useMemo(() => {
     return schemas.map(schema => ({
       value: schema.id.toString(),
@@ -57,123 +65,69 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
   }, [schemas]);
 
   const geocodeFieldOptions = useMemo(() => {
-    if (!selectedGeocodeSchemaId) return [];
-    const schemaId = parseInt(selectedGeocodeSchemaId, 10);
-    
-    // Use hierarchical field extraction to get all available fields
-    const targetKeys = getTargetKeysForScheme(schemaId, schemas);
-    
-    // Filter for fields that could contain location data (primarily strings)
+    if (!localGeocodeSource?.schemaId) return [];
+    const targetKeys = getTargetKeysForScheme(localGeocodeSource.schemaId, schemas);
     return targetKeys
       .filter(tk => tk.type === 'string' || (tk.type === 'array' && tk.key.toLowerCase().includes('location')))
-      .map(tk => ({
-        value: tk.key,
-        label: `${tk.name} (${tk.type})`
-      }));
-  }, [selectedGeocodeSchemaId, schemas]);
+      .map(tk => ({ value: tk.key, label: `${tk.name} (${tk.type})` }));
+  }, [localGeocodeSource?.schemaId, schemas]);
 
-  const currentMapLabelKeys = useMemo(() => {
-    if (mapLabelSchemaId !== null && schemas.length > 0) {
-      return getTargetKeysForScheme(mapLabelSchemaId, schemas);
-    }
-    return [];
-  }, [mapLabelSchemaId, schemas]);
+  const labelFieldOptions = useMemo(() => {
+    if (!localLabelSource?.schemaId) return [];
+    return getTargetKeysForScheme(localLabelSource.schemaId, schemas);
+  }, [localLabelSource?.schemaId, schemas]);
 
-  // --- Effects to sync initial state and reset fields ---
-  useEffect(() => {
-    setSelectedGeocodeSchemaId(initialSelectedGeocodeSchemaId);
-  }, [initialSelectedGeocodeSchemaId]);
-
-  useEffect(() => {
-    setSelectedGeocodeField(initialSelectedGeocodeField);
-  }, [initialSelectedGeocodeField]);
-
-  useEffect(() => {
-    setMapLabelSchemaId(initialMapLabelSchemaId);
-  }, [initialMapLabelSchemaId]);
-
-  useEffect(() => {
-    setMapLabelFieldKey(initialMapLabelFieldKey);
-  }, [initialMapLabelFieldKey]);
-
-  useEffect(() => {
-    setShowMapLabels(initialShowMapLabels);
-  }, [initialShowMapLabels]);
-
-  // Reset field selection when schema changes (respecting initial value)
-  useEffect(() => {
-    if (selectedGeocodeSchemaId !== initialSelectedGeocodeSchemaId || !initialSelectedGeocodeField) {
-        setSelectedGeocodeField(selectedGeocodeSchemaId === initialSelectedGeocodeSchemaId ? initialSelectedGeocodeField : null);
-    }
-  }, [selectedGeocodeSchemaId, initialSelectedGeocodeSchemaId, initialSelectedGeocodeField]);
-
-  useEffect(() => {
-    let targetFieldKey: string | null = mapLabelFieldKey;
-
-    if (mapLabelSchemaId === null) {
-      targetFieldKey = null;
+  const handleGeocodeSchemaChange = (schemaIdStr: string) => {
+    const newSchemaId = schemaIdStr ? parseInt(schemaIdStr, 10) : null;
+    if (newSchemaId) {
+      const targetKeys = getTargetKeysForScheme(newSchemaId, schemas);
+      const newFieldKey = targetKeys.length > 0 ? targetKeys[0].key : null;
+      const newConfig = { schemaId: newSchemaId, fieldKey: newFieldKey! };
+      setLocalGeocodeSource(newConfig);
+      onChange({ ...value, geocodeSource: newConfig });
     } else {
-      const currentKeys = getTargetKeysForScheme(mapLabelSchemaId, schemas);
-      const isCurrentKeyValid = currentKeys.some(k => k.key === mapLabelFieldKey);
-
-      if (!isCurrentKeyValid || mapLabelFieldKey === null) {
-        targetFieldKey = currentKeys.length > 0 ? currentKeys[0].key : null;
-      }
+      setLocalGeocodeSource(null);
+      onChange({ ...value, geocodeSource: null });
     }
-
-    if (targetFieldKey !== mapLabelFieldKey) {
-       setMapLabelFieldKey(targetFieldKey);
+  };
+  
+  const handleGeocodeFieldChange = (fieldKey: string) => {
+    if (localGeocodeSource) {
+      const newConfig = { ...localGeocodeSource, fieldKey };
+      setLocalGeocodeSource(newConfig);
+      onChange({ ...value, geocodeSource: newConfig });
     }
-  }, [mapLabelSchemaId, schemas]);
+  };
 
-  // --- Effect to notify parent of label config changes (MODIFIED) ---
-  useEffect(() => {
-    let configToSend: { schemaId: number; fieldKey: string } | undefined = undefined;
-
-    if (showMapLabels && mapLabelSchemaId !== null && mapLabelFieldKey !== null) {
-      const validKeysForScheme = getTargetKeysForScheme(mapLabelSchemaId, schemas);
-      const isFieldValidForScheme = validKeysForScheme.some(k => k.key === mapLabelFieldKey);
-
-      if (isFieldValidForScheme) {
-          configToSend = { schemaId: mapLabelSchemaId, fieldKey: mapLabelFieldKey };
-      }
+  const handleLabelSchemaChange = (schemaIdStr: string) => {
+    const newSchemaId = schemaIdStr ? parseInt(schemaIdStr, 10) : null;
+    if (newSchemaId) {
+      const targetKeys = getTargetKeysForScheme(newSchemaId, schemas);
+      const newFieldKey = targetKeys.length > 0 ? targetKeys[0].key : null;
+      const newConfig = { schemaId: newSchemaId, fieldKey: newFieldKey! };
+      setLocalLabelSource(newConfig);
+      onChange({ ...value, labelSource: newConfig });
+    } else {
+      setLocalLabelSource(null);
+      onChange({ ...value, labelSource: null });
     }
-    onMapLabelConfigChange(configToSend);
-  }, [showMapLabels, mapLabelSchemaId, mapLabelFieldKey, onMapLabelConfigChange, schemas]);
+  };
 
-  // --- Initial Geocode Trigger ---
-  useEffect(() => {
-    initialGeocodeAttempted.current = false;
-  }, [initialSelectedGeocodeSchemaId, initialSelectedGeocodeField]);
-
-  useEffect(() => {
-    const canGeocode =
-      initialSelectedGeocodeSchemaId &&
-      initialSelectedGeocodeField &&
-      results.length > 0 &&
-      !isLoadingGeocoding;
-
-    if (canGeocode && !initialGeocodeAttempted.current) {
-      initialGeocodeAttempted.current = true;
-      onGeocodeRequest(initialSelectedGeocodeSchemaId!, initialSelectedGeocodeField!);
+  const handleLabelFieldChange = (fieldKey: string) => {
+    if (localLabelSource) {
+      const newConfig = { ...localLabelSource, fieldKey };
+      setLocalLabelSource(newConfig);
+      onChange({ ...value, labelSource: newConfig });
     }
-  }, [
-      initialSelectedGeocodeSchemaId,
-      initialSelectedGeocodeField,
-      results,
-      isLoadingGeocoding,
-      onGeocodeRequest
-  ]);
+  };
 
-  // --- Handlers ---
-  const handleGeocodeClick = useCallback(() => {
-    if (selectedGeocodeSchemaId && selectedGeocodeField) {
-      onGeocodeRequest(selectedGeocodeSchemaId, selectedGeocodeField);
-    }
-  }, [selectedGeocodeSchemaId, selectedGeocodeField, onGeocodeRequest]);
-
+  const handleShowLabelsChange = (checked: boolean) => {
+    setLocalShowLabels(checked);
+    onChange({ ...value, showLabels: checked });
+  };
+  
   return (
-    <div className="mb-3 p-3 rounded-md bg-muted/40 backdrop-blur supports-[backdrop-filter]:bg-background/60 border border-border/50">
+    <div className="mb-0 p-3 rounded-t-md bg-muted/20 backdrop-blur supports-[backdrop-filter]:bg-background/40 border border-border/50">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold flex items-center text-muted-foreground">
@@ -183,7 +137,7 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
           <div className="flex items-end gap-2">
             <div className="flex-1">
               <Label htmlFor="geocode-schema-select" className="text-xs mb-1 block sr-only">Schema</Label>
-              <Select value={selectedGeocodeSchemaId ?? ""} onValueChange={setSelectedGeocodeSchemaId}>
+              <Select value={localGeocodeSource?.schemaId?.toString() ?? ""} onValueChange={handleGeocodeSchemaChange}>
                 <SelectTrigger id="geocode-schema-select" className="h-8 text-xs w-full" aria-label="Geocode Source Schema">
                   <SelectValue placeholder="Select schema..." />
                 </SelectTrigger>
@@ -201,9 +155,9 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
             <div className="flex-1">
                <Label htmlFor="geocode-field-select" className="text-xs mb-1 block sr-only">Field</Label>
                <Select
-                  value={selectedGeocodeField ?? ""}
-                  onValueChange={setSelectedGeocodeField}
-                  disabled={!selectedGeocodeSchemaId}
+                  value={localGeocodeSource?.fieldKey ?? ""}
+                  onValueChange={handleGeocodeFieldChange}
+                  disabled={!localGeocodeSource?.schemaId}
                >
                   <SelectTrigger id="geocode-field-select" className="h-8 text-xs w-full" aria-label="Geocode Source Field">
                      <SelectValue placeholder="Select field..." />
@@ -213,9 +167,9 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                       {geocodeFieldOptions.map(option => (
                         <SelectItem key={option.value} value={option.value} className="text-xs">{option.label}</SelectItem>
                       ))}
-                      {geocodeFieldOptions.length === 0 && selectedGeocodeSchemaId &&
+                      {geocodeFieldOptions.length === 0 && localGeocodeSource?.schemaId &&
                         <div className="p-2 text-xs text-center italic text-muted-foreground">No fields in schema</div>}
-                      {!selectedGeocodeSchemaId &&
+                      {!localGeocodeSource?.schemaId &&
                         <div className="p-2 text-xs text-center italic text-muted-foreground">Select a schema first</div>}
                     </ScrollArea>
                   </SelectContent>
@@ -224,10 +178,10 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
             <TooltipProvider delayDuration={100}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                   <div className={cn(!selectedGeocodeSchemaId || !selectedGeocodeField || results.length === 0 ? "cursor-not-allowed" : "")}>
+                   <div className={cn(!localGeocodeSource?.schemaId || !localGeocodeSource?.fieldKey ? "cursor-not-allowed" : "")}>
                      <Button
-                       onClick={handleGeocodeClick}
-                       disabled={!selectedGeocodeSchemaId || !selectedGeocodeField || isLoadingGeocoding || results.length === 0}
+                       onClick={onGeocodeRequest}
+                       disabled={!localGeocodeSource?.schemaId || !localGeocodeSource?.fieldKey || isLoadingGeocoding}
                        size="icon"
                        variant="outline"
                        className="h-8 w-8 flex-shrink-0"
@@ -238,11 +192,9 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                    </div>
                 </TooltipTrigger>
                 <TooltipContent>
-                   {results.length === 0
-                    ? "No results available to geocode"
-                    : (!selectedGeocodeSchemaId || !selectedGeocodeField
+                   {!localGeocodeSource?.schemaId || !localGeocodeSource?.fieldKey
                       ? "Select a schema and field first"
-                      : isLoadingGeocoding ? "Geocoding..." : "Geocode selected locations")}
+                      : isLoadingGeocoding ? "Geocoding..." : "Geocode selected locations"}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -263,23 +215,23 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                        <div className="h-8 flex items-center">
                           <Switch
                             id="map-label-switch"
-                            checked={showMapLabels}
-                            onCheckedChange={setShowMapLabels}
+                            checked={localShowLabels}
+                            onCheckedChange={handleShowLabelsChange}
                             className="data-[state=checked]:bg-primary"
                             aria-label="Show map labels toggle"
                           />
                        </div>
                      </TooltipTrigger>
-                     <TooltipContent><p>{showMapLabels ? 'Hide' : 'Show'} map labels</p></TooltipContent>
+                     <TooltipContent><p>{showLabels ? 'Hide' : 'Show'} map labels</p></TooltipContent>
                    </Tooltip>
                  </TooltipProvider>
               </div>
-              <div className={cn("flex-1", !showMapLabels && "opacity-50 pointer-events-none transition-opacity")}>
+              <div className={cn("flex-1", !localShowLabels && "opacity-50 pointer-events-none transition-opacity")}>
                  <Label htmlFor="map-label-schema-select" className="text-xs mb-1 block sr-only">Label Schema</Label>
                  <Select
-                   value={mapLabelSchemaId?.toString() ?? ""}
-                   onValueChange={(v) => setMapLabelSchemaId(v ? parseInt(v) : null)}
-                   disabled={!showMapLabels || schemas.length === 0}
+                   value={localLabelSource?.schemaId?.toString() ?? ""}
+                   onValueChange={handleLabelSchemaChange}
+                   disabled={!localShowLabels || schemas.length === 0}
                  >
                    <SelectTrigger id="map-label-schema-select" className="h-8 text-xs w-full" aria-label="Map Label Schema">
                      <SelectValue placeholder="Select schema..." />
@@ -294,32 +246,32 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                    </SelectContent>
                  </Select>
               </div>
-              <div className={cn("flex-1", !showMapLabels && "opacity-50 pointer-events-none transition-opacity")}>
+              <div className={cn("flex-1", !localShowLabels && "opacity-50 pointer-events-none transition-opacity")}>
                  <Label htmlFor="map-label-key-select" className="text-xs mb-1 block sr-only">Label Field</Label>
                  <Select
-                   value={mapLabelFieldKey ?? ""}
-                   onValueChange={(v) => setMapLabelFieldKey(v || null)}
-                   disabled={!showMapLabels || currentMapLabelKeys.length === 0}
+                   value={localLabelSource?.fieldKey ?? ""}
+                   onValueChange={handleLabelFieldChange}
+                   disabled={!localShowLabels || labelFieldOptions.length === 0}
                  >
                    <SelectTrigger id="map-label-key-select" className="h-8 text-xs w-full" aria-label="Map Label Field">
                      <SelectValue placeholder="Select field..." />
                    </SelectTrigger>
                    <SelectContent>
                      <ScrollArea className="max-h-60 w-full">
-                       {currentMapLabelKeys.map(tk => (
+                       {labelFieldOptions.map(tk => (
                          <SelectItem key={tk.key} value={tk.key} className="text-xs flex items-center gap-2">
                            <span className="truncate">{tk.name}</span>
                            <Badge variant="outline" className="text-xs px-1.5 py-0 ml-auto">{tk.type}</Badge>
                          </SelectItem>
                        ))}
-                       {currentMapLabelKeys.length === 0 &&
+                       {labelFieldOptions.length === 0 &&
                          <div className="p-2 text-xs text-center italic text-muted-foreground">No text fields</div>}
                      </ScrollArea>
                    </SelectContent>
                  </Select>
               </div>
            </div>
-            {showMapLabels && mapLabelSchemaId !== null && currentMapLabelKeys.length === 0 && (
+            {localShowLabels && localLabelSource?.schemaId !== null && labelFieldOptions.length === 0 && (
                 <div className="text-xs text-muted-foreground italic pt-1">
                     Selected schema has no text-based fields for labels.
                 </div>

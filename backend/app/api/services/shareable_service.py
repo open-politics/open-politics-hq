@@ -43,6 +43,7 @@ from app.models import (
     AnnotationSchema,
     Infospace, 
     AnnotationRun,
+    Annotation,
     Dataset,
     Asset, 
     Bundle,
@@ -60,7 +61,8 @@ from app.schemas import (
     ShareableLinkStats,
     SharedResourcePreview, 
     AssetPreview, 
-    BundlePreview
+    BundlePreview,
+    AnnotationRunPreview
 )
 from app.api.providers.base import StorageProvider
 from app.api.services.package_service import DataPackage, PackageMetadata
@@ -219,7 +221,7 @@ class ShareableService:
 
     def view_shared_resource(self, token: str) -> SharedResourcePreview:
         """
-        Provides a read-only, public view of a shared resource (Asset or Bundle).
+        Provides a read-only, public view of a shared resource (Asset, Bundle, or AnnotationRun).
         This method does not require authentication if the link is public.
         """
         link = self.get_link_by_token(token)
@@ -227,8 +229,8 @@ class ShareableService:
         if not link or not link.is_valid():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found or has expired.")
 
-        # This endpoint is only for viewing assets and bundles.
-        if link.resource_type not in [ResourceType.ASSET, ResourceType.BUNDLE]:
+        # This endpoint supports viewing assets, bundles, and annotation runs.
+        if link.resource_type not in [ResourceType.ASSET, ResourceType.BUNDLE, ResourceType.RUN]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This link cannot be viewed directly.")
 
         # Robustly determine the infospace_id for the resource,
@@ -289,6 +291,15 @@ class ShareableService:
                 content=bundle_preview
             )
         
+        elif link.resource_type == ResourceType.RUN:
+            run_preview = self._build_annotation_run_preview(resource, resource_infospace_id)
+            return SharedResourcePreview(
+                resource_type=link.resource_type,
+                name=run_preview.name,
+                description=run_preview.description,
+                content=run_preview
+            )
+        
         # This should not be reached due to the check above, but as a safeguard:
         raise HTTPException(status_code=500, detail="Unexpected error processing the shared resource.")
 
@@ -339,7 +350,12 @@ class ShareableService:
             return self.bundle_service.get_bundle(bundle_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
             
         elif rt == ResourceType.SCHEMA: return self.annotation_service.get_schema(schema_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
-        elif rt == ResourceType.RUN: return self.annotation_service.get_run_details(run_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
+        elif rt == ResourceType.RUN:
+            if u_id is None:  # Public view: direct lookup with relationships
+                from sqlalchemy.orm import selectinload
+                query = select(AnnotationRun).where(AnnotationRun.id == r_id, AnnotationRun.infospace_id == inf_id_ctx).options(selectinload(AnnotationRun.target_schemas))
+                return self.session.exec(query).first()
+            return self.annotation_service.get_run_details(run_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
         elif rt == ResourceType.DATASET: return self.dataset_service.get_dataset(dataset_id=r_id, user_id=u_id, infospace_id=inf_id_ctx)
 
         raise ValueError(f"Unsupported type: {rt}")
@@ -804,3 +820,79 @@ class ShareableService:
                 "imported_resource_name": getattr(imported_entity, 'name', getattr(imported_entity, 'title', 'Untitled')),
                 "target_infospace_id": target_infospace_id,
             } 
+
+    def _build_annotation_run_preview(self, run: AnnotationRun, infospace_id: int) -> "AnnotationRunPreview":
+        """
+        Build a preview representation of an annotation run for public sharing.
+        
+        Args:
+            run: The AnnotationRun object
+            infospace_id: The infospace ID for context
+            
+        Returns:
+            AnnotationRunPreview object with run details, schemas, and annotations
+        """
+        from app.schemas import AnnotationRunPreview
+        
+        # Get target schemas with summaries
+        target_schemas = []
+        for schema in run.target_schemas:
+            target_schemas.append({
+                "id": schema.id,
+                "uuid": str(schema.uuid),
+                "name": schema.name,
+                "description": schema.description,
+                "version": schema.version,
+                "output_contract": schema.output_contract,
+                "instructions": schema.instructions
+            })
+        
+        # Get annotations for this run
+        annotations_query = select(Annotation).where(Annotation.run_id == run.id).limit(1000)  # Limit for performance
+        annotations = self.session.exec(annotations_query).all()
+        
+        # Build annotation summaries with asset context
+        annotation_summaries = []
+        for annotation in annotations:
+            # Get basic asset info for context
+            asset = self.session.get(Asset, annotation.asset_id)
+            schema = self.session.get(AnnotationSchema, annotation.schema_id)
+            
+            annotation_data = {
+                "id": annotation.id,
+                "uuid": str(annotation.uuid),
+                "value": annotation.value,
+                "status": annotation.status.value if annotation.status else "unknown",
+                "timestamp": annotation.timestamp.isoformat() if annotation.timestamp else None,
+                "created_at": annotation.created_at.isoformat(),
+                "region": annotation.region,
+                "links": annotation.links,
+                "asset": {
+                    "id": asset.id if asset else annotation.asset_id,
+                    "uuid": str(asset.uuid) if asset else None,
+                    "title": asset.title if asset else f"Asset {annotation.asset_id}",
+                    "kind": asset.kind.value if asset else "unknown"
+                } if asset else None,
+                "schema": {
+                    "id": schema.id if schema else annotation.schema_id,
+                    "name": schema.name if schema else f"Schema {annotation.schema_id}",
+                    "version": schema.version if schema else "unknown"
+                } if schema else None
+            }
+            annotation_summaries.append(annotation_data)
+        
+        return AnnotationRunPreview(
+            id=run.id,
+            uuid=str(run.uuid),
+            name=run.name,
+            description=run.description,
+            status=run.status,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+            completed_at=run.completed_at,
+            views_config=run.views_config,
+            configuration=run.configuration,
+            annotation_count=len(annotations),
+            target_schemas=target_schemas,
+            annotations=annotation_summaries
+        ) 

@@ -82,3 +82,5 @@ for item in "${selected_items[@]}"; do
 done
 
 echo "Build and push completed"
+
+

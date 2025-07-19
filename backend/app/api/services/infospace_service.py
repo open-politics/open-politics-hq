@@ -26,7 +26,12 @@ from app.models import (
     Asset,
     Task,
     Package,
-    ResourceType 
+    ResourceType,
+    Annotation,
+    ShareableLink,
+    RunSchemaLink,
+    AssetBundleLink,
+    Bundle
 )
 
 # Add import for Infospace schemas from app.schemas
@@ -153,22 +158,122 @@ class InfospaceService:
         infospace_id: int,
         user_id: int,
     ) -> bool:
-        """Delete an infospace. Also handles deletion of related entities (cascade or manual)."""
+        """Delete an infospace and all its related entities in the correct order."""
         logger.info(f"Service: Attempting to delete infospace {infospace_id} by user {user_id}")
         db_infospace = self.get_infospace(infospace_id, user_id) # Validates access
         if not db_infospace:
             return False
         
-        # TODO: Implement robust deletion of all related entities within this infospace
-        # e.g., Assets, AssetChunks, Annotations, AnnotationRuns, Bundles, Tasks, Packages, ShareableLinks, Sources, Datasets
-        # This often requires careful cascading deletes defined in models or explicit deletion queries here.
-        # For now, just deleting the infospace itself.
-        logger.warning(f"Service: Deleting infospace {infospace_id}. NOTE: Related entity deletion (Assets, Annotations, etc.) is not fully implemented yet.")
-
-        self.session.delete(db_infospace)
-        self.session.commit()
-        logger.info(f"Service: Infospace {infospace_id} deleted from database.")
-        return True
+        try:
+            logger.info(f"Service: Starting cascade deletion for infospace {infospace_id}")
+            
+            # 1. Delete annotations first (they reference runs, schemas, and assets)
+            annotations = self.session.exec(
+                select(Annotation).where(Annotation.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(annotations)} annotations")
+            for annotation in annotations:
+                self.session.delete(annotation)
+            
+            # 2. Delete annotation runs (they reference schemas via link table)
+            runs = self.session.exec(
+                select(AnnotationRun).where(AnnotationRun.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(runs)} annotation runs")
+            for run in runs:
+                # Delete run-schema links first
+                run_schema_links = self.session.exec(
+                    select(RunSchemaLink).where(RunSchemaLink.run_id == run.id)
+                ).all()
+                for link in run_schema_links:
+                    self.session.delete(link)
+                # Then delete the run itself
+                self.session.delete(run)
+            
+            # 3. Delete annotation schemas
+            schemas = self.session.exec(
+                select(AnnotationSchema).where(AnnotationSchema.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(schemas)} annotation schemas")
+            for schema in schemas:
+                self.session.delete(schema)
+            
+            # 4. Delete asset-bundle links and bundles
+            bundles = self.session.exec(
+                select(Bundle).where(Bundle.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(bundles)} bundles")
+            for bundle in bundles:
+                # Delete asset-bundle links first
+                asset_bundle_links = self.session.exec(
+                    select(AssetBundleLink).where(AssetBundleLink.bundle_id == bundle.id)
+                ).all()
+                for link in asset_bundle_links:
+                    self.session.delete(link)
+                # Then delete the bundle itself
+                self.session.delete(bundle)
+            
+            # 5. Delete assets (they reference sources)
+            assets = self.session.exec(
+                select(Asset).where(Asset.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(assets)} assets")
+            for asset in assets:
+                self.session.delete(asset)
+            
+            # 6. Delete sources
+            sources = self.session.exec(
+                select(Source).where(Source.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(sources)} sources")
+            for source in sources:
+                self.session.delete(source)
+            
+            # 7. Delete datasets
+            datasets = self.session.exec(
+                select(Dataset).where(Dataset.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(datasets)} datasets")
+            for dataset in datasets:
+                self.session.delete(dataset)
+            
+            # 8. Delete tasks
+            tasks = self.session.exec(
+                select(Task).where(Task.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(tasks)} tasks")
+            for task in tasks:
+                self.session.delete(task)
+            
+            # 9. Delete packages
+            packages = self.session.exec(
+                select(Package).where(Package.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(packages)} packages")
+            for package in packages:
+                self.session.delete(package)
+            
+            # 10. Delete shareable links (optional infospace_id, but clean up if present)
+            shareable_links = self.session.exec(
+                select(ShareableLink).where(ShareableLink.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(shareable_links)} shareable links")
+            for link in shareable_links:
+                self.session.delete(link)
+            
+            # 11. Finally, delete the infospace itself
+            self.session.delete(db_infospace)
+            
+            # Commit all deletions
+            self.session.commit()
+            logger.info(f"Service: Successfully deleted infospace {infospace_id} and all related entities")
+            return True
+            
+        except Exception as e:
+            # Rollback on any error
+            self.session.rollback()
+            logger.error(f"Service: Error during cascade deletion of infospace {infospace_id}: {e}", exc_info=True)
+            raise e
 
     def ensure_default_infospace(
         self,

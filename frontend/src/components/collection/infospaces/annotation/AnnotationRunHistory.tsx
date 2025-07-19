@@ -3,9 +3,9 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Settings2, Repeat, Star, Loader2, ChevronDown, ChevronRight, History, Calendar, Clock, Play, Files, Microscope } from 'lucide-react';
+import { Settings2, Repeat, Star, Loader2, ChevronDown, ChevronRight, History, Calendar, Clock, Play, Files, Microscope, Share2, MoreHorizontal } from 'lucide-react';
 import { cn } from "@/lib/utils";
-import { AnnotationRunRead } from '@/client/models';
+import { AnnotationRunRead, ResourceType } from '@/client/models';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -17,13 +17,25 @@ import { Badge } from '@/components/ui/badge';
 import { shallow } from 'zustand/shallow';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useShareableStore } from '@/zustand_stores/storeShareables';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuLabel, 
+  DropdownMenuSeparator,
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
+import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 
 const FavoriteRunCard: React.FC<{
   run: AnnotationRunRead & { timestamp: string; documentCount: number; schemeCount: number };
   activeRunId?: number | null;
   onSelectRun: (runId: number) => void;
   onToggleFavorite: (run: AnnotationRunRead) => void;
-}> = ({ run, activeRunId, onSelectRun, onToggleFavorite }) => {
+  onShare: (runId: number) => void;
+}> = ({ run, activeRunId, onSelectRun, onToggleFavorite, onShare }) => {
   const config = run.configuration as any;
   const recurringTaskIdValue: unknown = config?.recurring_task_id;
   const isRecurring = typeof recurringTaskIdValue === 'number';
@@ -53,18 +65,31 @@ const FavoriteRunCard: React.FC<{
       )}
       onClick={() => onSelectRun(run.id)}
     >
-      {/* Favorite Star - Positioned absolutely */}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleFavorite(run);
-        }}
-        className="absolute top-3 right-3 h-8 w-8 hover:bg-amber-200/50"
-      >
-        <Star className="h-4 w-4 fill-amber-500 text-amber-600" />
-      </Button>
+      {/* Action Buttons - Positioned absolutely */}
+      <div className="absolute top-3 right-3 flex gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            onShare(run.id);
+          }}
+          className="h-8 w-8 hover:bg-amber-200/50"
+        >
+          <Share2 className="h-4 w-4 text-amber-600" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(run);
+          }}
+          className="h-8 w-8 hover:bg-amber-200/50"
+        >
+          <Star className="h-4 w-4 fill-amber-500 text-amber-600" />
+        </Button>
+      </div>
 
       {/* Content */}
       <div className="flex flex-col h-32 pr-12">
@@ -136,7 +161,8 @@ const RunTableRow: React.FC<{
   activeRunId?: number | null;
   onSelectRun: (runId: number) => void;
   onToggleFavorite: (run: AnnotationRunRead) => void;
-}> = ({ run, activeRunId, onSelectRun, onToggleFavorite }) => {
+  onShare: (runId: number) => void;
+}> = ({ run, activeRunId, onSelectRun, onToggleFavorite, onShare }) => {
   const config = run.configuration as any;
   const recurringTaskIdValue: unknown = config?.recurring_task_id;
   const isRecurring = typeof recurringTaskIdValue === 'number';
@@ -258,6 +284,22 @@ const RunTableRow: React.FC<{
           <span className="font-medium">{format(parseISO(run.created_at), 'MMM d, yyyy')}</span>
         </div>
       </TableCell>
+      <TableCell className="text-right py-6 pr-6">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <span className="sr-only">Open menu</span>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onShare(run.id);}}>
+              <Share2 className="mr-2 h-4 w-4" /> Share Dashboard
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </TableCell>
     </TableRow>
   );
 };
@@ -271,6 +313,7 @@ const RunHistoryPanel: React.FC<{
   const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isFavoritesExpanded, setIsFavoritesExpanded] = useState(true);
+  const [sharingRun, setSharingRun] = useState<AnnotationRunRead | null>(null);
   
   const { addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
   const favoriteRuns = useFavoriteRunsStore(state => state.favoriteRuns);
@@ -297,6 +340,16 @@ const RunHistoryPanel: React.FC<{
       });
     }
   }, [activeInfospace?.id, isFavorite, addFavoriteRun, removeFavoriteRun]);
+
+  const handleShareRun = useCallback((runId: number) => {
+    const run = runs.find(r => r.id === runId);
+    if (!run) {
+      toast.error('Run not found');
+      return;
+    }
+    
+    setSharingRun(run);
+  }, [runs]);
 
   const displayRuns = useMemo(() => {
     return runs.map(run => {
@@ -344,7 +397,7 @@ const RunHistoryPanel: React.FC<{
   return (
     <div className="flex flex-col h-full">
       {/* Fixed Header Section */}
-      <div className="flex-shrink-0 bg-background/95 backdrop-blur-sm border-b border-border/20">
+      <div className="flex-shrink-0 backdrop-blur-sm border-b border-border/20">
         <div className="p-4 pb-0">
           {/* Main Header Row */}
           <div className="flex items-center justify-between mb-6">
@@ -431,7 +484,7 @@ const RunHistoryPanel: React.FC<{
               
               <Collapsible open={isFavoritesExpanded}>
                 <CollapsibleContent>
-                  <div className="max-h-64 overflow-y-auto scrollbar-thin p-4">
+                  <div className="max-h-64 overflow-y-auto scrollbar-thin border border-primary/40 rounded-lg p-4">
                     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
                       {favoriteRunsFromList.map((run) => (
                         <FavoriteRunCard
@@ -440,6 +493,7 @@ const RunHistoryPanel: React.FC<{
                           activeRunId={activeRunId}
                           onSelectRun={onSelectRun}
                           onToggleFavorite={handleToggleFavoriteRun}
+                          onShare={handleShareRun}
                         />
                       ))}
                     </div>
@@ -454,7 +508,7 @@ const RunHistoryPanel: React.FC<{
       {/* All Runs Section - Fixed Header with Scrollable Content */}
       <div className="flex-1 flex flex-col min-h-0">
         {/* All Runs Header - Fixed */}
-        <div className="flex-shrink-0 bg-background/95 backdrop-blur-sm border-b border-border/20 p-2 pb-0 px-6">
+        <div className="flex-shrink-0 backdrop-blur-sm border-b border-border/20 p-2 pb-0 px-6">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <History className="h-5 w-5 text-muted-foreground" />
             All Runs
@@ -514,6 +568,9 @@ const RunHistoryPanel: React.FC<{
                           Created
                         </div>
                       </TableHead>
+                      <TableHead className="w-20 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Actions
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                 </Table>
@@ -530,6 +587,7 @@ const RunHistoryPanel: React.FC<{
                         activeRunId={activeRunId}
                         onSelectRun={onSelectRun}
                         onToggleFavorite={handleToggleFavoriteRun}
+                        onShare={handleShareRun}
                       />
                     ))}
                   </TableBody>
@@ -556,6 +614,14 @@ const RunHistoryPanel: React.FC<{
           )}
         </div>
       </div>
+      
+      {/* Share Dialog */}
+      {sharingRun && (
+        <ShareAnnotationRunDialog
+          run={sharingRun}
+          onClose={() => setSharingRun(null)}
+        />
+      )}
     </div>
   );
 };

@@ -1,7 +1,32 @@
 import { AnnotationSchemaRead } from "@/client/models";
-import { ResultFilter } from "@/components/collection/infospaces/annotation/AnnotationResultFilters"; 
-import { JsonSchemaType, FormattedAnnotation, Asset } from "./types"; 
+import { JsonSchemaType, FormattedAnnotation, Asset } from "./types";
 import { AnnotationRead as ClientAnnotationRead } from "@/client/models";
+
+// --- START: Types and functions moved from AnnotationResultFilters.tsx ---
+
+// Define field types locally since they're not exported from the main types
+type FieldType = 'int' | 'float' | 'str' | 'bool' | 'List[str]' | 'List[Dict[str, any]]';
+
+// Define the filter logic mode type
+export type FilterLogicMode = 'and' | 'or';
+
+// The configuration for an entire filter set
+export interface FilterSet {
+  logic: FilterLogicMode;
+  rules: ResultFilter[];
+}
+
+// Define the filter interface more formally
+export interface ResultFilter {
+  id: string; // Add a unique ID for React keys
+  schemaId: number;
+  fieldKey?: string;
+  operator: 'equals' | 'contains' | 'range' | 'greater_than' | 'less_than';
+  value: any;
+  isActive: boolean;
+}
+
+// --- END: Types and functions moved from AnnotationResultFilters.tsx ---
 
 // Helper function to get nested property value using dot notation (kept for internal use)
 const getNestedValue = (obj: any, path: string): any => {
@@ -76,7 +101,7 @@ export const getTargetFieldDefinition = (
     const fieldNames = Object.keys(properties);
     const targetKeyName = filter.fieldKey ?? fieldNames[0];
 
-    if (!targetKeyName) {
+    if (!targetKeyName || targetKeyName === undefined) {
          return { type: null, definition: null };
     }
     
@@ -233,6 +258,13 @@ export const checkFilterMatch = (
     if (!filter.isActive) {
         return true;
     }
+    
+    // Safety check for invalid filter configuration
+    if (!filter.fieldKey || filter.fieldKey === undefined) {
+        console.warn("Cannot filter: fieldKey is undefined for filter:", filter);
+        return true; // Allow all results through if filter is invalid
+    }
+    
     const targetSchemaResult = assetResults.find(r => r.schema_id === filter.schemaId);
     if (!targetSchemaResult || targetSchemaResult.value === null || targetSchemaResult.value === undefined) {
         return filter.operator === 'equals' && (filter.value === 'N/A' || filter.value === null || filter.value === undefined || filter.value === '');
@@ -240,7 +272,7 @@ export const checkFilterMatch = (
     const { type: fieldType, definition: fieldDefinition } = getTargetFieldDefinition(filter, allSchemas);
     if (!fieldType || !fieldDefinition) {
         console.warn("Cannot filter: Could not determine field type or definition for filter:", filter);
-        return false;
+        return true; // Allow all results through if filter is invalid
     }
 
     // Use smart hierarchical value retrieval
@@ -328,20 +360,16 @@ export const formatDisplayValue = (value: any, schema: AnnotationSchemaRead): st
 export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string): any => {
     if (!annotationValue || !fieldKey) return undefined;
     
-    console.log(`[getAnnotationFieldValue] Attempting to extract '${fieldKey}' from:`, annotationValue);
-    
     // Strategy 1: Try flat field access first (handles LLM outputs that don't follow hierarchical structure)
     // Extract the final field name from hierarchical path (e.g., "document.Topics" -> "Topics")
     const flatFieldName = fieldKey.includes('.') ? fieldKey.split('.').pop() : fieldKey;
     if (flatFieldName && flatFieldName in annotationValue) {
-        console.log(`[getAnnotationFieldValue] ✓ Found via flat access: ${flatFieldName} =`, annotationValue[flatFieldName]);
         return annotationValue[flatFieldName];
     }
     
     // Strategy 2: Try full hierarchical path access
     const hierarchicalValue = getNestedValue(annotationValue, fieldKey);
     if (hierarchicalValue !== undefined) {
-        console.log(`[getAnnotationFieldValue] ✓ Found via hierarchical access: ${fieldKey} =`, hierarchicalValue);
         return hierarchicalValue;
     }
     
@@ -349,7 +377,6 @@ export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string):
     if (fieldKey.startsWith('document.')) {
         const withoutDocument = fieldKey.substring('document.'.length);
         if (withoutDocument in annotationValue) {
-            console.log(`[getAnnotationFieldValue] ✓ Found via document prefix removal: ${withoutDocument} =`, annotationValue[withoutDocument]);
             return annotationValue[withoutDocument];
         }
     }
@@ -359,11 +386,90 @@ export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string):
         const keys = Object.keys(annotationValue);
         const matchingKey = keys.find(key => key.toLowerCase() === flatFieldName.toLowerCase());
         if (matchingKey) {
-            console.log(`[getAnnotationFieldValue] ✓ Found via case-insensitive access: ${matchingKey} =`, annotationValue[matchingKey]);
             return annotationValue[matchingKey];
         }
     }
     
-    console.log(`[getAnnotationFieldValue] ✗ Field '${fieldKey}' not found in annotation value`);
+    // Strategy 5: Handle space/formatting differences in field names
+    if (flatFieldName) {
+        const keys = Object.keys(annotationValue);
+        // Try removing spaces, hyphens, underscores from both field name and keys
+        const normalizedFieldName = flatFieldName.replace(/[\s\-_]/g, '').toLowerCase();
+        const matchingKey = keys.find(key => 
+            key.replace(/[\s\-_]/g, '').toLowerCase() === normalizedFieldName
+        );
+        if (matchingKey) {
+            return annotationValue[matchingKey];
+        }
+    }
+    
     return undefined;
 }; 
+
+// --- START: Functions moved from AnnotationResultFilters.tsx ---
+
+export const getOperatorsForType = (type: JsonSchemaType | 'bool' | 'float' | null): Array<ResultFilter['operator']> => {
+    switch (type) {
+        case 'number':
+            return ['equals', 'range', 'greater_than', 'less_than'];
+        case 'string':
+        case 'array':
+            return ['equals', 'contains'];
+        case 'boolean':
+            return ['equals'];
+        default:
+            return ['equals', 'contains'];
+    }
+};
+
+export const getFilterTooltip = (filter: ResultFilter, schemas: AnnotationSchemaRead[]) => {
+    const { type } = getTargetFieldDefinition(filter, schemas);
+    const schema = schemas.find(s => s.id === filter.schemaId);
+    const fieldName = filter.fieldKey ?? Object.keys((schema?.output_contract as any)?.properties || {})[0] ?? 'field';
+
+    switch (type) {
+        case 'number':
+            return `Filter numeric values in '${fieldName}'. Use 'equals', range, or comparison operators.`;
+        case 'string':
+             return `Filter text values in '${fieldName}'. Use 'equals' for exact matches or 'contains'.`;
+        case 'array':
+            return `Filter lists in '${fieldName}'. Use 'contains' to find items containing your text or 'equals' for exact matches.`;
+        case 'boolean':
+            return `Filter Yes/No values in '${fieldName}'. Use 'equals' (True/False).`;
+        default:
+            return `Filter results based on the '${fieldName}' field/key of the '${schema?.name}' schema.`;
+    }
+};
+
+export const hasLabels = (filter: ResultFilter, schemas: AnnotationSchemaRead[]): boolean => {
+    const { definition } = getTargetFieldDefinition(filter, schemas);
+    return definition?.enum && Array.isArray(definition.enum) && definition.enum.length > 0;
+};
+
+export const getLabelsForField = (filter: ResultFilter, schemas: AnnotationSchemaRead[]): string[] => {
+    const { definition } = getTargetFieldDefinition(filter, schemas);
+    return definition?.enum || [];
+};
+
+export const getFieldTypeDisplay = (filter: ResultFilter, schemas: AnnotationSchemaRead[]): string => {
+    const { type } = getTargetFieldDefinition(filter, schemas);
+    if (!type) return 'N/A';
+    if (type === 'array') return 'List';
+    if (type === 'boolean') return 'Yes/No';
+    if (type === 'number') return 'Number';
+    return 'Text';
+};
+
+export const renderValueInput = (
+    filter: ResultFilter,
+    index: number,
+    type: FieldType | 'bool' | 'float' | null,
+    hasLabels: boolean,
+    labels: string[],
+    updateFilter: (index: number, updatedFilterData: Partial<Omit<ResultFilter, 'id'>>) => void
+) => {
+    // This function returns a ReactNode, so it can't be in a utils file without importing React.
+    // It will be moved to the UnifiedFilterControls component.
+    return null;
+};
+// --- END: Functions moved from AnnotationResultFilters.tsx --- 

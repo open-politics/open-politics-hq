@@ -301,6 +301,7 @@ class AnnotationRunBase(SQLModel):
     configuration: Dict[str, Any] = {}
     include_parent_context: bool = False
     context_window: int = 0
+    views_config: Optional[List[Dict[str, Any]]] = None
 
 class AnnotationRunCreate(AnnotationRunBase):
     schema_ids: List[int]
@@ -313,6 +314,7 @@ class AnnotationRunUpdate(SQLModel):
     configuration: Optional[Dict[str, Any]] = None
     include_parent_context: Optional[bool] = None
     context_window: Optional[int] = None
+    views_config: Optional[List[Dict[str, Any]]] = None
 
 class AnnotationRunRead(AnnotationRunBase):
     id: int
@@ -742,14 +744,30 @@ class BundlePreview(SQLModel):
     description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    assets: List[AssetPreview] = []
+    assets: List[AssetPreview]
+
+class AnnotationRunPreview(SQLModel):
+    """Preview model for shared annotation runs."""
+    id: int
+    uuid: str
+    name: str
+    description: Optional[str] = None
+    status: RunStatus
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+    views_config: Optional[List[Dict[str, Any]]] = None
+    configuration: Dict[str, Any] = {}
+    annotation_count: int = 0
+    target_schemas: List[Dict[str, Any]] = []  # Schema summaries
+    annotations: List[Dict[str, Any]] = []  # Annotation results
 
 class SharedResourcePreview(SQLModel):
     """The complete public-facing model for a shared resource view."""
     resource_type: ResourceType
     name: str
     description: Optional[str] = None
-    content: Union[AssetPreview, BundlePreview]
+    content: Union[AssetPreview, BundlePreview, AnnotationRunPreview]
 
 # ───────────────────────────────────── Analysis Adapters ──── #
 class AnalysisAdapterBase(SQLModel):

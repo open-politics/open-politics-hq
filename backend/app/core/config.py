@@ -178,6 +178,14 @@ class AppSettings(BaseSettings):
     FASTCLASS_DEFAULT_PROVIDER: str = Field(default="Google", env="FASTCLASS_DEFAULT_PROVIDER")
     FASTCLASS_DEFAULT_MODEL: str = Field(default="gemini-2.5-flash-preview-05-20", env="FASTCLASS_DEFAULT_MODEL")
 
+    # --- Annotation Processing Configuration ---
+    # Default concurrency for parallel annotation processing
+    DEFAULT_ANNOTATION_CONCURRENCY: int = Field(default=5, env="DEFAULT_ANNOTATION_CONCURRENCY")
+    # Maximum allowed concurrency to prevent overwhelming external APIs
+    MAX_ANNOTATION_CONCURRENCY: int = Field(default=20, env="MAX_ANNOTATION_CONCURRENCY")
+    # Enable/disable parallel processing (fallback to sequential if disabled)
+    ENABLE_PARALLEL_ANNOTATION_PROCESSING: bool = Field(default=True, env="ENABLE_PARALLEL_ANNOTATION_PROCESSING")
+
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
             message = (

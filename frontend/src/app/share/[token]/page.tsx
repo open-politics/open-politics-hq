@@ -2,21 +2,27 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useShareableStore, SharedResourcePreview, AssetPreview, BundlePreview } from '@/zustand_stores/storeShareables';
+import { useShareableStore, SharedResourcePreview, AssetPreview, BundlePreview, AnnotationRunPreview } from '@/zustand_stores/storeShareables';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, AlertCircle, CheckCircle, InfoIcon, Import, LogIn, ChevronLeft } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle, InfoIcon, Import, LogIn, ChevronLeft, LayoutDashboard, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
 import { toast } from 'sonner';
 import AssetPublicView from '@/components/collection/infospaces/assets/Helper/AssetPublicView';
 import BundlePublicView from '@/components/collection/infospaces/assets/Helper/BundlePublicView';
+import SharedAnnotationRunViewer from '@/components/collection/infospaces/annotation/shared/SharedAnnotationRunViewer';
+import SharedAnnotationRunDashboard from '@/components/collection/infospaces/annotation/shared/SharedAnnotationRunDashboard';
 import useAuth from '@/hooks/useAuth';
 import { ImportResourceDialog } from '@/components/collection/infospaces/assets/Helper/ImportResourceDialog';
 
-function isBundle(content: AssetPreview | BundlePreview): content is BundlePreview {
+function isBundle(content: AssetPreview | BundlePreview | AnnotationRunPreview): content is BundlePreview {
     return 'assets' in content;
+}
+
+function isAnnotationRun(content: AssetPreview | BundlePreview | AnnotationRunPreview): content is AnnotationRunPreview {
+    return 'annotation_count' in content;
 }
 
 export default function ShareTokenPage() {
@@ -38,6 +44,7 @@ export default function ShareTokenPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [activeAsset, setActiveAsset] = useState<AssetPreview | null>(null);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'preview' | 'dashboard'>('dashboard');
 
   useEffect(() => {
     if (token) {
@@ -48,7 +55,7 @@ export default function ShareTokenPage() {
           const result = await viewSharedResource(token);
           if (result) {
             setResource(result);
-            if (!isBundle(result.content)) {
+            if (!isBundle(result.content) && !isAnnotationRun(result.content)) {
               // If the shared item is a single asset, show its detail view by default
               setActiveAsset(result.content);
             }
@@ -86,7 +93,6 @@ export default function ShareTokenPage() {
             fetchAssets();
             fetchBundles(targetInfospaceId);
             
-            router.push(`/desks/home/infospaces/asset-manager`);
         } else {
             toast.error(`Failed to import ${resource.resource_type}. You may need to log in or the import failed on the server.`);
         }
@@ -135,7 +141,7 @@ export default function ShareTokenPage() {
   if (!token) {
     return (
         <div className="container mx-auto p-4 flex justify-center items-center min-h-screen">
-            <Card className="w-full max-w-md">
+            <Card className="w-full max-w-7xl">
                 <CardHeader>
                     <CardTitle className="flex items-center">
                         <AlertCircle className="h-6 w-6 mr-2 text-red-500" /> Invalid URL
@@ -159,22 +165,48 @@ export default function ShareTokenPage() {
                     <h1 className="text-xl font-semibold">Shared Resource</h1>
                     <p className="text-sm text-muted-foreground">You've been invited to view this content. Log in to import it.</p>
                 </div>
-                {user ? (
-                  <>
-                    {/* Show import button only for the root resource, not for detailed asset views */}
-                    {!activeAsset || (isTopLevelBundle && activeAsset) ? (
-                        <Button onClick={handleOpenImportDialog} disabled={isImporting}>
-                            {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Import className="mr-2 h-4 w-4" />}
-                            Import to my Infospace
-                        </Button>
-                    ) : null}
-                  </>
-                ) : (
-                  <Button onClick={() => router.push(`/login?redirect=/share/${token}`)}>
-                      <LogIn className="mr-2 h-4 w-4" />
-                      Log In to Import
-                  </Button>
-                )}
+                <div className="flex items-center gap-3">
+                  {/* View mode toggle for annotation runs */}
+                  {resource && isAnnotationRun(resource.content) && (
+                    <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
+                      <Button
+                        variant={viewMode === 'preview' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('preview')}
+                        className="h-8 px-3"
+                      >
+                        <FileText className="h-4 w-4 mr-1" />
+                        Metadata
+                      </Button>
+                      <Button
+                        variant={viewMode === 'dashboard' ? 'default' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('dashboard')}
+                        className="h-8 px-3"
+                      >
+                        <LayoutDashboard className="h-4 w-4 mr-1" />
+                        Dashboard
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {user ? (
+                    <>
+                      {/* Show import button only for the root resource, not for detailed asset views */}
+                      {!activeAsset || (isTopLevelBundle && activeAsset) ? (
+                          <Button onClick={handleOpenImportDialog} disabled={isImporting}>
+                              {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Import className="mr-2 h-4 w-4" />}
+                              Import to my Infospace
+                          </Button>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Button onClick={() => router.push(`/login?redirect=/share/${token}`)}>
+                        <LogIn className="mr-2 h-4 w-4" />
+                        Log In to Import
+                    </Button>
+                  )}
+                </div>
             </header>
 
             <main>
@@ -189,6 +221,12 @@ export default function ShareTokenPage() {
                 </>
               ) : (resource && isBundle(resource.content)) ? (
                 <BundlePublicView bundle={resource.content} token={token} onAssetClick={setActiveAsset} />
+              ) : (resource && isAnnotationRun(resource.content)) ? (
+                viewMode === 'preview' ? (
+                  <SharedAnnotationRunViewer runData={resource.content as any} />
+                ) : (
+                  <SharedAnnotationRunDashboard runData={resource.content as any} />
+                )
               ) : (
                  <div className="text-center p-8"><p className="text-muted-foreground">Select an item to view.</p></div>
               )}

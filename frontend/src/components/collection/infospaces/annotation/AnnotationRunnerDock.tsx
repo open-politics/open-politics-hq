@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -20,6 +20,8 @@ import { SchemePreview } from './schemaCreation/SchemePreview';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import AssetSelector from '../assets/AssetSelector';
 import { toast } from 'sonner';
+import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import ProviderSelector from '../management/ProviderSelector';
 
 // --- NEW: Scheme Selector Component ---
 interface SchemeSelectorForRunProps {
@@ -119,22 +121,56 @@ export default function AnnotationRunnerDock({
   
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedAssetItems, setSelectedAssetItems] = useState<Set<string>>(new Set());
-  const [selectedSchemeIds, setSelectedSchemeIds] = useState<number[]>([]);
+  const [selectedSchemeIds, setSelectedSchemeIds] = useState<Set<number>>(new Set());
   const [newRunName, setNewRunName] = useState<string>('');
   const [newRunDescription, setNewRunDescription] = useState<string>('');
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
   const [previewScheme, setPreviewScheme] = useState<AnnotationSchemaRead | null>(null);
   const [isSchemeEditorOpen, setIsSchemeEditorOpen] = useState(false);
-  const [csvRowProcessing, setCsvRowProcessing] = useState<boolean>(true);
+  const [csvRowProcessing, setCsvRowProcessing] = useState(true);
+  const [includeThoughts, setIncludeThoughts] = useState(false);
+  const [annotationConcurrency, setAnnotationConcurrency] = useState(5);
+  const [enableParallelProcessing, setEnableParallelProcessing] = useState(true);
+  const [justificationOverride, setJustificationOverride] = useState<'schema' | 'all'>('schema');
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
+  const { apiKeys, selectedProvider, selectedModel } = useApiKeysStore();
+
+  // Helper function to check if AI is properly configured
+  const isAiConfigured = useMemo(() => {
+    const configured = !!(selectedProvider && apiKeys[selectedProvider]);
+    console.log('DOCK AI Config Check:', {
+      selectedProvider,
+      apiKeys,
+      hasKey: selectedProvider ? !!apiKeys[selectedProvider] : false,
+      isConfigured: configured
+    });
+    return configured;
+  }, [selectedProvider, apiKeys]);
+
+  // New state for collapsible sections
+  const [expandedSections, setExpandedSections] = useState({
+    processing: false,
+    advanced: false,
+  });
+
+  const toggleSection = (section: 'processing' | 'advanced') => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
 
   const handleRunClick = async () => {
     if (selectedAssetItems.size === 0) {
       toast.error("Please select at least one asset to annotate.");
       return;
     }
-    if (selectedSchemeIds.length === 0) {
+    if (selectedSchemeIds.size === 0) {
       toast.error("Please select at least one schema to use for annotation.");
+      return;
+    }
+    if (!isAiConfigured) {
+      toast.error("Please configure an AI provider and API key before running annotations.");
       return;
     }
 
@@ -149,13 +185,18 @@ export default function AnnotationRunnerDock({
     });
 
     const configuration: Record<string, any> = {};
-    configuration.justification_mode = "SCHEMA_DEFAULT";
+    configuration.justification_mode = justificationOverride === 'all' ? "ALL_WITH_SCHEMA_OR_DEFAULT_PROMPT" : "SCHEMA_DEFAULT";
     configuration.csv_row_processing = csvRowProcessing;
+    configuration.include_thoughts = includeThoughts;
+    configuration.annotation_concurrency = annotationConcurrency;
+    configuration.enable_parallel_processing = enableParallelProcessing;
+    configuration.ai_provider = selectedProvider;
+    configuration.ai_model = selectedModel;
     
     const runParams: AnnotationRunParams = {
         assetIds: Array.from(finalAssetIds),
         bundleId: null, 
-        schemaIds: selectedSchemeIds,
+        schemaIds: Array.from(selectedSchemeIds),
         name: newRunName || `Run - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
         description: newRunDescription || undefined,
         configuration: {
@@ -169,7 +210,21 @@ export default function AnnotationRunnerDock({
     setNewRunDescription('');
   };
 
-  const handleSchemeToggle = (id: number) => setSelectedSchemeIds(prev => prev.includes(id) ? prev.filter(sId => sId !== id) : [...prev, id]);
+  const handleSchemeToggle = (id: number) => {
+    if (selectedSchemeIds.has(id)) {
+      setSelectedSchemeIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+    } else {
+      setSelectedSchemeIds(prev => {
+        const newSet = new Set(prev);
+        newSet.add(id);
+        return newSet;
+      });
+    }
+  };
   const handlePreviewSchemeClick = (scheme: AnnotationSchemaRead) => { setPreviewScheme(scheme); setIsPreviewDialogOpen(true); };
   const handleCloseSchemeEditor = async () => { setIsSchemeEditorOpen(false); await refreshSchemasFromHook({ force: true }); };
 
@@ -221,16 +276,21 @@ export default function AnnotationRunnerDock({
     }
   }, [csvProcessingInfo.csvAssetCount]);
 
+  // Debug: Monitor store changes
+  useEffect(() => {
+    console.log('DOCK Store Changed:', { selectedProvider, apiKeys });
+  }, [selectedProvider, apiKeys]);
+
   return (
     <TooltipProvider>
       <div className={cn(
         "fixed bottom-4 left-1/2 transform -translate-x-1/2 flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-xl border",
         isExpanded 
-          ? "w-auto min-w-[1000px] max-w-[900px] shadow-lg hover:shadow-xl"
-          : "w-auto min-w-[600px] max-w-[95vw] lg:max-w-[1500px] shadow-2xl ring-1 ring-primary/20" 
+          ? "w-[95vw] sm:w-auto sm:min-w-[600px] sm:max-w-[900px] max-w-[95vw] shadow-lg hover:shadow-xl"
+          : "w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[700px] max-w-[95vw] shadow-2xl ring-1 ring-primary/20" 
       )}>
-        <div className="flex items-center justify-between px-6 py-4  cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl" onClick={() => setIsExpanded(!isExpanded)}>
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl" onClick={() => setIsExpanded(!isExpanded)}>
+                      <div className="flex items-center gap-2 sm:gap-4">
             <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
               <ListChecks className="h-5 w-5 text-primary" />
             </div>
@@ -246,7 +306,7 @@ export default function AnnotationRunnerDock({
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {activeRunId && (
               <Button 
                 variant="ghost" 
@@ -274,52 +334,222 @@ export default function AnnotationRunnerDock({
         </div>
 
         {isExpanded && (
-          <div className="p-6 max-h-[75vh] overflow-y-auto">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="new-job-name-dock" className="text-sm font-medium">Run Name</Label>
-                      <Input 
-                        id="new-job-name-dock" 
-                        placeholder="Enter a descriptive name..." 
-                        value={newRunName} 
-                        onChange={(e) => setNewRunName(e.target.value)}
-                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="new-job-description-dock" className="text-sm font-medium">Description</Label>
-                      <Textarea 
-                        id="new-job-description-dock" 
-                        placeholder="Optional description for this run..." 
-                        value={newRunDescription} 
-                        onChange={(e) => setNewRunDescription(e.target.value)}
-                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 min-h-[80px] resize-none"
-                      />
-                    </div>
-                    {/* CSV Row Processing Configuration */}
-                    {csvProcessingInfo.csvAssetCount > 0 && (
+          <div className="p-3 sm:p-6 max-h-[70vh] sm:max-h-[75vh] overflow-y-auto">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6">
+                                    <div className="space-y-3 sm:space-y-4">
+                      {/* Basic Settings */}
+                      <div className="space-y-2 sm:space-y-3">
                       <div className="space-y-2">
-                        <div className="flex items-center space-x-2">
-                          <Switch
-                            id="csv-row-processing"
-                            checked={csvRowProcessing}
-                            onCheckedChange={setCsvRowProcessing}
-                          />
-                          <Label htmlFor="csv-row-processing" className="text-sm font-medium cursor-pointer">
-                            Process CSV Rows Individually
-                          </Label>
-                        </div>
-                        <p className="text-xs text-muted-foreground ml-6">
-                          {csvRowProcessing 
-                            ? `Process each row as a separate asset (~${csvProcessingInfo.totalRowsEstimate} rows)`
-                            : `Process CSV files as complete documents (${csvProcessingInfo.csvAssetCount} files)`
-                          }
-                        </p>
+                        <Label htmlFor="new-job-name-dock" className="text-sm font-medium">Run Name</Label>
+                        <Input 
+                          id="new-job-name-dock" 
+                          placeholder="Enter a descriptive name..." 
+                          value={newRunName} 
+                          onChange={(e) => setNewRunName(e.target.value)}
+                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                        />
                       </div>
-                    )}
+                      <div className="space-y-2">
+                        <Label htmlFor="new-job-description-dock" className="text-sm font-medium">Description</Label>
+                        <Textarea 
+                          id="new-job-description-dock" 
+                          placeholder="Optional description for this run..." 
+                          value={newRunDescription} 
+                          onChange={(e) => setNewRunDescription(e.target.value)}
+                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 min-h-[80px] resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Processing Settings */}
+                    <div className="border rounded-lg bg-muted/20">
+                      <button
+                        onClick={() => toggleSection('processing')}
+                        className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Settings2 className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">Processing Settings</span>
+                        </div>
+                        <ChevronRight className={cn("h-4 w-4 transition-transform", expandedSections.processing && "rotate-90")} />
+                      </button>
+                      
+                      {expandedSections.processing && (
+                        <div className="p-3 pt-0 space-y-4 border-t">
+                          {/* CSV Row Processing Configuration */}
+                          {csvProcessingInfo.csvAssetCount > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center space-x-2">
+                                <Switch
+                                  id="csv-row-processing"
+                                  checked={csvRowProcessing}
+                                  onCheckedChange={setCsvRowProcessing}
+                                />
+                                <Label htmlFor="csv-row-processing" className="text-sm font-medium cursor-pointer">
+                                  Process CSV Rows Individually
+                                </Label>
+                              </div>
+                              <p className="text-xs text-muted-foreground ml-6">
+                                {csvRowProcessing 
+                                  ? `Process each row as a separate asset (~${csvProcessingInfo.totalRowsEstimate} rows)`
+                                  : `Process CSV files as complete documents (${csvProcessingInfo.csvAssetCount} files)`
+                                }
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Parallel Processing Configuration */}
+                          <div className="space-y-3">
+                            <div className="flex items-center space-x-2">
+                              <Switch
+                                id="enable-parallel-processing"
+                                checked={enableParallelProcessing}
+                                onCheckedChange={setEnableParallelProcessing}
+                              />
+                              <Label htmlFor="enable-parallel-processing" className="text-sm font-medium cursor-pointer">
+                                Enable Parallel Processing
+                              </Label>
+                            </div>
+                            <p className="text-xs text-muted-foreground ml-6">
+                              {enableParallelProcessing 
+                                ? 'Process multiple assets concurrently for faster completion'
+                                : 'Process assets one at a time (slower but more reliable)'
+                              }
+                            </p>
+                            
+                            {enableParallelProcessing && (
+                              <div className="ml-6 space-y-2">
+                                <Label htmlFor="annotation-concurrency" className="text-sm font-medium">
+                                  Concurrency Level: {annotationConcurrency}
+                                </Label>
+                                <div className="flex items-center space-x-3">
+                                  <span className="text-xs text-muted-foreground">1</span>
+                                  <input
+                                    id="annotation-concurrency"
+                                    type="range"
+                                    min="1"
+                                    max="20"
+                                    value={annotationConcurrency}
+                                    onChange={(e) => setAnnotationConcurrency(parseInt(e.target.value))}
+                                    className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                                  />
+                                  <span className="text-xs text-muted-foreground">20</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Higher values process faster but may overwhelm external APIs
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Advanced Settings */}
+                    <div className="border rounded-lg bg-muted/20">
+                      <button
+                        onClick={() => toggleSection('advanced')}
+                        className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Settings2 className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">Advanced Settings</span>
+                        </div>
+                        <ChevronRight className={cn("h-4 w-4 transition-transform", expandedSections.advanced && "rotate-90")} />
+                      </button>
+                      
+                      {expandedSections.advanced && (
+                        <div className="p-3 pt-0 space-y-4 border-t">
+                          {/* Justification Configuration */}
+                          <div className="space-y-3">
+                            <Label className="text-sm font-medium">Justification Mode</Label>
+                            <div className="space-y-2">
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="radio"
+                                  id="justification-schema"
+                                  name="justification-mode"
+                                  checked={justificationOverride === 'schema'}
+                                  onChange={() => setJustificationOverride('schema')}
+                                  className="w-4 h-4 text-primary bg-background border-border focus:ring-primary"
+                                />
+                                <Label htmlFor="justification-schema" className="text-sm font-medium cursor-pointer">
+                                  Schema Default
+                                </Label>
+                              </div>
+                              <p className="text-xs text-muted-foreground ml-6">
+                                Only request justifications for fields specifically configured in each schema
+                              </p>
+                              
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="radio"
+                                  id="justification-all"
+                                  name="justification-mode"
+                                  checked={justificationOverride === 'all'}
+                                  onChange={() => setJustificationOverride('all')}
+                                  className="w-4 h-4 text-primary bg-background border-border focus:ring-primary"
+                                />
+                                <Label htmlFor="justification-all" className="text-sm font-medium cursor-pointer">
+                                  All Fields
+                                </Label>
+                              </div>
+                              <p className="text-xs text-muted-foreground ml-6">
+                                Request justifications for all fields in all schemas, regardless of configuration
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Include Thoughts Configuration */}
+                          <div className="space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <Switch
+                                id="include-thoughts"
+                                checked={includeThoughts}
+                                onCheckedChange={setIncludeThoughts}
+                              />
+                              <Label htmlFor="include-thoughts" className="text-sm font-medium cursor-pointer">
+                                Include Reasoning Traces
+                              </Label>
+                            </div>
+                            <p className="text-xs text-muted-foreground ml-6">
+                              {includeThoughts 
+                                ? 'Include detailed reasoning and thought processes in results'
+                                : 'Only include final classification results'
+                              }
+                            </p>
+                          </div>
+
+                          {/* AI Model Configuration */}
+                          <div className="space-y-3">
+                            <Label className="text-sm font-medium">AI Model Configuration</Label>
+                            <div className="space-y-2">
+                              <ProviderSelector />
+                              {isAiConfigured ? (
+                                <div className="flex items-center gap-2 p-2 rounded-md bg-green-50 border border-green-200">
+                                  <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                  <span className="text-xs text-green-700 font-medium">
+                                    {selectedProvider} configured ({selectedModel || 'default model'})
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 p-2 rounded-md bg-amber-50 border border-amber-200">
+                                  <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                                  <span className="text-xs text-amber-700">
+                                    {selectedProvider 
+                                      ? `Please add an API key for ${selectedProvider}` 
+                                      : 'Please configure an AI provider and API key'
+                                    }
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                 </div>
-                <div className="flex flex-col justify-end space-y-4">
+                <div className="flex flex-col justify-end space-y-3 sm:space-y-4">
                     <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
                       <h4 className="text-sm font-medium text-muted-foreground">Run Summary</h4>
                       <div className="space-y-2">
@@ -351,7 +581,28 @@ export default function AnnotationRunnerDock({
                             <span className="text-sm font-medium">Schemes Selected</span>
                           </div>
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                            {selectedSchemeIds.length}
+                            {selectedSchemeIds.size}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className={cn(
+                              "w-3 h-3 rounded-full shadow-sm",
+                              isAiConfigured ? "bg-emerald-500" : "bg-red-500"
+                            )}></div>
+                            <span className="text-sm font-medium">AI Model</span>
+                          </div>
+                          <Badge variant="outline" className={cn(
+                            isAiConfigured 
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-red-50 text-red-700 border-red-200"
+                          )}>
+                            {isAiConfigured 
+                              ? `${selectedProvider}` 
+                              : selectedProvider 
+                                ? 'Missing API key'
+                                : 'Not configured'
+                            }
                           </Badge>
                         </div>
                         {csvProcessingInfo.csvAssetCount > 0 && (
@@ -376,7 +627,7 @@ export default function AnnotationRunnerDock({
                     </div>
                     <Button 
                       onClick={handleRunClick} 
-                      disabled={isCreatingRun || selectedAssetItems.size === 0 || selectedSchemeIds.length === 0}
+                      disabled={isCreatingRun || selectedAssetItems.size === 0 || selectedSchemeIds.size === 0 || !isAiConfigured}
                       className="h-12 font-medium transition-all duration-200 disabled:opacity-50 text-base"
                       size="lg"
                     >
@@ -394,17 +645,17 @@ export default function AnnotationRunnerDock({
                     </Button>
                 </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 border-t pt-6 mt-6">
-                <div className="flex flex-col h-[400px]">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6 border-t pt-3 sm:pt-6 mt-3 sm:mt-6">
+                <div className="flex flex-col h-[300px] sm:h-[400px]">
                   <h3 className="text-sm font-semibold text-foreground mb-3 px-1">Select Assets to Annotate</h3>
                   <div className="flex-1 min-h-0">
                     <AssetSelector selectedItems={selectedAssetItems} onSelectionChange={setSelectedAssetItems} />
                   </div>
                 </div>
-                <div className="flex flex-col h-[400px]">
+                <div className="flex flex-col h-[300px] sm:h-[400px]">
                   <h3 className="text-sm font-semibold text-foreground mb-3 px-1">Choose Annotation Schemes</h3>
                   <div className="flex-1 min-h-0">
-                    <SchemeSelectorForRun allSchemes={allSchemes} selectedSchemeIds={selectedSchemeIds} onToggleScheme={handleSchemeToggle} onPreviewScheme={handlePreviewSchemeClick} onOpenSchemeEditor={() => setIsSchemeEditorOpen(true)} />
+                    <SchemeSelectorForRun allSchemes={allSchemes} selectedSchemeIds={Array.from(selectedSchemeIds)} onToggleScheme={handleSchemeToggle} onPreviewScheme={handlePreviewSchemeClick} onOpenSchemeEditor={() => setIsSchemeEditorOpen(true)} />
                   </div>
                 </div>
             </div>

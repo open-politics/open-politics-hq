@@ -4,6 +4,7 @@ import React, { useState, createContext, useContext, useCallback } from 'react';
 // Removed: import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import AssetDetailOverlay from './AssetDetailOverlay';
 import AssetManagerOverlay from '../Helper/AssetManagerOverlay'; // Assuming this will be adapted or replaced
+import { TextSpanHighlightProvider } from '@/contexts/TextSpanHighlightContext';
 
 // --- Create Context ---
 interface AssetDetailContextType {
@@ -79,23 +80,25 @@ export default function AssetDetailProvider({
 
   return (
     // --- Wrap children with Provider ---
-    <AssetDetailContext.Provider value={contextValue}>
-      {children}
-      <AssetDetailOverlay
-        // Use state for props
-        open={isDetailOverlayOpen}
-        onClose={closeDetailOverlay}
-        assetId={detailAssetId} // Pass the correct ID
-        highlightAssetIdOnOpen={highlightAssetIdOnOpen} // Pass highlight ID
-        onLoadIntoRunner={handleLoadIntoRunner}
-        onOpenManagerRequest={handleOpenManagerRequest}
-      />
-      <AssetManagerOverlay
-        isOpen={isManagerOpen}
-        onClose={handleCloseManager}
-        onLoadIntoRunner={handleLoadIntoRunner}
-      />
-    </AssetDetailContext.Provider>
+    <TextSpanHighlightProvider>
+      <AssetDetailContext.Provider value={contextValue}>
+        {children}
+        <AssetDetailOverlay
+          // Use state for props
+          open={isDetailOverlayOpen}
+          onClose={closeDetailOverlay}
+          assetId={detailAssetId} // Pass the correct ID
+          highlightAssetIdOnOpen={highlightAssetIdOnOpen} // Pass highlight ID
+          onLoadIntoRunner={handleLoadIntoRunner}
+          onOpenManagerRequest={handleOpenManagerRequest}
+        />
+        <AssetManagerOverlay
+          isOpen={isManagerOpen}
+          onClose={handleCloseManager}
+          onLoadIntoRunner={handleLoadIntoRunner}
+        />
+      </AssetDetailContext.Provider>
+    </TextSpanHighlightProvider>
     // --- End Wrap children ---
   );
 } 

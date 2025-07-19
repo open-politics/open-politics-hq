@@ -51,7 +51,7 @@ def init_db(session: Session) -> None:
         logger.error(f"Error creating storage provider: {e}")
         raise
 
-    SQLModel.metadata.create_all(engine)
+    # SQLModel.metadata.create_all(engine)
 
     if os.environ.get("WIPE_DB") == "True":
         logger.info("Wiping DB")

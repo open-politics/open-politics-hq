@@ -25,7 +25,7 @@ from app.schemas import AssetCreate
 from app.api.providers.factory import create_scraping_provider, create_search_provider
 from app.api.providers.base import ScrapingProvider, SearchProvider
 
-from app.api.tasks.utils import update_task_status
+from app.api.tasks.utils import update_task_status, run_async_in_celery
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -96,9 +96,11 @@ def process_recurring_ingest(self, recurring_task_id: int):
                 logger.info(f"Executing search for source {source.id}: query='{query}', provider='{provider_name}'")
                 
                 search_provider = create_search_provider(settings)
-                search_results = asyncio.run(search_provider.search(
-                    query=query, limit=max_results, **search_params
-                ))
+                search_results = run_async_in_celery(search_provider.search,
+                    query,
+                    0,  # skip
+                    max_results
+                )
                 
                 urls_to_scrape = [result['url'] for result in search_results if result.get('url')]
                 logger.info(f"Search yielded {len(urls_to_scrape)} URLs to scrape.")
@@ -140,8 +142,8 @@ def process_recurring_ingest(self, recurring_task_id: int):
                         continue
 
                     # Scrape URL
-                    scraped_data = asyncio.run(
-                        scraping_provider.scrape_url(url, timeout=timeout, retry_attempts=retry_attempts)
+                    scraped_data = run_async_in_celery(
+                        scraping_provider.scrape_url, url, timeout=timeout, retry_attempts=retry_attempts
                     )
 
                     if not scraped_data or not scraped_data.get('text_content'):

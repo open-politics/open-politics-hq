@@ -22,6 +22,7 @@ from app.models import Asset, AssetKind, ProcessingStatus
 from app.api.providers.factory import create_storage_provider, create_scraping_provider
 from app.api.services.content_service import ContentService
 from app.core.config import settings
+from app.api.tasks.utils import run_async_in_celery
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ def process_content(self, asset_id: int, options: Optional[Dict[str, Any]] = Non
             scraping_provider = create_scraping_provider(settings)
             content_service = ContentService(session, storage_provider, scraping_provider)
             
-            # Process the content using asyncio.run for async methods
-            asyncio.run(content_service.process_content(asset, options or {}))
+            # Process the content using the helper function for proper event loop management
+            run_async_in_celery(content_service.process_content, asset, options or {})
             
             # Count child assets created
             child_count = session.query(Asset).filter(Asset.parent_asset_id == asset_id).count()
@@ -84,8 +85,8 @@ def reprocess_content(self, asset_id: int, options: Optional[Dict[str, Any]] = N
             scraping_provider = create_scraping_provider(settings)
             content_service = ContentService(session, storage_provider, scraping_provider)
             
-            # Reprocess the content using asyncio.run for async methods
-            asyncio.run(content_service.reprocess_content(asset, options or {}))
+            # Reprocess the content using the helper function for proper event loop management
+            run_async_in_celery(content_service.reprocess_content, asset, options or {})
             
             # Count child assets created
             child_count = session.query(Asset).filter(Asset.parent_asset_id == asset_id).count()
@@ -161,7 +162,7 @@ def ingest_bulk_urls(
             return assets_created, errors
     
     try:
-        assets_created, errors = asyncio.run(process_urls())
+        assets_created, errors = run_async_in_celery(process_urls)
         
         logger.info(f"[Bulk URL Ingestion] Completed: {len(assets_created)} successful, {len(errors)} failed")
         return {
@@ -222,7 +223,7 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
                     session.flush()
                     
                     # Retry processing
-                    asyncio.run(content_service.process_content(asset, {}))
+                    run_async_in_celery(content_service.process_content, asset, {})
                     success_count += 1
                     retried_count += 1
                     
@@ -355,7 +356,7 @@ def ingest_bulk_files(
             return assets_created, errors
     
     try:
-        assets_created, errors = asyncio.run(process_files())
+        assets_created, errors = run_async_in_celery(process_files)
         
         logger.info(f"[Bulk File Ingestion] Completed: {len(assets_created)} successful, {len(errors)} failed")
         return {

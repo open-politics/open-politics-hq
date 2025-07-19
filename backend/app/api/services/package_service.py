@@ -81,6 +81,24 @@ class PackageMetadata:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PackageMetadata":
         """Create metadata from dictionary."""
+        # Safely parse created_at field
+        created_at_raw = data.get("created_at")
+        created_at = None
+        if created_at_raw:
+            if isinstance(created_at_raw, str):
+                try:
+                    created_at = dateutil.parser.isoparse(created_at_raw)
+                except (ValueError, TypeError):
+                    logger.warning(f"Could not parse created_at string '{created_at_raw}' in PackageMetadata")
+                    created_at = datetime.now(timezone.utc)
+            elif isinstance(created_at_raw, datetime):
+                created_at = created_at_raw
+            else:
+                logger.warning(f"Unexpected type for created_at: {type(created_at_raw)}")
+                created_at = datetime.now(timezone.utc)
+        else:
+            created_at = datetime.now(timezone.utc)
+
         return cls(
             package_type=ResourceType(data["package_type"]),
             source_entity_uuid=data.get("source_entity_uuid"),
@@ -88,7 +106,7 @@ class PackageMetadata:
             source_entity_name=data.get("source_entity_name"),
             source_instance_id=data.get("source_instance_id"),
             format_version=data.get("format_version", "1.0"),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
+            created_at=created_at,
             created_by=data.get("created_by"),
             description=data.get("description")
         )
@@ -419,23 +437,88 @@ class PackageBuilder:
     ) -> DataPackage:
         logger.debug(f"Building package for AnnotationRun ID: {run.id}, Name: {run.name}")
         run_content = run.model_dump(exclude_none=True, exclude={'annotations', 'target_schemas'})
+        
+        # Ensure views_config is included in the export
+        if hasattr(run, 'views_config') and run.views_config:
+            run_content['views_config'] = run.views_config
 
-        run_content["target_schema_references"] = [
-            {"uuid": str(ts.uuid), "id": ts.id, "name": ts.name, "version": ts.version} 
-            for ts in run.target_schemas
-        ]
+        # Include full schema definitions (not just references)
+        run_content["annotation_schemas"] = []
+        for schema in run.target_schemas:
+            schema_data = schema.model_dump(exclude_none=True)
+            run_content["annotation_schemas"].append(schema_data)
 
+        # Collect all unique assets used in this run
+        unique_assets = {}
+        run_content["assets"] = []
+        
         if include_annotations:
             run_content["annotations"] = []
             annotations = run.annotations if hasattr(run, 'annotations') else self.session.exec(select(Annotation).where(Annotation.run_id == run.id)).all()
+            
+            # First pass: collect all unique assets
+            for ann in annotations:
+                asset = self.session.get(Asset, ann.asset_id)
+                if asset and asset.id not in unique_assets:
+                    unique_assets[asset.id] = asset
+            
+            # Second pass: collect parent assets for any child assets
+            # This ensures parent-child relationships are preserved during export
+            assets_to_check_for_parents = list(unique_assets.values())
+            for asset in assets_to_check_for_parents:
+                if asset.parent_asset_id:
+                    parent_asset = self.session.get(Asset, asset.parent_asset_id)
+                    if parent_asset and parent_asset.id not in unique_assets:
+                        unique_assets[parent_asset.id] = parent_asset
+                        logger.debug(f"Added parent asset '{parent_asset.title}' (ID {parent_asset.id}) to export package for child asset '{asset.title}' (ID {asset.id})")
+            
+            # Third pass: include full asset content for all unique assets
+            for asset_id, asset in unique_assets.items():
+                asset_data = AssetRead.model_validate(asset).model_dump(exclude_none=True, exclude={'text_content'})
+                
+                # Include parent-child relationship information
+                if asset.parent_asset_id:
+                    asset_data['parent_asset_id'] = asset.parent_asset_id
+                    asset_data['part_index'] = asset.part_index
+                    # Include parent UUID for reference resolution during import
+                    parent_asset = self.session.get(Asset, asset.parent_asset_id)
+                    if parent_asset:
+                        asset_data['parent_asset_uuid'] = str(parent_asset.uuid)
+                
+                # Include text content inline if short, or as file if long
+                if asset.text_content and len(asset.text_content) < 5000:
+                    asset_data['text_content'] = asset.text_content
+                elif asset.text_content:
+                    text_file_ref = self._add_file_to_package(f"asset_{asset.uuid}_content.txt", asset.text_content.encode('utf-8'))
+                    asset_data['text_content_file_reference'] = text_file_ref
+                
+                # Include blob content as file if available
+                if asset.blob_path:
+                    file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
+                    if file_bytes:
+                        original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
+                        blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
+                        asset_data["blob_file_reference"] = blob_file_ref
+                
+                run_content["assets"].append(asset_data)
+            
+            # Fourth pass: build annotations with proper references
             for ann in annotations:
                 ann_data = ann.model_dump(exclude_none=True, exclude={'justifications'})
                 justifications_for_ann = ann.justifications if hasattr(ann, 'justifications') else []
                 if include_justifications and justifications_for_ann:
                     ann_data["justifications"] = [j.model_dump(exclude_none=True) for j in justifications_for_ann]
+                
+                # Include asset reference
                 asset = self.session.get(Asset, ann.asset_id)
                 if asset:
                     ann_data["asset_reference"] = {"uuid": str(asset.uuid), "id": asset.id, "title": asset.title}
+                
+                # Include schema reference
+                schema = self.session.get(AnnotationSchema, ann.schema_id)
+                if schema:
+                    ann_data["schema_reference"] = {"uuid": str(schema.uuid), "id": schema.id, "name": schema.name, "version": schema.version}
+                
                 run_content["annotations"].append(ann_data)
         
         package_metadata = PackageMetadata(
@@ -729,6 +812,65 @@ class PackageImporter:
         source_uuid_entry = entity_type_map.get(source_uuid)
         if source_uuid_entry is None: return None
         return source_uuid_entry.get("local_id")
+    
+    def _sort_assets_by_parent_child_order(self, assets_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Sort assets to ensure parent assets are imported before their children.
+        Returns a list of assets in the correct import order.
+        """
+        # Create a mapping of UUID to asset data for quick lookup
+        uuid_to_asset = {}
+        for asset_data in assets_data:
+            asset_uuid = str(asset_data.get("uuid", asset_data.get("entity_uuid", "")))
+            uuid_to_asset[asset_uuid] = asset_data
+        
+        # Separate parent and child assets
+        parent_assets = []
+        child_assets = []
+        
+        for asset_data in assets_data:
+            if asset_data.get("parent_asset_uuid"):
+                child_assets.append(asset_data)
+            else:
+                parent_assets.append(asset_data)
+        
+        # Start with parent assets
+        ordered_assets = parent_assets.copy()
+        
+        # Add children in order, ensuring their parents have been processed
+        remaining_children = child_assets.copy()
+        max_iterations = len(child_assets) + 1  # Prevent infinite loops
+        iteration = 0
+        
+        while remaining_children and iteration < max_iterations:
+            added_in_this_iteration = []
+            
+            for child_asset in remaining_children:
+                parent_uuid = child_asset.get("parent_asset_uuid")
+                
+                # Check if parent has already been processed
+                parent_already_processed = any(
+                    str(processed_asset.get("uuid", processed_asset.get("entity_uuid", ""))) == parent_uuid
+                    for processed_asset in ordered_assets
+                )
+                
+                if parent_already_processed:
+                    ordered_assets.append(child_asset)
+                    added_in_this_iteration.append(child_asset)
+            
+            # Remove processed children from remaining list
+            for added_asset in added_in_this_iteration:
+                remaining_children.remove(added_asset)
+            
+            iteration += 1
+        
+        # Add any remaining children that couldn't be ordered (orphans)
+        if remaining_children:
+            logger.warning(f"Found {len(remaining_children)} child assets with missing parent references. Adding them at the end.")
+            ordered_assets.extend(remaining_children)
+        
+        logger.debug(f"Ordered {len(assets_data)} assets: {len(parent_assets)} parents, {len(child_assets)} children")
+        return ordered_assets
 
     async def import_source_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> Source:
         if package.metadata.package_type != ResourceType.SOURCE:
@@ -809,6 +951,17 @@ class PackageImporter:
             if text_file_bytes: text_content = text_file_bytes.decode('utf-8', errors='replace')
             else: logger.warning(f"Text content file '{asset_data_in_pkg['text_content_file_reference']}' not found in package for asset {asset_uuid}")
 
+        # Handle parent asset relationship resolution
+        resolved_parent_asset_id = parent_asset_id  # Use explicitly passed parent_asset_id if available
+        if asset_data_in_pkg.get("parent_asset_uuid") and resolved_parent_asset_id is None:
+            # Look up parent asset by UUID
+            parent_uuid = asset_data_in_pkg["parent_asset_uuid"]
+            resolved_parent_asset_id = self._get_local_id_from_source_uuid(ResourceType.ASSET.value, parent_uuid)
+            if resolved_parent_asset_id:
+                logger.debug(f"Resolved parent asset UUID {parent_uuid} to local ID {resolved_parent_asset_id} for asset {asset_uuid}")
+            else:
+                logger.warning(f"Could not resolve parent asset UUID {parent_uuid} for asset {asset_uuid}. Parent relationship will be lost.")
+        
         if parent_source_id is None and asset_data_in_pkg.get("kind") != "INFOSPACE_EXPORT_ANCHOR": # Example of a special kind
             logger.warning(f"Asset UUID {asset_uuid} is being imported without a direct parent_source_id. Ensure this is intended.")
         
@@ -835,7 +988,8 @@ class PackageImporter:
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
             source_id=parent_source_id, # Link to the source it belongs to
-            parent_asset_id=parent_asset_id, # Link to parent asset if it's a child asset
+            parent_asset_id=resolved_parent_asset_id, # Link to parent asset if it's a child asset
+            part_index=asset_data_in_pkg.get("part_index"), # Include part index for ordered children
             imported_from_uuid=asset_uuid,
             title=asset_data_in_pkg.get("title", f"Imported Asset {asset_uuid[:8]}"),
             kind=asset_kind_enum, # Use validated enum
@@ -867,27 +1021,51 @@ class PackageImporter:
 
         return new_asset
 
-    async def _import_annotations_for_asset(self, local_asset_id: int, annotations_data: List[Dict[str,Any]]):
-        logger.debug(f"Importing {len(annotations_data)} annotations for local Asset ID {local_asset_id}")
+    async def _import_annotations_for_asset(self, local_asset_id: int, annotations_data: List[Dict[str, Any]]):
+        """
+        Imports a batch of annotations for a specific asset, skipping any that already exist.
+        This method is transaction-safe and designed to be called within a larger import process.
+        """
+        if not annotations_data:
+            return
+
+        logger.debug(f"Starting batch import of {len(annotations_data)} annotations for asset ID {local_asset_id}.")
+
+        # 1. Collect all annotation UUIDs from the incoming package data.
+        ann_uuids_to_import = {str(ann_data.get("uuid")) for ann_data in annotations_data if ann_data.get("uuid")}
+        if not ann_uuids_to_import:
+            logger.warning(f"No annotation UUIDs found in data for asset {local_asset_id}, skipping.")
+            return
+
+        # 2. Find which of these annotations already exist in the database in a single query.
+        existing_uuids_query = select(Annotation.imported_from_uuid).where(Annotation.imported_from_uuid.in_(ann_uuids_to_import))
+        existing_uuids = set(self.session.exec(existing_uuids_query).all())
+        
+        if existing_uuids:
+            logger.info(f"Skipping {len(existing_uuids)} annotations that already exist for asset {local_asset_id}.")
+
+        # 3. Create new Annotation objects for those that don't exist.
+        annotations_to_create: List[Annotation] = []
         for ann_data in annotations_data:
             ann_uuid = str(ann_data.get("uuid"))
-            if not ann_uuid:
-                logger.warning(f"Skipping annotation for asset {local_asset_id} due to missing UUID in annotation data: {ann_data}")
+            if not ann_uuid or ann_uuid in existing_uuids:
                 continue
 
-            existing_local_ann_id = self._get_local_id_from_source_uuid(ResourceType.ANNOTATION.value, ann_uuid)
-            if existing_local_ann_id:
-                logger.debug(f"Skipping already imported Annotation UUID {ann_uuid}")
-                continue
-
-            schema_ref_uuid = ann_data.get("schema_reference",{}).get("uuid")
+            # Resolve schema and run references to their local IDs
+            schema_ref_uuid = ann_data.get("schema_reference", {}).get("uuid")
             local_schema_id = self._get_local_id_from_source_uuid(ResourceType.SCHEMA.value, str(schema_ref_uuid) if schema_ref_uuid else None)
-            run_ref_uuid = ann_data.get("run_reference",{}).get("uuid")
-            local_run_id = self._get_local_id_from_source_uuid(ResourceType.RUN.value, str(run_ref_uuid) if run_ref_uuid else None)
+            
+            local_run_id = ann_data.get("run_id")
+            if local_run_id is None:
+                run_ref_uuid = ann_data.get("run_reference", {}).get("uuid")
+                local_run_id = self._get_local_id_from_source_uuid(ResourceType.RUN.value, str(run_ref_uuid) if run_ref_uuid else None)
 
             if not local_schema_id:
-                logger.warning(f"Skipping annotation (UUID: {ann_uuid}) for asset {local_asset_id} due to missing or unmapped schema UUID: {schema_ref_uuid}")
+                logger.warning(f"Skipping annotation (UUID: {ann_uuid}) for asset {local_asset_id} due to unmapped schema: {schema_ref_uuid}")
                 continue
+
+            event_timestamp = self._safe_parse_datetime(ann_data.get("event_timestamp"), "event_timestamp")
+            timestamp = self._safe_parse_datetime(ann_data.get("timestamp"), "timestamp") or datetime.now(timezone.utc)
 
             new_ann = Annotation(
                 asset_id=local_asset_id,
@@ -900,25 +1078,45 @@ class PackageImporter:
                 status=ResultStatus(ann_data.get("status", "success")) if ann_data.get("status") else ResultStatus.SUCCESS,
                 region=ann_data.get("region"),
                 links=ann_data.get("links"),
-                event_timestamp=datetime.fromisoformat(ann_data["event_timestamp"]) if ann_data.get("event_timestamp") else None,
-                timestamp=datetime.fromisoformat(ann_data["timestamp"]) if ann_data.get("timestamp") else datetime.now(timezone.utc)
+                event_timestamp=event_timestamp,
+                timestamp=timestamp
             )
-            self.session.add(new_ann)
-            self.session.flush()
-            self._register_imported_entity(ResourceType.ANNOTATION.value, ann_uuid, new_ann)
+            annotations_to_create.append(new_ann)
 
+        # 4. Add all new annotations to the session and flush to assign IDs.
+        if not annotations_to_create:
+            logger.info(f"No new annotations to import for asset {local_asset_id}.")
+            return
+
+        self.session.add_all(annotations_to_create)
+        self.session.flush()
+        logger.info(f"Imported {len(annotations_to_create)} new annotations for asset {local_asset_id}.")
+        
+        # 5. Handle justifications for the newly created annotations.
+        ann_uuid_to_id_map = {str(ann.imported_from_uuid): ann.id for ann in annotations_to_create}
+        justifications_to_create = []
+        
+        for ann_data in annotations_data:
+            ann_uuid = str(ann_data.get("uuid"))
+            new_ann_id = ann_uuid_to_id_map.get(ann_uuid)
+            if not new_ann_id:
+                continue
+            
             if ann_data.get("justifications") and isinstance(ann_data["justifications"], list):
                 from app.models import Justification
                 for just_data in ann_data["justifications"]:
-                    new_just = Justification(
-                        annotation_id=new_ann.id,
+                    justifications_to_create.append(Justification(
+                        annotation_id=new_ann_id,
                         field_name=just_data.get("field_name"),
                         reasoning=just_data.get("reasoning"),
                         evidence_payload=just_data.get("evidence_payload", {}),
                         model_name=just_data.get("model_name"),
                         score=just_data.get("score")
-                    )
-                    self.session.add(new_just)
+                    ))
+        
+        if justifications_to_create:
+            self.session.add_all(justifications_to_create)
+            logger.info(f"Added {len(justifications_to_create)} justifications for newly imported annotations.")
 
     async def import_annotation_schema_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> AnnotationSchema:
         if package.metadata.package_type != ResourceType.SCHEMA:
@@ -935,6 +1133,30 @@ class PackageImporter:
             if not existing_schema: raise RuntimeError(f"Mapped Schema ID {existing_local_id} not found.")
             return existing_schema
 
+        # Also check for existing schema with same name and version in target infospace
+        schema_name = schema_data.get("name", f"Imported Schema {source_uuid[:8]}")
+        schema_version = schema_data.get("version", "1.0")
+        
+        # Query for existing schema with same name and version
+        existing_schema_by_name = self.session.query(AnnotationSchema).filter(
+            AnnotationSchema.infospace_id == self.target_infospace_id,
+            AnnotationSchema.name == schema_name,
+            AnnotationSchema.version == schema_version,
+            AnnotationSchema.is_active == True
+        ).first()
+        
+        if existing_schema_by_name and conflict_strategy == 'skip':
+            try:
+                schema_id = existing_schema_by_name.id
+                logger.info(f"Skipping import of schema '{schema_name}' v{schema_version} - already exists in target infospace (ID: {schema_id})")
+                # Register this schema in our mapping so other imports can find it
+                self._register_imported_entity(ResourceType.SCHEMA.value, source_uuid, existing_schema_by_name)
+                return existing_schema_by_name
+            except AttributeError as e:
+                logger.error(f"Existing schema object missing expected attributes: {e}. Object type: {type(existing_schema_by_name)}")
+                logger.error(f"Object attributes: {dir(existing_schema_by_name) if hasattr(existing_schema_by_name, '__dict__') else 'No attributes'}")
+                # Fall through to create new schema
+
         target_level_str = schema_data.get("target_level", "asset")
         try:
             target_level_enum = AnnotationSchemaTargetLevel(target_level_str)
@@ -946,18 +1168,34 @@ class PackageImporter:
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
             imported_from_uuid=source_uuid,
-            name=schema_data.get("name", f"Imported Schema {source_uuid[:8]}"),
+            name=schema_name,
             description=schema_data.get("description"),
             output_contract=schema_data.get("output_contract", {}),
             instructions=schema_data.get("instructions"),
             target_level=target_level_enum,
-            version=schema_data.get("version", "1.0")
+            version=schema_version
         )
         self.session.add(new_schema)
         self.session.flush()
         self._register_imported_entity(ResourceType.SCHEMA.value, source_uuid, new_schema)
         logger.info(f"Imported AnnotationSchema '{new_schema.name}' (ID {new_schema.id}, Source UUID {source_uuid})")
         return new_schema
+
+    def _safe_parse_datetime(self, value: Any, field_name: str = "datetime") -> Optional[datetime]:
+        """Safely parse a datetime field that might be a string or datetime object."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return dateutil.parser.isoparse(value)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse {field_name} string '{value}'")
+                return None
+        elif isinstance(value, datetime):
+            return value
+        else:
+            logger.warning(f"Unexpected type for {field_name}: {type(value)}")
+            return None
 
     async def import_annotation_run_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> AnnotationRun:
         if package.metadata.package_type != ResourceType.RUN:
@@ -974,20 +1212,70 @@ class PackageImporter:
             if not existing_run: raise RuntimeError(f"Mapped Run ID {existing_local_id} not found.")
             return existing_run
 
+        # First, import annotation schemas included in the package
         local_target_schema_ids = []
-        for schema_ref in run_data.get("target_schema_references", []):
-            schema_ref_uuid = str(schema_ref.get("uuid"))
-            local_id = self._get_local_id_from_source_uuid(ResourceType.SCHEMA.value, schema_ref_uuid)
-            if local_id: local_target_schema_ids.append(local_id)
-            else: 
-                logger.warning(f"Could not map target schema UUID {schema_ref_uuid} to local ID for run {source_uuid}. Schema might need to be imported first or is missing from package.")
+        if run_data.get("annotation_schemas") and isinstance(run_data["annotation_schemas"], list):
+            logger.info(f"Importing {len(run_data['annotation_schemas'])} annotation schemas for run '{run_data.get('name', source_uuid[:8])}'")
+            for schema_data_in_pkg in run_data["annotation_schemas"]:
+                schema_meta = PackageMetadata(
+                    package_type=ResourceType.SCHEMA, 
+                    source_entity_uuid=str(schema_data_in_pkg.get("uuid"))
+                )
+                temp_schema_pkg = DataPackage(
+                    metadata=schema_meta, 
+                    content={"annotation_schema": schema_data_in_pkg}, 
+                    files={}
+                )
+                imported_schema = await self.import_annotation_schema_package(temp_schema_pkg, conflict_strategy='skip')
+                if imported_schema:
+                    local_target_schema_ids.append(imported_schema.id)
+                    logger.debug(f"Imported schema '{imported_schema.name}' (ID {imported_schema.id}) for run")
         
+        # Flush after importing all schemas to ensure they're persisted
+        if local_target_schema_ids:
+            self.session.flush()
+        
+        # Get the actual schema objects for the run (refresh from DB to ensure proper session attachment)
         local_target_schemas = []
         if local_target_schema_ids:
-            local_target_schemas = self.session.exec(select(AnnotationSchema).where(AnnotationSchema.id.in_(local_target_schema_ids))).all()
+            # Refresh the session to ensure all imported objects are properly attached
+            self.session.expire_all()
+            for schema_id in local_target_schema_ids:
+                schema_obj = self.session.get(AnnotationSchema, schema_id)
+                if schema_obj:
+                    # Ensure the object is fully loaded and attached to this session
+                    self.session.refresh(schema_obj)
+                    local_target_schemas.append(schema_obj)
+                    logger.debug(f"Loaded schema '{schema_obj.name}' (ID {schema_obj.id}) for run relationship")
+                else:
+                    logger.warning(f"Could not find imported schema with ID {schema_id} for run {source_uuid}")
+            
             if len(local_target_schemas) != len(local_target_schema_ids):
                 logger.warning(f"Mismatch in resolved local target schemas for run {source_uuid}. Expected {len(local_target_schema_ids)}, found {len(local_target_schemas)}.")
 
+        # Second, import assets included in the package (ordered by parent-child relationships)
+        local_asset_ids = []
+        if run_data.get("assets") and isinstance(run_data["assets"], list):
+            logger.info(f"Importing {len(run_data['assets'])} assets for run '{run_data.get('name', source_uuid[:8])}'")
+            # Sort assets to ensure parents are imported before children
+            ordered_assets = self._sort_assets_by_parent_child_order(run_data["assets"])
+            for asset_data_in_pkg in ordered_assets:
+                # Import each asset - they are not tied to a specific source in this context
+                imported_asset = await self._import_asset_data(asset_data_in_pkg, package.files, parent_source_id=None)
+                if imported_asset:
+                    local_asset_ids.append(imported_asset.id)
+                    logger.debug(f"Imported asset '{imported_asset.title}' (ID {imported_asset.id}) for run")
+        
+        # Flush after importing all assets to ensure they're persisted
+        if local_asset_ids:
+            self.session.flush()
+
+        # Parse datetime fields safely
+        created_at = self._safe_parse_datetime(run_data.get("created_at"), "created_at") or datetime.now(timezone.utc)
+        started_at = self._safe_parse_datetime(run_data.get("started_at"), "started_at")
+        completed_at = self._safe_parse_datetime(run_data.get("completed_at"), "completed_at")
+
+        # Create the annotation run
         new_run = AnnotationRun(
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
@@ -998,33 +1286,85 @@ class PackageImporter:
             include_parent_context=run_data.get("include_parent_context", False),
             context_window=run_data.get("context_window", 0),
             error_message=run_data.get("error_message"),
+            views_config=run_data.get("views_config", []),  # Import the views configuration
             target_schemas=local_target_schemas,
-            created_at=datetime.fromisoformat(run_data["created_at"]) if run_data.get("created_at") else datetime.now(timezone.utc),
-            started_at=datetime.fromisoformat(run_data["started_at"]) if run_data.get("started_at") else None,
-            completed_at=datetime.fromisoformat(run_data["completed_at"]) if run_data.get("completed_at") else None,
+            created_at=created_at,
+            started_at=started_at,
+            completed_at=completed_at,
         )
         self.session.add(new_run)
         self.session.flush()
         self._register_imported_entity(ResourceType.RUN.value, source_uuid, new_run)
         logger.info(f"Imported AnnotationRun '{new_run.name}' (ID {new_run.id}, Source UUID {source_uuid})")
 
-        if run_data.get("annotations") and isinstance(run_data["annotations"], list):
-            logger.info(f"Importing {len(run_data['annotations'])} annotations for run '{new_run.name}'")
-            for ann_data_in_pkg in run_data["annotations"]:
-                asset_ref_uuid = ann_data_in_pkg.get("asset_reference", {}).get("uuid")
+        # Finally, import annotations for the run in a single batch
+        annotations_data = run_data.get("annotations")
+        if annotations_data and isinstance(annotations_data, list):
+            logger.info(f"Starting batch import of {len(annotations_data)} annotations for run '{new_run.name}'...")
+            
+            # 1. Collect all annotation UUIDs from the incoming package data.
+            ann_uuids_to_import = {str(ann_data.get("uuid")) for ann_data in annotations_data if ann_data.get("uuid")}
+            
+            # 2. Find which of these annotations already exist in the database.
+            existing_uuids_query = select(Annotation.imported_from_uuid).where(Annotation.imported_from_uuid.in_(ann_uuids_to_import))
+            existing_uuids = set(self.session.exec(existing_uuids_query).all())
+            if existing_uuids:
+                logger.info(f"Skipping {len(existing_uuids)} annotations that already exist.")
+
+            # 3. Create new Annotation objects for those that do not exist.
+            annotations_to_create: List[Annotation] = []
+            for ann_data in annotations_data:
+                ann_uuid = str(ann_data.get("uuid"))
+                if not ann_uuid or ann_uuid in existing_uuids:
+                    continue
+
+                # Resolve asset and schema references to their local IDs
+                asset_ref_uuid = ann_data.get("asset_reference", {}).get("uuid")
                 local_asset_id = self._get_local_id_from_source_uuid(ResourceType.ASSET.value, str(asset_ref_uuid) if asset_ref_uuid else None)
-                if not local_asset_id:
-                    logger.warning(f"Skipping annotation (UUID: {ann_data_in_pkg.get('uuid')}) for run {new_run.id} due to missing or unmapped asset UUID: {asset_ref_uuid}")
+                
+                schema_ref_uuid = ann_data.get("schema_reference", {}).get("uuid")
+                local_schema_id = self._get_local_id_from_source_uuid(ResourceType.SCHEMA.value, str(schema_ref_uuid) if schema_ref_uuid else None)
+
+                if not local_asset_id or not local_schema_id:
+                    logger.warning(f"Skipping annotation (UUID: {ann_uuid}) due to unmapped asset ({asset_ref_uuid}) or schema ({schema_ref_uuid}).")
                     continue
                 
-                ann_data_in_pkg_modified = ann_data_in_pkg.copy()
-                ann_data_in_pkg_modified["run_reference"] = {"uuid": str(new_run.uuid), "id": new_run.id}
-                ann_data_in_pkg_modified["run_id"] = new_run.id
-                await self._import_annotations_for_asset(local_asset_id, [ann_data_in_pkg_modified])
+                event_timestamp = self._safe_parse_datetime(ann_data.get("event_timestamp"), "event_timestamp")
+                timestamp = self._safe_parse_datetime(ann_data.get("timestamp"), "timestamp") or datetime.now(timezone.utc)
+
+                annotations_to_create.append(Annotation(
+                    asset_id=local_asset_id,
+                    schema_id=local_schema_id,
+                    run_id=new_run.id,
+                    infospace_id=self.target_infospace_id,
+                    user_id=self.target_user_id,
+                    imported_from_uuid=ann_uuid,
+                    value=ann_data.get("value", {}),
+                    status=ResultStatus(ann_data.get("status", "success")) if ann_data.get("status") else ResultStatus.SUCCESS,
+                    region=ann_data.get("region"),
+                    links=ann_data.get("links"),
+                    event_timestamp=event_timestamp,
+                    timestamp=timestamp
+                ))
+
+            # 4. Add all new annotations to the session and flush to assign IDs.
+            if annotations_to_create:
+                self.session.add_all(annotations_to_create)
+                self.session.flush()
+                logger.info(f"Successfully imported {len(annotations_to_create)} new annotations for run '{new_run.name}'.")
+
+        # Final commit for the entire run import transaction
+        self.session.commit()
+        
+        # Refresh the run object to reflect all newly added relationships
+        self.session.refresh(new_run)
+        final_annotation_count = len(new_run.annotations) if new_run.annotations else 0
+        logger.info(f"Completed import of run '{new_run.name}'. Final annotation count: {final_annotation_count}")
 
         return new_run
 
     async def import_dataset_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> Dataset:
+        """Imports a dataset from a package into the database."""
         if package.metadata.package_type != ResourceType.DATASET:
             raise ValueError("Invalid package type for import_dataset_package")
         self.source_instance_id_from_package = package.metadata.source_instance_id

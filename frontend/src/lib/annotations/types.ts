@@ -151,10 +151,21 @@ export interface FormattedAnnotation extends AnnotationResult {
   isOptimistic?: boolean;
 }
 
+export interface TimeFrameFilter {
+  enabled: boolean;
+  startDate?: Date;
+  endDate?: Date;
+}
+
 export interface TimeAxisConfig {
   type: 'default' | 'schema' | 'event';
   schemaId?: number;
   fieldKey?: string;
+  // NEW: Time range filtering
+  timeFrame?: TimeFrameFilter;
+  // NEW: Advanced aggregation options
+  aggregationMode?: 'standard' | 'smooth' | 'weighted';
+  smoothingWindow?: number; // For smoothing aggregation
 }
 
 // --- Parameters for initiating an annotation RUN --- //

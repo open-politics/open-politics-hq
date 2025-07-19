@@ -348,6 +348,104 @@ def monitor_provider_cache():
         print("Error: Could not import cache utilities")
         return None
 
+def run_async_in_celery(async_func, *args, **kwargs):
+    """
+    Safely run an async function in a Celery task context.
+    
+    This function manages the event loop properly to avoid "Event loop is closed" errors
+    that occur when using asyncio.run() in Celery workers.
+    
+    Args:
+        async_func: The async function to execute
+        *args: Positional arguments to pass to the async function
+        **kwargs: Keyword arguments to pass to the async function
+    
+    Returns:
+        The result of the async function
+    """
+    import asyncio
+    import logging
+    import threading
+    
+    logger = logging.getLogger(__name__)
+    
+    # Try to get existing event loop, but be more defensive about its state
+    loop = None
+    try:
+        # First, try to get the current event loop
+        current_loop = asyncio.get_event_loop()
+        
+        # Check if the loop is usable (not closed and not in a bad state)
+        if current_loop and not current_loop.is_closed() and not current_loop.is_running():
+            loop = current_loop
+            logger.debug("Using existing event loop")
+        else:
+            logger.debug(f"Current loop unusable: closed={current_loop.is_closed() if current_loop else 'None'}, running={current_loop.is_running() if current_loop else 'None'}")
+            raise RuntimeError("Current loop is not usable")
+            
+    except RuntimeError as e:
+        # No event loop exists, it's closed, or there's another issue
+        logger.debug(f"Creating new event loop due to: {e}")
+        try:
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            logger.debug("Created and set new event loop")
+        except Exception as create_error:
+            logger.error(f"Failed to create new event loop: {create_error}")
+            raise RuntimeError(f"Cannot create event loop: {create_error}") from create_error
+    
+    if not loop:
+        raise RuntimeError("Could not obtain a usable event loop")
+    
+    try:
+        # Run the async function
+        logger.debug(f"Running async function {async_func.__name__} with args={len(args)}, kwargs={len(kwargs)}")
+        result = loop.run_until_complete(async_func(*args, **kwargs))
+        logger.debug(f"Async function {async_func.__name__} completed successfully")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in async function {async_func.__name__}: {e}", exc_info=True)
+        raise
+        
+    finally:
+        # Clean up pending tasks without closing the loop
+        try:
+            # Get all tasks for this loop
+            pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            
+            if pending_tasks:
+                logger.debug(f"Cleaning up {len(pending_tasks)} pending tasks")
+                
+                # Cancel all pending tasks
+                for task in pending_tasks:
+                    if not task.done():
+                        task.cancel()
+                
+                # Wait for all tasks to be cancelled/completed
+                # Use a timeout to avoid hanging
+                try:
+                    loop.run_until_complete(
+                        asyncio.wait_for(
+                            asyncio.gather(*pending_tasks, return_exceptions=True),
+                            timeout=5.0  # 5 second timeout for cleanup
+                        )
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout during task cleanup - some tasks may still be pending")
+                except Exception as cleanup_error:
+                    logger.warning(f"Error during task cleanup: {cleanup_error}")
+            
+            # DO NOT close the loop - keep it alive for reuse in the same worker process
+            # Only log if there are still pending tasks after cleanup
+            remaining_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            if remaining_tasks:
+                logger.warning(f"{len(remaining_tasks)} tasks still pending after cleanup")
+                
+        except Exception as final_cleanup_error:
+            logger.warning(f"Error during final cleanup: {final_cleanup_error}")
+
 def clear_all_provider_caches():
     """
     Clear all provider caches. Useful for memory cleanup or cache invalidation.

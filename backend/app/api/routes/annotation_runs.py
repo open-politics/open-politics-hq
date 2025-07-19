@@ -173,6 +173,19 @@ def get_run(
         # Populate schema_ids from target_schemas relationship
         run_read.schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
         
+        # DEBUG: Log schema relationship details
+        logger.info(f"DEBUG: Retrieved run {run_id} with {len(run.target_schemas) if run.target_schemas else 0} target schemas")
+        if run.target_schemas:
+            for schema in run.target_schemas:
+                logger.info(f"DEBUG: Run {run_id} has target schema: ID={schema.id}, Name='{schema.name}', UUID={schema.uuid}")
+        else:
+            logger.warning(f"DEBUG: Run {run_id} has NO target schemas!")
+        
+        # DEBUG: Check if annotations exist for this run
+        annotation_count_query = select(func.count(Annotation.id)).where(Annotation.run_id == run.id)
+        actual_annotation_count = session.exec(annotation_count_query).one() or 0
+        logger.info(f"DEBUG: Run {run_id} has {actual_annotation_count} annotations in database")
+        
         # Add counts if requested
         if include_counts:
             # Count annotations for this run
@@ -180,6 +193,8 @@ def get_run(
                 Annotation.run_id == run.id
             )
             run_read.annotation_count = session.exec(annotations_count_query).one() or 0
+        else:
+            run_read.annotation_count = actual_annotation_count
         
         return run_read
     

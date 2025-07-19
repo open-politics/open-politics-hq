@@ -109,7 +109,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       isActive: false,
     },
     {
-      title: "Information Space Config",
+      title: "Infospace Manager",
       url: "/desks/home/infospaces/infospace-manager",
       icon: FolderCog,
       isActive: true,

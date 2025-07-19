@@ -4,19 +4,19 @@ import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
-import AnnotationSchemeManager from './AnnotationSchemeManager';
+import AnnotationSchemaManager from './AnnotationSchemaManager';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 
-interface SchemeManagerOverlayProps {
+interface SchemaManagerOverlayProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-export default function AnnotationSchemeManagerOverlay({
+export default function AnnotationSchemaManagerOverlay({
   isOpen,
   onClose
-}: SchemeManagerOverlayProps) {
+}: SchemaManagerOverlayProps) {
   const { activeInfospace } = useInfospaceStore();
   const { schemas, isLoadingSchemas, loadSchemas } = useAnnotationSystem();
   
@@ -46,7 +46,7 @@ export default function AnnotationSchemeManagerOverlay({
               <p>Loading annotation schemas...</p>
             </div>
           ) : (
-            <AnnotationSchemeManager />
+            <AnnotationSchemaManager />
           )}
         </div>
       </DialogContent>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { AnnotationRead, AnnotationSchemaRead } from '@/client/models';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,6 +10,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from "@/lib/utils"; // Import cn helper
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AlertCircle } from 'lucide-react';
 import {
     RadarChart,
@@ -22,6 +23,9 @@ import {
 } from 'recharts';
 import { HelpCircle } from 'lucide-react';
 import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
+import { TextSpanSnippets } from '@/components/ui/highlighted-text';
+import { useAnnotationTextSpans } from '@/contexts/TextSpanHighlightContext';
+import AnnotationDataInspector from '@/components/debug/AnnotationDataInspector';
 
 // Local interface for schema fields
 interface SchemaField {
@@ -30,6 +34,15 @@ interface SchemaField {
   description: string;
   config: any;
 }
+
+// Utility function to format field names for display
+const formatFieldNameForDisplay = (fieldName: string): string => {
+  // Remove "document." prefix if present to make field names cleaner
+  if (fieldName.startsWith('document.')) {
+    return fieldName.substring('document.'.length);
+  }
+  return fieldName;
+};
 
 // Component-level types (if needed, e.g., for props)
 interface AnnotationResultDisplayProps {
@@ -90,22 +103,97 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
     highlightValue = null
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const { extractTextSpansFromJustification } = useAnnotationTextSpans();
+  
+  // Track which justifications we've already processed to prevent infinite loops
+  const processedJustificationsRef = useRef<Set<string>>(new Set());
 
-  // This adapter is complex because `output_contract` is a JSON schema, not a simple fields array.
-  // This logic will need to be much more robust.
-  const adaptContractToSchemeFields = (contract: any, schemas: AnnotationSchemaRead[], schemaId: number): SchemaField[] => {
-      // Use the hierarchical field extraction logic
-      const targetKeys = getTargetKeysForScheme(schemaId, schemas);
-      return targetKeys.map(tk => ({
-          name: tk.key, // This is now the full hierarchical path like "document.topics"
-          type: tk.type,
-          description: '', // We don't have descriptions from getTargetKeysForScheme
-          config: {} // Placeholder
-      }));
-  }
+  // Extract justifications from result value to process them
+  const justificationsToProcess = useMemo(() => {
+    if (!result?.value || typeof result.value !== 'object') return [];
+    
+    const justifications: Array<{
+      justificationObj: any;
+      assetId: number;
+      assetUuid?: string;
+      fieldName: string;
+      schemaName: string;
+      justificationKey: string;
+    }> = [];
+
+    // Use getTargetKeysForScheme directly from utils
+    const targetKeys = getTargetKeysForScheme(schema.id, [schema]);
+    const fieldsToDisplay = targetKeys.map(tk => ({
+        name: tk.key, // This is now the full hierarchical path like "document.topics"
+        type: tk.type,
+        description: '', // We don't have descriptions from getTargetKeysForScheme
+        config: {} // Placeholder
+    }));
+    
+    fieldsToDisplay.forEach((schemaField) => {
+      const justificationFieldPath = `${schemaField.name}_justification`;
+      const flatJustificationName = justificationFieldPath.includes('.') 
+        ? justificationFieldPath.split('.').pop() 
+        : justificationFieldPath;
+      
+      if (flatJustificationName && 
+          (flatJustificationName in result.value || 
+           Object.keys(result.value).some(key => 
+             key.toLowerCase().includes('justification') || 
+             key.toLowerCase().includes('reasoning')
+           ))) {
+        const justificationObj = getAnnotationFieldValue(result.value, justificationFieldPath);
+        
+        if (justificationObj && typeof justificationObj === 'object' && justificationObj.text_spans?.length > 0) {
+          const assetUuid = (result.asset as any)?.uuid;
+          const justificationKey = `${result.asset_id}-${schemaField.name}-${schema.id}-${JSON.stringify(justificationObj.text_spans.map(s => ({ start: s.start_char_offset, end: s.end_char_offset, text: s.text_snippet })))}`;
+          
+          if (!processedJustificationsRef.current.has(justificationKey)) {
+            justifications.push({
+              justificationObj,
+              assetId: result.asset_id,
+              assetUuid,
+              fieldName: schemaField.name,
+              schemaName: schema.name,
+              justificationKey
+            });
+          }
+        }
+      }
+    });
+
+    return justifications;
+  }, [result, schema]);
+
+  // Process justifications after render
+  useEffect(() => {
+    if (justificationsToProcess.length > 0) {
+      justificationsToProcess.forEach(({ justificationObj, assetId, assetUuid, fieldName, schemaName, justificationKey }) => {
+        if (!processedJustificationsRef.current.has(justificationKey)) {
+          extractTextSpansFromJustification(
+            justificationObj,
+            assetId,
+            assetUuid,
+            fieldName,
+            schemaName
+          );
+          
+          // Mark this justification as processed
+          processedJustificationsRef.current.add(justificationKey);
+        }
+      });
+    }
+  }, [justificationsToProcess, extractTextSpansFromJustification]);
 
   const fieldsToDisplay = useMemo(() => {
-    let fields = adaptContractToSchemeFields(schema.output_contract, [schema], schema.id);
+    // Use getTargetKeysForScheme directly from utils
+    const targetKeys = getTargetKeysForScheme(schema.id, [schema]);
+    let fields = targetKeys.map(tk => ({
+        name: tk.key, // This is now the full hierarchical path like "document.topics"
+        type: tk.type,
+        description: '', // We don't have descriptions from getTargetKeysForScheme
+        config: {} // Placeholder
+    }));
 
     if (selectedFieldKeys && selectedFieldKeys.length > 0) {
       fields = fields.filter(f => selectedFieldKeys.includes(f.name));
@@ -174,7 +262,7 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
   }
 
   const containerClasses = cn(
-    'space-y-2 h-full flex flex-col',
+    'space-y-0 h-full flex flex-col',
     (renderContext === 'table') 
       ? 'border-2 border-results p-2 rounded-md'
       : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md')
@@ -182,25 +270,25 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
 
   return (
       <div className={containerClasses}>
-          {(!compact || (renderContext !== 'dialog' && renderContext !== 'table')) && (
-             <div className="flex items-center justify-between mb-2">
-               <span className="font-medium text-base text-yellow-500">{schema.name}</span>
-               {isFailed && (
-                 <TooltipProvider delayDuration={100}>
-                   <Tooltip>
-                     <TooltipTrigger asChild>
-                       <AlertCircle className="h-4 w-4 text-destructive opacity-80 cursor-help ml-2" />
-                     </TooltipTrigger>
-                     <TooltipContent side="top" align="end">
-                       <p className="text-xs max-w-xs break-words">
-                         Failed: {result.error_message || 'Unknown error'}
-                       </p>
-                     </TooltipContent>
-                   </Tooltip>
-                 </TooltipProvider>
-               )}
-             </div>
-          )}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-base text-yellow-500">{schema.name}</span>
+            </div>
+            {isFailed && (
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <AlertCircle className="h-4 w-4 text-destructive opacity-80 cursor-help ml-2" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="end">
+                    <p className="text-xs max-w-xs break-words">
+                      Failed: {result.error_message || 'Unknown error'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
           
           <div
             className={cn(
@@ -209,7 +297,7 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
               renderContext !== 'table' && isExpanded && isPotentiallyLong && 'max-h-80 overflow-y-auto'
             )}
           >
-            <div className={'space-y-3'}>
+            <div className={'space-y-0'}>
               {fieldsToDisplay.map((schemaField, idx) => {
                   if (targetFieldKey) {
                       if (schemaField.name !== targetFieldKey) return null;
@@ -223,28 +311,91 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
                       // For hierarchical schemas, the field name might be like "document.topics"
                       // So the justification field would be "document.topics_justification"
                       const justificationFieldPath = `${schemaField.name}_justification`;
-                      return getAnnotationFieldValue(result.value, justificationFieldPath);
+                      
+                      // Quick check if justification field might exist before calling expensive lookup
+                      const flatJustificationName = justificationFieldPath.includes('.') 
+                        ? justificationFieldPath.split('.').pop() 
+                        : justificationFieldPath;
+                      
+                      // Only attempt lookup if the field potentially exists
+                      if (flatJustificationName && 
+                          (flatJustificationName in result.value || 
+                           Object.keys(result.value).some(key => 
+                             key.toLowerCase().includes('justification') || 
+                             key.toLowerCase().includes('reasoning')
+                           ))) {
+                        const justificationObj = getAnnotationFieldValue(result.value, justificationFieldPath);
+                        
+                        // Handle structured justification objects (JustificationSubModel)
+                        if (justificationObj && typeof justificationObj === 'object') {
+                          return justificationObj; // Return the full object for rich display
+                        }
+                        // Handle legacy string justifications
+                        else if (typeof justificationObj === 'string') {
+                          return justificationObj;
+                        }
+                      }
                     }
                     return undefined;
                   })();
                   
                   return (
-                      <div key={idx} className={ 'space-y-1 border-b border-dashed border-border/30 pb-3 last:border-b-0 last:pb-0'}>
+                      <div key={idx} className={ 'space-y-1 border-b border-dashed border-border/30 last:border-b-0'}>
                           <div>
                             <div className="font-medium text-blue-400 italic inline-flex items-center mr-2">
-                              {schemaField.name}
-                              {justificationValue && typeof justificationValue === 'string' && (
-                                  <TooltipProvider delayDuration={100}>
-                                      <Tooltip>
-                                          <TooltipTrigger asChild>
-                                              <HelpCircle className="h-3.5 w-3.5 ml-1.5 text-muted-foreground cursor-help opacity-70 hover:opacity-100" />
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top" align="start" className="max-w-xs border-border shadow-lg z-[1000]">
-                                              <p className="text-xs font-semibold mb-1 text-indigo-400">Justification:</p>
-                                              <p className="text-xs">{justificationValue}</p>
-                                          </TooltipContent>
-                                      </Tooltip>
-                                  </TooltipProvider>
+                              {formatFieldNameForDisplay(schemaField.name)}
+                              {justificationValue && (
+                                  <Popover>
+                                      <PopoverTrigger asChild>
+                                          <HelpCircle className="h-3.5 w-3.5 ml-1.5 text-muted-foreground cursor-pointer opacity-70 hover:opacity-100" />
+                                      </PopoverTrigger>
+                                      <PopoverContent side="top" align="start" className="max-w-sm border border-border shadow-lg z-[1000] bg-popover text-popover-foreground p-0">
+                                        <ScrollArea className="max-h-[400px] overflow-y-auto w-full">
+                                          <div className="space-y-3 p-3">
+                                            <div className="flex items-center justify-between">
+                                              <p className="text-xs font-semibold text-indigo-400">Justification:</p>
+                                              <AnnotationDataInspector result={result} schema={schema} className="text-[10px]" />
+                                            </div>
+                                            {(() => {
+                                              // Handle structured justification objects
+                                              if (typeof justificationValue === 'object' && justificationValue !== null) {
+                                                return (
+                                                  <div className="space-y-1">
+                                                    {justificationValue.reasoning && (
+                                                      <p className="text-xs">{justificationValue.reasoning}</p>
+                                                    )}
+                                                    {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
+                                                      <div className="space-y-2">
+                                                        <p className="text-xs text-muted-foreground">
+                                                          📝 {justificationValue.text_spans.length} text span{justificationValue.text_spans.length > 1 ? 's' : ''}:
+                                                        </p>
+                                                        <TextSpanSnippets 
+                                                          spans={justificationValue.text_spans} 
+                                                          maxSnippets={2}
+                                                          className="max-w-xs"
+                                                        />
+                                                      </div>
+                                                    )}
+                                                    {justificationValue.image_regions && justificationValue.image_regions.length > 0 && (
+                                                      <p className="text-xs text-muted-foreground">
+                                                        🖼️ {justificationValue.image_regions.length} image region{justificationValue.image_regions.length > 1 ? 's' : ''}
+                                                      </p>
+                                                    )}
+                                                    {justificationValue.audio_segments && justificationValue.audio_segments.length > 0 && (
+                                                      <p className="text-xs text-muted-foreground">
+                                                        🎵 {justificationValue.audio_segments.length} audio segment{justificationValue.audio_segments.length > 1 ? 's' : ''}
+                                                      </p>
+                                                    )}
+                                                  </div>
+                                                );
+                                              }
+                                              // Handle string justifications
+                                              return <p className="text-xs">{String(justificationValue)}</p>;
+                                            })()}
+                                          </div>
+                                        </ScrollArea>
+                                      </PopoverContent>
+                                  </Popover>
                               )}
                             </div>
                             <div className="inline-block">{formatFieldValue(result.value, schemaField, highlightValue)}</div>

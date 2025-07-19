@@ -421,6 +421,9 @@ class AnnotationRun(SQLModel, table=True):
     # New fields from user query
     include_parent_context: bool = Field(default=False)
     context_window: int = Field(default=0)
+    views_config: Optional[List[Dict[str, Any]]] = Field(
+        default_factory=list, sa_column=Column(JSONB)
+    )
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")

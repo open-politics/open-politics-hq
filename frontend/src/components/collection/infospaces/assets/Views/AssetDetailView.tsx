@@ -48,6 +48,8 @@ import { toast } from 'sonner';
 import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useTextSpanHighlight } from '@/contexts/TextSpanHighlightContext';
+import { HighlightedText } from '@/components/ui/highlighted-text';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import AssetDetailViewCsv from './AssetDetailViewCsv';
 import AssetDetailViewPdf from './AssetDetailViewPdf';
@@ -95,6 +97,9 @@ const AssetDetailView = ({
   const [childrenError, setChildrenError] = useState<string | null>(null);
   const [selectedChildAsset, setSelectedChildAsset] = useState<AssetRead | null>(null);
   const [childSearchTerm, setChildSearchTerm] = useState('');
+
+  // Text span highlighting
+  const { getHighlightsForAsset, hasHighlights } = useTextSpanHighlight();
 
   // Media blob URLs for authenticated access
   const [mediaBlobUrls, setMediaBlobUrls] = useState<Map<string, string>>(new Map());
@@ -885,13 +890,37 @@ const AssetDetailView = ({
     );
   };
 
-  const renderTextDisplay = (text: string | null) => (
-    <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
-      <div className="whitespace-pre-wrap break-words w-full max-w-full">
-        {text || <span className="text-muted-foreground italic">No text content available.</span>}
-      </div>
-    </ScrollArea>
-  );
+  const renderTextDisplay = (text: string | null, assetId?: number, assetUuid?: string) => {
+    if (!text) {
+      return (
+        <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
+          <div className="whitespace-pre-wrap break-words w-full max-w-full">
+            <span className="text-muted-foreground italic">No text content available.</span>
+          </div>
+        </ScrollArea>
+      );
+    }
+
+    // Check if we have text spans to highlight for this asset
+    const textSpans = (assetId !== undefined) ? getHighlightsForAsset(assetId, assetUuid) : [];
+    const shouldHighlight = textSpans.length > 0;
+
+    return (
+      <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
+        <div className="whitespace-pre-wrap break-words w-full max-w-full">
+          {shouldHighlight ? (
+            <HighlightedText 
+              text={text} 
+              spans={textSpans}
+              highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 rounded text-yellow-900 dark:text-yellow-100 z-[1001]"
+            />
+          ) : (
+            text
+          )}
+        </div>
+      </ScrollArea>
+    );
+  };
 
   const handleSaveEdit = async () => {
     if (!editingAsset || !activeInfospace?.id) return;
@@ -1008,7 +1037,7 @@ const AssetDetailView = ({
       {asset.text_content && (
         <div className="flex-1">
           <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Article Content</h4>
-          {renderTextDisplay(asset.text_content)}
+          {renderTextDisplay(asset.text_content, asset.id, asset.uuid)}
         </div>
       )}
       {hasChildren && (
@@ -1428,7 +1457,11 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
           {asset.text_content && (
             <div className="prose prose-gray max-w-none">
               <div className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
-                {asset.text_content}
+                <HighlightedText 
+                  text={asset.text_content} 
+                  spans={getHighlightsForAsset(asset.id, asset.uuid)}
+                  highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 rounded text-yellow-900 dark:text-yellow-100 z-[1001]"
+                />
               </div>
             </div>
           )}
@@ -1603,7 +1636,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
             {asset.text_content && (
                 <div className="mt-3 pt-3 border-t">
                     <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Text Content</h4>
-                    {renderTextDisplay(asset.text_content)}
+                    {renderTextDisplay(asset.text_content, asset.id, asset.uuid)}
                 </div>
             )}
             {asset.source_metadata && Object.keys(asset.source_metadata).length > 0 && (

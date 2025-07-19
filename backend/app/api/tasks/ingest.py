@@ -28,6 +28,7 @@ from app.schemas import AssetCreate
 from app.core.config import settings
 from app.api.providers.factory import create_storage_provider, create_scraping_provider
 from app.api.providers.base import StorageProvider, ScrapingProvider # Import protocols for type hinting
+from app.api.tasks.utils import run_async_in_celery
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -501,14 +502,13 @@ def process_source(self, source_id: int, task_origin_details_override: Optional[
                 logging.info(f"Processing CSV Source: {source_obj.id}")
                 object_name = actual_source_details.get('storage_path')
                 if not object_name: raise ValueError(f"Missing 'storage_path' for CSV Source {source_obj.id}")
-                asset_creation_payloads, processed_source_metadata_update = asyncio.run(
-                     _task_process_csv_content(
-                         source_id=source_id,
-                         storage_path=object_name,
-                         origin_details=actual_source_details,
-                         storage_provider=storage_provider
-                     )
-                )
+                asset_creation_payloads, processed_source_metadata_update = run_async_in_celery(
+                     _task_process_csv_content,
+                     source_id=source_id,
+                     storage_path=object_name,
+                     origin_details=actual_source_details,
+                     storage_provider=storage_provider
+                 )
                 if asset_creation_payloads:
                     parent_csv_asset_title = actual_source_details.get('filename', f"CSV Data from Source {source_id}")
                     parent_csv_asset_payload = {
@@ -547,15 +547,14 @@ def process_source(self, source_id: int, task_origin_details_override: Optional[
                         file_object = await storage_provider.get_file(object_name)
                         return await asyncio.to_thread(file_object.read)
 
-                    pdf_bytes_content = asyncio.run(get_pdf_content())
-                    all_pdf_asset_payloads, processed_source_metadata_update = asyncio.run(
-                         _task_process_pdf_content(
-                             pdf_bytes_content,
-                             source_id,
-                             origin_details_override=task_origin_details_override,
-                             actual_source_origin_details=actual_source_details
-                         )
-                    )
+                    pdf_bytes_content = run_async_in_celery(get_pdf_content)
+                    all_pdf_asset_payloads, processed_source_metadata_update = run_async_in_celery(
+                         _task_process_pdf_content,
+                         pdf_bytes_content,
+                         source_id,
+                         origin_details_override=task_origin_details_override,
+                         actual_source_origin_details=actual_source_details
+                     )
                     if all_pdf_asset_payloads:
                         parent_pdf_asset_payload = all_pdf_asset_payloads[0]
                         page_asset_payloads = all_pdf_asset_payloads[1:]
@@ -573,8 +572,10 @@ def process_source(self, source_id: int, task_origin_details_override: Optional[
 
                 finally:
                     if file_object and hasattr(file_object, 'close'):
-                        try: asyncio.run(asyncio.to_thread(file_object.close))
-                        except Exception: pass
+                        try: 
+                            run_async_in_celery(asyncio.to_thread, file_object.close)
+                        except Exception: 
+                            pass
             
             elif source_obj.kind == "url_list_scrape":
                 logging.info(f"Processing URL_LIST Source: {source_obj.id}")
@@ -589,7 +590,7 @@ def process_source(self, source_id: int, task_origin_details_override: Optional[
                     error_msg_url = None
                     record_title_url = None 
                     try:
-                        scraped_data_url = asyncio.run(scraping_provider.scrape_url(url))
+                        scraped_data_url = run_async_in_celery(scraping_provider.scrape_url, url)
                         
                         text_content_url = None
                         if isinstance(scraped_data_url, dict):

@@ -1,5 +1,5 @@
 import React from "react";
-import { AnnotationSchemaRead } from "@/client/models";
+import { AnnotationSchemaRead, FieldJustificationConfig } from "@/client/models";
 import { AdvancedSchemeField, AnnotationSchemaFormData as SchemeFormData } from "@/lib/annotations/types";
 import { Badge } from "@/components/ui/badge";
 import { 
@@ -11,8 +11,11 @@ import {
   AlertCircle,
   Info,
   Tag,
-  Settings
+  Settings,
+  HelpCircle,
+  MessageSquare
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface SchemePreviewProps {
   scheme: SchemeFormData | AnnotationSchemaRead;
@@ -22,6 +25,31 @@ const isSchemeFormData = (scheme: SchemeFormData | AnnotationSchemaRead): scheme
   return 'structure' in scheme && 
          Array.isArray(scheme.structure) && 
          scheme.structure.length > 0;
+};
+
+// Helper function to get justification config for a field
+const getJustificationConfig = (
+  fieldName: string, 
+  scheme: SchemeFormData | AnnotationSchemaRead
+): { enabled: boolean; custom_prompt?: string | null } | null => {
+  if (isSchemeFormData(scheme)) {
+    // For form data, check the field's justification property
+    const allFields = scheme.structure.flatMap(section => section.fields);
+    const field = allFields.find(f => f.name === fieldName);
+    if (field?.justification?.enabled) {
+      return {
+        enabled: true,
+        custom_prompt: field.justification.custom_prompt || null
+      };
+    }
+  } else {
+    // For API schema data, check field_specific_justification_configs
+    const configs = scheme.field_specific_justification_configs;
+    if (configs && configs[fieldName]) {
+      return configs[fieldName];
+    }
+  }
+  return null;
 };
 
 // Enhanced field type icons with better styling
@@ -50,8 +78,11 @@ const formatFieldType = (type: string): string => {
 };
 
 // Enhanced field display component
-const FieldCard = ({ field, depth = 0 }: { field: any; depth?: number }) => {
+const FieldCard = ({ field, depth = 0, scheme }: { field: any; depth?: number; scheme?: SchemeFormData | AnnotationSchemaRead }) => {
   const indentClass = depth > 0 ? `ml-${depth * 3}` : '';
+  
+  // Get justification config for this field
+  const justificationConfig = scheme ? getJustificationConfig(field.name, scheme) : null;
   
   return (
     <div className={`py-2 ${indentClass} ${depth > 0 ? 'border-l-2 border-border/30 pl-3' : ''}`}>
@@ -68,6 +99,39 @@ const FieldCard = ({ field, depth = 0 }: { field: any; depth?: number }) => {
                 <Badge variant="destructive" className="text-xs h-5">
                   Required
                 </Badge>
+              )}
+              {justificationConfig?.enabled && (
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1">
+                        <Badge variant="secondary" className="text-xs h-5 bg-indigo-100 text-indigo-700 border-indigo-200">
+                          <HelpCircle className="h-3 w-3 mr-1" />
+                          Justification
+                        </Badge>
+                        {justificationConfig.custom_prompt && (
+                          <MessageSquare className="h-3 w-3 text-indigo-600" />
+                        )}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="start" className="max-w-sm z-[1001]">
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold">Justification Enabled</p>
+                        <p className="text-xs text-muted-foreground">
+                          AI will provide reasoning for this field's values
+                        </p>
+                        {justificationConfig.custom_prompt && (
+                          <div className="pt-1 border-t">
+                            <p className="text-xs font-semibold mb-1">Custom Prompt:</p>
+                            <p className="text-xs bg-muted p-1 rounded text-wrap break-words">
+                              {justificationConfig.custom_prompt}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
             </div>
             {field.description && (
@@ -118,7 +182,7 @@ const FieldCard = ({ field, depth = 0 }: { field: any; depth?: number }) => {
             <List className="h-3 w-3 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground">Array of:</span>
           </div>
-          <FieldCard field={{ ...field.items, name: `${field.name} item` }} depth={depth + 1} />
+          <FieldCard field={{ ...field.items, name: `${field.name} item` }} depth={depth + 1} scheme={scheme} />
         </div>
       )}
 
@@ -131,7 +195,7 @@ const FieldCard = ({ field, depth = 0 }: { field: any; depth?: number }) => {
           </div>
           <div className="space-y-1">
             {field.properties.map((prop: any, idx: number) => (
-              <FieldCard key={idx} field={prop} depth={depth + 1} />
+              <FieldCard key={idx} field={prop} depth={depth + 1} scheme={scheme} />
             ))}
           </div>
         </div>
@@ -141,7 +205,7 @@ const FieldCard = ({ field, depth = 0 }: { field: any; depth?: number }) => {
 };
 
 // Component to parse and display JSON Schema structure
-const JsonSchemaFields = ({ outputContract }: { outputContract: any }) => {
+const JsonSchemaFields = ({ outputContract, scheme }: { outputContract: any; scheme?: SchemeFormData | AnnotationSchemaRead }) => {
   if (!outputContract?.properties) return null;
 
   const parseProperties = (properties: any, prefix = '', skipPrefix = false): any[] => {
@@ -167,7 +231,7 @@ const JsonSchemaFields = ({ outputContract }: { outputContract: any }) => {
     return (
       <div className="space-y-1">
         {fields.map((field, idx) => (
-          <FieldCard key={idx} field={field} />
+          <FieldCard key={idx} field={field} scheme={scheme} />
         ))}
       </div>
     );
@@ -178,7 +242,7 @@ const JsonSchemaFields = ({ outputContract }: { outputContract: any }) => {
   return (
     <div className="space-y-1">
       {fields.map((field, idx) => (
-        <FieldCard key={idx} field={field} />
+        <FieldCard key={idx} field={field} scheme={scheme} />
       ))}
     </div>
   );
@@ -245,7 +309,7 @@ export function SchemePreview({ scheme }: SchemePreviewProps) {
                   </div>
                   <div className="space-y-1">
                     {section.fields.map((field, fieldIdx) => (
-                      <FieldCard key={field.id || fieldIdx} field={field} />
+                      <FieldCard key={field.id || fieldIdx} field={field} scheme={scheme} />
                     ))}
                   </div>
                 </div>
@@ -253,7 +317,7 @@ export function SchemePreview({ scheme }: SchemePreviewProps) {
             ) : null
           ) : (
             // Display JSON schema fields
-            <JsonSchemaFields outputContract={scheme.output_contract} />
+            <JsonSchemaFields outputContract={scheme.output_contract} scheme={scheme} />
           )
         ) : (
           <div className="text-center py-4 text-muted-foreground">

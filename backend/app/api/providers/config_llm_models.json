@@ -20,6 +20,20 @@
           "supports_structured_output": true,
           "supports_thinking": true,
           "use_cases": ["rag", "classification", "complex_analysis", "multimodal_understanding"]
+        },
+        "gemini-2.5-flash-lite-preview-06-17": {
+          "name": "gemini-2.5-flash-lite-preview-06-17",
+          "description": "Gemini 2.5 Flash-Lite Preview 06-17",
+          "max_tokens": 8192,
+          "context_length": 1048576,
+          "recommended": true,
+          "tags": ["latest", "multimodal", "reasoning", "thinking", "structured"],
+          "cost_per_1k_input_tokens": 0.00015,
+          "cost_per_1k_output_tokens": 0.0006,
+          "supports_multimodal": true,
+          "supports_structured_output": true,
+          "supports_thinking": true,
+          "use_cases": ["rag", "classification", "complex_analysis", "multimodal_understanding"]
         }
       }
     },

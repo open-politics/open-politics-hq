@@ -7,12 +7,21 @@ import { columns, InfospaceRowData } from '@/components/collection/infospaces/ta
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { toast } from 'sonner';
 import { ResourceType } from '@/client/models';
+import { RowSelectionState } from '@tanstack/react-table';
 
 interface InfospacesPageProps {
   onEdit: (Infospace: InfospaceRowData) => void;
+  enableRowSelection?: boolean;
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: React.Dispatch<React.SetStateAction<RowSelectionState>>;
 }
 
-export default function InfospacesPage({ onEdit }: InfospacesPageProps) {
+export default function InfospacesPage({ 
+  onEdit, 
+  enableRowSelection = false,
+  rowSelection = {},
+  onRowSelectionChange
+}: InfospacesPageProps) {
   const { infospaces, fetchInfospaces, deleteInfospace, exportInfospace } = useInfospaceStore();
   const { createLink, isLoading: isShareLoading, error: shareError } = useShareableStore();
 
@@ -61,6 +70,9 @@ export default function InfospacesPage({ onEdit }: InfospacesPageProps) {
       <DataTable
         columns={tableColumns}
         data={infospaces as unknown as InfospaceRowData[]}
+        enableRowSelection={enableRowSelection}
+        rowSelection={rowSelection}
+        onRowSelectionChange={onRowSelectionChange}
         />
     </div>
   );

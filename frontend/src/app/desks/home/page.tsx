@@ -10,15 +10,24 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import ProviderSelector from '@/components/collection/infospaces/management/ProviderSelector'
+import { toast } from 'sonner'
+
 
 export default function DesksPage() {
   const { apiKeys, setApiKey, selectedProvider, selectedModel } = useApiKeysStore();
   const [tempApiKey, setTempApiKey] = useState('');
 
   const handleSaveApiKey = () => {
+    console.log('Save attempt:', { selectedProvider, tempApiKey: tempApiKey ? '[HIDDEN]' : 'empty' });
     if (selectedProvider && tempApiKey) {
+      console.log('Calling setApiKey with provider:', selectedProvider);
       setApiKey(selectedProvider, tempApiKey);
-      setTempApiKey('');  
+      setTempApiKey('');
+      console.log('After setApiKey, current apiKeys:', apiKeys);
+      toast.success(`API key saved for ${selectedProvider}`);
+    } else {
+      console.log('Save failed - missing provider or key');
+      toast.error('Please select a provider and enter an API key');
     }
   };
 
@@ -138,8 +147,8 @@ export default function DesksPage() {
           {/* AI Model Configuration Card */}
           <div className="relative transition-all duration-200 h-full">
             <Card className="transition-all duration-200 relative h-full overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-[var(--settings-ai-from)] to-[var(--settings-ai-to)] rounded-lg"></div>
-              <CardHeader>
+              <div className="absolute inset-0 bg-gradient-to-r from-[var(--settings-ai-from)] to-[var(--settings-ai-to)] rounded-lg -z-10"></div>
+              <CardHeader className="relative z-10">
                 <CardTitle className="flex items-center gap-2">
                   <Brain className="w-5 h-5" />
                   AI Model
@@ -149,13 +158,13 @@ export default function DesksPage() {
                 </CardDescription>
                 <div className="flex flex-col gap-2">
                   <span className="text-xs text-gray-500">
-                    <Link href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-800 dark:text-blue-200">
+                    <Link href="https://aistudio.google.com/app/apikey" rel="noopener noreferrer" className="text-blue-800 dark:text-blue-200 hover:underline">
                       How to get an API key (Google)
                     </Link>
                   </span>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="relative z-10">
                 <div className="space-y-4">
                   <ProviderSelector />
 

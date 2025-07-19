@@ -1,7 +1,8 @@
 #! /usr/bin/env bash
+set -e
 
 # alembic stamp head
-# alembic revision --autogenerate -m "Add partial unique index to annotation schemas"
+# alembic revision --autogenerate -m "adding 'views_config' to annotation run"
 # alembic upgrade head
 
 # Let the DB start

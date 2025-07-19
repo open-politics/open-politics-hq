@@ -9507,7 +9507,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "default": "2025-06-25",
+              "default": "2025-07-03",
               "title": "Timeframe To"
             }
           }
@@ -9859,6 +9859,21 @@
             "title": "Context Window",
             "default": 0
           },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
+          },
           "schema_ids": {
             "items": {
               "type": "integer"
@@ -9899,6 +9914,113 @@
         ],
         "title": "AnnotationRunCreate"
       },
+      "AnnotationRunPreview": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Configuration",
+            "default": {}
+          },
+          "annotation_count": {
+            "type": "integer",
+            "title": "Annotation Count",
+            "default": 0
+          },
+          "target_schemas": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Target Schemas",
+            "default": []
+          },
+          "annotations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Annotations",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uuid",
+          "name",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AnnotationRunPreview",
+        "description": "Preview model for shared annotation runs."
+      },
       "AnnotationRunRead": {
         "properties": {
           "name": {
@@ -9931,6 +10053,21 @@
             "type": "integer",
             "title": "Context Window",
             "default": 0
+          },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
           },
           "id": {
             "type": "integer",
@@ -10095,6 +10232,21 @@
               }
             ],
             "title": "Context Window"
+          },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
           }
         },
         "type": "object",
@@ -11437,8 +11589,7 @@
               "$ref": "#/components/schemas/AssetPreview"
             },
             "type": "array",
-            "title": "Assets",
-            "default": []
+            "title": "Assets"
           }
         },
         "type": "object",
@@ -11446,7 +11597,8 @@
           "id",
           "name",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "assets"
         ],
         "title": "BundlePreview",
         "description": "A lightweight public representation of a Bundle."
@@ -13626,6 +13778,9 @@
               },
               {
                 "$ref": "#/components/schemas/BundlePreview"
+              },
+              {
+                "$ref": "#/components/schemas/AnnotationRunPreview"
               }
             ],
             "title": "Content"

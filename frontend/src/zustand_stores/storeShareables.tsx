@@ -44,11 +44,49 @@ export interface BundlePreview {
   assets: AssetPreview[];
 }
 
+export interface AnnotationRunPreview {
+  id: number;
+  uuid: string;
+  name: string;
+  description?: string;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string;
+  views_config?: any;
+  configuration?: any;
+  annotation_count: number;
+  target_schemas: Array<{
+    id: number;
+    name: string;
+    description?: string;
+    schema_definition: any;
+  }>;
+  annotations: Array<{
+    id: number;
+    created_at: string;
+    updated_at?: string;
+    results: any;
+    asset?: {
+      id: number;
+      uuid: string;
+      title: string;
+      kind: string;
+    };
+    schema?: {
+      id: number;
+      name: string;
+      description?: string;
+      schema_definition: any;
+    };
+  }>;
+}
+
 export interface SharedResourcePreview {
   resource_type: ResourceType;
   name: string;
   description?: string;
-  content: AssetPreview | BundlePreview;
+  content: AssetPreview | BundlePreview | AnnotationRunPreview;
 }
 // ---------------------------------------------------------
 
@@ -466,6 +504,8 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
     try {
       const body = { target_infospace_id: infospaceId };
 
+      console.log(`Importing resource from token ${token} into infospace ${infospaceId}`);
+      
       const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/import-from-token/${token}`, {
         method: 'POST',
         headers: {
@@ -480,6 +520,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
         try {
           const errorBody = await response.json();
           errorDetail = errorBody.detail || errorDetail;
+          console.error('Import error details:', errorBody);
         } catch (e) {
           errorDetail = `${errorDetail} - ${response.statusText}`;
         }
@@ -487,11 +528,22 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
       }
 
       const result = await response.json() as SingleImportSuccess;
+      console.log('Import successful:', result);
+      
+      // Log the imported resource details for debugging
+      if (result.resource_type === 'run') {
+        console.log(`Successfully imported annotation run: ${result.imported_resource_name} (ID: ${result.imported_resource_id})`);
+        toast.success(`Successfully imported annotation run: ${result.imported_resource_name}`);
+      } else {
+        toast.success(`Successfully imported ${result.resource_type}: ${result.imported_resource_name}`);
+      }
+      
       set({ isLoading: false });
       return result;
 
     } catch (err) {
       const message = err instanceof Error ? err.message : `Failed to import from token`;
+      console.error('Import from token error:', err);
       set({ error: message, isLoading: false });
       toast.error(message);
       throw err;
