@@ -22,7 +22,7 @@ worker_server_type = "cx22"
 location = "fsn1"
 
 # SSH key name (must exist in Hetzner Cloud Console)
-ssh_key_name = "open-politics-admin-1756477053"
+ssh_key_name = "open-politics-admin"
 
 # Domain configuration
 # This domain will be used for SSL certificates and ingress
