@@ -382,7 +382,7 @@ export function DashboardToolbar({
                       maxSplits: config.maxSplits,
                       groupOthers: config.groupOthers,
                       valueAliases: config.valueAliases || {}
-                    } : null;
+                    } : undefined;
                     
                     setGlobalVariableSplitting(storeConfig);
                   }}

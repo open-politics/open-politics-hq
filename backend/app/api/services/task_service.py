@@ -13,11 +13,12 @@ from app.models import (
     AnnotationSchema,
     Asset,
     Bundle,
+    IntelligencePipeline,
 )
 from app.api.services.annotation_service import AnnotationService
 from app.core.beat_utils import add_or_update_schedule, remove_schedule
 from app.api.services.service_utils import validate_infospace_access
-from app.api.tasks.ingest_recurringly import process_recurring_ingest
+from app.api.tasks.ingest import process_source
 from app.schemas import AnnotationRunCreate, TaskCreate, TaskUpdate
 
 
@@ -91,6 +92,14 @@ def _validate_task_input_config(task_model: Union[TaskCreate, TaskUpdate], sessi
                 bundle = session.get(Bundle, target_bundle_id)
                 if not bundle or bundle.infospace_id != infospace_id:
                     raise ValueError(f"Target Bundle ID {target_bundle_id} not found or not in infospace {infospace_id}.")
+
+        elif normalized_type == TaskType.PIPELINE:
+            pipeline_id = config.get('pipeline_id')
+            if not pipeline_id or not isinstance(pipeline_id, int):
+                raise ValueError("PIPELINE task configuration requires an integer 'pipeline_id'.")
+            pipeline = session.get(IntelligencePipeline, pipeline_id)
+            if not pipeline or pipeline.infospace_id != infospace_id:
+                raise ValueError(f"Target Pipeline ID {pipeline_id} not found or not in infospace {infospace_id}.")
 
 class TaskService:
     def __init__(self, session: Session, annotation_service: AnnotationService):
@@ -294,8 +303,19 @@ class TaskService:
 
         try:
             if task.type == TaskType.INGEST:
-                process_recurring_ingest.delay(task.id)
-                logger.info(f"TaskService: Dispatched process_recurring_ingest for Task {task.id}")
+                # The 'target_source_id' is required and validated in the config
+                target_source_id = task.configuration.get("target_source_id")
+                if target_source_id:
+                    process_source.delay(target_source_id)
+                    logger.info(f"TaskService: Dispatched process_source for Task {task.id} targeting Source {target_source_id}")
+                else:
+                    logger.error(f"TaskService: Cannot execute INGEST task {task.id}. Missing 'target_source_id' in configuration.")
+                    # Update task status to reflect this configuration error
+                    task.last_run_status = "error"
+                    task.last_run_message = "Manual execution failed: Missing 'target_source_id' in configuration."
+                    self.session.add(task)
+                    self.session.commit()
+                    return False
             
             elif task.type == TaskType.ANNOTATE:
                 run_config = task.configuration or {}
@@ -325,6 +345,63 @@ class TaskService:
                     run_in=create_run_payload
                 )
                 logger.info(f"TaskService: Created AnnotationRun {new_run.id} from Task {task.id} for manual execution. Celery task for run processing should be queued by AnnotationService.")
+
+            elif task.type == TaskType.MONITOR:
+                # Handle MONITOR task type by dispatching to execute_monitor_task
+                monitor_id = task.configuration.get("monitor_id")
+                if monitor_id:
+                    from app.api.tasks.monitor_tasks import execute_monitor_task
+                    execute_monitor_task.delay(monitor_id)
+                    logger.info(f"TaskService: Dispatched MONITOR task {task.id} for monitor {monitor_id}")
+                else:
+                    logger.error(f"TaskService: Cannot execute MONITOR task {task.id}. Missing 'monitor_id' in configuration.")
+                    task.last_run_status = "error"
+                    task.last_run_message = "Manual execution failed: Missing 'monitor_id' in configuration."
+                    task.last_run_at = datetime.now(timezone.utc)
+                    self.session.add(task)
+                    self.session.commit()
+                    return False
+
+            elif task.type == TaskType.PIPELINE:
+                pipeline_id = task.configuration.get("pipeline_id") if task.configuration else None
+                if not pipeline_id:
+                    logger.error(f"TaskService: Cannot execute PIPELINE task {task.id}. Missing 'pipeline_id' in configuration.")
+                    task.last_run_status = "error"
+                    task.last_run_message = "Manual execution failed: Missing 'pipeline_id' in configuration."
+                    task.last_run_at = datetime.now(timezone.utc)
+                    self.session.add(task)
+                    self.session.commit()
+                    return False
+                from app.api.services.pipeline_service import PipelineService
+                from app.api.services.annotation_service import AnnotationService
+                from app.api.services.analysis_service import AnalysisService
+                from app.api.services.bundle_service import BundleService
+                from app.api.services.asset_service import AssetService
+                from app.api.providers.factory import create_model_registry, create_storage_provider
+                from app.core.config import settings
+
+                storage_provider = create_storage_provider(settings)
+                asset_service = AssetService(self.session, storage_provider)
+                model_registry = create_model_registry(settings)
+                await model_registry.initialize_providers()
+                annotation_service = AnnotationService(self.session, model_registry, asset_service)
+                analysis_service = AnalysisService(self.session, model_registry, annotation_service, asset_service)
+                bundle_service = BundleService(self.session)
+                pipeline_service = PipelineService(self.session, annotation_service, analysis_service, bundle_service)
+
+                pipeline = self.session.get(IntelligencePipeline, pipeline_id)
+                if not pipeline or pipeline.infospace_id != infospace_id:
+                    logger.error(f"TaskService: Pipeline {pipeline_id} not found in infospace {infospace_id}.")
+                    task.last_run_status = "error"
+                    task.last_run_message = f"Manual execution failed: Pipeline {pipeline_id} not found."
+                    task.last_run_at = datetime.now(timezone.utc)
+                    self.session.add(task)
+                    self.session.commit()
+                    return False
+                delta = pipeline_service._resolve_start_assets_delta(pipeline)
+                triggering_assets = sorted({aid for ids in delta.values() for aid in ids})
+                execution = pipeline_service.trigger_pipeline(pipeline_id=pipeline_id, asset_ids=triggering_assets, trigger_type="MANUAL_ADHOC")
+                logger.info(f"TaskService: Started pipeline execution {execution.id} for Task {task.id}")
 
             else:
                 logger.warning(f"TaskService: Manual execution for task type '{task.type}' is not implemented for Task {task.id}.")

@@ -9,9 +9,10 @@ Includes:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Literal, Union
+from typing import Any, Dict, List, Optional, Literal, Union, Set
+from dataclasses import dataclass
 
 from sqlmodel import SQLModel, Field
 from pydantic import computed_field, ConfigDict
@@ -42,6 +43,17 @@ class UserOut(UserBase):
     id: int
     is_active: bool = True
     is_superuser: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+class UserPublicProfile(SQLModel):
+    """Public user profile (no sensitive information)."""
+    id: int
+    full_name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    bio: Optional[str] = None
+    description: Optional[str] = None
+    created_at: datetime
 
 class UsersOut(SQLModel):
     data: List[UserOut]
@@ -51,21 +63,48 @@ class UserCreate(UserBase):
     password: str
     is_superuser: bool = False
     is_active: bool = True
+    # Control whether to send a welcome email on admin/user creation
+    send_welcome_email: bool = True
 
 class UserCreateOpen(SQLModel):
     email: str
     password: str
     full_name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    bio: Optional[str] = None
+    description: Optional[str] = None
 
 class UserUpdate(SQLModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
+    is_active: Optional[bool] = None
     tier: Optional[UserTier] = None
+    profile_picture_url: Optional[str] = None
+    bio: Optional[str] = None
+    description: Optional[str] = None
 
 class UserUpdateMe(SQLModel):
-    full_name: Optional[str] = None
+    full_name: Optional[str] = Field(None, max_length=100)
     email: Optional[str] = None
+    profile_picture_url: Optional[str] = Field(None, max_length=500)
+    bio: Optional[str] = Field(None, max_length=500, description="Short bio (max 500 characters)")
+    description: Optional[str] = Field(None, max_length=2000, description="Longer description (max 2000 characters)")
+
+class UserProfileUpdate(SQLModel):
+    """Dedicated schema for profile-only updates (no email/password)."""
+    full_name: Optional[str] = Field(None, max_length=100)
+    profile_picture_url: Optional[str] = Field(None, max_length=500)
+    bio: Optional[str] = Field(None, max_length=500, description="Short bio (max 500 characters)")
+    description: Optional[str] = Field(None, max_length=2000, description="Longer description (max 2000 characters)")
+
+class UserProfileStats(SQLModel):
+    """User profile statistics."""
+    user_id: int
+    infospaces_count: int
+    assets_count: int
+    annotations_count: int
+    member_since: datetime
 
 class UpdatePassword(SQLModel):
     current_password: str
@@ -84,6 +123,91 @@ class NewPassword(SQLModel):
 
 class Message(SQLModel):
     message: str
+
+@dataclass
+class SearchResult:
+    """Standardized search result with enhanced metadata."""
+    title: str
+    url: str
+    content: str
+    score: Optional[float] = None
+    provider: str = "unknown"
+    raw_data: Optional[Dict[str, Any]] = None
+    
+    def __post_init__(self):
+        self.content_hash = self._generate_content_hash()
+        self.domain = self._extract_domain()
+    
+    def _generate_content_hash(self) -> str:
+        import hashlib
+        from urllib.parse import urlparse
+        content_for_hash = f"{self.title}|{self.url}|{self.content[:500]}"
+        return hashlib.md5(content_for_hash.encode()).hexdigest()
+    
+    def _extract_domain(self) -> str:
+        from urllib.parse import urlparse
+        try:
+            return urlparse(self.url).netloc
+        except Exception:
+            return "unknown"
+
+class SearchFilter:
+    """Configuration for filtering search results."""
+    
+    def __init__(self):
+        self.allowed_domains: Optional[Set[str]] = None
+        self.blocked_domains: Optional[Set[str]] = None
+        self.required_keywords: Optional[List[str]] = None
+        self.blocked_keywords: Optional[List[str]] = None
+        self.min_content_length: Optional[int] = None
+        self.max_content_length: Optional[int] = None
+        self.min_score: Optional[float] = None
+        self.url_patterns: Optional[List[str]] = None  # Regex patterns for URLs
+        self.content_patterns: Optional[List[str]] = None  # Regex patterns for content
+        
+    def matches(self, result: SearchResult) -> bool:
+        """Check if a search result matches the filter criteria."""
+        # Domain filtering
+        if self.allowed_domains and result.domain not in self.allowed_domains:
+            return False
+        if self.blocked_domains and result.domain in self.blocked_domains:
+            return False
+            
+        # Keyword filtering
+        if self.required_keywords:
+            content_lower = f"{result.title} {result.content}".lower()
+            if not any(keyword.lower() in content_lower for keyword in self.required_keywords):
+                return False
+                
+        if self.blocked_keywords:
+            content_lower = f"{result.title} {result.content}".lower()
+            if any(keyword.lower() in content_lower for keyword in self.blocked_keywords):
+                return False
+                
+        # Content length filtering
+        if self.min_content_length and len(result.content) < self.min_content_length:
+            return False
+        if self.max_content_length and len(result.content) > self.max_content_length:
+            return False
+            
+        # Score filtering
+        if self.min_score and (result.score is None or result.score < self.min_score):
+            return False
+            
+        # URL pattern filtering
+        if self.url_patterns:
+            import re
+            if not any(re.search(pattern, result.url) for pattern in self.url_patterns):
+                return False
+                
+        # Content pattern filtering
+        if self.content_patterns:
+            import re
+            content_text = f"{result.title} {result.content}"
+            if not any(re.search(pattern, content_text, re.IGNORECASE) for pattern in self.content_patterns):
+                return False
+                
+        return True
 
 # ───────────────────────────────────────────── Infospace ──── #
 
@@ -162,6 +286,9 @@ class SourceTransferResponse(SQLModel):
     message: str
     source_id: int
     infospace_id: int
+
+# Monitoring source configurations are documented in 
+# backend/app/api/docs/MONITORING_ARCHITECTURE.md
 
 # ─────────────────────────────────────────────── Asset ──── #
 
@@ -367,6 +494,13 @@ class AnnotationRead(AnnotationBase):
     created_at: datetime
     updated_at: datetime
 
+class AnnotationRetryRequest(SQLModel):
+    """Request payload for retrying a single annotation with optional custom prompt."""
+    custom_prompt: Optional[str] = Field(
+        default=None, 
+        description="Optional additional guidance or prompt override for this specific retry"
+    )
+
 class AnnotationsOut(SQLModel):
     data: List[AnnotationRead]
     count: int
@@ -503,6 +637,87 @@ class SearchHistoriesOut(SQLModel):
 class TasksOut(SQLModel): # For listing multiple tasks
     data: List[TaskRead]
     count: int
+
+# --- New Models for Monitor ---
+class MonitorBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    schedule: str # Cron schedule
+    target_bundle_ids: List[int]
+    target_schema_ids: List[int]
+    run_config_override: Optional[Dict[str, Any]] = {}
+
+class MonitorCreate(MonitorBase):
+    pass
+
+class MonitorUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    schedule: Optional[str] = None
+    target_bundle_ids: Optional[List[int]] = None
+    target_schema_ids: Optional[List[int]] = None
+    run_config_override: Optional[Dict[str, Any]] = None
+    status: Optional[str] = None
+
+class MonitorRead(MonitorBase):
+    id: int
+    uuid: str
+    infospace_id: int
+    user_id: int
+    linked_task_id: int
+    status: str
+    last_checked_at: Optional[datetime] = None
+
+# --- New Models for Pipeline ---
+
+class PipelineStepBase(SQLModel):
+    name: str
+    step_order: int
+    step_type: str = Field(description="Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE")
+    configuration: Dict[str, Any] = Field(description="Configuration for the step")
+    input_source: Dict[str, Any] = Field(description="Source of input for this step")
+
+class PipelineStepCreate(PipelineStepBase):
+    pass
+
+class PipelineStepRead(PipelineStepBase):
+    id: int
+    pipeline_id: int
+
+class IntelligencePipelineBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    source_bundle_ids: List[int]
+
+class IntelligencePipelineCreate(IntelligencePipelineBase):
+    steps: List[PipelineStepCreate]
+
+class IntelligencePipelineUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    source_bundle_ids: Optional[List[int]] = None
+    steps: Optional[List[PipelineStepCreate]] = None
+
+class IntelligencePipelineRead(IntelligencePipelineBase):
+    id: int
+    uuid: str
+    infospace_id: int
+    user_id: int
+    linked_task_id: Optional[int]
+    steps: List[PipelineStepRead]
+
+class PipelineExecutionRead(SQLModel):
+    id: int
+    pipeline_id: int
+    status: str
+    trigger_type: str
+    started_at: datetime
+    completed_at: Optional[datetime]
+    triggering_asset_ids: Optional[List[int]]
+
+# --- End New Models for Pipeline ---
+
+# --- End New Models for Monitor ---
 
 # --- New Models for Provider Discovery ---
 class ProviderModel(SQLModel):
@@ -799,3 +1014,195 @@ class AnalysisAdapterRead(AnalysisAdapterBase):
     creator_user_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+
+# ─────────────────────────────────────────────────────────── Backup Schemas ──── #
+
+class InfospaceBackupBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+class InfospaceBackupCreate(InfospaceBackupBase):
+    backup_type: Optional[str] = "manual"  # BackupType enum as string
+    include_sources: bool = True
+    include_schemas: bool = True
+    include_runs: bool = True
+    include_datasets: bool = True
+    include_annotations: bool = True
+
+class InfospaceBackupUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_shareable: Optional[bool] = None
+    expires_at: Optional[datetime] = None
+
+class InfospaceBackupRead(InfospaceBackupBase):
+    id: int
+    uuid: str
+    infospace_id: int
+    user_id: int
+    backup_type: str
+    storage_path: str
+    file_size_bytes: Optional[int] = None
+    content_hash: Optional[str] = None
+    included_sources: int = 0
+    included_assets: int = 0
+    included_schemas: int = 0
+    included_runs: int = 0
+    included_datasets: int = 0
+    status: str  # BackupStatus enum as string
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    is_shareable: bool = False
+    share_token: Optional[str] = None
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_expired(self) -> bool:
+        """Check if backup has expired."""
+        if not self.expires_at:
+            return False
+        return datetime.now(timezone.utc) > self.expires_at
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_ready(self) -> bool:
+        """Check if backup is ready for use."""
+        return self.status == "completed" and not self.is_expired
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def download_url(self) -> Optional[str]:
+        """Generate download URL if backup is shareable."""
+        if self.is_shareable and self.share_token:
+            return f"/api/v1/backups/download/{self.share_token}"
+        return None
+
+class InfospaceBackupsOut(SQLModel):
+    data: List[InfospaceBackupRead]
+    count: int
+
+class BackupRestoreRequest(SQLModel):
+    backup_id: int
+    target_infospace_name: Optional[str] = None  # If different from original
+    conflict_strategy: str = "skip"  # How to handle conflicts during restore
+
+class BackupShareRequest(SQLModel):
+    backup_id: int
+    is_shareable: bool = True
+    expiration_hours: Optional[int] = None  # Hours until share link expires
+
+
+# ==================== USER BACKUP SCHEMAS ====================
+
+class UserBackupBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    backup_type: str = "user"
+
+class UserBackupCreate(UserBackupBase):
+    target_user_id: int
+    expires_at: Optional[datetime] = None
+
+class UserBackupUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_shareable: Optional[bool] = None
+
+class UserBackupRead(UserBackupBase):
+    id: int
+    uuid: str
+    target_user_id: int
+    created_by_user_id: int
+    backup_type: str
+    storage_path: str
+    file_size_bytes: Optional[int] = None
+    content_hash: Optional[str] = None
+    included_infospaces: int = 0
+    included_assets: int = 0
+    included_schemas: int = 0
+    included_runs: int = 0
+    included_annotations: int = 0
+    included_datasets: int = 0
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    is_shareable: bool = False
+    share_token: Optional[str] = None
+    is_expired: bool
+    is_ready: bool
+
+    @computed_field
+    @property
+    def download_url(self) -> Optional[str]:
+        """Generate download URL if shareable."""
+        if self.is_shareable and self.share_token:
+            return f"/api/v1/user-backups/download/{self.share_token}"
+        return None
+
+class UserBackupsOut(SQLModel):
+    data: List[UserBackupRead]
+    count: int
+
+class UserBackupRestoreRequest(SQLModel):
+    backup_id: int
+    target_user_email: Optional[str] = None  # If restoring to different user
+    conflict_strategy: str = "skip"  # How to handle conflicts during restore
+
+class UserBackupShareRequest(SQLModel):
+    backup_id: int
+    is_shareable: bool = True
+    expiration_hours: Optional[int] = None  # Hours until share link expires
+
+
+# ─────────────────────────────────────────── Chat & AI Conversation ──── #
+
+class ChatMessage(SQLModel):
+    """Individual message in a conversation."""
+    role: str  # "system", "user", "assistant"
+    content: str
+
+class ChatRequest(SQLModel):
+    """Request for intelligence analysis chat."""
+    messages: List[ChatMessage]
+    model_name: str
+    infospace_id: int
+    stream: bool = False
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    thinking_enabled: bool = False
+
+class ChatResponse(SQLModel):
+    """Response from intelligence analysis chat."""
+    content: str
+    model_used: str
+    usage: Optional[Dict[str, Any]] = None  # Changed from Dict[str, int] to handle complex usage objects
+    tool_calls: Optional[List[Dict]] = None
+    thinking_trace: Optional[str] = None
+    finish_reason: Optional[str] = None
+
+class ToolCallRequest(SQLModel):
+    """Request to execute a tool call."""
+    tool_name: str
+    arguments: Dict[str, Any]
+    infospace_id: int
+
+class ModelInfo(SQLModel):
+    """Information about a language model."""
+    name: str
+    provider: str
+    description: Optional[str] = None
+    supports_structured_output: bool = False
+    supports_tools: bool = False
+    supports_streaming: bool = False
+    supports_thinking: bool = False
+    supports_multimodal: bool = False
+    max_tokens: Optional[int] = None
+    context_length: Optional[int] = None
+
+class ModelListResponse(SQLModel):
+    """Response listing available models."""
+    models: List[ModelInfo]
+    providers: List[str]

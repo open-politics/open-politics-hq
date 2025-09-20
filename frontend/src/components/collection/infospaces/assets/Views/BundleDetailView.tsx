@@ -501,51 +501,7 @@ export default function BundleDetailView({
               <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
                 Bundle
               </Badge>
-            </div>
-            {selectedBundle.description && (
-              <p className="text-sm text-muted-foreground mt-1">
-                {selectedBundle.description}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Bundle Actions</DropdownMenuLabel>
-                <DropdownMenuItem><Share2 className="mr-2 h-4 w-4" />Share Bundle</DropdownMenuItem>
-                <DropdownMenuItem><Download className="mr-2 h-4 w-4" />Export Bundle</DropdownMenuItem>
-                {onLoadIntoRunner && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => onLoadIntoRunner(1, 'Default Runner')}>
-                      <PlayCircle className="mr-2 h-4 w-4" />Load into Runner
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            
-            <Button 
-              variant="default" 
-              size="sm"
-              onClick={() => {
-                // TODO: Open upload dialog for this bundle
-                toast.info("Upload to bundle functionality coming soon");
-              }}
-              className="bg-primary hover:bg-primary/90"
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Add Files
-            </Button>
-          </div>
-        </div>
-
-        {/* Bundle Metadata */}
+              {/* Bundle Metadata */}
         <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Hash className="h-3 w-3" />
@@ -601,6 +557,51 @@ export default function BundleDetailView({
             </>
           )}
         </div>
+            </div>
+            {selectedBundle.description && (
+              <p className="text-sm text-muted-foreground mt-1">
+                "{selectedBundle.description}"
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Bundle Actions</DropdownMenuLabel>
+                <DropdownMenuItem><Share2 className="mr-2 h-4 w-4" />Share Bundle</DropdownMenuItem>
+                <DropdownMenuItem><Download className="mr-2 h-4 w-4" />Export Bundle</DropdownMenuItem>
+                {onLoadIntoRunner && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onLoadIntoRunner(1, 'Default Runner')}>
+                      <PlayCircle className="mr-2 h-4 w-4" />Load into Runner
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
+            <Button 
+              variant="default" 
+              size="sm"
+              onClick={() => {
+                // TODO: Open upload dialog for this bundle
+                toast.info("Upload to bundle functionality coming soon");
+              }}
+              className="bg-primary hover:bg-primary/90"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Add Files
+            </Button>
+          </div>
+        </div>
+
+        
       </div>
 
       {/* Bundle Content */}

@@ -246,6 +246,21 @@ export const $AnnotationRead = {
 	},
 } as const;
 
+export const $AnnotationRetryRequest = {
+	description: `Request payload for retrying a single annotation with optional custom prompt.`,
+	properties: {
+		custom_prompt: {
+	type: 'any-of',
+	description: `Optional additional guidance or prompt override for this specific retry`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $AnnotationRunCreate = {
 	properties: {
 		name: {
@@ -919,9 +934,27 @@ export const $AnnotationsOut = {
 	},
 } as const;
 
-export const $ArticleResponse = {
+export const $ArticleComposition = {
 	properties: {
-		contents: {
+		title: {
+	type: 'string',
+	isRequired: true,
+},
+		content: {
+	type: 'string',
+	isRequired: true,
+},
+		summary: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		embedded_assets: {
+	type: 'any-of',
+	contains: [{
 	type: 'array',
 	contains: {
 	type: 'dictionary',
@@ -930,7 +963,41 @@ export const $ArticleResponse = {
 	},
 },
 },
-	isRequired: true,
+}, {
+	type: 'null',
+}],
+},
+		referenced_bundles: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		event_timestamp: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -1376,6 +1443,48 @@ export const $AssetsOut = {
 	},
 } as const;
 
+export const $BackupRestoreRequest = {
+	properties: {
+		backup_id: {
+	type: 'number',
+	isRequired: true,
+},
+		target_infospace_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		conflict_strategy: {
+	type: 'string',
+	default: 'skip',
+},
+	},
+} as const;
+
+export const $BackupShareRequest = {
+	properties: {
+		backup_id: {
+	type: 'number',
+	isRequired: true,
+},
+		is_shareable: {
+	type: 'boolean',
+	default: true,
+},
+		expiration_hours: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $Body_assets_add_files_to_bundle_background = {
 	properties: {
 		files: {
@@ -1454,6 +1563,30 @@ export const $Body_filestorage_file_upload = {
 	},
 } as const;
 
+export const $Body_filters_test_filter = {
+	properties: {
+		filter_config: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		test_data: {
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $Body_login_login_access_token = {
 	properties: {
 		grant_type: {
@@ -1497,7 +1630,7 @@ export const $Body_login_login_access_token = {
 	},
 } as const;
 
-export const $Body_shareables_export_resource = {
+export const $Body_sharing_export_resource = {
 	properties: {
 		resource_type: {
 	type: 'ResourceType',
@@ -1510,7 +1643,30 @@ export const $Body_shareables_export_resource = {
 	},
 } as const;
 
-export const $Body_shareables_import_resource = {
+export const $Body_sharing_import_resource = {
+	properties: {
+		file: {
+	type: 'binary',
+	isRequired: true,
+	format: 'binary',
+},
+	},
+} as const;
+
+export const $Body_sso_complete_discourse_sso = {
+	properties: {
+		sso: {
+	type: 'string',
+	isRequired: true,
+},
+		sig: {
+	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $Body_users_upload_profile_picture = {
 	properties: {
 		file: {
 	type: 'binary',
@@ -1781,6 +1937,122 @@ export const $BundleUpdate = {
 	properties: {
 	},
 },
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $ChatMessage = {
+	description: `Individual message in a conversation.`,
+	properties: {
+		role: {
+	type: 'string',
+	isRequired: true,
+},
+		content: {
+	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $ChatRequest = {
+	description: `Request for intelligence analysis chat.`,
+	properties: {
+		messages: {
+	type: 'array',
+	contains: {
+		type: 'ChatMessage',
+	},
+	isRequired: true,
+},
+		model_name: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		stream: {
+	type: 'boolean',
+	default: false,
+},
+		temperature: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		max_tokens: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		thinking_enabled: {
+	type: 'boolean',
+	default: false,
+},
+	},
+} as const;
+
+export const $ChatResponse = {
+	description: `Response from intelligence analysis chat.`,
+	properties: {
+		content: {
+	type: 'string',
+	isRequired: true,
+},
+		model_used: {
+	type: 'string',
+	isRequired: true,
+},
+		usage: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		tool_calls: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+},
+}, {
+	type: 'null',
+}],
+},
+		thinking_trace: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		finish_reason: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
 }, {
 	type: 'null',
 }],
@@ -2551,6 +2823,261 @@ export const $ImportFromTokenRequest = {
 	},
 } as const;
 
+export const $InfospaceBackupCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		expires_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		backup_type: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		include_sources: {
+	type: 'boolean',
+	default: true,
+},
+		include_schemas: {
+	type: 'boolean',
+	default: true,
+},
+		include_runs: {
+	type: 'boolean',
+	default: true,
+},
+		include_datasets: {
+	type: 'boolean',
+	default: true,
+},
+		include_annotations: {
+	type: 'boolean',
+	default: true,
+},
+	},
+} as const;
+
+export const $InfospaceBackupRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		expires_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		backup_type: {
+	type: 'string',
+	isRequired: true,
+},
+		storage_path: {
+	type: 'string',
+	isRequired: true,
+},
+		file_size_bytes: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		content_hash: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		included_sources: {
+	type: 'number',
+	default: 0,
+},
+		included_assets: {
+	type: 'number',
+	default: 0,
+},
+		included_schemas: {
+	type: 'number',
+	default: 0,
+},
+		included_runs: {
+	type: 'number',
+	default: 0,
+},
+		included_datasets: {
+	type: 'number',
+	default: 0,
+},
+		status: {
+	type: 'string',
+	isRequired: true,
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		completed_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		is_shareable: {
+	type: 'boolean',
+	default: false,
+},
+		share_token: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		is_expired: {
+	type: 'boolean',
+	description: `Check if backup has expired.`,
+	isReadOnly: true,
+	isRequired: true,
+},
+		is_ready: {
+	type: 'boolean',
+	description: `Check if backup is ready for use.`,
+	isReadOnly: true,
+	isRequired: true,
+},
+		download_url: {
+	type: 'any-of',
+	description: `Generate download URL if backup is shareable.`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+	isReadOnly: true,
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $InfospaceBackupUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		is_shareable: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+		expires_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $InfospaceBackupsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'InfospaceBackupRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $InfospaceCreate = {
 	properties: {
 		name: {
@@ -2759,11 +3286,417 @@ export const $InfospacesOut = {
 	},
 } as const;
 
+export const $IntelligencePipelineCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_bundle_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		steps: {
+	type: 'array',
+	contains: {
+		type: 'PipelineStepCreate',
+	},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $IntelligencePipelineRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_bundle_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		linked_task_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		steps: {
+	type: 'array',
+	contains: {
+		type: 'PipelineStepRead',
+	},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $IntelligencePipelineUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		source_bundle_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		steps: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+		type: 'PipelineStepCreate',
+	},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $Message = {
 	properties: {
 		message: {
 	type: 'string',
 	isRequired: true,
+},
+	},
+} as const;
+
+export const $ModelInfo = {
+	description: `Information about a language model.`,
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		supports_structured_output: {
+	type: 'boolean',
+	default: false,
+},
+		supports_tools: {
+	type: 'boolean',
+	default: false,
+},
+		supports_streaming: {
+	type: 'boolean',
+	default: false,
+},
+		supports_thinking: {
+	type: 'boolean',
+	default: false,
+},
+		supports_multimodal: {
+	type: 'boolean',
+	default: false,
+},
+		max_tokens: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		context_length: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $ModelListResponse = {
+	description: `Response listing available models.`,
+	properties: {
+		models: {
+	type: 'array',
+	contains: {
+		type: 'ModelInfo',
+	},
+	isRequired: true,
+},
+		providers: {
+	type: 'array',
+	contains: {
+	type: 'string',
+},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $MonitorCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		schedule: {
+	type: 'string',
+	isRequired: true,
+},
+		target_bundle_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		target_schema_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		run_config_override: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $MonitorRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		schedule: {
+	type: 'string',
+	isRequired: true,
+},
+		target_bundle_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		target_schema_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		run_config_override: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		linked_task_id: {
+	type: 'number',
+	isRequired: true,
+},
+		status: {
+	type: 'string',
+	isRequired: true,
+},
+		last_checked_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $MonitorUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		schedule: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		target_bundle_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		target_schema_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+},
+		run_config_override: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -2845,6 +3778,130 @@ export const $PermissionLevel = {
 	enum: ['read_only','edit','full_access',],
 } as const;
 
+export const $PipelineExecutionRead = {
+	properties: {
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		pipeline_id: {
+	type: 'number',
+	isRequired: true,
+},
+		status: {
+	type: 'string',
+	isRequired: true,
+},
+		trigger_type: {
+	type: 'string',
+	isRequired: true,
+},
+		started_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		completed_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		triggering_asset_ids: {
+	type: 'any-of',
+	contains: [{
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $PipelineStepCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		step_order: {
+	type: 'number',
+	isRequired: true,
+},
+		step_type: {
+	type: 'string',
+	description: `Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE`,
+	isRequired: true,
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		input_source: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $PipelineStepRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		step_order: {
+	type: 'number',
+	isRequired: true,
+},
+		step_type: {
+	type: 'string',
+	description: `Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE`,
+	isRequired: true,
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		input_source: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		pipeline_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $ProcessingStatus = {
 	type: 'Enum',
 	enum: ['ready','pending','processing','failed',],
@@ -2899,6 +3956,40 @@ export const $QueryType = {
 	properties: {
 		type: {
 	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $RegistrationStats = {
+	properties: {
+		total_users: {
+	type: 'number',
+	isRequired: true,
+},
+		users_created_today: {
+	type: 'number',
+	isRequired: true,
+},
+		users_created_this_week: {
+	type: 'number',
+	isRequired: true,
+},
+		users_created_this_month: {
+	type: 'number',
+	isRequired: true,
+},
+		open_registration_enabled: {
+	type: 'boolean',
+	isRequired: true,
+},
+		last_registration: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 	isRequired: true,
 },
 	},
@@ -3063,11 +4154,6 @@ export const $SearchHistoryRead = {
 	format: 'date-time',
 },
 	},
-} as const;
-
-export const $SearchType = {
-	type: 'Enum',
-	enum: ['text','semantic','structured',],
 } as const;
 
 export const $ShareableLinkCreate = {
@@ -3321,6 +4407,344 @@ export const $SharedResourcePreview = {
 	},
 } as const;
 
+export const $SourceCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		kind: {
+	type: 'string',
+	isRequired: true,
+},
+		details: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+	},
+} as const;
+
+export const $SourceRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		kind: {
+	type: 'string',
+	isRequired: true,
+},
+		details: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		status: {
+	type: 'string',
+	isRequired: true,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		source_metadata: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $SourceTransferRequest = {
+	properties: {
+		source_ids: {
+	type: 'array',
+	contains: {
+	type: 'number',
+},
+	isRequired: true,
+},
+		target_infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		target_user_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $SourceTransferResponse = {
+	properties: {
+		message: {
+	type: 'string',
+	isRequired: true,
+},
+		source_id: {
+	type: 'number',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $SourceUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		kind: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		details: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $SourcesOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'SourceRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $TaskCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		type: {
+	type: 'TaskType',
+	isRequired: true,
+},
+		schedule: {
+	type: 'string',
+	isRequired: true,
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+	},
+} as const;
+
+export const $TaskRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		type: {
+	type: 'TaskType',
+	isRequired: true,
+},
+		schedule: {
+	type: 'string',
+	isRequired: true,
+},
+		configuration: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	default: {},
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+		status: {
+	type: 'TaskStatus',
+	isRequired: true,
+},
+		last_run_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+	isRequired: true,
+},
+		consecutive_failure_count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $TaskStatus = {
+	type: 'Enum',
+	enum: ['active','paused','error',],
+} as const;
+
+export const $TaskType = {
+	type: 'Enum',
+	enum: ['ingest','annotate','monitor','pipeline',],
+} as const;
+
+export const $TaskUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		type: {
+	type: 'any-of',
+	contains: [{
+	type: 'TaskType',
+}, {
+	type: 'null',
+}],
+},
+		schedule: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		configuration: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+		status: {
+	type: 'any-of',
+	contains: [{
+	type: 'TaskStatus',
+}, {
+	type: 'null',
+}],
+},
+		is_enabled: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $TasksOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'TaskRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $Token = {
 	properties: {
 		access_token: {
@@ -3334,6 +4758,28 @@ export const $Token = {
 	},
 } as const;
 
+export const $ToolCallRequest = {
+	description: `Request to execute a tool call.`,
+	properties: {
+		tool_name: {
+	type: 'string',
+	isRequired: true,
+},
+		arguments: {
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+	isRequired: true,
+},
+		infospace_id: {
+	type: 'number',
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $UpdatePassword = {
 	properties: {
 		current_password: {
@@ -3342,6 +4788,265 @@ export const $UpdatePassword = {
 },
 		new_password: {
 	type: 'string',
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $UserBackupCreate = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		backup_type: {
+	type: 'string',
+	default: 'user',
+},
+		target_user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		expires_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $UserBackupRead = {
+	properties: {
+		name: {
+	type: 'string',
+	isRequired: true,
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		backup_type: {
+	type: 'string',
+	isRequired: true,
+},
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		uuid: {
+	type: 'string',
+	isRequired: true,
+},
+		target_user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		created_by_user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		storage_path: {
+	type: 'string',
+	isRequired: true,
+},
+		file_size_bytes: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		content_hash: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		included_infospaces: {
+	type: 'number',
+	default: 0,
+},
+		included_assets: {
+	type: 'number',
+	default: 0,
+},
+		included_schemas: {
+	type: 'number',
+	default: 0,
+},
+		included_runs: {
+	type: 'number',
+	default: 0,
+},
+		included_annotations: {
+	type: 'number',
+	default: 0,
+},
+		included_datasets: {
+	type: 'number',
+	default: 0,
+},
+		status: {
+	type: 'string',
+	isRequired: true,
+},
+		error_message: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		completed_at: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	format: 'date-time',
+}, {
+	type: 'null',
+}],
+},
+		is_shareable: {
+	type: 'boolean',
+	default: false,
+},
+		share_token: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		is_expired: {
+	type: 'boolean',
+	isRequired: true,
+},
+		is_ready: {
+	type: 'boolean',
+	isRequired: true,
+},
+		download_url: {
+	type: 'any-of',
+	description: `Generate download URL if shareable.`,
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+	isReadOnly: true,
+	isRequired: true,
+},
+	},
+} as const;
+
+export const $UserBackupRestoreRequest = {
+	properties: {
+		backup_id: {
+	type: 'number',
+	isRequired: true,
+},
+		target_user_email: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		conflict_strategy: {
+	type: 'string',
+	default: 'skip',
+},
+	},
+} as const;
+
+export const $UserBackupShareRequest = {
+	properties: {
+		backup_id: {
+	type: 'number',
+	isRequired: true,
+},
+		is_shareable: {
+	type: 'boolean',
+	default: true,
+},
+		expiration_hours: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $UserBackupUpdate = {
+	properties: {
+		name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		is_shareable: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $UserBackupsOut = {
+	properties: {
+		data: {
+	type: 'array',
+	contains: {
+		type: 'UserBackupRead',
+	},
+	isRequired: true,
+},
+		count: {
+	type: 'number',
 	isRequired: true,
 },
 	},
@@ -3365,6 +5070,30 @@ export const $UserCreate = {
 	type: 'UserTier',
 	default: 'tier_0',
 },
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 		password: {
 	type: 'string',
 	isRequired: true,
@@ -3374,6 +5103,10 @@ export const $UserCreate = {
 	default: false,
 },
 		is_active: {
+	type: 'boolean',
+	default: true,
+},
+		send_welcome_email: {
 	type: 'boolean',
 	default: true,
 },
@@ -3391,6 +5124,30 @@ export const $UserCreateOpen = {
 	isRequired: true,
 },
 		full_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
@@ -3419,6 +5176,30 @@ export const $UserOut = {
 	type: 'UserTier',
 	default: 'tier_0',
 },
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
 		id: {
 	type: 'number',
 	isRequired: true,
@@ -3430,6 +5211,134 @@ export const $UserOut = {
 		is_superuser: {
 	type: 'boolean',
 	default: false,
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+		updated_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $UserProfileStats = {
+	description: `User profile statistics.`,
+	properties: {
+		user_id: {
+	type: 'number',
+	isRequired: true,
+},
+		infospaces_count: {
+	type: 'number',
+	isRequired: true,
+},
+		assets_count: {
+	type: 'number',
+	isRequired: true,
+},
+		annotations_count: {
+	type: 'number',
+	isRequired: true,
+},
+		member_since: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
+},
+	},
+} as const;
+
+export const $UserProfileUpdate = {
+	description: `Dedicated schema for profile-only updates (no email/password).`,
+	properties: {
+		full_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	maxLength: 100,
+}, {
+	type: 'null',
+}],
+},
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	maxLength: 500,
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	description: `Short bio (max 500 characters)`,
+	contains: [{
+	type: 'string',
+	maxLength: 500,
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	description: `Longer description (max 2000 characters)`,
+	contains: [{
+	type: 'string',
+	maxLength: 2000,
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $UserPublicProfile = {
+	description: `Public user profile (no sensitive information).`,
+	properties: {
+		id: {
+	type: 'number',
+	isRequired: true,
+},
+		full_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		created_at: {
+	type: 'string',
+	isRequired: true,
+	format: 'date-time',
 },
 	},
 } as const;
@@ -3465,10 +5374,42 @@ export const $UserUpdate = {
 	type: 'null',
 }],
 },
+		is_active: {
+	type: 'any-of',
+	contains: [{
+	type: 'boolean',
+}, {
+	type: 'null',
+}],
+},
 		tier: {
 	type: 'any-of',
 	contains: [{
 	type: 'UserTier',
+}, {
+	type: 'null',
+}],
+},
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
 }, {
 	type: 'null',
 }],
@@ -3482,6 +5423,7 @@ export const $UserUpdateMe = {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
+	maxLength: 100,
 }, {
 	type: 'null',
 }],
@@ -3490,6 +5432,35 @@ export const $UserUpdateMe = {
 	type: 'any-of',
 	contains: [{
 	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		profile_picture_url: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+	maxLength: 500,
+}, {
+	type: 'null',
+}],
+},
+		bio: {
+	type: 'any-of',
+	description: `Short bio (max 500 characters)`,
+	contains: [{
+	type: 'string',
+	maxLength: 500,
+}, {
+	type: 'null',
+}],
+},
+		description: {
+	type: 'any-of',
+	description: `Longer description (max 2000 characters)`,
+	contains: [{
+	type: 'string',
+	maxLength: 2000,
 }, {
 	type: 'null',
 }],
@@ -3536,4 +5507,14 @@ export const $ValidationError = {
 	isRequired: true,
 },
 	},
+} as const;
+
+export const $app__api__v1__entities__routes__SearchType = {
+	type: 'Enum',
+	enum: ['text','semantic',],
+} as const;
+
+export const $app__api__v1__search__routes__SearchType = {
+	type: 'Enum',
+	enum: ['text','semantic','structured',],
 } as const;

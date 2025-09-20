@@ -32,7 +32,7 @@ import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getT
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -53,6 +53,7 @@ import { AnnotationResultStatus, FormattedAnnotation, TimeAxisConfig } from '@/l
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle } from 'lucide-react';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
+import GuidedRetryModal from './GuidedRetryModal';
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
@@ -119,7 +120,7 @@ interface AnnotationResultsTableProps {
   onResultSelect?: (result: ResultWithSourceInfo) => void;
   onResultDelete?: (resultId: number) => void;
   onResultAction?: (action: string, result: ResultWithSourceInfo) => void;
-  onRetrySingleResult?: (resultId: number) => Promise<AnnotationRead | null>;
+  onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<AnnotationRead | null>;
   retryingResultId?: number | null;
   excludedRecordIds: Set<number>;
   onToggleRecordExclusion: (recordId: number) => void;
@@ -234,6 +235,17 @@ export function AnnotationResultsTable({
   const { activeInfospace } = useInfospaceStore();
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
 
+  // NEW: Guided retry modal state
+  const [guidedRetryModal, setGuidedRetryModal] = useState<{
+    isOpen: boolean;
+    result: ResultWithSourceInfo | null;
+    schema: AnnotationSchemaRead | null;
+  }>({
+    isOpen: false,
+    result: null,
+    schema: null,
+  });
+
   const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
     if (initialTableConfig?.selectedFieldsPerScheme) {
       return initialTableConfig.selectedFieldsPerScheme;
@@ -266,6 +278,38 @@ export function AnnotationResultsTable({
   const isInitialRender = useRef(true);
   const previousConfigRef = useRef<any>(null);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // NEW: Retry handler functions
+  const handleQuickRetry = useCallback(async (result: ResultWithSourceInfo) => {
+    if (!onRetrySingleResult) return;
+    try {
+      await onRetrySingleResult(result.id);
+    } catch (error) {
+      // Error handling is done in the hook
+    }
+  }, [onRetrySingleResult]);
+
+  const handleGuidedRetry = useCallback((result: ResultWithSourceInfo) => {
+    const schema = schemas.find(s => s.id === result.schema_id) || null;
+    setGuidedRetryModal({
+      isOpen: true,
+      result,
+      schema,
+    });
+  }, [schemas]);
+
+  const handleGuidedRetryExecute = useCallback(async (resultId: number, customPrompt: string) => {
+    if (!onRetrySingleResult) return;
+    await onRetrySingleResult(resultId, customPrompt);
+  }, [onRetrySingleResult]);
+
+  const closeGuidedRetryModal = useCallback(() => {
+    setGuidedRetryModal({
+      isOpen: false,
+      result: null,
+      schema: null,
+    });
+  }, []);
 
   // Debounced function to notify parent of config changes
   const debouncedConfigUpdate = useCallback((config: any) => {
@@ -876,7 +920,10 @@ export function AnnotationResultsTable({
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <AlertCircle className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help" />
+                    <AlertCircle 
+                      className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help" 
+                      onClick={(e) => e.stopPropagation()}
+                    />
                   </TooltipTrigger>
                   <TooltipContent side="top" align="end">
                     <p className="text-xs max-w-xs break-words">
@@ -894,6 +941,7 @@ export function AnnotationResultsTable({
                 selectedFieldKeys={fieldKeysToShow}
                 maxFieldsToShow={undefined}
                 renderContext="default"
+                onResultSelect={onResultSelect}
               />
             </div>
           </div>
@@ -959,19 +1007,33 @@ export function AnnotationResultsTable({
                     </DropdownMenuItem>
                   )}
                   {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
-                   {onRetrySingleResult && firstResult.status === 'failure' && (
-                     <DropdownMenuItem
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         if (firstResult && typeof firstResult.id === 'number') {
-                             onRetrySingleResult(firstResult.id);
-                         }
-                       }}
-                       disabled={isCurrentlyRetryingThis}
-                       className="text-orange-600 hover:text-orange-700 focus:bg-orange-100 focus:text-orange-800"
-                     >
-                       <RefreshCw className="mr-2 h-4 w-4" /> Retry Annotation
-                     </DropdownMenuItem>
+                   {onRetrySingleResult && (
+                     <>
+                       <DropdownMenuItem
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           if (firstResult && typeof firstResult.id === 'number') {
+                               handleQuickRetry(firstResult);
+                           }
+                         }}
+                         disabled={isCurrentlyRetryingThis}
+                         className="text-orange-600 hover:text-orange-700 focus:bg-orange-100 focus:text-orange-800"
+                       >
+                         <RefreshCw className="mr-2 h-4 w-4" /> Quick Retry
+                       </DropdownMenuItem>
+                       <DropdownMenuItem
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           if (firstResult && typeof firstResult.id === 'number') {
+                               handleGuidedRetry(firstResult);
+                           }
+                         }}
+                         disabled={isCurrentlyRetryingThis}
+                         className="text-blue-600 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-800"
+                       >
+                         <Sparkles className="mr-2 h-4 w-4" /> Guided Retry
+                       </DropdownMenuItem>
+                     </>
                    )}
                   {onResultDelete && (
                     <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(firstResult.id); }} className="text-red-600 hover:text-red-700" disabled={isCurrentlyRetryingThis}>
@@ -1240,6 +1302,14 @@ export function AnnotationResultsTable({
            </Button>
          </div>
       </div>
+      <GuidedRetryModal
+        isOpen={guidedRetryModal.isOpen}
+        onClose={closeGuidedRetryModal}
+        result={guidedRetryModal.result}
+        schema={guidedRetryModal.schema}
+        onRetry={handleGuidedRetryExecute}
+        isRetrying={!!retryingResultId && retryingResultId === guidedRetryModal.result?.id}
+      />
     </div>
   );
 }

@@ -12,7 +12,7 @@ import { debounce } from 'lodash';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, Globe, Map as MapIcon, MapPin, FileText, Calendar, Tag, X, ExternalLink } from 'lucide-react';
+import { Loader2, Globe, Map as MapIcon, MapPin, FileText, Calendar, Tag, X, ExternalLink, Info, ChevronDown, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import { cn } from '@/lib/utils';
@@ -91,6 +91,8 @@ interface AnnotationResultsMapProps {
   // NEW: Field selection controls
   selectedFieldsPerScheme?: Record<number, string[]>;
   onSelectedFieldsChange?: (selectedFieldsPerScheme: Record<number, string[]>) => void;
+  // NEW: Result selection callback
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 // Define a specific type for our label features
@@ -136,6 +138,8 @@ interface InlineSidePanelProps {
   // NEW: Field selection props
   selectedFieldsPerScheme?: Record<number, string[]>;
   onSelectedFieldsChange?: (selectedFieldsPerScheme: Record<number, string[]>) => void;
+  // NEW: Result selection callback
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 const InlineSidePanel: React.FC<InlineSidePanelProps> = ({ 
@@ -147,7 +151,9 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
   assets = [],
   // NEW: Field selection props
   selectedFieldsPerScheme: externalSelectedFieldsPerScheme,
-  onSelectedFieldsChange: externalOnSelectedFieldsChange
+  onSelectedFieldsChange: externalOnSelectedFieldsChange,
+  // NEW: Result selection callback
+  onResultSelect
 }) => {
   // SIMPLIFIED: Use one state source like table
   const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
@@ -185,8 +191,42 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
     });
   }, [schemas, externalSelectedFieldsPerScheme]);
 
+  // NEW: Field selection handler - ALLOW ZERO FIELDS TO HIDE SCHEMAS
+  const handleFieldToggle = useCallback((schemaId: number, fieldKey: string) => {
+    setSelectedFieldsPerScheme(prev => {
+      const currentSelected = prev[schemaId] || [];
+      const isSelected = currentSelected.includes(fieldKey);
+      const newSelected = isSelected 
+        ? currentSelected.filter(key => key !== fieldKey) 
+        : [...currentSelected, fieldKey];
+      
+      // FIXED: Allow zero fields (this hides the schema)
+      const updatedSelection = { ...prev, [schemaId]: newSelected };
+      
+      return updatedSelection;
+    });
+  }, []);
 
+  // Sync external state when local state changes (prevents render-time state updates)
+  const prevSelectedFieldsRef = useRef<Record<number, string[]>>({});
+  const externalOnSelectedFieldsChangeRef = useRef(externalOnSelectedFieldsChange);
+  
+  // Update the ref whenever the callback changes
+  React.useEffect(() => {
+    externalOnSelectedFieldsChangeRef.current = externalOnSelectedFieldsChange;
+  }, [externalOnSelectedFieldsChange]);
+  
+  React.useEffect(() => {
+    // Only call external change handler if the values have actually changed
+    const hasChanged = JSON.stringify(selectedFieldsPerScheme) !== JSON.stringify(prevSelectedFieldsRef.current);
+    
+    if (hasChanged && externalOnSelectedFieldsChangeRef.current) {
+      prevSelectedFieldsRef.current = selectedFieldsPerScheme;
+      externalOnSelectedFieldsChangeRef.current(selectedFieldsPerScheme);
+    }
+  }, [selectedFieldsPerScheme]); // Remove externalOnSelectedFieldsChange from dependencies
 
+  // Early return AFTER all hooks have been called
   if (!point) return null;
 
   const schemaLookup = new Map(schemas.map(s => [s.id, s]));
@@ -212,27 +252,6 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
       assetGroups.get(result.asset_id)!.results.push({ result, schema });
     }
   });
-
-  // NEW: Field selection handler - ALLOW ZERO FIELDS TO HIDE SCHEMAS
-  const handleFieldToggle = (schemaId: number, fieldKey: string) => {
-    setSelectedFieldsPerScheme(prev => {
-      const currentSelected = prev[schemaId] || [];
-      const isSelected = currentSelected.includes(fieldKey);
-      const newSelected = isSelected 
-        ? currentSelected.filter(key => key !== fieldKey) 
-        : [...currentSelected, fieldKey];
-      
-      // FIXED: Allow zero fields (this hides the schema)
-      const updatedSelection = { ...prev, [schemaId]: newSelected };
-      
-      // Notify parent immediately without setTimeout to prevent blinking
-      if (externalOnSelectedFieldsChange) {
-        externalOnSelectedFieldsChange(updatedSelection);
-      }
-      
-      return updatedSelection;
-    });
-  };
 
   return (
     <div className="absolute top-0 right-0 w-1/2 h-full bg-background/25 backdrop-blur border-l border-border z-10 flex flex-col">
@@ -321,6 +340,7 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
                       point={point}
                       compact={true}
                       allAssets={assets}
+                      onResultSelect={onResultSelect}
                     />
                   </div>
                 );
@@ -334,6 +354,7 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
                   point={point}
                   compact={true}
                   allAssets={assets}
+                  onResultSelect={onResultSelect}
                 />
               );
             })}
@@ -374,6 +395,8 @@ interface AssetCardProps {
   point: MapPoint;
   compact?: boolean;
   allAssets?: any[]; // Add assets for title lookup
+  // NEW: Result selection callback
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 const AssetCard: React.FC<AssetCardProps> = ({ 
@@ -382,7 +405,9 @@ const AssetCard: React.FC<AssetCardProps> = ({
   onPointClick, 
   point,
   compact = false,
-  allAssets = []
+  allAssets = [],
+  // NEW: Result selection callback
+  onResultSelect
 }) => {
   // Group by schema
   const schemaMap = new Map<string, Array<{ result: FormattedAnnotation; schema: AnnotationSchemaRead }>>();
@@ -474,6 +499,7 @@ const AssetCard: React.FC<AssetCardProps> = ({
                   compact={false}
                   selectedFieldKeys={selectedFields}
                   renderContext="table"
+                  onResultSelect={onResultSelect}
                 />
               </div>
             </div>
@@ -502,6 +528,8 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   // NEW: Field selection
   selectedFieldsPerScheme,
   onSelectedFieldsChange,
+  // NEW: Result selection callback
+  onResultSelect,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -603,8 +631,10 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     }
   }, [isGlobeView, mapLoaded]);
 
-  // Handle point click with fixed popup
+  // Handle point click - always show side panel for consistent UX
   const handlePointClick = useCallback((point: MapPoint) => {
+    // Always show the side panel first, regardless of result count
+    // This provides consistent behavior and lets users see context
     setSelectedPoint(point);
   }, []);
 
@@ -732,7 +762,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     };
   }, [processedPoints, mapLoaded, handlePointClick]);
 
-  // Memoize label data to prevent unnecessary re-renders
+  // Enhanced label generation with numeric field averaging
   const labelData = useMemo(() => {
     if (processedPoints.length === 0) {
       return null;
@@ -741,25 +771,54 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const schemeLookup = new Map(schemas.map(s => [s.id, s]));
     
     const featuresForMap: LabelGeoJsonFeature[] = processedPoints.map(point => {
-      const assetId = point.documentIds[0];
-      if (!assetId) return null;
+      if (!point.documentIds.length) return null;
 
       // Always show location as the primary label
       let labelText = point.locationString;
 
       // If labelConfig is provided, add the field value underneath
       if (labelConfig && schemas.some(s => s.id === labelConfig.schemaId) && resultsForMap.length > 0) {
-        const result = resultsForMap.find(r =>
-          r.asset_id === assetId && r.schema_id === labelConfig.schemaId
-        );
         const schema = schemeLookup.get(labelConfig.schemaId);
+        
+        if (schema) {
+          // Get ALL results for this location (all documents at this point)
+          const locationResults = resultsForMap.filter(r =>
+            point.documentIds.includes(r.asset_id) && r.schema_id === labelConfig.schemaId
+          );
 
-        if (result && schema) {
-          const fieldValue = getLabelValue(result.value, schema, labelConfig.fieldKey);
-          if (fieldValue && fieldValue !== 'N/A') {
-            // Add the field value on a new line, truncated to prevent overly long labels
-            const truncatedFieldValue = String(fieldValue).substring(0, 30);
-            labelText = `${labelText}\n${truncatedFieldValue}`;
+          if (locationResults.length > 0) {
+            // Determine if this is a numeric field
+            const targetKeys = getTargetKeysForScheme(labelConfig.schemaId, schemas);
+            const fieldInfo = targetKeys.find(tk => tk.key === labelConfig.fieldKey);
+            const isNumericField = fieldInfo && (fieldInfo.type === 'integer' || fieldInfo.type === 'number');
+
+            if (isNumericField && locationResults.length > 1) {
+              // Calculate average for numeric fields with multiple results
+              const numericValues: number[] = [];
+              
+              locationResults.forEach(result => {
+                const fieldValue = getAnnotationFieldValue(result.value, labelConfig.fieldKey);
+                const numValue = Number(fieldValue);
+                if (!isNaN(numValue) && fieldValue !== null && fieldValue !== undefined) {
+                  numericValues.push(numValue);
+                }
+              });
+
+              if (numericValues.length > 0) {
+                const average = numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
+                const formattedAverage = Number.isInteger(average) ? average.toString() : average.toFixed(2);
+                labelText = `${labelText}\nAvg: ${formattedAverage} (${numericValues.length} values)`;
+              }
+            } else {
+              // For non-numeric fields or single results, use existing logic
+              const firstResult = locationResults[0];
+              const fieldValue = getLabelValue(firstResult.value, schema, labelConfig.fieldKey);
+              if (fieldValue && fieldValue !== 'N/A') {
+                // Add the field value on a new line, truncated to prevent overly long labels
+                const truncatedFieldValue = String(fieldValue).substring(0, 30);
+                labelText = `${labelText}\n${truncatedFieldValue}`;
+              }
+            }
           }
         }
       }
@@ -905,6 +964,72 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
      // Keep dependencies minimal, related only to theme and map readiness.
   }, [theme, mapLoaded]);
 
+  // Get label configuration info for display
+  const labelConfigInfo = useMemo(() => {
+    if (!labelConfig) return null;
+    
+    const schema = schemas.find(s => s.id === labelConfig.schemaId);
+    if (!schema) return null;
+    
+    const targetKeys = getTargetKeysForScheme(labelConfig.schemaId, schemas);
+    const fieldInfo = targetKeys.find(tk => tk.key === labelConfig.fieldKey);
+    
+    return {
+      schemaName: schema.name,
+      fieldName: fieldInfo?.name || labelConfig.fieldKey,
+      fieldType: fieldInfo?.type || 'unknown'
+    };
+  }, [labelConfig, schemas]);
+
+  // Handle location click from list
+  const handleLocationClick = useCallback((point: MapPoint) => {
+    if (mapRef.current) {
+      // Calculate offset to account for side panel (which takes up half the width)
+      // We want the marker to appear in the center of the visible (left) half
+      const map = mapRef.current;
+      const container = map.getContainer();
+      const containerWidth = container.offsetWidth;
+      
+      // Side panel takes up 50% of width, so we want to center in the left 50%
+      // This means shifting the center point to the left by 25% of total width
+      const offsetRatio = -0.05; // Shift left by 25% of total width
+      
+      // Convert the offset from screen coordinates to map coordinates
+      try {
+        const bounds = map.getBounds();
+        if (!bounds) {
+          throw new Error('Bounds not available');
+        }
+        
+        const longitudeRange = bounds.getEast() - bounds.getWest();
+        const longitudeOffset = longitudeRange * offsetRatio;
+        
+        // Calculate the adjusted center
+        const adjustedCenter: [number, number] = [
+          point.coordinates.longitude - longitudeOffset,
+          point.coordinates.latitude
+        ];
+        
+        // Fly to the adjusted position
+        map.flyTo({
+          center: adjustedCenter,
+          zoom: Math.max(map.getZoom(), 10), // Ensure minimum zoom level
+          duration: 1000
+        });
+      } catch (error) {
+        // Fallback to original coordinates if bounds calculation fails
+        map.flyTo({
+          center: [point.coordinates.longitude, point.coordinates.latitude],
+          zoom: Math.max(map.getZoom(), 10),
+          duration: 1000
+        });
+      }
+      
+      // Also trigger the point click to show details
+      handlePointClick(point);
+    }
+  }, [handlePointClick]);
+
   return (
     <div className="w-full h-full relative">
       <div 
@@ -939,19 +1064,97 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         </Button>
       </div>
       
-            {/* Points Counter */}
-      {processedPoints.length > 0 && (
-        <div className="absolute top-4 left-4 z-10">
-          <div className="bg-background/80 backdrop-blur-sm border shadow-lg rounded-lg px-3 py-2">
-            <div className="flex items-center gap-2 text-sm">
-              <MapPin className="h-4 w-4 text-primary" />
-              <span className="font-medium">{processedPoints.length}</span>
-              <span className="text-muted-foreground">location{processedPoints.length === 1 ? '' : 's'}</span>
-              {variableSplittingConfig?.enabled && (
-                <Badge variant="secondary" className="text-xs">Split View</Badge>
-              )}
+      {/* Label Indicator Badge */}
+      {labelConfigInfo && (
+        <div className="absolute bottom-1 left-1 z-10">
+          <div className="bg-background/90 backdrop-blur-sm border border-blue-500 shadow-lg rounded-lg px-3 py-2">
+            <div className="flex items-center gap-2 ">
+              <Eye className="h-4 w-4 text-blue-500" />
+              <div className="flex flex-col">
+                <span className="text-xs text-muted-foreground">
+                  {labelConfigInfo.fieldName} ({labelConfigInfo.fieldType})
+                </span>
+              </div>
             </div>
           </div>
+        </div>
+      )}
+      
+      {/* Points Counter with Location List */}
+      {processedPoints.length > 0 && (
+        <div className="absolute top-4 left-4 z-10">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button 
+                variant="ghost" 
+                className="bg-background/80 backdrop-blur-sm border shadow-lg hover:bg-background/90 px-3 py-2 h-auto"
+              >
+                <div className="flex items-center gap-2 text-sm">
+                  <MapPin className="h-4 w-4 text-primary" />
+                  <span className="font-medium">{processedPoints.length}</span>
+                  <span className="text-muted-foreground">location{processedPoints.length === 1 ? '' : 's'}</span>
+                  {variableSplittingConfig?.enabled && (
+                    <Badge variant="secondary" className="text-xs">Split View</Badge>
+                  )}
+                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                </div>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-0" align="start">
+              <div className="p-3 font-medium text-sm border-b">
+                All Locations ({processedPoints.length})
+              </div>
+              <ScrollArea className="max-h-80 overflow-y-auto">
+                <div className="p-2">
+                  {processedPoints.map((point, index) => {
+                    // Get result count for this location
+                    const locationResultCount = resultsForMap.filter(r => 
+                      point.documentIds.includes(r.asset_id)
+                    ).length;
+                    
+                    return (
+                      <button
+                        key={point.id}
+                        onClick={() => handleLocationClick(point)}
+                        className="w-full text-left p-2 rounded-md hover:bg-muted/50 transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <MapPin className="h-3 w-3 text-primary flex-shrink-0" />
+                              <span className="font-medium text-sm truncate">
+                                {point.locationString}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <FileText className="h-3 w-3" />
+                                {point.documentIds.length} doc{point.documentIds.length === 1 ? '' : 's'}
+                              </span>
+                              {locationResultCount > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <Tag className="h-3 w-3" />
+                                  {locationResultCount} result{locationResultCount === 1 ? '' : 's'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1 font-mono">
+                              {point.coordinates.latitude.toFixed(4)}, {point.coordinates.longitude.toFixed(4)}
+                            </div>
+                          </div>
+                          {point.splitValue && (
+                            <Badge variant="outline" className="text-xs flex-shrink-0">
+                              {point.splitValue}
+                            </Badge>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </PopoverContent>
+          </Popover>
         </div>
       )}
 
@@ -971,6 +1174,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         assets={assets}
         selectedFieldsPerScheme={selectedFieldsPerScheme}
         onSelectedFieldsChange={onSelectedFieldsChange}
+        onResultSelect={onResultSelect}
       />
     </div>
   );

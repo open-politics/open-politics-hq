@@ -50,6 +50,12 @@ interface PanelRendererProps {
   onRemovePanel: (panelId: string) => void;
   onMapPointClick?: (point: MapPoint) => void;
   activeRunId?: number;
+  // NEW: Result interaction callbacks
+  onResultSelect?: (result: any) => void;
+  onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<any>;
+  retryingResultId?: number | null;
+  // NEW: Field interaction callback for enhanced dialog
+  onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
 }
 
 export const PanelRenderer: React.FC<PanelRendererProps> = ({ 
@@ -62,6 +68,12 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   onRemovePanel,
   onMapPointClick,
   activeRunId,
+  // NEW: Result interaction callbacks
+  onResultSelect,
+  onRetrySingleResult,
+  retryingResultId,
+  // NEW: Field interaction callback for enhanced dialog
+  onFieldInteraction,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -978,7 +990,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   schemas={allSchemas} 
                   sources={allSources} 
                   assets={allAssets} 
-                  onResultSelect={() => {}} 
+                  onResultSelect={onResultSelect} 
+                  onRetrySingleResult={onRetrySingleResult}
+                  retryingResultId={retryingResultId}
                   excludedRecordIds={new Set()} 
                   onToggleRecordExclusion={() => {}} 
                   initialTableConfig={{
@@ -1025,6 +1039,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   // NEW: Fix interval handling
                   onSettingsChange={handlePanelSettingsUpdate}
                   initialSettings={panel.settings}
+                  // NEW: Result selection callback
+                  onResultSelect={onResultSelect}
+                  onFieldInteraction={onFieldInteraction}
                 />
               </AssetDetailProvider>
             </div>
@@ -1054,6 +1071,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                 // NEW: Time frame filtering and variable splitting
                 timeAxisConfig={panel.settings?.timeAxisConfig || null}
                 variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
+                // NEW: Result selection callback
+                onResultSelect={onResultSelect}
+                onFieldInteraction={onFieldInteraction}
                 />
               </AssetDetailProvider>
             </div>
@@ -1110,6 +1130,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                       selectedFieldsPerScheme: selectedFieldsPerScheme
                     });
                   }}
+                  // NEW: Result selection callback
+                  onResultSelect={onResultSelect}
                 />
               </AssetDetailProvider>
             </div>
@@ -1135,6 +1157,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   // NEW: Time frame filtering and variable splitting
                   timeAxisConfig={panel.settings?.timeAxisConfig || null}
                   variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
+                  // NEW: Result selection callback
+                  onResultSelect={onResultSelect}
                 />
               </AssetDetailProvider>
             </div>

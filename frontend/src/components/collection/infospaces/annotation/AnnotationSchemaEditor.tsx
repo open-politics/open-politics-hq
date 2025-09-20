@@ -162,6 +162,14 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
     }
   }, [defaultValues, mode, toast]);
 
+  // Helper function to validate field names
+  const isValidFieldName = (name: string): boolean => {
+      // Only allow alphanumeric characters and underscores (Python-safe identifiers)
+      return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+  };
+
+
+
   // Validation for the new structure
   const validateForm = (): boolean => {
       const errors: Record<string, string | string[]> = {};
@@ -179,7 +187,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
           errors.structure = "At least one field in one section is required";
           isValid = false;
       } else {
-          // Validate field names are not empty
+          // Validate field names are not empty and don't contain special characters
           for (const section of formData.structure) {
               for (const field of section.fields) {
                   if (!field.name.trim()) {
@@ -187,6 +195,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
                       isValid = false;
                       break;
                   }
+
               }
               if (!isValid) break;
           }
@@ -243,162 +252,319 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
       height="h-[90vh]"
       className="border-2 border-schemes"
     >
-        <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-4 h-full w-full">
+        <form onSubmit={handleSubmit} className="flex flex-col lg:flex-row gap-6 h-full w-full overflow-hidden">
           {/* Panel 1: Left - Schema Details */}
-          <div className="w-full md:w-1/4 lg:w-1/5 border-r pr-4 flex flex-col gap-4">
-              <ScrollArea className="flex-1">
+          <div className="w-full lg:w-80 xl:w-96 flex flex-col gap-6">
+              <div className="bg-card/50 border rounded-lg p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <FileText className="h-5 w-5 text-primary" />
+                  <h3 className="text-lg font-semibold">Schema Details</h3>
+                </div>
                 <div className="space-y-4">
-                    <h3 className="text-lg font-medium">Schema Details</h3>
-                    <div>
-                        <Label htmlFor="scheme-name">Name</Label>
+                    <div className="space-y-2">
+                        <Label htmlFor="scheme-name" className="text-sm font-medium">Name *</Label>
                         <Input
                             id="scheme-name"
                             value={formData.name}
                             onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                            placeholder="e.g., Threat Assessment Report"
+                            placeholder="e.g., Article Analysis Schema"
                             disabled={isLoadingSchemas || mode === 'watch'}
+                            className={cn(formErrors.name && "border-destructive focus-visible:ring-destructive")}
                         />
-                         {formErrors.name && <p className="text-xs text-red-500 mt-1">{formErrors.name as string}</p>}
+                         {formErrors.name && (
+                           <div className="flex items-center gap-1.5 text-destructive">
+                             <AlertTriangle className="h-3 w-3" />
+                             <p className="text-xs">{formErrors.name as string}</p>
+                           </div>
+                         )}
                     </div>
-                    <div>
-                        <Label htmlFor="scheme-description">Description</Label>
+                    <div className="space-y-2">
+                        <Label htmlFor="scheme-description" className="text-sm font-medium">Description</Label>
                         <Textarea
                             id="scheme-description"
                             value={formData.description}
                             onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                            placeholder="Describe the schema's purpose"
+                            placeholder="Brief description of what this schema analyzes..."
                             rows={3}
                             disabled={isLoadingSchemas || mode === 'watch'}
+                            className="resize-none"
                         />
                     </div>
-                    <div>
-                        <Label htmlFor="model-instructions">Instructions</Label>
+                    <div className="space-y-2">
+                        <Label htmlFor="model-instructions" className="text-sm font-medium">AI Instructions</Label>
                         <Textarea
                            id="model-instructions"
                            value={formData.instructions || ''}
                            onChange={(e) => setFormData(prev => ({ ...prev, instructions: e.target.value }))}
-                           placeholder="High-level instructions for the AI model..."
-                           rows={5}
+                           placeholder="Detailed instructions for the AI model on how to analyze content..."
+                           rows={4}
                            disabled={isLoadingSchemas || mode === 'watch'}
-                           className="text-sm font-mono"
+                           className="text-sm font-mono resize-none"
                         />
+                        <p className="text-xs text-muted-foreground">These instructions guide the AI's analysis approach.</p>
                     </div>
                 </div>
-              </ScrollArea>
+              </div>
+              
               {mode !== 'watch' && (
-                <div className="flex justify-end gap-3 pt-4 border-t">
-                    <Button type="button" variant="outline" onClick={onClose} disabled={isLoadingSchemas}>Cancel</Button>
-                    <Button type="submit" disabled={isLoadingSchemas}>
-                        {isLoadingSchemas ? 'Saving...' : (mode === 'create' ? 'Create Schema' : 'Update Schema')}
-                    </Button>
+                <div className="bg-gradient-to-r from-primary/5 to-primary/10 border-2 border-primary/20 rounded-xl p-5 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className="bg-primary/10 p-2 rounded-full">
+                            <div className={cn("h-3 w-3 rounded-full transition-colors", 
+                              formData.name && formData.structure.some(s => s.fields.length > 0) 
+                                ? "bg-green-500" 
+                                : "bg-yellow-500"
+                            )} />
+                        </div>
+                        <div>
+                            <span className="text-base font-semibold">
+                                {mode === 'create' ? 'Create Schema' : 'Save Changes'}
+                            </span>
+                            <p className="text-sm text-muted-foreground">
+                                {formData.name && formData.structure.some(s => s.fields.length > 0) 
+                                    ? 'Ready to save' 
+                                    : 'Complete required fields'
+                                }
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex gap-3">
+                        <Button 
+                            type="button" 
+                            variant="outline" 
+                            onClick={onClose} 
+                            disabled={isLoadingSchemas}
+                            className="flex-1 h-11 border-2 hover:border-primary/30"
+                        >
+                            Cancel
+                        </Button>
+                        <Button 
+                            type="submit" 
+                            disabled={isLoadingSchemas || (!formData.name || !formData.structure.some(s => s.fields.length > 0))}
+                            className="flex-1 h-11 font-semibold shadow-sm"
+                        >
+                            {isLoadingSchemas ? (
+                                <div className="flex items-center gap-2">
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    Saving...
+                                </div>
+                            ) : (
+                                mode === 'create' ? 'Create Schema' : 'Update Schema'
+                            )}
+                        </Button>
+                    </div>
                 </div>
               )}
           </div>
 
           {/* Panel 2: Center - Schema Structure */}
-          <div className="w-full md:w-1/2 lg:w-2/5 border-r pr-4 flex flex-col">
-             <div className="flex-shrink-0">
-                <h3 className="text-lg font-medium mb-2">Schema Structure</h3>
-                <p className="text-xs text-muted-foreground mb-4">Define sections and fields for the AI. Select an item to edit its properties.</p>
+          <div className="flex-1 min-w-0 flex flex-col">
+             <div className="bg-card/30 border rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileJson className="h-5 w-5 text-primary" />
+                    <h3 className="text-lg font-semibold">Schema Structure</h3>
+                  </div>
+                  <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                    {formData.structure.reduce((total, section) => total + section.fields.length, 0)} total fields
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-2">Define sections and fields for the AI. Click any item to edit its properties.</p>
              </div>
-             <ScrollArea className="flex-1 pr-2">
-                <div className="space-y-4">
+             
+             <ScrollArea className="flex-1">
+                <div className="space-y-3">
                     {formData.structure.map((section, sectionIndex) => (
                         <div key={section.id} className={cn(
-                            "p-3 rounded-lg border",
-                            selectedNodeId === section.id ? "border-blue-500 bg-blue-500/5" : "border-border"
+                            "rounded-lg border-2 transition-all duration-200",
+                            selectedNodeId === section.id 
+                              ? "border-primary bg-primary/5 shadow-md" 
+                              : "border-border bg-card/50 hover:border-primary/30 hover:shadow-sm"
                         )}>
                             <div 
-                                className="flex items-center justify-between cursor-pointer"
+                                className="flex items-center justify-between p-4 cursor-pointer group"
                                 onClick={() => setSelectedNodeId(section.id)}
                             >
-                                <div className="flex items-center gap-2">
-                                    <FileJson className="h-4 w-4 text-muted-foreground" />
-                                    <span className="font-medium capitalize">{section.name}</span>
-                                </div>
-                                <Button 
-                                    type="button" 
-                                    variant="ghost" 
-                                    size="icon" 
-                                    className="h-6 w-6"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleRemoveSection(section.id);
-                                    }}
-                                    disabled={section.name === 'document'}
-                                >
-                                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-red-500"/>
-                                </Button>
-                            </div>
-                            <div className="mt-3 space-y-2 pl-4 border-l ml-2">
-                                {section.fields.map((field, fieldIndex) => (
-                                    <div 
-                                        key={field.id}
-                                        className={cn(
-                                            "flex items-center justify-between p-2 rounded-md cursor-pointer group",
-                                            selectedNodeId === field.id ? "bg-primary/10" : "hover:bg-muted/50"
-                                        )}
-                                        onClick={() => setSelectedNodeId(field.id)}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm">{field.name}</span>
-                                            {field.required && <span className="text-red-500 text-xs">*</span>}
-                                        </div>
-                                        <div className="flex items-center">
-                                            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-sm mr-2">{field.type}</span>
-                                            <Trash2 
-                                                className="h-3.5 w-3.5 text-muted-foreground/50 opacity-0 group-hover:opacity-100 hover:text-red-500"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleRemoveField(section.id, field.id);
-                                                }}
-                                            />
+                                <div className="flex items-center gap-3 flex-1">
+                                    {section.name === 'document' ? (
+                                        <FileText className="h-5 w-5 text-blue-600" />
+                                    ) : section.name === 'per_image' ? (
+                                        <Image className="h-5 w-5 text-green-600" />
+                                    ) : section.name === 'per_audio' ? (
+                                        <Mic className="h-5 w-5 text-purple-600" />
+                                    ) : (
+                                        <Video className="h-5 w-5 text-orange-600" />
+                                    )}
+                                    <div>
+                                        <span className="font-semibold text-base capitalize">
+                                            {section.name.replace('per_', '')} Analysis
+                                        </span>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                            <span className="text-xs text-muted-foreground">
+                                                {section.fields.length} field{section.fields.length !== 1 ? 's' : ''}
+                                            </span>
+                                            {section.fields.some(f => f.required) && (
+                                                <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">
+                                                    {section.fields.filter(f => f.required).length} required
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
-                                ))}
-                                 <Button 
-                                    type="button" 
-                                    variant="outline" 
-                                    size="sm"
-                                    className="mt-2"
-                                    onClick={() => handleAddField(section.id)}
-                                >
-                                    <PlusCircle className="h-3 w-3 mr-1.5" />
-                                    Add Field
-                                </Button>
+                                </div>
+                                {section.name !== 'document' && mode !== 'watch' && (
+                                    <Button 
+                                        type="button" 
+                                        variant="ghost" 
+                                        size="icon" 
+                                        className="h-8 w-8 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-opacity"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleRemoveSection(section.id);
+                                        }}
+                                        title="Remove section"
+                                    >
+                                        <Trash2 className="h-4 w-4"/>
+                                    </Button>
+                                )}
                             </div>
+                            
+                            {section.fields.length > 0 && (
+                                <div className="px-4 pb-4">
+                                    <div className="pl-8 space-y-1 border-l-2 border-muted ml-2">
+                                        {section.fields.map((field, fieldIndex) => (
+                                            <div 
+                                                key={field.id}
+                                                className={cn(
+                                                    "flex items-center justify-between p-3 rounded-md cursor-pointer group transition-all duration-150",
+                                                    selectedNodeId === field.id 
+                                                      ? "bg-primary/15 border border-primary/30 shadow-sm" 
+                                                      : "hover:bg-muted/70 border border-transparent hover:border-border"
+                                                )}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSelectedNodeId(field.id);
+                                                }}
+                                            >
+                                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-sm font-medium truncate">{field.name}</span>
+                                                        {field.required && (
+                                                            <span className="text-destructive text-sm font-bold shrink-0" title="Required field">*</span>
+                                                        )}
+                                                    </div>
+                                                    {field.description && (
+                                                        <span className="text-xs text-muted-foreground truncate max-w-40">
+                                                            {field.description}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <span className="text-xs bg-muted text-muted-foreground px-2.5 py-1 rounded-full font-mono">
+                                                        {field.type === 'array' && field.items ? `${field.items.type}[]` : field.type}
+                                                    </span>
+                                                    {mode !== 'watch' && (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-7 w-7 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-opacity"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleRemoveField(section.id, field.id);
+                                                            }}
+                                                            title="Remove field"
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {mode !== 'watch' && (
+                                <div className="px-4 pb-4">
+                                    <Button 
+                                        type="button" 
+                                        variant="outline" 
+                                        size="sm"
+                                        className="w-full h-9 border-dashed hover:border-solid hover:bg-primary/5 hover:border-primary/30 transition-all"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleAddField(section.id);
+                                        }}
+                                    >
+                                        <PlusCircle className="h-4 w-4 mr-2" />
+                                        Add Field to {section.name.replace('per_', '').charAt(0).toUpperCase() + section.name.replace('per_', '').slice(1)}
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
-                {formErrors.structure && <p className="text-xs text-red-500 mt-1">{formErrors.structure as string}</p>}
+                {formErrors.structure && (
+                    <div className="flex items-center gap-2 text-destructive mt-3 p-3 bg-destructive/5 rounded-lg border border-destructive/20">
+                        <AlertTriangle className="h-4 w-4" />
+                        <p className="text-sm">{formErrors.structure as string}</p>
+                    </div>
+                )}
              </ScrollArea>
-             <div className="pt-2 border-t mt-2">
-                <Select onValueChange={(value: SchemaSection['name']) => {
-                    if(value) handleAddSection(value);
-                }} value="">
-                    <SelectTrigger className="h-8 text-xs text-muted-foreground">
-                        <SelectValue placeholder="Add another section..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="per_image" className="text-xs"><Image className="h-3 w-3 mr-2 inline-block"/>per_image</SelectItem>
-                        <SelectItem value="per_audio" className="text-xs"><Mic className="h-3 w-3 mr-2 inline-block"/>per_audio</SelectItem>
-                        <SelectItem value="per_video" className="text-xs"><Video className="h-3 w-3 mr-2 inline-block"/>per_video</SelectItem>
-                    </SelectContent>
-                </Select>
-             </div>
+             
+             {mode !== 'watch' && (
+                 <div className="bg-card/30 border rounded-lg p-4 mt-4">
+                    <div className="flex items-center gap-2 mb-3">
+                        <PlusCircle className="h-4 w-4 text-primary" />
+                        <Label className="text-sm font-semibold">Add Media Analysis</Label>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                        {[
+                            { value: 'per_image', icon: Image, label: 'Images', color: 'text-green-600', disabled: formData.structure.some(s => s.name === 'per_image') },
+                            { value: 'per_audio', icon: Mic, label: 'Audio', color: 'text-purple-600', disabled: formData.structure.some(s => s.name === 'per_audio') },
+                            { value: 'per_video', icon: Video, label: 'Video', color: 'text-orange-600', disabled: formData.structure.some(s => s.name === 'per_video') }
+                        ].map((mediaType) => (
+                            <Button
+                                key={mediaType.value}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={mediaType.disabled}
+                                className={cn(
+                                    "h-12 flex-col gap-1 border-dashed hover:border-solid transition-all",
+                                    mediaType.disabled 
+                                        ? "opacity-50 cursor-not-allowed" 
+                                        : "hover:bg-primary/5 hover:border-primary/30"
+                                )}
+                                onClick={() => handleAddSection(mediaType.value as SchemaSection['name'])}
+                            >
+                                <mediaType.icon className={cn("h-4 w-4", mediaType.color)} />
+                                <span className="text-xs font-medium">{mediaType.label}</span>
+                            </Button>
+                        ))}
+                    </div>
+                 </div>
+             )}
           </div>
 
           {/* Panel 3: Right - Properties Inspector */}
-          <div className="w-full md:w-1/4 lg:w-2/5">
-             <h3 className="text-lg font-medium mb-2">Properties</h3>
-             <p className="text-xs text-muted-foreground mb-4">Configure the selected section or field.</p>
-             <ScrollArea className="h-full pr-2">
-                 <PropertyInspector 
-                    selectedNodeId={selectedNodeId}
-                    formData={formData}
-                    onFormChange={setFormData}
-                    disabled={isLoadingSchemas || mode === 'watch'}
-                 />
+          <div className="w-full lg:w-80 xl:w-96 flex flex-col">
+             <div className="bg-card/30 border rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <Info className="h-5 w-5 text-primary" />
+                  <h3 className="text-lg font-semibold">Properties</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mt-2">Configure the selected section or field.</p>
+             </div>
+             <ScrollArea className="flex-1 pr-2">
+                 <div className="space-y-4 pb-4">
+                   <PropertyInspector 
+                      selectedNodeId={selectedNodeId}
+                      formData={formData}
+                      onFormChange={setFormData}
+                      disabled={isLoadingSchemas || mode === 'watch'}
+                   />
+                 </div>
              </ScrollArea>
           </div>
 
@@ -490,149 +656,311 @@ const PropertyInspector: React.FC<{
 
     if (!node) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-center p-4 border border-dashed rounded-lg bg-muted/30">
-                <FileJson className="h-10 w-10 text-muted-foreground mb-2" />
-                <h4 className="font-semibold">Nothing Selected</h4>
-                <p className="text-sm text-muted-foreground">Select a section or field from the structure panel to see its properties.</p>
+            <div className="flex flex-col items-center justify-center h-64 text-center p-6 border-2 border-dashed rounded-xl bg-muted/20">
+                <div className="bg-primary/10 p-4 rounded-full mb-4">
+                    <FileJson className="h-8 w-8 text-primary" />
+                </div>
+                <h4 className="font-semibold text-lg mb-2">Nothing Selected</h4>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                    Click on any section or field in the schema structure to configure its properties here.
+                </p>
             </div>
         );
     }
     
     if (node === 'section' && section) {
+        const getSectionInfo = () => {
+            switch (section.name) {
+                case 'document':
+                    return {
+                        icon: <FileText className="h-6 w-6 text-blue-600" />,
+                        title: 'Document Analysis',
+                        description: 'Fields extracted from the main document content (text, metadata, etc.)',
+                        color: 'border-blue-200'
+                    };
+                case 'per_image':
+                    return {
+                        icon: <Image className="h-6 w-6 text-green-600" />,
+                        title: 'Image Analysis',
+                        description: 'Fields extracted from each individual image in the document',
+                        color: 'border-green-200'
+                    };
+                case 'per_audio':
+                    return {
+                        icon: <Mic className="h-6 w-6 text-purple-600" />,
+                        title: 'Audio Analysis',
+                        description: 'Fields extracted from each individual audio file in the document',
+                        color: 'border-purple-200'
+                    };
+                case 'per_video':
+                    return {
+                        icon: <Video className="h-6 w-6 text-orange-600" />,
+                        title: 'Video Analysis',
+                        description: 'Fields extracted from each individual video file in the document',
+                        color: 'border-orange-200'
+                    };
+                default:
+                    return {
+                        icon: <FileJson className="h-6 w-6 text-muted-foreground" />,
+                        title: section.name,
+                        description: 'Section configuration',
+                        color: 'border-border'
+                    };
+            }
+        };
+
+        const sectionInfo = getSectionInfo();
+
         return (
-             <div className="space-y-4 p-4 border rounded-lg bg-card">
-                <div className="flex items-center gap-2">
-                    <FileJson className="h-5 w-5 text-muted-foreground" />
-                    <h3 className="text-lg font-medium capitalize">{section.name}</h3>
+             <div className={cn("space-y-4 p-5 border-2 rounded-xl", sectionInfo.color)}>
+                <div className="flex items-center gap-3">
+                    {sectionInfo.icon}
+                    <div>
+                        <h3 className="text-xl font-semibold">{sectionInfo.title}</h3>
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className="text-sm text-muted-foreground">
+                                {section.fields.length} field{section.fields.length !== 1 ? 's' : ''}
+                            </span>
+                            {section.fields.some(f => f.required) && (
+                                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                                    {section.fields.filter(f => f.required).length} required
+                                </span>
+                            )}
+                        </div>
+                    </div>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                    {section.name === 'document' 
-                        ? 'This section defines the fields to be extracted from the main document content (e.g., the text of an article).'
-                        : `This section defines fields to be extracted from each individual ${section.name.replace('per_', '')} associated with the main document.`
-                    }
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                    {sectionInfo.description}
                 </p>
+                {section.fields.length === 0 && (
+                    <div className="p-3 bg-muted/50 rounded-lg border border-dashed">
+                        <p className="text-sm text-muted-foreground text-center">
+                            No fields defined yet. Click "Add Field" to get started.
+                        </p>
+                    </div>
+                )}
              </div>
         );
     }
     
     if (node === 'field' && field) {
         return (
-            <div className="space-y-4">
-                <div className="space-y-2">
-                    <Label htmlFor="field-name">Field Name</Label>
-                    <Input 
-                        id="field-name"
-                        value={field.name}
-                        onChange={(e) => handleFieldUpdate({ name: e.target.value })}
-                        placeholder="e.g., summary"
-                        disabled={disabled}
-                    />
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="field-desc">Description</Label>
-                    <Textarea 
-                        id="field-desc"
-                        value={field.description || ''}
-                        onChange={(e) => handleFieldUpdate({ description: e.target.value })}
-                        placeholder="A hint for the AI of what to extract."
-                        rows={3}
-                        disabled={disabled}
-                        className="text-sm"
-                    />
-                </div>
-                 <div className="space-y-2">
-                    <Label htmlFor="field-type">Type</Label>
-                    <Select 
-                        value={getTypeValue()}
-                        onValueChange={handleTypeChange}
-                        disabled={disabled}
-                    >
-                        <SelectTrigger id="field-type">
-                            <SelectValue placeholder="Select a type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {ADVANCED_SCHEME_TYPE_OPTIONS.map(opt => (
-                                <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="flex items-center space-x-2 pt-3">
-                    <Switch
-                        id="field-required"
-                        checked={field.required}
-                        onCheckedChange={(checked) => handleFieldUpdate({ required: checked })}
-                        disabled={disabled}
-                    />
-                    <Label htmlFor="field-required" className="cursor-pointer">Required Field</Label>
+            <div className="space-y-6">
+                {/* Field Header */}
+                <div className="bg-card/50 border-2 rounded-xl p-4">
+                    <div className="flex items-center gap-3 mb-3">
+                        <div className="bg-primary/10 p-2 rounded-lg">
+                            <FileJson className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-semibold">Field Configuration</h3>
+                            <p className="text-sm text-muted-foreground">Configure how the AI extracts this data</p>
+                        </div>
+                    </div>
                 </div>
 
-                {/* --- Type-Specific Config --- */}
-                {field.type === 'string' && (
-                    <div className="space-y-2 pt-2 border-t mt-3">
-                         <Label htmlFor="field-enum">Allowed Values (Optional)</Label>
-                         <Textarea
-                            id="field-enum"
-                            value={(field.enum || []).join('\n')}
-                            onChange={(e) => handleFieldUpdate({ enum: e.target.value.split('\n').filter(v => v) })}
-                            placeholder="One value per line to restrict choices"
-                            rows={3}
+                {/* Basic Properties */}
+                <div className="space-y-4 p-2">
+                    <div className="space-y-2">
+                        <Label htmlFor="field-name" className="text-sm font-semibold">Field Name *</Label>
+                        <Input 
+                            id="field-name"
+                            value={field.name}
+                            onChange={(e) => handleFieldUpdate({ name: e.target.value })}
+                            placeholder="e.g., summary, threat_level, article_type"
                             disabled={disabled}
-                            className="text-sm"
-                         />
-                         <p className="text-xs text-muted-foreground">If you add values here, the AI will be forced to choose one of them.</p>
-                    </div>
-                )}
-                {(field.type === 'object' || (field.type === 'array' && field.items?.type === 'object')) && (
-                    <div className="space-y-2 pt-2 border-t mt-3">
-                        <Label>Sub-fields</Label>
-                        <div className="p-3 border border-dashed rounded-lg text-center">
-                            <p className="text-sm text-muted-foreground">Recursive field definition is not yet implemented.</p>
-                        </div>
-                    </div>
-                )}
-
-
-                {/* --- Justification --- */}
-                <Accordion type="single" collapsible className="w-full">
-                  <AccordionItem value="justification">
-                    <AccordionTrigger>Justification</AccordionTrigger>
-                    <AccordionContent className="space-y-4 pt-2">
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="justification-enabled"
-                                checked={field.justification?.enabled ?? false}
-                                onCheckedChange={(checked) => handleFieldUpdate({ justification: { ...field.justification, enabled: !!checked }})}
-                                disabled={disabled}
-                            />
-                            <Label htmlFor="justification-enabled" className="cursor-pointer leading-none">
-                                Request justification for this field
-                            </Label>
-                        </div>
-                        {field.justification?.enabled && (
-                            <div className="space-y-2">
-                                <Label htmlFor="justification-prompt">Custom Prompt (Optional)</Label>
-                                <Textarea
-                                    id="justification-prompt"
-                                    value={field.justification.custom_prompt || ''}
-                                    onChange={(e) => handleFieldUpdate({ justification: { enabled: field.justification?.enabled ?? true, custom_prompt: e.target.value }})}
-                                    placeholder="e.g., Explain step-by-step how you arrived at this summary."
-                                    rows={3}
-                                    disabled={disabled}
-                                    className="text-sm"
-                                />
+                            className={cn(
+                                "transition-all",
+                                !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field.name) && field.name 
+                                    ? "border-yellow-400 focus-visible:ring-yellow-400" 
+                                    : ""
+                            )}
+                        />
+                        {field.name && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field.name) && (
+                            <div className="flex items-start gap-2 p-2 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                                <p className="text-xs text-yellow-700">
+                                    Consider using only letters, numbers, and underscores for better compatibility (e.g., summary_text, threat_level).
+                                </p>
                             </div>
                         )}
-                        <div className="flex-shrink-0 h-10 w-10 rounded-full bg-muted flex items-center justify-center">
-                            {field.provider?.includes('anthropic') && <img src="/anthropic-logo.png" className="h-6 w-6" alt="Anthropic logo" />}
-                            {field.provider?.includes('openai') && <img src="/openai-logo.png" className="h-6 w-6" alt="OpenAI logo" />}
-                            {field.provider?.includes('google') && <img src="/google-logo.png" className="h-5 w-5" alt="Google logo" />}
-                            {field.provider?.includes('groq') && <img src="/groq-logo.png" className="h-5 w-5" alt="Groq logo" />}
-                            {field.provider?.includes('together') && <img src="/together-logo.png" className="h-5 w-5" alt="Together AI logo" />}
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="field-desc" className="text-sm font-semibold">Description</Label>
+                        <Textarea 
+                            id="field-desc"
+                            value={field.description || ''}
+                            onChange={(e) => handleFieldUpdate({ description: e.target.value })}
+                            placeholder="Describe what this field should contain and how the AI should extract it..."
+                            rows={3}
+                            disabled={disabled}
+                            className="text-sm resize-none"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            A clear description helps the AI understand what to extract.
+                        </p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="field-type" className="text-sm font-semibold">Data Type</Label>
+                        <Select 
+                            value={getTypeValue()}
+                            onValueChange={handleTypeChange}
+                            disabled={disabled}
+                        >
+                            <SelectTrigger id="field-type" className="h-10">
+                                <SelectValue placeholder="Select a type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {ADVANCED_SCHEME_TYPE_OPTIONS.map(opt => (
+                                    <SelectItem key={opt.value} value={opt.value} className="text-sm py-2">
+                                        {opt.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    <div className="bg-muted/30 border rounded-lg p-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <Label htmlFor="field-required" className="text-sm font-semibold cursor-pointer">
+                                    Required Field
+                                </Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    AI must provide a value for this field
+                                </p>
+                            </div>
+                            <Switch
+                                id="field-required"
+                                checked={field.required}
+                                onCheckedChange={(checked) => handleFieldUpdate({ required: checked })}
+                                disabled={disabled}
+                            />
                         </div>
-                        <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-gray-900 truncate">{field.model_name}</p>
+                    </div>
+                </div>
+
+                {/* Advanced Configuration */}
+                <Accordion type="multiple" className="w-full space-y-3">
+                  {/* Type-Specific Config */}
+                  {field.type === 'string' && (
+                    <AccordionItem value="type-config" className="border rounded-lg px-3">
+                      <AccordionTrigger className="text-sm font-semibold py-3">
+                        Value Constraints
+                      </AccordionTrigger>
+                      <AccordionContent className="pb-3">
+                        <div className="space-y-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="field-enum" className="text-sm font-medium">Allowed Values (Optional)</Label>
+                            <Textarea
+                              id="field-enum"
+                              value={(field.enum || []).join('\n')}
+                              onChange={(e) => handleFieldUpdate({ enum: e.target.value.split('\n').filter(v => v) })}
+                              placeholder="One value per line to restrict choices"
+                              rows={3}
+                              disabled={disabled}
+                              className="text-sm resize-none"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Restrict the AI to only these specific values.
+                            </p>
+                          </div>
                         </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+
+                  {(field.type === 'object' || (field.type === 'array' && field.items?.type === 'object')) && (
+                    <AccordionItem value="object-config" className="border rounded-lg px-3">
+                      <AccordionTrigger className="text-sm font-semibold py-3">
+                        Object Structure
+                      </AccordionTrigger>
+                      <AccordionContent className="pb-3">
+                        <div className="p-4 bg-muted/30 border border-dashed rounded-lg text-center">
+                          <p className="text-sm text-muted-foreground">
+                            Nested object configuration is coming soon.
+                          </p>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  )}
+
+                  {/* Justification Section */}
+                  <AccordionItem value="justification" className="border rounded-lg px-3">
+                    <AccordionTrigger className="text-sm font-semibold py-3">
+                      <div className="flex items-center gap-2">
+                        <span>AI Justification</span>
+                        {field.justification?.enabled && (
+                          <div className="h-2 w-2 bg-green-500 rounded-full" />
+                        )}
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pb-3">
+                      <div className="space-y-4">
+                        <div className="bg-muted/20 border rounded-lg p-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <Label htmlFor="justification-enabled" className="text-sm font-medium cursor-pointer">
+                                Request Justification
+                              </Label>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Ask AI to explain how it determined this value
+                              </p>
+                            </div>
+                            <Switch
+                              id="justification-enabled"
+                              checked={field.justification?.enabled ?? false}
+                              onCheckedChange={(checked) => handleFieldUpdate({ justification: { ...field.justification, enabled: !!checked }})}
+                              disabled={disabled}
+                            />
+                          </div>
+                        </div>
+                        
+                        {field.justification?.enabled && (
+                          <div className="space-y-3">
+                            <div className="space-y-2">
+                              <Label htmlFor="justification-prompt" className="text-sm font-medium">
+                                Custom Prompt (Optional)
+                              </Label>
+                              <Textarea
+                                id="justification-prompt"
+                                value={field.justification.custom_prompt || ''}
+                                onChange={(e) => handleFieldUpdate({ 
+                                  justification: { 
+                                    enabled: field.justification?.enabled ?? true, 
+                                    custom_prompt: e.target.value 
+                                  }
+                                })}
+                                placeholder="e.g., Explain step-by-step how you determined this value..."
+                                rows={3}
+                                disabled={disabled}
+                                className="text-sm resize-none"
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Custom instructions for how the AI should justify this field.
+                              </p>
+                            </div>
+                            
+                            {field.provider && field.model_name && (
+                              <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-background flex items-center justify-center border">
+                                  {field.provider?.includes('anthropic') && <img src="/anthropic-logo.png" className="h-5 w-5" alt="Anthropic" />}
+                                  {field.provider?.includes('openai') && <img src="/openai-logo.png" className="h-5 w-5" alt="OpenAI" />}
+                                  {field.provider?.includes('google') && <img src="/google-logo.png" className="h-4 w-4" alt="Google" />}
+                                  {field.provider?.includes('groq') && <img src="/groq-logo.png" className="h-4 w-4" alt="Groq" />}
+                                  {field.provider?.includes('together') && <img src="/together-logo.png" className="h-4 w-4" alt="Together" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium truncate">{field.model_name}</p>
+                                  <p className="text-xs text-muted-foreground">Justification model</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>

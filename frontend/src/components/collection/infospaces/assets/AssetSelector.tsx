@@ -174,6 +174,7 @@ export default function AssetSelector({
     addAssetToBundle,
     removeAssetFromBundle,
     updateBundle, // Keep for inline editing
+    createBundle,
   } = useBundleStore();
 
   // UI State
@@ -193,12 +194,24 @@ export default function AssetSelector({
 
   // Drag and drop state
   const [draggedOverBundleId, setDraggedOverBundleId] = useState<string | null>(null);
+  const [isDraggedOverTopLevel, setIsDraggedOverTopLevel] = useState(false);
+  const [draggedOverAssetId, setDraggedOverAssetId] = useState<string | null>(null);
+  const [dragOverTimeout, setDragOverTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // View mode state
   const [viewMode, setViewMode] = useState<'list' | 'card'>('list');
   const [cardViewFolder, setCardViewFolder] = useState<AssetTreeItem | null>(null);
 
   const fetchingRef = useRef(false);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (dragOverTimeout) {
+        clearTimeout(dragOverTimeout);
+      }
+    };
+  }, [dragOverTimeout]);
 
   // Fetch data when infospace changes
   useEffect(() => {
@@ -572,6 +585,127 @@ export default function AssetSelector({
     }
   }, [addAssetToBundle, removeAssetFromBundle, getBundleAssets, bundleAssets]);
 
+  const handleDropOnTopLevel = useCallback(async (e: React.DragEvent) => {
+    setIsDraggedOverTopLevel(false);
+    const data = e.dataTransfer.getData('application/json');
+    if (!data) return;
+    try {
+        const { type, items: draggedAssets } = JSON.parse(data) as { type: string; items: AssetRead[] };
+        if (type !== 'assets' || !Array.isArray(draggedAssets)) return;
+        
+        // Find assets that are currently in bundles and remove them
+        const assetsToRemove = draggedAssets.filter(asset => {
+            for (const [bundleId, assetsInBundle] of bundleAssets.entries()) {
+                if (assetsInBundle.some(a => a.id === asset.id)) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        if (assetsToRemove.length > 0) {
+            toast.info(`Moving ${assetsToRemove.length} asset(s) to top level...`);
+            
+            const removeOperations = assetsToRemove.map(asset => {
+                let sourceBundleId: number | null = null;
+                for (const [bundleId, assetsInBundle] of bundleAssets.entries()) {
+                    if (assetsInBundle.some(a => a.id === asset.id)) {
+                        sourceBundleId = bundleId;
+                        break;
+                    }
+                }
+                return { asset, sourceBundleId };
+            });
+
+            const promises = removeOperations
+                .filter(({ sourceBundleId }) => sourceBundleId !== null)
+                .map(({ asset, sourceBundleId }) => removeAssetFromBundle(sourceBundleId!, asset.id));
+            
+            await Promise.all(promises);
+            toast.success(`Successfully moved ${assetsToRemove.length} asset(s) to top level.`);
+            
+            // Refresh affected bundles
+            const bundlesToRefresh = new Set(removeOperations.map(op => op.sourceBundleId).filter(id => id !== null) as number[]);
+            const refreshPromises = Array.from(bundlesToRefresh).map(id => getBundleAssets(id));
+            const refreshedData = await Promise.all(refreshPromises);
+
+            setBundleAssets(prev => {
+                const newMap = new Map(prev);
+                Array.from(bundlesToRefresh).forEach((bundleId, index) => newMap.set(bundleId, refreshedData[index]));
+                return newMap;
+            });
+        }
+    } catch (error) {
+        console.error('Drop on top level error:', error);
+        toast.error('Failed to move assets to top level.');
+    }
+  }, [bundleAssets, removeAssetFromBundle, getBundleAssets]);
+
+  const handleDropOnAsset = useCallback(async (targetItem: AssetTreeItem, e: React.DragEvent) => {
+    if (!targetItem.asset) return;
+    setDraggedOverAssetId(null);
+    const data = e.dataTransfer.getData('application/json');
+    if (!data) return;
+    
+    try {
+        const { type, items: draggedAssets } = JSON.parse(data) as { type: string; items: AssetRead[] };
+        if (type !== 'assets' || !Array.isArray(draggedAssets)) return;
+        
+        // Don't allow dropping on itself
+        if (draggedAssets.some(asset => asset.id === targetItem.asset!.id)) {
+            return;
+        }
+
+        // Create a new bundle with the target asset and dragged assets
+        const allAssets = [targetItem.asset, ...draggedAssets];
+        const bundleName = `Bundle with ${targetItem.asset.title}`;
+        
+        toast.info(`Creating bundle "${bundleName}" with ${allAssets.length} assets...`);
+        
+        // Create the bundle using the store method
+        const newBundle = await createBundle({ 
+            name: bundleName,
+            description: `Bundle created by dragging assets onto ${targetItem.asset.title}`
+        });
+
+        if (!newBundle) {
+            throw new Error('Failed to create bundle');
+        }
+        
+        // Remove assets from their current bundles if they're in any
+        const removeOperations = allAssets.map(asset => {
+            let sourceBundleId: number | null = null;
+            for (const [bundleId, assetsInBundle] of bundleAssets.entries()) {
+                if (assetsInBundle.some(a => a.id === asset.id)) {
+                    sourceBundleId = bundleId;
+                    break;
+                }
+            }
+            return { asset, sourceBundleId };
+        });
+
+        const removePromises = removeOperations
+            .filter(({ sourceBundleId }) => sourceBundleId !== null)
+            .map(({ asset, sourceBundleId }) => removeAssetFromBundle(sourceBundleId!, asset.id));
+        
+        await Promise.all(removePromises);
+        
+        // Add all assets to the new bundle
+        const addPromises = allAssets.map(asset => addAssetToBundle(newBundle.id, asset.id));
+        await Promise.all(addPromises);
+        
+        // Refresh bundle assets
+        const refreshedAssets = await getBundleAssets(newBundle.id);
+        setBundleAssets(prev => new Map(prev.set(newBundle.id, refreshedAssets)));
+        
+        toast.success(`Successfully created bundle "${bundleName}" with ${allAssets.length} assets.`);
+        
+    } catch (error) {
+        console.error('Drop on asset error:', error);
+        toast.error('Failed to create bundle.');
+    }
+  }, [bundleAssets, removeAssetFromBundle, addAssetToBundle, createBundle, getBundleAssets]);
+
   const getIndentationStyle = (level: number) => ({ paddingLeft: `${level * 1.5}rem` });
 
   const renderTreeItem = useCallback((item: AssetTreeItem) => {
@@ -581,6 +715,7 @@ export default function AssetSelector({
     const isFolder = item.type === 'folder';
     const isEditing = editingItem?.id === item.id;
     const isDragOver = draggedOverBundleId === item.id;
+    const isDragOverAsset = draggedOverAssetId === item.id;
     
     if (item.type === 'folder' && item.bundle) {
       const bundleId = item.bundle.id;
@@ -589,18 +724,36 @@ export default function AssetSelector({
       return (
         <div key={item.id}>
           <div
-            className={cn("group flex items-center gap-2 py-2 px-3 hover:bg-muted cursor-pointer transition-colors border-t border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-l-4 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500")}
+            className={cn("group flex items-center justify-between gap-2 py-2 px-3 hover:bg-muted cursor-pointer transition-colors border-t border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-l-4 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500")}
             style={getIndentationStyle(item.level)}
             onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}
-            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDraggedOverBundleId(item.id); }}
-            onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDraggedOverBundleId(null); }}
+            onDragOver={(e) => { 
+              e.preventDefault(); 
+              e.stopPropagation(); 
+              setDraggedOverBundleId(item.id);
+              setIsDraggedOverTopLevel(false);
+              if (dragOverTimeout) {
+                clearTimeout(dragOverTimeout);
+                setDragOverTimeout(null);
+              }
+            }}
+            onDragLeave={(e) => { 
+              e.preventDefault(); 
+              e.stopPropagation(); 
+              setDraggedOverBundleId(null); 
+            }}
             onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropOnBundle(item, e); }}
           >
             <div className="w-4 h-4 flex items-center justify-center">
-              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : item.isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />} </Button>}
+              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className={cn("h-3 w-3 transition-transform duration-200", item.isExpanded && "rotate-90")} />} </Button>}
             </div>
             <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
-            <div className="w-4 h-4 flex items-center justify-center">{item.isExpanded ? <FolderOpen className="h-4 w-4 text-blue-600" /> : <Folder className="h-4 w-4 text-blue-600" />}</div>
+            <div className="w-4 h-4 flex items-center justify-center">
+              <div className="relative">
+                <Folder className={cn("h-4 w-4 text-blue-600 transition-opacity duration-200", item.isExpanded && "opacity-0")} />
+                <FolderOpen className={cn("h-4 w-4 text-blue-600 absolute inset-0 transition-opacity duration-200", !item.isExpanded && "opacity-0")} />
+              </div>
+            </div>
             <div className="flex-1 min-w-0" onDoubleClick={(e) => { e.stopPropagation(); handleEditItem(item); }}>
               <div className="flex items-center gap-2">
                 {isEditing ? (
@@ -609,17 +762,47 @@ export default function AssetSelector({
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleSaveEditing();}}><Check className="h-4 w-4 text-green-600"/></Button>
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleCancelEdit();}}><X className="h-4 w-4 text-red-600"/></Button>
                   </div>
-                ) : <span className="text-sm font-semibold truncate">{item.name}</span>}
-                {hasChildren && <Badge variant="secondary" className="text-xs">{item.children?.length} items</Badge>}
+                ) : (
+                  <>
+                    <span className="text-sm font-semibold truncate">{item.name}</span>
+                    {hasChildren && <Badge variant="secondary" className="text-xs">{item.children?.length} items</Badge>}
+                    <div className="md:hidden flex items-center gap-1">
+                      {item.type === 'folder' && (
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Bundle Details">
+                          <View className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {renderItemActions ? renderItemActions(item) : (
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-            <div className="flex items-center justify-end gap-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity pl-4">
+            <div className="hidden md:flex items-center gap-1">
+              {item.type === 'folder' && (
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Bundle Details">
+                  <View className="h-4 w-4" />
+                </Button>
+              )}
               {renderItemActions ? renderItemActions(item) : (
                 <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
               )}
             </div>
           </div>
-          {item.isExpanded && item.children && <div className="ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-0 space-y-0.5">{item.children.map(child => renderTreeItem(child))}</div>}
+          <div
+            data-state={item.isExpanded ? "open" : "closed"}
+            className="overflow-hidden transition-all duration-800 ease-out data-[state=closed]:animate-slide-up data-[state=open]:animate-slide-down data-[state=closed]:h-0 data-[state=open]:h-auto max-h-72 overflow-y-auto"
+          >
+            {item.children && (
+              <div className="ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-0 space-y-0.5 pb-2 pt-1">
+                <div className="space-y-0.5">
+                  {item.children.map(child => renderTreeItem(child))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
@@ -627,10 +810,30 @@ export default function AssetSelector({
     return (
       <div key={item.id}>
         <div
-          className={cn("group flex items-center gap-2.5 py-1.5 px-3 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 border-l-4 rounded-none border-blue-500")}
+          className={cn("group flex items-center gap-2.5 py-1.5 px-3 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 border-l-4 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500")}
           style={getIndentationStyle(item.level)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}
+          onDragOver={(e) => { 
+            e.preventDefault(); 
+            e.stopPropagation(); 
+            setDraggedOverAssetId(item.id);
+            setIsDraggedOverTopLevel(false);
+            if (dragOverTimeout) {
+              clearTimeout(dragOverTimeout);
+              setDragOverTimeout(null);
+            }
+          }}
+          onDragLeave={(e) => { 
+            e.preventDefault(); 
+            e.stopPropagation(); 
+            setDraggedOverAssetId(null); 
+          }}
+          onDrop={(e) => { 
+            e.preventDefault(); 
+            e.stopPropagation(); 
+            handleDropOnAsset(item, e); 
+          }}
           draggable onDragStart={(e) => {
             e.stopPropagation();
             const draggedItem = item.asset;
@@ -656,7 +859,7 @@ export default function AssetSelector({
             }
           }}
         >
-          <div className="w-4 h-4 flex items-center justify-center">{canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>{isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : item.isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</Button>}</div>
+          <div className="w-4 h-4 flex items-center justify-center">{canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>{isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className={cn("h-3 w-3 transition-transform duration-200", item.isExpanded && "rotate-90")} />}</Button>}</div>
           <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4" />
           <div className="w-4 h-4 flex items-center justify-center">{item.asset && getAssetIcon(item.asset.kind)}</div>
           <div className="flex-1 min-w-0 overflow-hidden" onDoubleClick={(e) => { e.stopPropagation(); handleEditItem(item); }}>
@@ -671,23 +874,39 @@ export default function AssetSelector({
                   <>
                     {item.asset?.kind && <Badge variant="outline" className={cn("text-xs flex-shrink-0", getAssetBadgeClass(item.asset.kind))}>{formatAssetKind(item.asset.kind)}</Badge>}
                     <span className="text-sm font-medium truncate">{item.name}</span>
+                    <div className="md:hidden flex items-center gap-1">
+                      {renderItemActions ? renderItemActions(item) : (
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+                      )}
+                    </div>
                   </>
               )}
             </div>
           </div>
           <div className="flex items-center gap-4 ml-auto pl-4">
             {item.asset && <div className="text-xs text-muted-foreground truncate hidden group-hover:block md:block">{formatDistanceToNow(new Date(item.asset.updated_at), { addSuffix: true })}</div>}
-            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="hidden md:flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {renderItemActions ? renderItemActions(item) : (
                 <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
               )}
             </div>
           </div>
         </div>
-        {item.isExpanded && item.children && <div className="ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-2 space-y-1">{item.children.map(child => renderTreeItem(child))}</div>}
+        <div
+          data-state={item.isExpanded ? "open" : "closed"}
+          className="overflow-hidden transition-all duration-300 ease-out data-[state=closed]:animate-slide-up data-[state=open]:animate-slide-down data-[state=closed]:h-0 data-[state=open]:h-auto max-h-72 overflow-y-auto"
+        >
+          {item.children && (
+            <div className="ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-2 space-y-1 pb-2 pt-1">
+              <div className="space-y-1">
+                {item.children.map(child => renderTreeItem(child))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
-  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, handleDropOnBundle, assets, renderItemActions]);
+  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, assets, renderItemActions]);
 
   const itemsForView = useMemo(() => {
     if (viewMode === 'card' && cardViewFolder) return cardViewFolder.children || [];
@@ -738,8 +957,59 @@ export default function AssetSelector({
         </div>
 
         {/* Asset Tree */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div 
+          className={cn("flex-1 min-h-0 overflow-hidden relative", isDraggedOverTopLevel && !draggedOverBundleId && !draggedOverAssetId && "bg-blue-50 dark:bg-blue-900/50 ring-2 ring-blue-500 ring-inset")}
+          onDragOver={(e) => { 
+            e.preventDefault(); 
+            // Clear any existing timeout
+            if (dragOverTimeout) {
+              clearTimeout(dragOverTimeout);
+            }
+            
+            // Set a timeout to show top-level drop zone only if we're not over a specific item
+            const timeout = setTimeout(() => {
+              if (!draggedOverBundleId && !draggedOverAssetId) {
+                setIsDraggedOverTopLevel(true);
+              }
+            }, 100); // Small delay to allow child elements to set their drag states first
+            
+            setDragOverTimeout(timeout);
+          }}
+          onDragLeave={(e) => { 
+            // Clear timeout
+            if (dragOverTimeout) {
+              clearTimeout(dragOverTimeout);
+              setDragOverTimeout(null);
+            }
+            
+            // Only set to false if we're leaving the container itself, not a child
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setIsDraggedOverTopLevel(false); 
+            }
+          }}
+          onDrop={(e) => { 
+            e.preventDefault(); 
+            // Clear timeout
+            if (dragOverTimeout) {
+              clearTimeout(dragOverTimeout);
+              setDragOverTimeout(null);
+            }
+            
+            // Only handle top level drop if we're not over a specific item
+            if (!draggedOverBundleId && !draggedOverAssetId) {
+              handleDropOnTopLevel(e); 
+            }
+          }}
+        >
           <ScrollArea className="h-full">
+            {isDraggedOverTopLevel && !draggedOverBundleId && !draggedOverAssetId && (
+              <div className="absolute inset-0 flex items-center justify-center bg-blue-50/90 dark:bg-blue-900/90 z-50 pointer-events-none">
+                <div className="text-blue-600 dark:text-blue-300 text-lg font-medium flex items-center gap-2">
+                  <Upload className="h-6 w-6" />
+                  Drop here to move assets to top level
+                </div>
+              </div>
+            )}
             {(isLoadingAssets || isLoadingBundles) ? (
               <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /><span className="ml-2 text-muted-foreground">Loading...</span></div>
             ) : (assetError || bundleError) ? (

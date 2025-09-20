@@ -137,12 +137,23 @@ export default function AnnotationRunnerDock({
 
   // Helper function to check if AI is properly configured
   const isAiConfigured = useMemo(() => {
-    const configured = !!(selectedProvider && apiKeys[selectedProvider]);
+    if (!selectedProvider) {
+      return false;
+    }
+    
+    // Ollama doesn't require an API key since it runs locally
+    if (selectedProvider === 'ollama') {
+      return true;
+    }
+    
+    // Other providers require API keys
+    const configured = !!(apiKeys[selectedProvider]);
     console.log('DOCK AI Config Check:', {
       selectedProvider,
       apiKeys,
       hasKey: selectedProvider ? !!apiKeys[selectedProvider] : false,
-      isConfigured: configured
+      isConfigured: configured,
+      isOllama: selectedProvider === 'ollama'
     });
     return configured;
   }, [selectedProvider, apiKeys]);
@@ -170,7 +181,11 @@ export default function AnnotationRunnerDock({
       return;
     }
     if (!isAiConfigured) {
-      toast.error("Please configure an AI provider and API key before running annotations.");
+      if (selectedProvider === 'ollama') {
+        toast.error("Please ensure Ollama is running and has at least one model installed.");
+      } else {
+        toast.error("Please configure an AI provider and API key before running annotations.");
+      }
       return;
     }
 
@@ -530,15 +545,18 @@ export default function AnnotationRunnerDock({
                                   <div className="w-2 h-2 rounded-full bg-green-500"></div>
                                   <span className="text-xs text-green-700 font-medium">
                                     {selectedProvider} configured ({selectedModel || 'default model'})
+                                    {selectedProvider === 'ollama' && ' - Local'}
                                   </span>
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-2 p-2 rounded-md bg-amber-50 border border-amber-200">
                                   <div className="w-2 h-2 rounded-full bg-amber-500"></div>
                                   <span className="text-xs text-amber-700">
-                                    {selectedProvider 
-                                      ? `Please add an API key for ${selectedProvider}` 
-                                      : 'Please configure an AI provider and API key'
+                                    {selectedProvider === 'ollama'
+                                      ? 'Ollama is ready - no API key needed'
+                                      : selectedProvider 
+                                        ? `Please add an API key for ${selectedProvider}` 
+                                        : 'Please configure an AI provider'
                                     }
                                   </span>
                                 </div>
@@ -598,10 +616,12 @@ export default function AnnotationRunnerDock({
                               : "bg-red-50 text-red-700 border-red-200"
                           )}>
                             {isAiConfigured 
-                              ? `${selectedProvider}` 
-                              : selectedProvider 
-                                ? 'Missing API key'
-                                : 'Not configured'
+                              ? `${selectedProvider}${selectedProvider === 'ollama' ? ' (Local)' : ''}` 
+                              : selectedProvider === 'ollama'
+                                ? 'Ollama Ready'
+                                : selectedProvider 
+                                  ? 'Missing API key'
+                                  : 'Not configured'
                             }
                           </Badge>
                         </div>

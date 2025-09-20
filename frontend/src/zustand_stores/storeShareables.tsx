@@ -1,13 +1,13 @@
 import { create } from 'zustand';
 import {
-  ShareablesService,
+  SharingService as ShareablesService,
   ShareableLinkCreate,
   ShareableLinkRead,
   ShareableLinkUpdate,
   ShareableLinkStats,
   ResourceType,
   DatasetPackageSummary,
-  Body_shareables_export_resource,
+  Body_sharing_export_resource as Body_shareables_export_resource,
   ExportBatchRequest,
   // Assuming the backend response for a single successful import might look like this:
   // We might need to define this more accurately based on actual backend output for single non-batch imports

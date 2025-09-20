@@ -60,7 +60,15 @@ const useAuth = () => {
       console.log('Login mutation successful, navigating to home.');
       setError(null);
       queryClient.invalidateQueries({ queryKey: ['CurrentUser'] });
-      router.push('/desks/home');
+      
+      // Don't auto-redirect if there's a return URL (SSO flow)
+      const urlParams = new URLSearchParams(window.location.search);
+      const returnUrl = urlParams.get('return_url');
+      
+      if (!returnUrl) {
+        router.push('/hq');
+      }
+      // If there is a return_url, let the login page handle the redirect
     },
     onError: (err: ApiError) => {
       let errDetail = (err.body as any)?.detail || 'Login failed';

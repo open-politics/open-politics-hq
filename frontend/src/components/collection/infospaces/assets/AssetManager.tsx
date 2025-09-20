@@ -37,10 +37,9 @@ import {
   EyeOff,
   View,
   Settings,
-  LayoutGrid,
-  Rows,
   ChevronLeft,
   FileIcon,
+  Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
@@ -73,6 +72,7 @@ import AssetDetailView from './Views/AssetDetailView';
 import CreateAssetDialog from './Helper/AssetCreateDataSourceDialog';
 import EditAssetOverlay from './Helper/EditAssetOverlay';
 import { AssetTransferPopover } from './Helper/AssetTransferPopover';
+import ArticleComposer from './Composer/ArticleComposer';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -83,6 +83,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import BundleEditDialog from './Helper/BundleEditDialog';
 import CreateBundleDialog from './Helper/CreateBundleDialog';
 import BundleDetailView from './Views/BundleDetailView';
@@ -98,6 +105,9 @@ import AssetSelector, { AssetTreeItem } from './AssetSelector';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import ShareItemDialog from './Helper/ShareItemDialog';
 import { ResourceType } from '@/client';
+import { TextSpanHighlightProvider } from '@/contexts/TextSpanHighlightContext';
+import { useIsMobile } from '@/hooks/use-mobile';
+
 
 type SortKey = 'name' | 'updated_at' | 'kind';
 type SortDirection = 'asc' | 'desc';
@@ -158,6 +168,11 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const [isCreateBundleOpen, setIsCreateBundleOpen] = useState(false);
   const [sharingItem, setSharingItem] = useState<AssetTreeItem | null>(null);
   
+  // Article composer state
+  const [isArticleComposerOpen, setIsArticleComposerOpen] = useState(false);
+  const [articleComposerMode, setArticleComposerMode] = useState<'create' | 'edit'>('create');
+  const [editingArticleId, setEditingArticleId] = useState<number | undefined>();
+  
   // Data fetching state
   const [bundleAssets, setBundleAssets] = useState<Map<number, AssetRead[]>>(new Map());
   const [childAssets, setChildAssets] = useState<Map<number, AssetRead[]>>(new Map());
@@ -169,6 +184,10 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   // View mode state
   const [viewMode, setViewMode] = useState<'list' | 'card'>('list');
   const [cardViewFolder, setCardViewFolder] = useState<AssetTreeItem | null>(null);
+
+  // Mobile responsive state
+  const isMobile = useIsMobile();
+  const [showMobileSelector, setShowMobileSelector] = useState(false);
 
   // Delete confirmation dialog state
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
@@ -716,6 +735,18 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     setIsCreateDialogOpen(true);
   };
 
+  const handleCreateArticle = () => {
+    setArticleComposerMode('create');
+    setEditingArticleId(undefined);
+    setIsArticleComposerOpen(true);
+  };
+
+  const handleEditArticle = (asset: AssetRead) => {
+    setArticleComposerMode('edit');
+    setEditingArticleId(asset.id);
+    setIsArticleComposerOpen(true);
+  };
+
   const transferItems = useMemo(() => {
     const items: Array<{ id: number; type: 'asset' | 'bundle'; title: string }> = [];
     selectedItems.forEach(itemId => {
@@ -732,6 +763,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     return items;
   }, [selectedItems, bundles, assets]);
 
+
   const renderItemActions = (item: AssetTreeItem) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -744,12 +776,18 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
         <DropdownMenuItem onClick={() => handleItemView(item)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
         {item.type === 'folder' && item.bundle && (
           <>
+            <DropdownMenuItem onClick={() => handleItemView(item)}><View className="mr-2 h-4 w-4" /> Bundle Details</DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleUploadToBundle(item.bundle!)}><Upload className="mr-2 h-4 w-4" /> Add Files</DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEditBundle(item.bundle!)}><Settings className="mr-2 h-4 w-4" /> Edit Details</DropdownMenuItem>
           </>
         )}
         {item.type === 'asset' && item.asset && (
-          <DropdownMenuItem onClick={() => handleEditAsset(item.asset!)}><Settings className="mr-2 h-4 w-4" /> Edit Details</DropdownMenuItem>
+          <>
+            <DropdownMenuItem onClick={() => handleEditAsset(item.asset!)}><Settings className="mr-2 h-4 w-4" /> Edit Details</DropdownMenuItem>
+            {item.asset.kind === 'article' && (
+              <DropdownMenuItem onClick={() => handleEditArticle(item.asset!)}><FileText className="mr-2 h-4 w-4" /> Edit Article</DropdownMenuItem>
+            )}
+          </>
         )}
         <DropdownMenuItem onClick={() => setSharingItem(item)}><Share2 className="mr-2 h-4 w-4" /> Share</DropdownMenuItem>
         <DropdownMenuItem onClick={() => handleExportItem(item)}><Download className="mr-2 h-4 w-4" /> Export</DropdownMenuItem>
@@ -766,54 +804,168 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   }
 
   return (
-    <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-1 sm:px-2 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-start justify-start gap-2 border-b border-primary/80 pb-2">
-        <div className="flex items-center gap-0"> 
-          <FileIcon className="h-5 w-5" />
-          <h1 className="text-xl font-bold ml-1">Asset Manager</h1> 
-        </div>
-      </div>
-      <div className="flex-none py-2 px-1 sm:px-2 border-b border-primary/80">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="default" onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} className="h-9"><Upload className="h-4 w-4 mr-2" /> Upload Assets</Button>
-            <Button variant="outline" onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} className="h-9"><LinkIcon className="h-4 w-4 mr-2" /> Add from URL</Button>
-            <Button variant="outline" onClick={handleCreateEmptyBundle} className="h-9"><FolderPlus className="h-4 w-4 mr-2" /> Create Folder</Button>
-            <Button variant="outline" onClick={() => document.getElementById('import-file-input')?.click()} className="h-9"><Download className="h-4 w-4 mr-2" /> Import</Button>
-            <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
+    <TextSpanHighlightProvider>
+      <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-1 sm:px-2 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-primary/80 pb-2">
+          <div className="flex items-center gap-2"> 
+            <FileIcon className="h-5 w-5" />
+            <h1 className="text-xl font-bold">Asset Manager</h1> 
           </div>
-          <div className="flex items-center gap-2">
-            {selectedItems.size > 0 && (
-              <>
-                <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/30">{selectedItems.size} selected</Badge>
-                <Button variant="outline" size="sm" onClick={handleBulkDelete} className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-3 w-3 mr-1" /> Delete</Button>
-                <Button variant="outline" size="sm" onClick={handleBulkExport} className="h-7 px-2"><Download className="h-3 w-3 mr-1" /> Export</Button>
-                <AssetTransferPopover selectedItems={transferItems} onComplete={() => setSelectedItems(new Set())} />
-                <Button variant="ghost" size="sm" onClick={() => setSelectedItems(new Set())} className="h-6 w-6 p-0"><X className="h-3 w-3" /></Button>
+        </div>
+        <div className="flex-none py-2 px-1 sm:px-2 border-b border-primary/80">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex flex-wrap gap-2">
+              {/* Mobile file list button moved to left side */}
+              {isMobile && (
+                <>
+                  <Sheet open={showMobileSelector} onOpenChange={setShowMobileSelector}>
+                    <SheetTrigger asChild>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-9 px-3 text-xs bg-blue-600 hover:bg-blue-700 text-white border-0 rounded-md shadow-sm"
+                      >
+                        <Menu className="h-4 w-4 mr-1" />
+                        All Files
+                      </Button>
+                    </SheetTrigger>
+                  <SheetContent side="left" className="w-full sm:w-full flex flex-col">
+                    <SheetHeader className="flex-shrink-0">
+                      <SheetTitle>Assets & Bundles</SheetTitle>
+                    </SheetHeader>
+                    <div className="flex-1 mt-4 min-h-0">
+                      <AssetSelector
+                        selectedItems={selectedItems}
+                        onSelectionChange={setSelectedItems}
+                        onItemView={(item) => {
+                          handleItemView(item);
+                          setShowMobileSelector(false);
+                        }}
+                        onItemDoubleClick={(item) => {
+                          handleItemDoubleClick(item);
+                          setShowMobileSelector(false);
+                        }}
+                        renderItemActions={(item) => (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => e.stopPropagation()}>
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenuLabel>{item.type === 'folder' ? 'Folder' : 'Asset'} Actions</DropdownMenuLabel>
+                              <DropdownMenuItem onClick={() => { handleItemView(item); setShowMobileSelector(false); }}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
+                              {item.type === 'folder' && item.bundle && (
+                                <>
+                                  <DropdownMenuItem onClick={() => { handleItemView(item); setShowMobileSelector(false); }}><View className="mr-2 h-4 w-4" /> Bundle Details</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleUploadToBundle(item.bundle!)}><Upload className="mr-2 h-4 w-4" /> Add Files</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleEditBundle(item.bundle!)}><Settings className="mr-2 h-4 w-4" /> Edit Details</DropdownMenuItem>
+                                </>
+                              )}
+                              {item.type === 'asset' && item.asset && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handleEditAsset(item.asset!)}><Settings className="mr-2 h-4 w-4" /> Edit Details</DropdownMenuItem>
+                                  {item.asset.kind === 'article' && (
+                                    <DropdownMenuItem onClick={() => handleEditArticle(item.asset!)}><FileText className="mr-2 h-4 w-4" /> Edit Article</DropdownMenuItem>
+                                  )}
+                                </>
+                              )}
+                              <DropdownMenuItem onClick={() => setSharingItem(item)}><Share2 className="mr-2 h-4 w-4" /> Share</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleExportItem(item)}><Download className="mr-2 h-4 w-4" /> Export</DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600" onClick={() => item.asset ? handleDeleteAsset(item.asset) : item.bundle ? handleDeleteBundle(item.bundle) : null}>
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      />
+                    </div>
+                  </SheetContent>
+                </Sheet>
+                {/* Separator after file list button */}
+                <div className="w-px h-6 bg-border/60 mx-1"></div>
               </>
-            )}
+              )}
+              <Button 
+                variant="default" 
+                onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} 
+                className={cn("h-9", isMobile && "text-xs px-2")}
+              >
+                <Upload className="h-4 w-4 mr-1" /> 
+                {isMobile ? "Upload" : "Upload Assets"}
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} 
+                className={cn("h-9", isMobile && "text-xs px-2")}
+              >
+                <LinkIcon className="h-4 w-4 mr-1" /> 
+                {isMobile ? "URL" : "Add from URL"}
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={handleCreateEmptyBundle} 
+                className={cn("h-9", isMobile && "text-xs px-2")}
+              >
+                <FolderPlus className="h-4 w-4 mr-1" /> 
+                {isMobile ? "Folder" : "Create Folder"}
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={handleCreateArticle} 
+                className={cn("h-9", isMobile && "text-xs px-2")}
+              >
+                <FileText className="h-4 w-4 mr-1" /> 
+                {isMobile ? "Article" : "Create Article"}
+              </Button>
+              {!isMobile && (
+                <Button variant="outline" onClick={() => document.getElementById('import-file-input')?.click()} className="h-9">
+                  <Download className="h-4 w-4 mr-2" /> Import
+                </Button>
+              )}
+              <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
+            </div>
+            <div className="flex items-center gap-2">
+              {selectedItems.size > 0 && (
+                <>
+                  <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/30">
+                    {selectedItems.size} {isMobile ? "" : "selected"}
+                  </Badge>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleBulkDelete} 
+                    className={cn("h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50", isMobile && "px-1")}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" /> 
+                    {!isMobile && "Delete"}
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleBulkExport} 
+                    className={cn("h-7 px-2", isMobile && "px-1")}
+                  >
+                    <Download className="h-3 w-3 mr-1" /> 
+                    {!isMobile && "Export"}
+                  </Button>
+                  {!isMobile && <AssetTransferPopover selectedItems={transferItems} onComplete={() => setSelectedItems(new Set())} />}
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedItems(new Set())} className="h-6 w-6 p-0">
+                    <X className="h-3 w-3" />
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 min-h-0 overflow-hidden p-1 pb-3">
-        <ResizablePanelGroup direction="horizontal" className="h-full w-full rounded-lg border-primary/60">
-          <ResizablePanel defaultSize={40} minSize={25} maxSize={65} className="min-w-[400px]">
-            <AssetSelector
-                selectedItems={selectedItems}
-                onSelectionChange={setSelectedItems}
-                onItemView={handleItemView}
-                onItemDoubleClick={handleItemDoubleClick}
-                renderItemActions={renderItemActions}
-            />
-          </ResizablePanel>
-
-          <ResizableHandle withHandle className="bg-border" />
-
-          <ResizablePanel defaultSize={60} minSize={35} maxSize={75}>
-            <div className="h-full border-l">
+        {/* Main Content */}
+        <div className="flex-1 min-h-0 overflow-hidden p-1 pb-3 backdrop-blur">
+          {isMobile ? (
+            /* Mobile Layout - Single panel with sheet for selector */
+            <div className="h-full w-full rounded-lg border border-primary/60">
               {activeDetail?.type === 'asset' ? (
                 <AssetDetailView
                   selectedAssetId={activeDetail.id}
@@ -831,53 +983,197 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   highlightAssetId={highlightAssetId}
                 />
               ) : (
-                <div className="h-full flex items-center justify-center p-6">
-                  <div className="text-center">
-                    <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium text-muted-foreground">Select an item to view its details</h3>
+                <div className="h-full flex flex-col backdrop-blur">
+                  {/* Mobile Asset Preview */}
+                  <div className="flex-none p-4 border-b ">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-medium">Recent Assets</h3>
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => {
+                            // Reset any search filters to show all recent assets
+                            setSearchTerm('');
+                            setAssetTypeFilter('all');
+                            setSortOption('updated_at-desc');
+                            setShowMobileSelector(true);
+                          }}
+                        >
+                          View All
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto">
+                    {filteredTree.length === 0 ? (
+                      <div className="flex items-center justify-center h-full p-6">
+                        <div className="text-center">
+                          <FileIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                          <h3 className="text-lg font-medium text-muted-foreground mb-2">No Assets Yet</h3>
+                          <p className="text-sm text-muted-foreground mb-4">Start by uploading your first asset</p>
+                          <Button 
+                            variant="default"
+                            onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }}
+                          >
+                            <Upload className="h-4 w-4 mr-2" />
+                            Upload Assets
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 space-y-3">
+                        {filteredTree.slice(0, 8).map((item) => {
+                          const Icon = item.type === 'folder' ? Folder : 
+                            item.asset?.kind === 'pdf' ? FileText :
+                            item.asset?.kind === 'csv' ? FileSpreadsheet :
+                            item.asset?.kind === 'image' ? ImageIcon :
+                            item.asset?.kind === 'video' ? Video :
+                            item.asset?.kind === 'audio' ? Music :
+                            item.asset?.kind === 'web' ? Globe :
+                            FileText;
+                          
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => handleItemView(item)}
+                              className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                            >
+                              <Icon className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm truncate">{item.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {item.type === 'folder' ? 
+                                    `Bundle • ${item.children?.length || 0} items` :
+                                    `${item.asset?.kind?.toUpperCase()} • ${item.asset?.updated_at ? formatDistanceToNow(new Date(item.asset.updated_at)) + ' ago' : ''}`
+                                  }
+                                </p>
+                              </div>
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          );
+                        })}
+                        
+                        {filteredTree.length > 8 && (
+                          <div className="pt-2">
+                            <Button 
+                              variant="outline" 
+                              className="w-full"
+                              onClick={() => setShowMobileSelector(true)}
+                            >
+                              <Menu className="h-4 w-4 mr-2" />
+                              View All {filteredTree.length} Items
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
+          ) : (
+            /* Desktop Layout - Resizable panels */
+            <ResizablePanelGroup direction="horizontal" className="h-full w-full rounded-lg border-primary/60">
+              <ResizablePanel 
+                defaultSize={40} 
+                minSize={20} 
+                maxSize={80} 
+                className="min-w-[300px]"
+              >
+                  <AssetSelector
+                    selectedItems={selectedItems}
+                    onSelectionChange={setSelectedItems}
+                    onItemView={handleItemView}
+                    onItemDoubleClick={handleItemDoubleClick}
+                    renderItemActions={renderItemActions}
+                />
+              </ResizablePanel>
+
+              <ResizableHandle withHandle className="bg-border" />
+
+              <ResizablePanel 
+                defaultSize={60} 
+                minSize={20} 
+                maxSize={80}
+              >
+                <div className="h-full border-l">
+                  {activeDetail?.type === 'asset' ? (
+                    <AssetDetailView
+                      selectedAssetId={activeDetail.id}
+                      highlightAssetIdOnOpen={highlightAssetId}
+                      onEdit={handleEditAsset}
+                      schemas={[]}
+                      onLoadIntoRunner={onLoadIntoRunner}
+                    />
+                  ) : activeDetail?.type === 'bundle' ? (
+                    <BundleDetailView
+                      selectedBundleId={activeDetail.id}
+                      onLoadIntoRunner={onLoadIntoRunner}
+                      selectedAssetId={selectedAssetInBundle}
+                      onAssetSelect={setSelectedAssetInBundle}
+                      highlightAssetId={highlightAssetId}
+                    />
+                  ) : (
+                    <div className="h-full flex items-center justify-center p-6">
+                      <div className="text-center">
+                        <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                        <h3 className="text-lg font-medium text-muted-foreground">Select an item to view its details</h3>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          )}
+        </div>
+
+        {/* Dialogs */}
+        <CreateAssetDialog open={isCreateDialogOpen} onClose={() => { setIsCreateDialogOpen(false); setUploadToBundle(null); setCreateDialogInitialFocus(undefined); }} mode={createDialogMode} initialFocus={createDialogInitialFocus} existingBundleId={uploadToBundle?.id} existingBundleName={uploadToBundle?.name} />
+        <CreateBundleDialog open={isCreateBundleOpen} onClose={() => setIsCreateBundleOpen(false)} />
+        <ArticleComposer 
+          open={isArticleComposerOpen} 
+          onClose={() => {
+            setIsArticleComposerOpen(false);
+            setEditingArticleId(undefined);
+          }} 
+          mode={articleComposerMode}
+          existingAssetId={editingArticleId}
+        />
+        {sharingItem && <ShareItemDialog item={sharingItem} onClose={() => setSharingItem(null)} />}
+        {editingAsset && <EditAssetOverlay open={true} onClose={() => setEditingAsset(null)} asset={editingAsset} onSave={handleSaveAsset} />}
+        {editingBundle && <BundleEditDialog open={true} onClose={() => setEditingBundle(null)} bundle={editingBundle} onSave={handleSaveBundle} />}
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={deleteConfirmation.isOpen} onOpenChange={(open) => !open && setDeleteConfirmation({ type: 'asset', items: [], isOpen: false })}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+              <AlertDialogDescription>
+                {(() => {
+                  const { items } = deleteConfirmation;
+                  const count = items.length;
+                  const assets = items.filter(item => 'kind' in item);
+                  const bundles = items.filter(item => 'name' in item && !('kind' in item));
+                  if (count === 1) {
+                      if (assets.length === 1) return `Are you sure you want to delete the asset "${(assets[0] as AssetRead).title}"? This cannot be undone.`;
+                      if (bundles.length === 1) return `Are you sure you want to delete the folder "${(bundles[0] as BundleRead).name}"? Assets inside will NOT be deleted. This cannot be undone.`;
+                  }
+                  let message = `Are you sure you want to delete ${items.length} items?`;
+                  if (bundles.length > 0) message += ` Assets inside folders will NOT be deleted.`;
+                  message += ` This action cannot be undone.`;
+                  return message;
+                })()}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={executeDelete} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-
-      {/* Dialogs */}
-      <CreateAssetDialog open={isCreateDialogOpen} onClose={() => { setIsCreateDialogOpen(false); setUploadToBundle(null); setCreateDialogInitialFocus(undefined); }} mode={createDialogMode} initialFocus={createDialogInitialFocus} existingBundleId={uploadToBundle?.id} existingBundleName={uploadToBundle?.name} />
-      <CreateBundleDialog open={isCreateBundleOpen} onClose={() => setIsCreateBundleOpen(false)} />
-      {sharingItem && <ShareItemDialog item={sharingItem} onClose={() => setSharingItem(null)} />}
-      {editingAsset && <EditAssetOverlay open={true} onClose={() => setEditingAsset(null)} asset={editingAsset} onSave={handleSaveAsset} />}
-      {editingBundle && <BundleEditDialog open={true} onClose={() => setEditingBundle(null)} bundle={editingBundle} onSave={handleSaveBundle} />}
-
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={deleteConfirmation.isOpen} onOpenChange={(open) => !open && setDeleteConfirmation({ type: 'asset', items: [], isOpen: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
-            <AlertDialogDescription>
-              {(() => {
-                const { items } = deleteConfirmation;
-                const count = items.length;
-                const assets = items.filter(item => 'kind' in item);
-                const bundles = items.filter(item => 'name' in item && !('kind' in item));
-                if (count === 1) {
-                    if (assets.length === 1) return `Are you sure you want to delete the asset "${(assets[0] as AssetRead).title}"? This cannot be undone.`;
-                    if (bundles.length === 1) return `Are you sure you want to delete the folder "${(bundles[0] as BundleRead).name}"? Assets inside will NOT be deleted. This cannot be undone.`;
-                }
-                let message = `Are you sure you want to delete ${items.length} items?`;
-                if (bundles.length > 0) message += ` Assets inside folders will NOT be deleted.`;
-                message += ` This action cannot be undone.`;
-                return message;
-              })()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={executeDelete} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+    </TextSpanHighlightProvider>
   );
 }

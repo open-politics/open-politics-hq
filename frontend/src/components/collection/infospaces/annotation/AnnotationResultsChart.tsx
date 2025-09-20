@@ -95,6 +95,10 @@ interface Props {
   // Settings callback for persistence
   onSettingsChange?: (settings: any) => void;
   initialSettings?: any;
+  // NEW: Result selection callback
+  onResultSelect?: (result: FormattedAnnotation) => void;
+  // NEW: Field interaction callback for opening enhanced dialog
+  onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
 }
 
 // NEW: Interface for group selection in timeline charts
@@ -751,6 +755,10 @@ const AnnotationResultsChart: React.FC<Props> = ({
   onVariableSplittingChange,
   onSettingsChange,
   initialSettings,
+  // NEW: Result selection callback
+  onResultSelect,
+  // NEW: Field interaction callback for opening enhanced dialog
+  onFieldInteraction,
 }) => {
   const [isGrouped, setIsGrouped] = useState(false);
   const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
@@ -1747,7 +1755,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
 
       {/* Details Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chart Point Details</DialogTitle>
             <DialogDescription>
@@ -1761,11 +1769,13 @@ const AnnotationResultsChart: React.FC<Props> = ({
             {selectedPoint && (
               <ChartDialogDetails 
                 selectedPoint={selectedPoint}
-                results={results}
+                results={resultsForChart}
                 schemas={schemas}
                 assets={assets}
                 timeAxisConfig={timeAxisConfig}
                 selectedTimeInterval={selectedTimeInterval}
+                onResultSelect={onResultSelect}
+                onFieldInteraction={onFieldInteraction}
               />
             )}
           </ScrollArea>
@@ -1787,6 +1797,8 @@ interface ChartDialogDetailsProps {
   assets?: AssetRead[];
   timeAxisConfig: TimeAxisConfig | null;
   selectedTimeInterval: 'day' | 'week' | 'month' | 'quarter' | 'year';
+  onResultSelect?: (result: FormattedAnnotation) => void;
+  onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
 }
 
 const ChartDialogDetails: React.FC<ChartDialogDetailsProps> = ({ 
@@ -1795,26 +1807,138 @@ const ChartDialogDetails: React.FC<ChartDialogDetailsProps> = ({
     schemas, 
     assets,
     timeAxisConfig,
-    selectedTimeInterval
+    selectedTimeInterval,
+    onResultSelect,
+    onFieldInteraction,
 }) => {
+    // Field selection state for controlling what fields to show
+    const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
+        const initialState: Record<number, string[]> = {};
+        schemas.forEach(schema => {
+            const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+            // Show all fields by default for better overview
+            initialState[schema.id] = targetKeys.map(tk => tk.key);
+        });
+        return initialState;
+    });
+
+    // Update field selection when schemas change
+    useEffect(() => {
+        setSelectedFieldsPerScheme(prev => {
+            const newState: Record<number, string[]> = {};
+            schemas.forEach(schema => {
+                const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+                const keys = targetKeys.map(tk => tk.key);
+                newState[schema.id] = prev[schema.id] ?? keys; // Keep existing selection or use all
+            });
+            return newState;
+        });
+    }, [schemas]);
+
+    const handleFieldToggle = (schemaId: number, fieldKey: string) => {
+        setSelectedFieldsPerScheme(prev => {
+            const currentSelected = prev[schemaId] || [];
+            const isSelected = currentSelected.includes(fieldKey);
+            const newSelected = isSelected 
+                ? currentSelected.filter(key => key !== fieldKey) 
+                : [...currentSelected, fieldKey];
+            
+            // Allow zero fields to hide schema completely if desired
+            return { ...prev, [schemaId]: newSelected };
+        });
+    };
     
     if ('valueString' in selectedPoint) {
+        // For grouped data, get the results that match this value
         const relevantAssetIds = Array.from(selectedPoint.sourceDocuments.values()).flat();
+        const relevantSchema = schemas.find(s => s.name === selectedPoint.schemeName);
+        
+        if (!relevantSchema) {
+            return (
+                <div className="p-4">
+                    <p className="text-red-500">Schema not found: {selectedPoint.schemeName}</p>
+                    <p className="text-sm text-muted-foreground mt-2">
+                        Available schemas: {schemas.map(s => s.name).join(', ')}
+                    </p>
+                </div>
+            );
+        }
+
+        // Filter results to only include those for this schema and these assets
+        const relevantResults = results.filter(r => 
+            r.schema_id === relevantSchema.id && 
+            relevantAssetIds.includes(r.asset_id)
+        );
+        
+        const availableFields = getTargetKeysForScheme(relevantSchema.id, schemas);
+        const selectedFields = selectedFieldsPerScheme[relevantSchema.id] || [];
+
         return (
             <div className="p-4 space-y-4">
-                <h3 className="font-bold">{selectedPoint.schemeName}: "{selectedPoint.valueString}" ({selectedPoint.totalCount} results)</h3>
+                <div className="flex items-center justify-between">
+                    <h3 className="font-bold">{selectedPoint.schemeName}: "{selectedPoint.valueString}" ({selectedPoint.totalCount} results)</h3>
+                    
+                    {/* Field Selection Controls */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button variant="outline" size="sm">
+                                <Settings2 className="h-4 w-4 mr-2" />
+                                Fields ({selectedFields.length})
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-0" align="end">
+                            <div className="p-3 border-b">
+                                <h4 className="font-medium text-sm">Show Fields for {relevantSchema.name}</h4>
+                            </div>
+                            <ScrollArea className="max-h-60 p-2">
+                                {availableFields.map(field => (
+                                    <div key={field.key} className="flex items-center space-x-2 px-2 py-1.5 text-sm">
+                                        <Checkbox
+                                            id={`chart-field-${relevantSchema.id}-${field.key}`}
+                                            checked={selectedFields.includes(field.key)}
+                                            onCheckedChange={() => handleFieldToggle(relevantSchema.id, field.key)}
+                                        />
+                                        <Label
+                                            htmlFor={`chart-field-${relevantSchema.id}-${field.key}`}
+                                            className="font-normal cursor-pointer truncate flex-1"
+                                        >
+                                            {field.name} ({field.type})
+                                        </Label>
+                                    </div>
+                                ))}
+                            </ScrollArea>
+                        </PopoverContent>
+                    </Popover>
+                </div>
+                
+                <p className="text-sm text-muted-foreground">Found {relevantResults.length} matching results for {relevantAssetIds.length} assets.</p>
                 {relevantAssetIds.map((assetId: number) => {
                     const asset = assets?.find(a => a.id === assetId);
-                    const assetResults = results.filter(r => r.asset_id === assetId && r.schema_id === schemas.find(s => s.name === selectedPoint.schemeName)?.id);
-                    const relevantSchema = schemas.find(s => s.name === selectedPoint.schemeName);
+                    const assetResults = relevantResults.filter(r => r.asset_id === assetId);
 
-                    if (!asset || !relevantSchema) return null;
+                    if (!asset || assetResults.length === 0) return null;
 
                     return (
                         <div key={assetId} className="border-t pt-4">
                             <AssetLink assetId={assetId} className="font-semibold hover:underline">{asset.title || `Asset #${assetId}`}</AssetLink>
                             <div className="mt-2 pl-4 border-l-2">
-                              <AnnotationResultDisplay result={assetResults} schema={[relevantSchema]} compact={false} useTabs={false} />
+                              <AnnotationResultDisplay 
+                                result={assetResults} 
+                                schema={[relevantSchema]} 
+                                compact={false} 
+                                useTabs={false}
+                                selectedFieldKeys={selectedFields.length > 0 ? selectedFields : undefined}
+                                maxFieldsToShow={undefined}
+                                renderContext="dialog"
+                                onResultSelect={onResultSelect}
+                                onFieldInteraction={(fieldKey, justification) => {
+                                  // Handle field interaction by calling the parent callback with the first result
+                                  const firstResult = assetResults[0];
+                                  if (firstResult && onFieldInteraction) {
+                                    onFieldInteraction(firstResult, fieldKey);
+                                  }
+                                }}
+                              />
                             </div>
                         </div>
                     );
@@ -1825,27 +1949,61 @@ const ChartDialogDetails: React.FC<ChartDialogDetailsProps> = ({
     
     else if ('dateString' in selectedPoint) {
         const assetsMap = new Map(assets?.map(a => [a.id, a]));
-        const relevantResults = results.filter(r => {
-            const timestamp = getTimestamp(r, assetsMap, timeAxisConfig);
-            if (!timestamp) return false;
-            
-            let dateKey: string;
-            switch (selectedTimeInterval) {
-                case 'week': dateKey = format(startOfWeek(timestamp), 'yyyy-MM-dd'); break;
-                case 'month': dateKey = format(startOfMonth(timestamp), 'yyyy-MM-dd'); break;
-                case 'quarter': dateKey = format(startOfQuarter(timestamp), 'yyyy-MM-dd'); break;
-                case 'year': dateKey = format(startOfYear(timestamp), 'yyyy-MM-dd'); break;
-                default: dateKey = format(startOfDay(timestamp), 'yyyy-MM-dd'); break;
-            }
-            return dateKey === selectedPoint.dateString;
-        });
         
-        const relevantAssetIds = Array.from(new Set(relevantResults.map(r => r.asset_id)));
-
-         return (
+        // FIXED: Use the documents array directly instead of trying to recompute time filtering
+        // This is more reliable since the chart data already computed which documents belong to this time bucket
+        const relevantAssetIds = selectedPoint.documents || [];
+        const relevantResults = results.filter(r => relevantAssetIds.includes(r.asset_id));
+        
+        return (
              <div className="p-4 space-y-4">
-                 <h3 className="font-bold">Date: {format(new Date(selectedPoint.timestamp), 'PPP')}</h3>
-                 <p className="text-sm text-muted-foreground">{selectedPoint.count} annotation(s) in this time bucket.</p>
+                 <div className="flex items-center justify-between">
+                     <h3 className="font-bold">Date: {format(new Date(selectedPoint.timestamp), 'PPP')}</h3>
+                     
+                     {/* Multi-Schema Field Selection Controls */}
+                     <Popover>
+                         <PopoverTrigger asChild>
+                             <Button variant="outline" size="sm">
+                                 <Settings2 className="h-4 w-4 mr-2" />
+                                 Field Settings
+                             </Button>
+                         </PopoverTrigger>
+                         <PopoverContent className="w-80 p-0" align="end">
+                             <div className="p-3 border-b">
+                                 <h4 className="font-medium text-sm">Show Fields by Schema</h4>
+                             </div>
+                             <ScrollArea className="max-h-80 p-2">
+                                 {schemas.map(schema => {
+                                     const availableFields = getTargetKeysForScheme(schema.id, schemas);
+                                     const selectedFields = selectedFieldsPerScheme[schema.id] || [];
+                                     
+                                     return (
+                                         <div key={schema.id} className="mb-4 last:mb-0">
+                                             <div className="font-medium text-sm mb-2 px-2">{schema.name}</div>
+                                             {availableFields.map(field => (
+                                                 <div key={field.key} className="flex items-center space-x-2 px-4 py-1.5 text-sm">
+                                                     <Checkbox
+                                                         id={`timeline-field-${schema.id}-${field.key}`}
+                                                         checked={selectedFields.includes(field.key)}
+                                                         onCheckedChange={() => handleFieldToggle(schema.id, field.key)}
+                                                     />
+                                                     <Label
+                                                         htmlFor={`timeline-field-${schema.id}-${field.key}`}
+                                                         className="font-normal cursor-pointer truncate flex-1"
+                                                     >
+                                                         {field.name} ({field.type})
+                                                     </Label>
+                                                 </div>
+                                             ))}
+                                         </div>
+                                     );
+                                 })}
+                             </ScrollArea>
+                         </PopoverContent>
+                     </Popover>
+                 </div>
+                 
+                 <p className="text-sm text-muted-foreground">{selectedPoint.documents?.length || 0} document(s) in this time bucket, {relevantResults.length} total annotation results.</p>
                  {relevantAssetIds.map(assetId => {
                     const asset = assets?.find(a => a.id === assetId);
                     if (!asset) return null;
@@ -1854,11 +2012,37 @@ const ChartDialogDetails: React.FC<ChartDialogDetailsProps> = ({
                     const relevantSchemaIds = Array.from(new Set(assetResults.map(r => r.schema_id)));
                     const relevantSchemas = schemas.filter(s => relevantSchemaIds.includes(s.id));
 
+                    if (assetResults.length === 0) return null;
+
                     return (
                         <div key={assetId} className="border-t pt-4">
                             <AssetLink assetId={assetId} className="font-semibold hover:underline">{asset.title || `Asset #${assetId}`}</AssetLink>
                             <div className="mt-2 pl-4 border-l-2">
-                              <AnnotationResultDisplay result={assetResults} schema={relevantSchemas} compact={false} useTabs={assetResults.length > 1} />
+                              <AnnotationResultDisplay 
+                                result={assetResults} 
+                                schema={relevantSchemas} 
+                                compact={false} 
+                                useTabs={assetResults.length > 1}
+                                selectedFieldKeys={(() => {
+                                    // Combine selected fields from all relevant schemas
+                                    const allSelectedFields: string[] = [];
+                                    relevantSchemas.forEach(schema => {
+                                        const schemaFields = selectedFieldsPerScheme[schema.id] || [];
+                                        allSelectedFields.push(...schemaFields);
+                                    });
+                                    return allSelectedFields.length > 0 ? allSelectedFields : undefined;
+                                })()}
+                                maxFieldsToShow={undefined}
+                                renderContext="dialog"
+                                onResultSelect={onResultSelect}
+                                onFieldInteraction={(fieldKey, justification) => {
+                                  // Handle field interaction by calling the parent callback with the first result
+                                  const firstResult = assetResults[0];
+                                  if (firstResult && onFieldInteraction) {
+                                    onFieldInteraction(firstResult, fieldKey);
+                                  }
+                                }}
+                              />
                             </div>
                         </div>
                     );

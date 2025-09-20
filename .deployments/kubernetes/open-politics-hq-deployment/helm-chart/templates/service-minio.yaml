@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.minio.service.type }}
+  ports:
+    - port: {{ .Values.minio.service.port }}
+      targetPort: {{ .Values.minio.service.port }}
+      protocol: TCP
+      name: api
+  selector:
+    app: minio
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-console
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.minio.consoleService.type }}
+  ports:
+    - port: {{ .Values.minio.consoleService.port }}
+      targetPort: {{ .Values.minio.consoleService.port }}
+      protocol: TCP
+      name: console
+  selector:
+    app: minio

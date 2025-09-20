@@ -19,28 +19,43 @@ from app.schemas import TokenPayload
 from app.api.providers.base import (
     StorageProvider,
     ScrapingProvider, 
-    ClassificationProvider, 
     SearchProvider,
     GeospatialProvider,
     EmbeddingProvider
 )
-
-# --- Provider Factory Imports --- 
+from app.api.providers.model_registry import ModelRegistryService
 from app.api.providers.factory import (
     create_storage_provider,
     create_scraping_provider,
-    create_classification_provider,
     create_search_provider,
+    create_embedding_provider,
     create_geospatial_provider,
-    create_embedding_provider
+    create_model_registry,
 )
+from app.api.services.annotation_service import AnnotationService
+from app.api.services.infospace_service import InfospaceService 
+from app.api.services.shareable_service import ShareableService 
+from app.api.services.package_service import PackageService
+from app.api.services.bundle_service import BundleService 
+from app.api.services.asset_service import AssetService 
+from app.api.services.analysis_service import AnalysisService
+from app.api.services.dataset_service import DatasetService
+from app.api.services.content_ingestion_service import ContentIngestionService
+from app.api.services.backup_service import BackupService
+from app.api.services.user_backup_service import UserBackupService
+from app.api.services.task_service import TaskService
+from app.api.services.source_service import SourceService
+from app.api.services.chunking_service import ChunkingService
+from app.api.services.embedding_service import EmbeddingService
+from app.api.services.monitor_service import MonitorService
+from app.api.services.pipeline_service import PipelineService
+from app.api.services.conversation_service import IntelligenceConversationService
 
 # --- Service Class Imports --- 
 # Use TYPE_CHECKING to ensure imports are only for type analysis, avoiding runtime circularities
 # The actual classes will be resolved from their modules by FastAPI when dependencies are built.
 if TYPE_CHECKING:
     from app.api.services.annotation_service import AnnotationService
-    from app.api.services.ingestion_service import IngestionService 
     from app.api.services.infospace_service import InfospaceService 
     from app.api.services.shareable_service import ShareableService 
     from app.api.services.package_service import PackageService 
@@ -54,16 +69,23 @@ if TYPE_CHECKING:
 # but using string literals (e.g., Annotated['InfospaceService', ...]) is safer for complex DI graphs.
 # For Pylance to be happy with direct types in Annotated, these imports must be resolvable.
 from app.api.services.annotation_service import AnnotationService
-from app.api.services.ingestion_service import IngestionService 
 from app.api.services.infospace_service import InfospaceService 
 from app.api.services.shareable_service import ShareableService 
 from app.api.services.package_service import PackageService
 from app.api.services.bundle_service import BundleService 
 from app.api.services.asset_service import AssetService 
-from app.api.services.task_service import TaskService 
 from app.api.services.analysis_service import AnalysisService
 from app.api.services.dataset_service import DatasetService
-from app.api.services.content_service import ContentService
+from app.api.services.content_ingestion_service import ContentIngestionService
+from app.api.services.backup_service import BackupService
+from app.api.services.user_backup_service import UserBackupService
+from app.api.services.task_service import TaskService
+from app.api.services.source_service import SourceService
+from app.api.services.chunking_service import ChunkingService
+from app.api.services.embedding_service import EmbeddingService
+from app.api.services.monitor_service import MonitorService
+from app.api.services.pipeline_service import PipelineService
+from app.api.services.conversation_service import IntelligenceConversationService
 
 logger = logging.getLogger(__name__) 
 
@@ -139,9 +161,6 @@ def get_storage_provider_dependency(settings: SettingsDep) -> StorageProvider:
 def get_scraping_provider_dependency(settings: SettingsDep) -> ScrapingProvider:
     return create_scraping_provider(settings)
 
-def get_classification_provider_dependency(settings: SettingsDep) -> ClassificationProvider:
-    return create_classification_provider(settings) 
-
 def get_search_provider_dependency(settings: SettingsDep) -> SearchProvider:
     return create_search_provider(settings)
 
@@ -151,12 +170,19 @@ def get_geospatial_provider_dependency(settings: SettingsDep) -> GeospatialProvi
 def get_embedding_provider_dependency(settings: SettingsDep) -> EmbeddingProvider:
     return create_embedding_provider(settings)
 
+async def get_model_registry_dependency(settings: SettingsDep):
+    """Create and initialize model registry"""
+    from app.api.providers.model_registry import ModelRegistryService
+    registry = create_model_registry(settings)
+    await registry.initialize_providers()
+    return registry
+
 StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dependency)]
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dependency)]
-ClassificationProviderDep = Annotated[ClassificationProvider, Depends(get_classification_provider_dependency)]
 SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dependency)]
 GeospatialProviderDep = Annotated[GeospatialProvider, Depends(get_geospatial_provider_dependency)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider_dependency)]
+ModelRegistryDep = Annotated['ModelRegistryService', Depends(get_model_registry_dependency)]
 
 
 # --- Service Dependencies (Per-Request with Request State Caching) ---
@@ -186,32 +212,27 @@ def get_bundle_service(request: Request, session: SessionDep) -> BundleService:
     return instance
 BundleServiceDep = Annotated[BundleService, Depends(get_bundle_service)]
 
-def get_annotation_service(
-    request: Request, session: SessionDep, classification_provider: ClassificationProviderDep, 
+async def get_annotation_service(
+    request: Request, session: SessionDep, model_registry: ModelRegistryDep, 
     asset_service: AssetServiceDep
 ) -> AnnotationService:
     service_name = "annotation_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AnnotationService(session=session, classification_provider=classification_provider, asset_service=asset_service)
+    instance = AnnotationService(session=session, model_registry=model_registry, asset_service=asset_service)
     setattr(request.state, service_name, instance)
     return instance
 AnnotationServiceDep = Annotated[AnnotationService, Depends(get_annotation_service)]
 
-def get_content_service(
-    request: Request, session: SessionDep, storage_provider: StorageProviderDep,
-    scraping_provider: ScrapingProviderDep
-) -> ContentService:
-    service_name = "content_service"
+def get_content_ingestion_service(
+    request: Request, session: SessionDep
+) -> ContentIngestionService:
+    service_name = "content_ingestion_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = ContentService(
-        session=session, 
-        storage_provider=storage_provider,
-        scraping_provider=scraping_provider
-    )
+    instance = ContentIngestionService(session=session)
     setattr(request.state, service_name, instance)
     return instance
 
-ContentServiceDep = Annotated[ContentService, Depends(get_content_service)]
+ContentIngestionServiceDep = Annotated[ContentIngestionService, Depends(get_content_ingestion_service)]
 
 def get_dataset_service(
     request: Request, session: SessionDep, 
@@ -231,7 +252,7 @@ DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 
 def get_package_service(
     request: Request, session: SessionDep, storage_provider: StorageProviderDep,
-    annotation_service: AnnotationServiceDep, content_service: ContentServiceDep, 
+    annotation_service: AnnotationServiceDep, content_ingestion_service: ContentIngestionServiceDep, 
     asset_service: AssetServiceDep, bundle_service: BundleServiceDep, 
     dataset_service: DatasetServiceDep,
     settings: SettingsDep 
@@ -243,7 +264,7 @@ def get_package_service(
         storage_provider=storage_provider, 
         asset_service=asset_service, 
         annotation_service=annotation_service, 
-        ingestion_service=content_service, 
+        ingestion_service=content_ingestion_service, 
         bundle_service=bundle_service, 
         dataset_service=dataset_service,
         settings=settings 
@@ -286,18 +307,106 @@ def get_shareable_service(
     return instance
 ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
 
-def get_analysis_service(
-    request: Request, session: SessionDep, classification_provider: ClassificationProviderDep,
+async def get_analysis_service(
+    request: Request, session: SessionDep, model_registry: ModelRegistryDep,
     annotation_service: AnnotationServiceDep, asset_service: AssetServiceDep,
     current_user: CurrentUser, settings: SettingsDep 
 ) -> AnalysisService:
     service_name = "analysis_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AnalysisService(session=session, classification_provider=classification_provider, 
+    instance = AnalysisService(session=session, model_registry=model_registry, 
                              annotation_service=annotation_service, asset_service=asset_service,
                              current_user=current_user, settings=settings)
     setattr(request.state, service_name, instance)
     return instance
 AnalysisServiceDep = Annotated[AnalysisService, Depends(get_analysis_service)]
+
+def get_backup_service(
+    request: Request, session: SessionDep, storage_provider: StorageProviderDep,
+    settings: SettingsDep
+) -> BackupService:
+    service_name = "backup_service"
+    if hasattr(request.state, service_name): return getattr(request.state, service_name)
+    instance = BackupService(
+        session=session, 
+        storage_provider=storage_provider,
+        settings=settings
+    )
+    setattr(request.state, service_name, instance)
+    return instance
+BackupServiceDep = Annotated[BackupService, Depends(get_backup_service)]
+
+def get_user_backup_service(
+    request: Request, session: SessionDep, storage_provider: StorageProviderDep,
+    settings: SettingsDep
+) -> UserBackupService:
+    service_name = "user_backup_service"
+    if hasattr(request.state, service_name): return getattr(request.state, service_name)
+    instance = UserBackupService(
+        session=session, 
+        storage_provider=storage_provider,
+        settings=settings
+    )
+    setattr(request.state, service_name, instance)
+    return instance
+UserBackupServiceDep = Annotated[UserBackupService, Depends(get_user_backup_service)]
+
+def get_monitor_service(
+    request: Request, session: SessionDep, 
+    annotation_service: AnnotationServiceDep, 
+    task_service: TaskServiceDep
+) -> MonitorService:
+    service_name = "monitor_service"
+    if hasattr(request.state, service_name): return getattr(request.state, service_name)
+    instance = MonitorService(
+        session=session, 
+        annotation_service=annotation_service,
+        task_service=task_service
+    )
+    setattr(request.state, service_name, instance)
+    return instance
+MonitorServiceDep = Annotated[MonitorService, Depends(get_monitor_service)]
+
+def get_pipeline_service(
+    request: Request, session: SessionDep,
+    annotation_service: AnnotationServiceDep,
+    analysis_service: AnalysisServiceDep,
+    bundle_service: BundleServiceDep
+) -> PipelineService:
+    service_name = "pipeline_service"
+    if hasattr(request.state, service_name): return getattr(request.state, service_name)
+    instance = PipelineService(
+        session=session,
+        annotation_service=annotation_service,
+        analysis_service=analysis_service,
+        bundle_service=bundle_service
+    )
+    setattr(request.state, service_name, instance)
+    return instance
+PipelineServiceDep = Annotated[PipelineService, Depends(get_pipeline_service)]
+
+def get_embedding_service(
+    session: SessionDep,
+    embedding_provider: EmbeddingProviderDep
+) -> EmbeddingService:
+    return EmbeddingService(session=session, embedding_provider=embedding_provider)
+
+async def get_conversation_service(
+    request: Request, session: SessionDep, model_registry: ModelRegistryDep,
+    asset_service: AssetServiceDep, annotation_service: AnnotationServiceDep,
+    content_ingestion_service: ContentIngestionServiceDep
+) -> IntelligenceConversationService:
+    service_name = "conversation_service"
+    if hasattr(request.state, service_name): return getattr(request.state, service_name)
+    instance = IntelligenceConversationService(
+        session=session,
+        model_registry=model_registry,
+        asset_service=asset_service,
+        annotation_service=annotation_service,
+        content_ingestion_service=content_ingestion_service
+    )
+    setattr(request.state, service_name, instance)
+    return instance
+ConversationServiceDep = Annotated[IntelligenceConversationService, Depends(get_conversation_service)]
 
 

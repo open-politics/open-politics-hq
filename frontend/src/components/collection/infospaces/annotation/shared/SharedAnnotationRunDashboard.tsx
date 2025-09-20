@@ -441,6 +441,10 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
                 allAssets={formattedAssets}
                 onUpdatePanel={handleUpdatePanel}
                 onRemovePanel={handleRemovePanel}
+                // Note: Shared dashboard has limited interactivity by design
+                onResultSelect={undefined}
+                onRetrySingleResult={undefined}
+                retryingResultId={undefined}
               />
             </div>
           ))}

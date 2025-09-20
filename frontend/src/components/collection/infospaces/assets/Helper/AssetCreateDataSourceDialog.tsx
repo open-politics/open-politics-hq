@@ -23,6 +23,7 @@ import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 
 interface CreateAssetDialogProps {
@@ -155,6 +156,9 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
   const [newTextTitle, setNewTextTitle] = useState('');
   const [useBackgroundProcessing, setUseBackgroundProcessing] = useState(false);
   const [backgroundTasks, setBackgroundTasks] = useState<any[]>([]);
+  
+  // Mobile responsive state
+  const isMobile = useIsMobile();
 
   // Fetch bundles when dialog opens
   useEffect(() => {
@@ -891,7 +895,10 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
           />
         </div>
         
-        <div className="grid grid-cols-3 gap-2">
+        <div className={cn(
+          "grid gap-2",
+          isMobile ? "grid-cols-2" : "grid-cols-3"
+        )}>
           {assetKinds.filter(k => k.group === 'file').map((kind) => {
             const Icon = kind.icon;
             return (
@@ -910,10 +917,13 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
                   input.click();
                 }}
                 disabled={!!uploadProgress}
-                className="flex flex-col h-16 p-2 items-center justify-center gap-1"
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1 p-2",
+                  isMobile ? "h-12" : "h-16"
+                )}
               >
-                <Icon className="h-4 w-4" />
-                <span className="text-xs">{kind.label}</span>
+                <Icon className={cn(isMobile ? "h-3 w-3" : "h-4 w-4")} />
+                <span className={cn(isMobile ? "text-xs" : "text-xs")}>{kind.label}</span>
               </Button>
             );
           })}
@@ -1002,7 +1012,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     }
 
     return (
-      <ScrollArea className="h-64 pr-4">
+      <ScrollArea className={cn("pr-4", isMobile ? "h-48" : "h-64")}>
         <div className="space-y-2">
           {items.map((item) => {
             const Icon = getItemIcon(item);
@@ -1010,7 +1020,8 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               <div
                 key={item.id}
                 className={cn(
-                  "flex items-center gap-3 p-3 border rounded-lg transition-colors",
+                  "flex items-center gap-2 border rounded-lg transition-colors",
+                  isMobile ? "p-2" : "p-3 gap-3",
                   getStatusColor(item.status)
                 )}
               >
@@ -1023,19 +1034,19 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
                     value={item.title}
                     onChange={(e) => updateItemTitle(item.id, e.target.value)}
                     disabled={storeIsLoading || !!uploadProgress}
-                    className="h-7 text-sm"
+                    className={cn("text-sm", isMobile ? "h-6 text-xs" : "h-7")}
                   />
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="outline" className="text-xs">
+                  <div className={cn("flex items-center gap-2 mt-1", isMobile && "flex-wrap")}>
+                    <Badge variant="outline" className={cn(isMobile ? "text-xs px-1" : "text-xs")}>
                       {item.kind}
                     </Badge>
-                    {item.type === 'file' && item.file && (
+                    {item.type === 'file' && item.file && !isMobile && (
                       <span className="text-xs text-muted-foreground">
                         {(item.file.size / 1024 / 1024).toFixed(1)} MB
                       </span>
                     )}
                     {item.type === 'url' && (
-                      <span className="text-xs text-muted-foreground truncate">
+                      <span className={cn("text-xs text-muted-foreground truncate", isMobile && "max-w-[120px]")}>
                         {item.url}
                       </span>
                     )}
@@ -1133,9 +1144,12 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className={cn(
+        "max-h-screen overflow-y-auto flex flex-col",
+        isMobile ? "w-[95vw] max-w-[95vw] h-[90vh]" : "sm:max-w-4xl"
+      )}>
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className={cn(isMobile && "text-lg")}>
             {destination === 'existing_bundle'
               ? `Upload to Bundle: ${bundles.find(b => b.id === (typeof selectedBundleId === 'string' ? parseInt(selectedBundleId) : selectedBundleId))?.name || '...'}`
               : destination === 'new_bundle'
@@ -1144,7 +1158,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
             }
           </DialogTitle>
           <DialogDescription asChild>
-            <div>
+            <div className={cn(isMobile && "text-sm")}>
               {destination === 'existing_bundle'
                 ? `Add files, URLs, and text content to the selected bundle.`
                 : destination === 'individual'
@@ -1152,9 +1166,11 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
                   : (
                     <div className="space-y-1">
                       <div>Create a new bundle with multiple files, URLs, and text content.</div>
-                      <div className="text-xs text-muted-foreground">
-                        💡 Tip: Add all related files to one bundle instead of creating separate bundles for each file.
-                      </div>
+                      {!isMobile && (
+                        <div className="text-xs text-muted-foreground">
+                          💡 Tip: Add all related files to one bundle instead of creating separate bundles for each file.
+                        </div>
+                      )}
                     </div>
                   )
               }
@@ -1166,14 +1182,17 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
           {uploadProgress && renderUploadProgress()}
 
           {!uploadProgress && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className={cn(
+              "grid gap-4",
+              isMobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3"
+            )}>
               {renderFileDropZone()}
               {renderUrlInput()}
               {renderTextInput()}
             </div>
           )}
 
-          <div className="space-y-3 flex-1 overflow-hidden flex flex-col">
+          <div className="space-y-3 flex-1 overflow-y-auto flex flex-col">
             <div className="flex items-center justify-between">
               <Label>
                 Items to Upload ({items.length} items)
@@ -1193,7 +1212,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               )}
             </div>
             
-            <div className="border rounded-lg p-4 flex-1 overflow-hidden">
+            <div className="border rounded-lg p-4 flex-1 overflow-y-auto">
               {renderItemsList()}
             </div>
           </div>
@@ -1278,23 +1297,25 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
             </Alert>
           )}
 
-          <DialogFooter>
+          <DialogFooter className={cn(isMobile && "flex-col-reverse gap-2")}>
             <Button 
               type="button" 
               variant="outline" 
               onClick={handleClose} 
               disabled={isUploading}
+              className={cn(isMobile && "w-full")}
             >
               {isUploading ? 'Uploading...' : 'Cancel'}
             </Button>
             <Button 
               type="submit" 
               disabled={storeIsLoading || items.length === 0 || isUploading}
+              className={cn(isMobile && "w-full")}
             >
               {isUploading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {uploadProgress?.message || 'Processing...'}
+                  {isMobile ? 'Processing...' : (uploadProgress?.message || 'Processing...')}
                 </>
               ) : storeIsLoading ? (
                 <>
@@ -1302,11 +1323,11 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
                   {'Processing...'}
                 </>
               ) : destination === 'individual' ? (
-                `Upload ${items.length} Item${items.length !== 1 ? 's' : ''}`
+                isMobile ? `Upload ${items.length}` : `Upload ${items.length} Item${items.length !== 1 ? 's' : ''}`
               ) : destination === 'existing_bundle' ? (
-                `Add to Bundle (${items.length} items)`
+                isMobile ? `Add ${items.length}` : `Add to Bundle (${items.length} items)`
               ) : (
-                `Create Bundle (${items.length} items)`
+                isMobile ? `Create Bundle` : `Create Bundle (${items.length} items)`
               )}
             </Button>
           </DialogFooter>

@@ -1,0 +1,18 @@
+#cloud-config
+packages:
+  - curl
+
+users:
+  - name: cluster
+    ssh-authorized-keys:
+      - __ADMIN_PUBLIC_KEY__
+      - __WORKER_PUBLIC_KEY__
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+
+runcmd:
+  - apt-get update -y
+  - PUBLIC_IP=$(curl -s https://ipinfo.io/ip)
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=servicelb --disable-cloud-controller --kubelet-arg cloud-provider=external --node-ip=${private_ip} --tls-san=$PUBLIC_IP --write-kubeconfig-mode=644" sh -
+  - chown cluster:cluster /etc/rancher/k3s/k3s.yaml
+  - chown cluster:cluster /var/lib/rancher/k3s/server/node-token

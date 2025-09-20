@@ -9,11 +9,24 @@ import string
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 import shutil
 import asyncio
 from pathlib import Path
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime, date, and other non-serializable objects."""
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        if hasattr(obj, 'hex'):  # UUID objects
+            return str(obj)
+        if hasattr(obj, 'value'):  # Enum objects
+            return obj.value
+        if hasattr(obj, '__dict__'):  # Other objects with dict representation
+            return str(obj)
+        return super().default(obj)
 
 from fastapi import HTTPException, UploadFile, status, Depends
 from sqlmodel import Session, select, func, col
@@ -381,7 +394,7 @@ class ShareableService:
         try:
             if pkg.files: pkg.to_zip(tmp_path); logger.info(f"ZIP: {tmp_path}")
             else: 
-                with open(tmp_path, 'w') as f: json.dump({"metadata": pkg.metadata.to_dict(), "content": pkg.content}, f, indent=2)
+                with open(tmp_path, 'w') as f: json.dump({"metadata": pkg.metadata.to_dict(), "content": pkg.content}, f, indent=2, cls=DateTimeEncoder)
                 logger.info(f"JSON: {tmp_path}")
             return pkg, tmp_path
         except Exception as e: logger.error(f"Save failed: {e}", exc_info=True); self._cleanup_temp_file(tmp_path); raise

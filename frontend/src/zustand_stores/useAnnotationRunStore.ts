@@ -1,19 +1,18 @@
+import { AnnotationRunRead, AnnotationRunCreate, AnnotationRunUpdate, AssetRead, AnnotationSchemaRead } from '@/client/models';
+import { RunsService as AnnotationRunsServiceApi } from '@/client/services';
+import { FormattedAnnotation } from '@/lib/annotations/types';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { produce } from 'immer';
-import {
-  AnnotationRunRead,
-  AnnotationRunUpdate,
-  AnnotationJobsService as AnnotationRunsServiceApi,
-  AnnotationRunCreate,
-  AnnotationRunsOut,
-} from '@/client';
-import { devtools } from 'zustand/middleware';
 import { toast } from 'sonner';
-import { useInfospaceStore } from './storeInfospace';
-import { FormattedAnnotation } from '@/lib/annotations/types';
-import { FilterSet } from '@/components/collection/infospaces/annotation/AnnotationResultFilters';
 import { nanoid } from 'nanoid';
+import { useShareableStore } from './storeShareables';
+
+// Helper types
+export interface FilterSet {
+  logic: 'and' | 'or';
+  rules: any[];
+}
 
 // Helper function to deserialize timeAxisConfig dates from JSON
 const deserializeTimeAxisConfig = (config: any): any => {
@@ -395,8 +394,10 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
 
         exportAnnotationRun: async (infospaceId, runId) => {
             try {
-                // Export functionality would be implemented here
-                toast.success('Export functionality not yet implemented.');
+                // Use the existing shareable store export functionality
+                const { exportResource } = useShareableStore.getState();
+                await exportResource('run', runId, infospaceId);
+                toast.success('Annotation run export started.');
             } catch (error: any) {
                 const errorMsg = error.body?.detail || 'Failed to export annotation run.';
                 toast.error(errorMsg);

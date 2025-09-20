@@ -1,94 +1,44 @@
 # Documentation Index
 
-**Welcome to the OSINT Kernel Backend Documentation**
-
-This index provides organized access to all system documentation, replacing the scattered collection of handover docs and README files with a structured, navigable knowledge base.
+> **Status:** ✅ **Current & Accurate**  
+> **Purpose:** Central navigation for all backend system documentation.
 
 ---
 
 ## 🏗️ **System Architecture**
 
-**Main Reference:** [System Architecture Guide](./docs/SYSTEM_ARCHITECTURE.md)
-- Core data models and abstractions
-- Multi-modal annotation engine
-- Analysis adapter framework
-- Database design and relationships
+- **[System Architecture Guide](./SYSTEM_ARCHITECTURE.md)**: **START HERE**. The canonical overview of the backend architecture, core data models, service responsibilities, and primary workflows.
+- **[Intelligence Workflows & Composition Guide](./INTELLIGENCE_WORKFLOWS_GUIDE.md)**: How to compose and orchestrate multiple intelligence modules to create complex, multi-step workflows.
 
 ---
 
-## 🚀 **Implementation Status**
+## 🔧 **Developer & Feature Guides**
 
-**Current Status:** [Implementation Status Dashboard](./docs/IMPLEMENTATION_STATUS.md)
-- ✅ Complete: Embedding & RAG, Content Service, Sharing & Export, Multi-Modal, Search Pipeline
-- 🔄 Partial: Graph Analysis (adapters needed)
-- 📋 Ready: Frontend development
+### Core Capabilities
+- **[Content Ingestion Guide](./CONTENT_INGESTION_GUIDE.md)**: How to ingest any content (files, URLs, text, search queries) using the unified `ContentIngestionService`.
+- **[Multi-Modal Processing Guide](./MULTIMODAL_GUIDE.md)**: How to design schemas and run analysis on content with mixed media (e.g., text and images).
+- **[Embedding & RAG System Guide](./EMBEDDING_GUIDE.md)**: Guide to using the embedding system, vector search, and Retrieval-Augmented Generation (RAG) for Q&A.
+- **[Advanced Filtering & Composition Guide](./FILTERING_COMPOSITION_GUIDE.md)**: A deep dive into the powerful, reusable filtering framework used in pipelines and analysis.
 
----
+### Automation & Workflows
+- **[Pipelines & Monitors Guide](./PIPELINES_AND_MONITORS.md)**: How to create automated, multi-step intelligence workflows.
+- **[Analysis Adapters Guide](./ANALYSIS_ADAPTERS_GUIDE.md)**: How to create and use custom modules for post-processing and advanced analysis.
+- **[Intelligence Workflows & Composition Guide](./INTELLIGENCE_WORKFLOWS_GUIDE.md)**: How to compose and orchestrate multiple intelligence modules to create complex, multi-step workflows.
 
-## 🔧 **Developer Guides**
-
-### **Feature Development**
-- [Embedding & Vector Search](./docs/EMBEDDING_GUIDE.md) - Complete system ready for use
-- [Graph Analysis](./docs/GRAPH_GUIDE.md) - Implementation needed for adapters
-- [Search & Analysis Pipeline](./docs/SEARCH_PIPELINE_GUIDE.md) - Automated intelligence workflows
-- [Multi-Modal Processing](./docs/MULTIMODAL_GUIDE.md) - Cross-modal analysis capabilities
-
-### **Core Services**
-- [Content Service API](./docs/CONTENT_SERVICE_GUIDE.md) - File/URL/text ingestion
-- [Analysis Adapters](./docs/ANALYSIS_ADAPTERS_GUIDE.md) - Backend analysis modules
-- [Sharing & Export](./docs/SHARING_GUIDE.md) - Data portability features
+### Data Portability
+- **[Backup & Restore Guide](./BACKUP_RESTORE_GUIDE.md)**: User-facing guide for creating, managing, and restoring infospace backups.
+- **[Sharing & Export Guide](./SHARING_GUIDE.md)**: How to share resources and use the package system for data portability.
+- **[Disaster Recovery Guide](./BACKUP_DISASTER_RECOVERY.md)**: Admin-level procedures for system-wide backup and recovery.
 
 ---
 
-## 📂 **Quick Reference**
+## ⚙️ **Advanced Topics & Roadmaps**
 
-### **For New Developers:**
-1. Start with [System Architecture Guide](./docs/SYSTEM_ARCHITECTURE.md)
-2. Check [Implementation Status](./docs/IMPLEMENTATION_STATUS.md)
-3. Pick a feature guide based on your work area
-
-### **For Feature Development:**
-1. Check if feature exists in [Implementation Status](./docs/IMPLEMENTATION_STATUS.md)
-2. Follow relevant guide in **Developer Guides** section
-3. Reference architecture docs as needed
-
-### **For System Understanding:**
-1. [System Architecture Guide](./docs/SYSTEM_ARCHITECTURE.md) - High-level design
-2. [Content Service Guide](./docs/CONTENT_SERVICE_GUIDE.md) - How data flows through system
-3. [Multi-Modal Guide](./docs/MULTIMODAL_GUIDE.md) - Cross-modal analysis details
+- **[Standalone Export/Import (Roadmap)](./STANDALONE_EXPORT_IMPORT.md)**: Future plans for advanced, annotation-focused data migration between instances.
+- **[Streams Architecture (Planned)](./STREAMS_ARCHITECTURE.md)**: The future, event-driven architecture for unifying automation.
 
 ---
 
 ## 🗂️ **Archive**
 
-**Legacy/Completed Handover Documents:** [`./archive/`](./archive/)
-
-All legacy documentation has been **moved to archive** and reorganized into the structured guides above. The archive preserves the original implementation discussions for historical reference.
-
-**Reorganized Documents:**
-- ✅ `README.md` → [System Architecture Guide](./docs/SYSTEM_ARCHITECTURE.md)
-- ✅ `EMBEDDING_IMPLEMENTATION_HANDOVER.md` → [Embedding Guide](./docs/EMBEDDING_GUIDE.md)
-- ✅ `RAG_IMPLEMENTATION_PROGRESS.md` → [Implementation Status](./docs/IMPLEMENTATION_STATUS.md)
-- ✅ `MULTIMODAL_IMPLEMENTATION_HANDOVER.md` → [Multi-Modal Guide](./docs/MULTIMODAL_GUIDE.md)
-- ✅ `CONTENT_SERVICE_ARCHITECTURE.md` → [Content Service Guide](./docs/CONTENT_SERVICE_GUIDE.md)
-- ✅ `SEARCH_ANALYSIS_PIPELINE_HANDOVER.md` → [Search Pipeline Guide](./docs/SEARCH_PIPELINE_GUIDE.md)
-- ✅ `SHARE-README.md` → [Sharing Guide](./docs/SHARING_GUIDE.md)
-- ✅ `GRAPH_IMPLEMENTATION_HANDOVER.md` → [Graph Guide](./docs/GRAPH_GUIDE.md)
-
----
-
-## ✅ **Cleanup Complete**
-
-**🎉 Documentation reorganization finished!**
-
-- **9 structured guides** created from scattered handover docs
-- **8 legacy files** moved to archive with preservation notice
-- **Clear navigation** with purpose-driven organization
-- **Practical focus** with examples and best practices
-- **Complete cross-references** between related topics
-
-**Start exploring:** Choose a guide from the sections above based on your needs!
-
----
-
-*Documentation reorganized: December 2024* 
+- **[Legacy Handover Documents](./archive/)**: The original, now-outdated, handover documents are preserved here for historical context. All relevant information has been migrated into the guides above. 

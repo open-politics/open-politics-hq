@@ -17,22 +17,22 @@ const mainNavItems = [
   {
     title: "Globe View",
     icon: Globe,
-    url: "/desks/home/globe",
+    url: "/hq/globe",
   },
   {
     title: "Chat",
     icon: MessageSquare,
-    url: "/desks/chat",
+    url: "/hq/chat",
   },
   {
     title: "Bookmarks",
     icon: Bookmark,
-    url: "/desks/bookmarks",
+    url: "/hq/bookmarks",
   },
   {
     title: "Settings",
     icon: Settings,
-    url: "/desks/settings",
+    url: "/hq/settings",
   },
 ]
 

@@ -3,7 +3,7 @@
 import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
-import { Button } from "@/components/ui/button"
+import { SidebarMenuButton } from "@/components/ui/sidebar"
 
 export function ModeSwitcher() {
   const { setTheme, resolvedTheme } = useTheme()
@@ -13,16 +13,20 @@ export function ModeSwitcher() {
   }, [resolvedTheme, setTheme])
 
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-8 w-8 px-0"
+    <SidebarMenuButton
       onClick={toggleTheme}
+      tooltip={{
+        children: `Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`,
+      }}
     >
-      <Sun className="hidden h-4 w-4 dark:block" />
-      <Moon className="h-4 w-4 dark:hidden" />
-      <span className="sr-only">Toggle theme</span>
-    </Button>
+      {resolvedTheme === "dark" ? (
+        <Sun className="h-4 w-4" />
+      ) : (
+        <Moon className="h-4 w-4" />
+      )}
+      <span className="hidden dark:block dark:text-white">Dark Mode</span>
+      <span className="block dark:hidden text-black">Light Mode</span>
+    </SidebarMenuButton>
   )
 }
 

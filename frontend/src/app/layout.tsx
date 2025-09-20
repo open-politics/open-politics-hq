@@ -3,9 +3,8 @@ import { cn } from "@/lib/utils";
 import { fontSans, fontMono } from "@/lib/fonts";
 import { ReactNode } from 'react';
 import ClientWrapper from './ClientWrapper';
-import BlurredDots from '@/components/collection/unsorted/BlurredDots';
+import BackgroundImage from '@/components/collection/unsorted/BackgroundImage';
 import { ToastProvider, ToastViewport } from '@/components/ui/toast';
-import Header from '@/components/collection/unsorted/Header';
 import Footer from '@/components/collection/unsorted/Footer';
 import { AppStateProvider } from '@/lib/utils/app-state'
 import { AI } from './xactions';
@@ -28,8 +27,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           <SidebarProvider>
               <SidebarInset>
                 <ClientWrapper>
-                  <BlurredDots />
-                  <Header />
+                  <BackgroundImage />
                   <ToastProvider>
                     {children}
                     <ToastViewport />

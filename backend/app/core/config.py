@@ -64,10 +64,19 @@ class AppSettings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str = ""
+    POSTGRES_SSL_MODE: Optional[str] = None
 
     @computed_field  # type: ignore[misc]
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:
+        # Build DSN with optional sslmode as a query string to avoid type issues
+        query: str | None = (
+            f"sslmode={self.POSTGRES_SSL_MODE}"
+            if self.POSTGRES_SSL_MODE and self.POSTGRES_SSL_MODE.strip()
+            else None
+        )
+        # Ensure database name does not start with a slash to avoid sending "/dbname" to server
+
         return MultiHostUrl.build(
             scheme="postgresql+psycopg",
             username=self.POSTGRES_USER,
@@ -75,6 +84,7 @@ class AppSettings(BaseSettings):
             host=self.POSTGRES_SERVER,
             port=self.POSTGRES_PORT,
             path=self.POSTGRES_DB,
+            query=query,
         )
 
     SMTP_TLS: bool = True
@@ -108,6 +118,12 @@ class AppSettings(BaseSettings):
     FIRST_SUPERUSER: str
     FIRST_SUPERUSER_PASSWORD: str
     USERS_OPEN_REGISTRATION: bool = False
+    REQUIRE_EMAIL_VERIFICATION: bool = True
+
+    # Discourse Connect (SSO) Configuration
+    DISCOURSE_CONNECT_ENABLED: bool = Field(default=False, env="DISCOURSE_CONNECT_ENABLED")
+    DISCOURSE_CONNECT_SECRET: Optional[str] = Field(default=None, env="DISCOURSE_CONNECT_SECRET")
+    DISCOURSE_CONNECT_URL: Optional[str] = Field(default=None, env="DISCOURSE_CONNECT_URL")  # e.g., https://forum.open-politics.org
 
     # MinIO Configuration
     MINIO_ENDPOINT: Optional[str] = Field(default="localhost:9000", env="MINIO_ENDPOINT")
@@ -133,10 +149,6 @@ class AppSettings(BaseSettings):
 
     # --- Storage Provider ---
     STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
-    # --- Classification Provider ---
-    CLASSIFICATION_PROVIDER_TYPE: Literal["gemini_native", "opol_google_via_fastclass", "opol_ollama_via_fastclass"] = Field(default="gemini_native", env="CLASSIFICATION_PROVIDER_TYPE")
-    # Default model name for the chosen CLASSIFICATION_PROVIDER_TYPE
-    DEFAULT_CLASSIFICATION_MODEL_NAME: str = Field(default="gemini-2.5-flash-preview-05-20", env="DEFAULT_CLASSIFICATION_MODEL_NAME")
 
     # Credentials (ensure these environment variables are set for the chosen provider)
     GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
@@ -145,7 +157,7 @@ class AppSettings(BaseSettings):
     OPOL_MODE: Optional[Literal["remote", "local", "container"]] = Field(default="remote", env="OPOL_MODE")
     OPOL_API_KEY: Optional[str] = Field(default=None, env="OPOL_API_KEY")
     # Ollama specific (if OPOL uses it, or if you add a native Ollama provider)
-    OLLAMA_BASE_URL: Optional[str] = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
+    OLLAMA_BASE_URL: Optional[str] = Field(default="http://ollama:11434", env="OLLAMA_BASE_URL")
     OLLAMA_DEFAULT_MODEL: Optional[str] = Field(default="llama3", env="OLLAMA_DEFAULT_MODEL")
 
     # --- Scraping Provider ---
@@ -174,9 +186,6 @@ class AppSettings(BaseSettings):
     # Tavily API Key
     TAVILY_API_KEY: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
 
-    # --- OPOL "FastClass" specific (from opol_config.py, better centralized here) ---
-    FASTCLASS_DEFAULT_PROVIDER: str = Field(default="Google", env="FASTCLASS_DEFAULT_PROVIDER")
-    FASTCLASS_DEFAULT_MODEL: str = Field(default="gemini-2.5-flash-preview-05-20", env="FASTCLASS_DEFAULT_MODEL")
 
     # --- Annotation Processing Configuration ---
     # Default concurrency for parallel annotation processing

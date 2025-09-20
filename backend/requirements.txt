@@ -46,3 +46,4 @@ pytest-celery
 watchfiles>=0.18.1
 Werkzeug>=3.0.0
 pgvector
+feedparser

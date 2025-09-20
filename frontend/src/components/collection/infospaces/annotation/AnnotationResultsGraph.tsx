@@ -120,6 +120,8 @@ interface AnnotationResultsGraphProps {
   // NEW: Settings persistence
   onSettingsChange?: (settings: any) => void;
   initialSettings?: any;
+  // NEW: Result selection callback
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 // Custom node component for entities
@@ -195,6 +197,7 @@ function AnnotationResultsGraphInner({
   onVariableSplittingChange,
   onSettingsChange,
   initialSettings,
+  onResultSelect,
 }: AnnotationResultsGraphProps) {
   const { activeInfospace } = useInfospaceStore();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -944,6 +947,7 @@ export default function AnnotationResultsGraph({
   onVariableSplittingChange,
   onSettingsChange,
   initialSettings,
+  onResultSelect,
 }: AnnotationResultsGraphProps) {
   return (
     <ReactFlowProvider>
@@ -958,6 +962,7 @@ export default function AnnotationResultsGraph({
         onVariableSplittingChange={onVariableSplittingChange}
         onSettingsChange={onSettingsChange}
         initialSettings={initialSettings}
+        onResultSelect={onResultSelect}
       />
     </ReactFlowProvider>
   );

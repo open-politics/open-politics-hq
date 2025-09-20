@@ -1,180 +1,146 @@
-# System Architecture Guide
+## System Architecture Guide
 
-> **Purpose:** High-level overview of the OSINT Kernel system architecture, core principles, and data models.
-
----
-
-## 🎯 **Vision & Core Principles**
-
-**Create one extensible platform** where investigators can:
-- Ingest any open-source data (text, image, video, audio, tabular, web, etc.)
-- Enrich it with AI/ML pipelines via flexible `AnnotationSchema`s
-- Perform cross-modal analysis where text, images, audio are analyzed together
-- Curate flexible, shareable collections (`Bundle`s)
-- Perform complex analysis through backend `AnalysisAdapter`s
-- Share actionable intelligence with clear provenance
-
-### **Design Principles**
-
-1. **Everything is Addressable:** UUID + Infospace for every core entity
-2. **Immutability First:** Assets & Annotations are write-once
-3. **Schema-Driven Everything:** JSONSchema + instructions define all processing
-4. **Multi-Modal by Design:** Single LLM call processes all modalities together
-5. **Pluggable Analysis:** AnalysisAdapter registry for extensible capabilities
-6. **API-First:** Backend APIs are the primary interface
+> **Status:** ✅ **Current & Accurate**  
+> **Purpose:** Canonical overview of the backend architecture, core concepts, and development patterns.
 
 ---
 
-## 🏗️ **Core Data Models**
+### Core Philosophy
 
-### **Primary Entities**
+The platform is designed to perform **qualitative research at a quantitative scale**. It operationalizes complex, human-centric analysis into reproducible, automated workflows.
 
-| Entity | Purpose | Key Fields |
-|--------|---------|------------|
-| **Infospace** | Tenant space, owns all other entities | `id`, `name`, `embedding_model`, `owner_id` |
-| **Asset** | Immutable raw/processed item with parent-child hierarchy | `id`, `uuid`, `title`, `kind`, `text_content`, `parent_asset_id` |
-| **Bundle** | Curated, mutable collection of Assets | `id`, `uuid`, `name`, `assets` |
-| **AnnotationSchema** | Defines output structure + instructions for AI tasks | `id`, `name`, `output_contract` (JSON), `instructions` |
-| **AnnotationRun** | Execution of schemas over targets | `id`, `configuration` (JSON), `status`, `target_schemas` |
-| **Annotation** | Result of applying schema to asset | `id`, `uuid`, `asset_id`, `schema_id`, `value` (JSON) |
-
-### **Supporting Systems**
-
-| Entity | Purpose |
-|--------|---------|
-| **AssetChunk** | Text segments for embedding/search |
-| **EmbeddingModel** | Registry of available embedding models |
-| **Source** | Configuration for ingestion pathways |
-| **Task** | Automated, scheduled jobs |
-| **AnalysisAdapter** | Registered backend analysis modules |
+**Core Principles:**
+- **Auditability & Reproducibility**: All analysis is traceable through immutable `AnnotationRun` records.
+- **Composition**: Services are decoupled and chainable, enabling complex workflows.
+- **Schema-Driven**: `AnnotationSchema` (JSON Schema + instructions) provides a structured contract for all AI analysis.
+- **Asynchronous by Default**: Heavy operations (ingestion, analysis) are handled by background tasks for resilience and scalability.
 
 ---
 
-## 🔄 **System Capabilities**
+### Core Data Model & Workflow
 
-### **1. Ingestion Engine**
-- **Modular Sources:** Each `Source.kind` has dedicated worker
-- **Multi-Modal Containers:** PDFs→pages, CSVs→rows, Web→images
-- **Automatic Chunking:** Text segmentation for embedding
-- **Deduplication:** SHA-256 + optional semantic deduplication
+The fundamental workflow transforms unstructured content into structured, curated intelligence.
 
-### **2. Multi-Modal Annotation Engine**
-- **Schema-Driven:** JSONSchema defines structure, instructions guide AI
-- **Hierarchical Processing:** `document` vs `per_image`/`per_audio` sections
-- **Implicit Linking:** System automatically links child media analysis to correct assets
-- **Rich Justifications:** Evidence payloads with text spans, image regions, audio segments
-
-### **3. Embedding & Vector Search**
-- **Variable Dimensions:** Each model gets optimized pgvector table
-- **Multiple Providers:** Ollama (local), Jina AI (cloud), OpenAI (planned)
-- **Hybrid Search:** Vector similarity + SQL filters
-- **RAG Ready:** Question-answering over embedded content
-
-### **4. Analysis Engine**
-- **Adapter Registry:** Database-registered analysis modules
-- **Dynamic Loading:** Runtime loading from module paths
-- **Flexible Configuration:** JSONSchema-validated parameters
-- **Built-in Adapters:** Label distribution, time series, alerting, graph aggregation
-
-### **5. Automation & Sharing**
-- **Scheduled Tasks:** Cron-based ingestion and annotation
-- **Package System:** Export/import with full provenance
-- **Shareable Links:** Time-bounded access to resources
-- **Cross-Modal Intelligence:** Automated search→annotation→analysis pipelines
-
----
-
-## 🏗️ **Architecture Patterns**
-
-### **Multi-Modal Processing Flow**
-```
-Asset (PDF) → Child Assets (pages) → AssetChunks (text segments)
-     ↓
-AnnotationRun with Schema
-     ↓
-LLM Context: Parent text + Child images with UUIDs
-     ↓
-Structured Output: document + per_image analysis
-     ↓
-System maps results to correct Assets via UUIDs
+```mermaid
+flowchart TD
+    subgraph Ingestion["1. Content Ingestion"]
+        A["Locator (URL, File, Query)"] --> B[ContentIngestionService];
+        B --> C[Asset Creation & Processing];
+    end
+    
+    subgraph Analysis["2. Analysis & Annotation"]
+        D["AnnotationSchema (The 'How')"] --> E[AnnotationRun];
+        C --> E["Asset(s) (The 'What')"];
+        E --> F[Annotation (Structured Result)];
+    end
+    
+    subgraph Curation["3. Curation & Intelligence"]
+        F --> G[Justification (The 'Why')];
+        F --> H[Intelligence Fragments];
+        H --> C;
+    end
 ```
 
-### **Analysis Adapter Pattern**
-```
-Frontend selects adapter + configuration
-     ↓
-POST /api/analysis/{adapter_name}/execute
-     ↓
-Dynamic loading from database registry
-     ↓
-Adapter processes data scope (runs, bundles, assets)
-     ↓
-Returns JSON matching output schema
-```
+**Key Entities:**
 
-### **Search-to-Insight Pipeline**
-```
-Search Source → INGEST Task → Assets in Bundle
-     ↓
-ANNOTATE Task → Structured annotations
-     ↓
-Analysis Adapter → Alerts/insights
-```
+- **Infospace**: The top-level tenant boundary. Owns all data.
+- **Asset**: An immutable record of content (e.g., a PDF, a web page, a CSV row). Assets can have parent-child relationships (e.g., a PDF parent with page children).
+- **Bundle**: A mutable, named collection of Assets. Used for organizing data and as inputs for automated workflows.
+- **AnnotationSchema**: The blueprint for an analysis task, defining the desired JSON output and providing natural language instructions for the AI.
+- **AnnotationRun**: An immutable record of executing one or more `AnnotationSchemas` against a set of target `Assets`. It is the core unit of auditability.
+- **Annotation**: The structured data result of applying one `Schema` to one `Asset` within one `Run`.
+- **Justification**: An optional record linked to an `Annotation` that captures the AI's reasoning and the specific evidence (text spans, image regions) used.
+- **Intelligence Fragment**: A curated piece of intelligence promoted from an `Annotation` and stored directly on an `Asset`'s metadata for durable, queryable access.
 
 ---
 
-## 📊 **Data Flow Examples**
+### Service Layer Architecture
 
-### **Example 1: PDF Analysis**
-1. **Ingest:** PDF uploaded → parent Asset + page child Assets + text chunks
-2. **Annotate:** Schema extracts entities from each page
-3. **Analyze:** Count entity distribution across pages
+The backend follows a service-oriented architecture with clear responsibilities.
 
-### **Example 2: Multi-Modal Article**
-1. **Ingest:** Web article → parent Asset + image child Assets
-2. **Annotate:** LLM analyzes text + images together, identifies correlations
-3. **Search:** Vector search finds similar cross-modal patterns
+```mermaid
+graph TD
+    subgraph "Unified Entry Points"
+        A["ContentIngestionService"]
+        B["AnnotationService"]
+        C["IntelligenceConversationService (Chat)"]
+    end
 
-### **Example 3: Automated Monitoring**
-1. **Schedule:** Search task runs every 2 hours
-2. **Ingest:** New articles added to monitoring bundle
-3. **Annotate:** Threat assessment schema processes new content
-4. **Alert:** Analysis adapter flags high-risk items
+    subgraph "Core Services"
+        D["AssetService"]
+        E["BundleService"]
+        F["SourceService"]
+        G["TaskService"]
+        H["PipelineService"]
+        I["MonitorService"]
+    end
+    
+    subgraph "Provider Abstractions"
+        J["ModelRegistryService"]
+        K["StorageProvider"]
+        L["SearchProvider"]
+        M["ScrapingProvider"]
+    end
+    
+    A --> D;
+    A --> F;
+    A --> L;
+    A --> M;
+    B --> D;
+    B --> J;
+    C --> B;
+    C --> A;
+    H --> B;
+    I --> B;
+    I --> G;
+    
+    classDef entry fill:#cde4ff,stroke:#5a96e3,stroke-width:2px;
+    classDef core fill:#e1f5fe,stroke:#5a96e3,stroke-width:1px;
+    classDef provider fill:#f3e5f5,stroke:#9c27b0,stroke-width:1px;
+    class A,B,C entry;
+    class D,E,F,G,H,I core;
+    class J,K,L,M provider;
+```
+
+**Primary Services:**
+
+-   **`ContentIngestionService`**: The **single entry point** for all content. It handles discovery (from search, URLs, RSS), ingestion (files, text), and processing (scraping, PDF parsing), creating the corresponding `Asset` records.
+-   **`AnnotationService`**: Manages all AI analysis. It creates `AnnotationRun`s, processes them via the `ModelRegistryService`, and stores the resulting `Annotation`s and `Justification`s. It also handles result aggregation.
+-   **`IntelligenceConversationService`**: Powers the chat interface. It orchestrates tool calls, delegating actions like searching or analyzing to the `ContentIngestionService` and `AnnotationService`.
+-   **`AssetService`**: Handles the fundamental CRUD (Create, Read, Update, Delete) operations for `Asset` models.
+-   **`SourceService`**: Manages `Source` configurations, which are essentially saved ingestion recipes (e.g., an RSS feed URL) that can be run on a schedule by a `Task`.
+-   **`MonitorService` & `PipelineService`**: Orchestrate automated, multi-step intelligence workflows.
+-   **`ModelRegistryService`**: A unified interface to all configured language model providers (OpenAI, Gemini, Ollama), handling dynamic model discovery and routing requests.
 
 ---
 
-## 🔧 **Extension Points**
+### Automation Patterns
 
-### **Adding New Content Types**
-- Create new `Source.kind` with dedicated worker
-- Define `Asset.kind` for the content type
-- Add processing logic for child Asset creation
-
-### **Adding New Analysis**
-- Create class implementing `AnalysisAdapterProtocol`
-- Register in database with input/output schemas
-- System handles dynamic loading and execution
-
-### **Adding New Providers**
-- Implement provider protocols (`StorageProvider`, `ClassificationProvider`)
-- Add configuration to provider factory
-- System handles provider selection
+-   **Tasks (`TaskService`)**: The fundamental scheduling mechanism, powered by Celery Beat. A `Task` runs on a cron schedule.
+    -   **INGEST Task**: Executes a saved `Source` configuration to discover new assets.
+    -   **MONITOR Task**: Executes a `Monitor` to analyze new assets.
+-   **Monitors (`MonitorService`)**: A simple, continuous automation pattern. It watches `Bundle`(s) and automatically creates an `AnnotationRun` to analyze any *new* assets that appear.
+-   **Pipelines (`PipelineService`)**: A more complex, multi-stage workflow engine. Pipelines can chain steps like `ANNOTATE` -> `FILTER` -> `ANALYZE` -> `BUNDLE` to create sophisticated, conditional analysis workflows.
 
 ---
 
-## 🎯 **Performance Targets**
+### Performance & Scalability Patterns
 
-| Metric | Target |
-|--------|--------|
-| Cold ingest throughput | 100 MB/min per worker |
-| Vector query P95 latency | < 200 ms for 1M vectors |
-| Multi-modal annotation | 20 req/min per GPU instance |
-| Analysis adapter execution | < 5s for 10k annotations |
+The service architecture is designed for high performance and scalability, incorporating several key patterns:
+
+-   **Provider Caching**: In asynchronous contexts like Celery tasks, provider instances (for Storage and AI Models) are cached at the worker level. This eliminates redundant and slow initializations (e.g., SSL handshakes, authentication) for tasks executing within the same worker process, dramatically reducing overhead on multi-asset runs.
+
+-   **Data Pre-fetching & Batching**: For operations involving multiple assets or schemas (like `AnnotationRun`), all required data is pre-fetched in a single batch. Schemas are validated and compiled once per run, and all target assets are retrieved from the database upfront, minimizing DB queries inside processing loops.
+
+-   **Concurrent Processing**: Where applicable, tasks are executed in parallel using `asyncio.gather`. Concurrency is managed by a semaphore to respect external API rate limits and control system load, ensuring high throughput without overwhelming downstream services.
+
+-   **Asynchronous Operations**: All potentially long-running operations, especially I/O-bound tasks like content scraping or file storage, are handled asynchronously, either in API routes or dedicated background tasks, ensuring the application remains responsive.
 
 ---
 
-**Related Documentation:**
-- [Implementation Status](./IMPLEMENTATION_STATUS.md) - What's built vs planned
-- [Content Processing](./CONTENT_PROCESSING.md) - Detailed ingestion flows
-- [Multi-Modal Guide](./MULTIMODAL_GUIDE.md) - Cross-modal implementation details
-- [Analysis Adapters](./ANALYSIS_ADAPTERS_GUIDE.md) - Creating custom analysis modules 
+### Development & Extension
+
+-   **Adding a New Content Source**: Extend `ContentIngestionService` with a new handler for your locator type (e.g., a social media feed).
+-   **Adding a New AI Analysis**: Create a new `AnalysisAdapter` and register it in the database.
+-   **Adding a New LLM Provider**: Implement the `LanguageModelProvider` interface and add it to the `ModelRegistryService` in `factory.py`.
+-   **Creating a New Workflow**: Define a `Monitor` for simple, continuous tasks or an `IntelligencePipeline` for complex, multi-step processes.

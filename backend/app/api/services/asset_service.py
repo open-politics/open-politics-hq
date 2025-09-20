@@ -15,35 +15,91 @@ class AssetService:
         self.storage_provider = storage_provider
         logger.info("AssetService initialized.")
 
-    def _needs_processing(self, asset_kind: AssetKind) -> bool:
-        """Check if asset kind needs processing after creation."""
-        return asset_kind in [AssetKind.CSV, AssetKind.PDF, AssetKind.WEB]
+    def _needs_background_processing(self, asset_kind: AssetKind) -> bool:
+        """
+        Determines if an asset of a given kind requires asynchronous background processing
+        to extract child assets or scrape content.
+        """
+        return asset_kind in [
+            AssetKind.CSV, 
+            AssetKind.PDF, 
+            AssetKind.WEB,
+            AssetKind.MBOX,
+            # Add other kinds that have heavy processing tasks
+        ]
     
-    def _trigger_content_processing(self, asset: Asset, options: Optional[Dict[str, Any]] = None) -> None:
-        """Trigger content processing for assets that need it."""
+    def _trigger_content_processing(self, asset_id: int, options: Optional[Dict[str, Any]] = None) -> None:
+        """Dispatches a background task to process the asset's content."""
         try:
-            celery.send_task(
-                "process_content",
-                args=[asset.id],
-                kwargs={"options": options}
-            )
-            logger.info(f"Triggered content processing for asset {asset.id} ({asset.kind})")
+            # Note: We now use the task from content_tasks.py
+            from app.api.tasks.content_tasks import process_content
+            process_content.delay(asset_id, options=options)
+            logger.info(f"Triggered content processing task for asset {asset_id}")
         except Exception as e:
-            logger.error(f"Failed to trigger content processing for asset {asset.id}: {e}")
+            logger.error(f"Failed to trigger content processing for asset {asset_id}: {e}", exc_info=True)
+            # In a real-world scenario, you might want to update the asset status to FAILED here
+            # but that would require another DB transaction. For now, we log the error.
 
-    def create_asset(self, asset_create: AssetCreate) -> Asset:
-        """Create a new asset and trigger processing if needed."""
-        
-        # Ensure required fields are provided
-        if asset_create.user_id is None:
-            raise ValueError("user_id is required for asset creation")
-        if asset_create.infospace_id is None:
-            raise ValueError("infospace_id is required for asset creation")
+    def create_asset(self, asset_create: AssetCreate, process_immediately: bool = False) -> Asset:
+        """
+        Creates a new asset and triggers background processing if necessary.
+        This is the single, canonical method for creating any asset.
+        """
+        if asset_create.user_id is None or asset_create.infospace_id is None:
+            raise ValueError("user_id and infospace_id are required for asset creation")
             
         asset_data = asset_create.model_dump(exclude_unset=True)
+
+        # Smart dedupe policy:
+        # 1) If source_identifier exists, try to find the latest asset with same source_identifier in the same infospace.
+        #    - If content_hash provided and matches, skip and return existing.
+        #    - If content differs or no content_hash yet, create a new version linking previous_asset_id in source_metadata.
+        # 2) If content_hash provided (e.g., text/file), dedupe by content_hash within infospace.
+
+        existing_by_source = None
+        if asset_data.get("source_identifier"):
+            existing_by_source = self.session.exec(
+                select(Asset)
+                .where(
+                    Asset.infospace_id == asset_data["infospace_id"],
+                    Asset.source_identifier == asset_data["source_identifier"],
+                )
+                .order_by(Asset.created_at.desc())
+            ).first()
+
+        if existing_by_source is not None:
+            incoming_hash = asset_data.get("content_hash")
+            if incoming_hash and existing_by_source.content_hash == incoming_hash:
+                # Exact duplicate: skip and return existing
+                return existing_by_source
+            # Versioned duplicate: chain to previous
+            sm = dict(asset_data.get("source_metadata") or {})
+            sm["previous_asset_id"] = existing_by_source.id
+            sm["version"] = (existing_by_source.source_metadata or {}).get("version", 1) + 1
+            asset_data["source_metadata"] = sm
+            # Set first-class column too
+            asset_data["previous_asset_id"] = existing_by_source.id
+
+        # Dedupe by content hash if available
+        if asset_data.get("content_hash"):
+            existing_by_hash = self.session.exec(
+                select(Asset)
+                .where(
+                    Asset.infospace_id == asset_data["infospace_id"],
+                    Asset.content_hash == asset_data["content_hash"],
+                )
+                .order_by(Asset.created_at.desc())
+            ).first()
+            if existing_by_hash is not None:
+                # If also same source_identifier, we already handled above; else treat as duplicate-of with different source
+                if asset_data.get("source_identifier") == existing_by_hash.source_identifier:
+                    return existing_by_hash
+                sm = dict(asset_data.get("source_metadata") or {})
+                sm["duplicate_of_asset_id"] = existing_by_hash.id
+                asset_data["source_metadata"] = sm
         
-        # Set initial processing status
-        if self._needs_processing(asset_create.kind):
+        # Contract: The initial status depends on whether it needs background processing.
+        if self._needs_background_processing(asset_create.kind):
             asset_data["processing_status"] = ProcessingStatus.PENDING
         else:
             asset_data["processing_status"] = ProcessingStatus.READY
@@ -53,9 +109,12 @@ class AssetService:
         self.session.commit()
         self.session.refresh(asset)
         
-        # Trigger content processing if needed
-        if self._needs_processing(asset.kind):
-            self._trigger_content_processing(asset)
+        # Contract: If it needs processing, dispatch a background task.
+        # The `process_immediately` flag is now gone from the service layer call,
+        # but kept here in case some internal logic needs it. In general, processing
+        # should be async. The ContentService will handle immediate processing if needed.
+        if self._needs_background_processing(asset.kind):
+            self._trigger_content_processing(asset.id)
         
         return asset
 
@@ -138,16 +197,14 @@ class AssetService:
         if not asset:
             return False
         
-        if not self._needs_processing(asset.kind):
+        if not self._needs_background_processing(asset.kind):
             logger.warning(f"Asset {asset_id} of kind {asset.kind} does not support reprocessing")
             return False
         
         try:
-            celery.send_task(
-                "reprocess_content",
-                args=[asset.id],
-                kwargs={"options": options}
-            )
+            # Note: We now use the task from content_tasks.py
+            from app.api.tasks.content_tasks import reprocess_content
+            reprocess_content.delay(asset.id, options=options)
             logger.info(f"Triggered reprocessing for asset {asset.id} with options: {options}")
             return True
         except Exception as e:

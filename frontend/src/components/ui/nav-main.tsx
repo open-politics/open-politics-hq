@@ -21,7 +21,9 @@ import { Button } from "@/components/ui/button"
 
 export function NavMain({
   items,
+  title,
 }: {
+  title?: string
   items: {
     title: string
     url: string
@@ -38,7 +40,7 @@ export function NavMain({
 }) {
   return (
     <SidebarGroup className="p-2">
-      <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+      <SidebarGroupLabel>{title ? title : "Navigation"}</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) =>
           item.items && item.items.length > 0 ? (
@@ -60,23 +62,27 @@ export function NavMain({
                   <SidebarMenuSub>
                     {item.items?.map((subItem) => (
                       <SidebarMenuSubItem key={subItem.title}>
-                        <SidebarMenuSubButton
-                          asChild
-                          size="sm"
-                          className="pl-8"
-                        >
-                          {item.isButton ? (
-                            <Button asChild onClick={subItem.onClick}>
-                              {subItem.icon && <subItem.icon className="size-4" />}
-                              <span>{subItem.title}</span>
-                            </Button>
-                          ) : (
+                        {item.isButton ? (
+                          <SidebarMenuSubButton
+                            size="sm"
+                            className="pl-8"
+                            onClick={subItem.onClick}
+                          >
+                            {subItem.icon && <subItem.icon className="size-4" />}
+                            <span>{subItem.title}</span>
+                          </SidebarMenuSubButton>
+                        ) : (
+                          <SidebarMenuSubButton
+                            asChild
+                            size="sm"
+                            className="pl-8"
+                          >
                             <a href={subItem.url}>
                               {subItem.icon && <subItem.icon className="size-4" />}
                               <span>{subItem.title}</span>
                             </a>
-                          )}
-                        </SidebarMenuSubButton>
+                          </SidebarMenuSubButton>
+                        )}
                       </SidebarMenuSubItem>
                     ))}
                   </SidebarMenuSub>

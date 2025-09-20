@@ -1,0 +1,69 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    # deploy only one Traefik replica to avoid multi‑instance ACME issues
+    deployment:
+      replicas: 1
+      # initContainer to ensure /data/acme.json exists and has 0600 perms
+      initContainers:
+        - name: init-acme
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - 'touch /data/acme.json && chmod 600 /data/acme.json'
+          volumeMounts:
+            - name: data
+              mountPath: /data
+    podSecurityContext:
+      fsGroup: 65532
+      fsGroupChangePolicy: "OnRootMismatch"
+    service:
+      type: LoadBalancer
+      annotations:
+        load-balancer.hetzner.cloud/name: "open-politics-prod-lb"
+        load-balancer.hetzner.cloud/location: "fsn1"
+        load-balancer.hetzner.cloud/use-private-ip: "true"
+        load-balancer.hetzner.cloud/network: "open-politics-prod-network"
+    ports:
+      web:
+        port: 80
+      websecure:
+        port: 443
+        protocol: TCP
+    persistence:
+      enabled: true
+      size: 1Gi
+      accessMode: ReadWriteOnce
+    # static entrypoints
+    entryPoints:
+      web:
+        address: ":80"
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
+      websecure:
+        address: ":443"
+    # configure the ACME resolver via the Helm chart values
+    certificatesResolvers:
+      letsencrypt:
+        acme:
+          email: engage@open-politics.org
+          storage: /data/acme.json
+          # use TLS‑ALPN challenge (works with HTTPS only)
+          tlsChallenge: true
+          # caServer: https://acme-staging-v02.api.letsencrypt.org/directory 
+          # remove this once we have a valid certificate
+    # log level caan help when debugging
+    logs:
+      general:
+        level: INFO
+      access:
+        enabled: true

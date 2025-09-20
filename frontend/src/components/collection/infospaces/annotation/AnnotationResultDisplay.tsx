@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { AnnotationRead, AnnotationSchemaRead } from '@/client/models';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client/models';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AnnotationResultStatus } from "@/lib/annotations/types";
@@ -21,11 +21,16 @@ import {
     ResponsiveContainer,
     Legend
 } from 'recharts';
-import { HelpCircle } from 'lucide-react';
+import { HelpCircle, FileText } from 'lucide-react';
 import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
 import { TextSpanSnippets } from '@/components/ui/highlighted-text';
 import { useAnnotationTextSpans } from '@/contexts/TextSpanHighlightContext';
 import AnnotationDataInspector from '@/components/debug/AnnotationDataInspector';
+import { Separator } from '@/components/ui/separator';
+// NEW: Enhanced panel components
+import AnnotationFieldsPanel from './AnnotationFieldsPanel';
+import AssetContentPanel from './AssetContentPanel';
+import JustificationSidebar from './JustificationSidebar';
 
 // Local interface for schema fields
 interface SchemaField {
@@ -57,13 +62,23 @@ interface AnnotationResultDisplayProps {
   /** If true and multiple results are provided, renders them in tabs (unless overridden by context). Defaults to false. */
   useTabs?: boolean;
   /** Optional context for rendering adjustments */
-  renderContext?: 'dialog' | 'table' | 'default';
+  renderContext?: 'dialog' | 'table' | 'default' | 'enhanced';
   /** Optional: Array of field keys to specifically display. If null or undefined, displays according to other rules (compact/targetFieldKey). */
   selectedFieldKeys?: string[] | null;
   /** Optional: Maximum number of fields to show when not compact and specific fields aren't selected. */
   maxFieldsToShow?: number;
   /** Optional: A specific value within a field (e.g., a List[str] item) to highlight */
   highlightValue?: string | null;
+  /** NEW: Asset data for enhanced view */
+  asset?: AssetRead | null;
+  /** NEW: Whether to show asset content in enhanced view */
+  showAssetContent?: boolean;
+  /** NEW: Callback for field interaction in enhanced view */
+  onFieldInteraction?: (fieldKey: string, justification: any) => void;
+  /** NEW: Active field being highlighted */
+  activeField?: string | null;
+  /** NEW: Callback when result is selected/clicked */
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 interface SingleAnnotationResultProps {
@@ -71,10 +86,15 @@ interface SingleAnnotationResultProps {
   schema: AnnotationSchemaRead;
   compact?: boolean;
   targetFieldKey?: string | null;
-  renderContext?: 'dialog' | 'table' | 'default';
+  renderContext?: 'dialog' | 'table' | 'default' | 'enhanced';
   selectedFieldKeys?: string[] | null;
   maxFieldsToShow?: number;
   highlightValue?: string | null;
+  asset?: AssetRead | null;
+  showAssetContent?: boolean;
+  onFieldInteraction?: (fieldKey: string, justification: any) => void;
+  activeField?: string | null;
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 interface ConsolidatedSchemasViewProps {
@@ -83,30 +103,78 @@ interface ConsolidatedSchemasViewProps {
   compact?: boolean;
   targetFieldKey?: string | null;
   useTabs?: boolean;
-  renderContext?: 'dialog' | 'table' | 'default';
+  renderContext?: 'dialog' | 'table' | 'default' | 'enhanced';
   selectedFieldKeys?: string[] | null;
   maxFieldsToShow?: number;
   highlightValue?: string | null;
+  asset?: AssetRead | null;
+  showAssetContent?: boolean;
+  onFieldInteraction?: (fieldKey: string, justification: any) => void;
+  activeField?: string | null;
+  onResultSelect?: (result: FormattedAnnotation) => void;
 }
 
 /**
  * Component for displaying a single annotation result based on its schema.
  */
-const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
-    result,
-    schema,
-    compact = false,
-    targetFieldKey = null,
-    renderContext = 'default',
-    selectedFieldKeys = null,
-    maxFieldsToShow = 10,
-    highlightValue = null
-}) => {
-  const [isExpanded, setIsExpanded] = useState(false);
+function SingleAnnotationResult({ 
+  result, 
+  schema, 
+  compact = false, 
+  targetFieldKey = null, 
+  renderContext = 'default',
+  selectedFieldKeys = null,
+  maxFieldsToShow = undefined,
+  highlightValue = null,
+  asset = null,
+  showAssetContent = false,
+  onFieldInteraction,
+  activeField = null,
+  onResultSelect
+}: SingleAnnotationResultProps) {
   const { extractTextSpansFromJustification } = useAnnotationTextSpans();
+  const [highlightedSpans, setHighlightedSpans] = useState<Set<string>>(new Set());
+  const renderedRef = useRef<HTMLDivElement>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   
   // Track which justifications we've already processed to prevent infinite loops
   const processedJustificationsRef = useRef<Set<string>>(new Set());
+
+  // Enhanced layout hooks - MUST be called before any early returns
+  const [activeFieldState, setActiveFieldState] = useState<string | null>(activeField || null);
+  const [selectedSpan, setSelectedSpan] = useState<{ fieldKey: string; spanIndex: number; span: any } | null>(null);
+  
+  const handleFieldInteraction = useCallback((fieldKey: string, justification: any) => {
+    setActiveFieldState(fieldKey);
+    // Clear span selection when switching fields
+    setSelectedSpan(null);
+    if (onFieldInteraction) {
+      onFieldInteraction(fieldKey, justification);
+    }
+  }, [onFieldInteraction]);
+
+  const handleSpanSelect = useCallback((fieldKey: string, spanIndex: number, span: any) => {
+    if (spanIndex === -1) {
+      // Deselect the span
+      setSelectedSpan(null);
+    } else {
+      setSelectedSpan({ fieldKey, spanIndex, span });
+      // Also set the active field if it's not already active
+      setActiveFieldState(prev => prev !== fieldKey ? fieldKey : prev);
+    }
+  }, []);
+
+  const handleSpanClick = useCallback((spanId: string) => {
+    setHighlightedSpans(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(spanId)) {
+        newSet.delete(spanId);
+      } else {
+        newSet.add(spanId);
+      }
+      return newSet;
+    });
+  }, []);
 
   // Extract justifications from result value to process them
   const justificationsToProcess = useMemo(() => {
@@ -168,20 +236,31 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
   // Process justifications after render
   useEffect(() => {
     if (justificationsToProcess.length > 0) {
-      justificationsToProcess.forEach(({ justificationObj, assetId, assetUuid, fieldName, schemaName, justificationKey }) => {
-        if (!processedJustificationsRef.current.has(justificationKey)) {
-          extractTextSpansFromJustification(
-            justificationObj,
-            assetId,
-            assetUuid,
-            fieldName,
-            schemaName
-          );
-          
-          // Mark this justification as processed
-          processedJustificationsRef.current.add(justificationKey);
+      // Process justifications asynchronously
+      const processJustifications = async () => {
+        for (const { justificationObj, assetId, assetUuid, fieldName, schemaName, justificationKey } of justificationsToProcess) {
+          if (!processedJustificationsRef.current.has(justificationKey)) {
+            try {
+              await extractTextSpansFromJustification(
+                justificationObj,
+                assetId,
+                assetUuid,
+                fieldName,
+                schemaName
+              );
+              
+              // Mark this justification as processed
+              processedJustificationsRef.current.add(justificationKey);
+            } catch (error) {
+              console.error('Failed to process justification:', error);
+              // Still mark as processed to avoid infinite retries
+              processedJustificationsRef.current.add(justificationKey);
+            }
+          }
         }
-      });
+      };
+
+      processJustifications();
     }
   }, [justificationsToProcess, extractTextSpansFromJustification]);
 
@@ -253,7 +332,6 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
       }
   };
 
-
   if (!schema || !schema.output_contract) {
       return <div className="text-sm text-red-500 italic">Invalid schema provided.</div>;
   }
@@ -261,26 +339,105 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
        return <div className="text-sm text-gray-500 italic">No annotation value available.</div>;
   }
 
+
+
+  // NEW: Enhanced layout for unified annotation and asset viewing
+  if (renderContext === 'enhanced') {
+
+    return (
+      <div className="h-full w-full flex flex-col">
+        {/* Three-column layout: Fields | Justifications | Content */}
+        <div className="flex-1 min-h-0 grid grid-cols-12 gap-3 p-4">
+          {/* Left column: Annotation fields (3 columns) */}
+          <div className="col-span-3 border rounded-lg bg-background overflow-hidden flex flex-col">
+            <AnnotationFieldsPanel
+              result={result}
+              schema={schema}
+              selectedFieldKeys={selectedFieldKeys}
+              activeField={activeFieldState}
+              selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
+              onFieldInteraction={handleFieldInteraction}
+              highlightValue={highlightValue}
+            />
+          </div>
+
+          {/* Middle column: Justifications (4 columns) */}
+          <div className="col-span-4 border rounded-lg bg-background overflow-hidden">
+            <JustificationSidebar
+              result={result}
+              activeField={activeFieldState}
+              onSpanClick={handleSpanClick}
+              onSpanSelect={handleSpanSelect}
+              selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
+            />
+          </div>
+
+          {/* Right column: Asset content (5 columns) */}
+          {asset && showAssetContent && (
+            <div className="col-span-5 border rounded-lg bg-background overflow-hidden">
+              <AssetContentPanel
+                asset={asset}
+                activeField={activeFieldState}
+                selectedSpan={selectedSpan}
+              />
+            </div>
+          )}
+
+          {/* Fallback: Expand justifications if no asset content */}
+          {(!asset || !showAssetContent) && (
+            <div className="col-span-5 border rounded-lg bg-background overflow-hidden flex items-center justify-center">
+              <div className="text-center text-muted-foreground p-8">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700 flex items-center justify-center mb-4 mx-auto">
+                  <FileText className="h-8 w-8 opacity-60" />
+                </div>
+                <p className="text-sm font-medium mb-2">No Content Available</p>
+                <p className="text-xs opacity-75 max-w-xs">
+                  Asset content will appear here when available for enhanced annotation review.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const containerClasses = cn(
     'space-y-0 h-full flex flex-col',
     (renderContext === 'table') 
       ? 'border-2 border-results p-2 rounded-md'
-      : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md')
+      : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md'),
+    // NEW: Add cursor pointer when clickable
+    onResultSelect && (renderContext === 'table' || renderContext === 'default') && 'cursor-pointer hover:bg-muted/30 transition-colors'
   );
 
+  const handleResultClick = (e: React.MouseEvent) => {
+    // Only handle clicks if onResultSelect is provided and we're in appropriate contexts
+    if (onResultSelect && (renderContext === 'table' || renderContext === 'default')) {
+      // Don't trigger on button clicks or other interactive elements
+      if ((e.target as HTMLElement).closest('button, [role="button"], .cursor-help')) {
+        return;
+      }
+      onResultSelect(result);
+    }
+  };
+
   return (
-      <div className={containerClasses}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
+      <div 
+        className={containerClasses}
+        onClick={handleResultClick}
+      >
+          <div className="flex items-center justify-between">
+            {/* <div className="flex items-center gap-2">
               <span className="font-medium text-base text-yellow-500">{schema.name}</span>
-            </div>
+            </div> */}
             {isFailed && (
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <AlertCircle className="h-4 w-4 text-destructive opacity-80 cursor-help ml-2" />
                   </TooltipTrigger>
-                  <TooltipContent side="top" align="end">
+                  <TooltipContent side="top" align="end" className="z-[70]">
                     <p className="text-xs max-w-xs break-words">
                       Failed: {result.error_message || 'Unknown error'}
                     </p>
@@ -345,57 +502,81 @@ const SingleAnnotationResult: React.FC<SingleAnnotationResultProps> = ({
                             <div className="font-medium text-blue-400 italic inline-flex items-center mr-2">
                               {formatFieldNameForDisplay(schemaField.name)}
                               {justificationValue && (
-                                  <Popover>
-                                      <PopoverTrigger asChild>
-                                          <HelpCircle className="h-3.5 w-3.5 ml-1.5 text-muted-foreground cursor-pointer opacity-70 hover:opacity-100" />
-                                      </PopoverTrigger>
-                                      <PopoverContent side="top" align="start" className="max-w-sm border border-border shadow-lg z-[1000] bg-popover text-popover-foreground p-0">
-                                        <ScrollArea className="max-h-[400px] overflow-y-auto w-full">
-                                          <div className="space-y-3 p-3">
-                                            <div className="flex items-center justify-between">
-                                              <p className="text-xs font-semibold text-indigo-400">Justification:</p>
-                                              <AnnotationDataInspector result={result} schema={schema} className="text-[10px]" />
-                                            </div>
-                                            {(() => {
-                                              // Handle structured justification objects
-                                              if (typeof justificationValue === 'object' && justificationValue !== null) {
-                                                return (
-                                                  <div className="space-y-1">
-                                                    {justificationValue.reasoning && (
-                                                      <p className="text-xs">{justificationValue.reasoning}</p>
-                                                    )}
-                                                    {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
-                                                      <div className="space-y-2">
-                                                        <p className="text-xs text-muted-foreground">
-                                                          📝 {justificationValue.text_spans.length} text span{justificationValue.text_spans.length > 1 ? 's' : ''}:
-                                                        </p>
-                                                        <TextSpanSnippets 
-                                                          spans={justificationValue.text_spans} 
-                                                          maxSnippets={2}
-                                                          className="max-w-xs"
-                                                        />
-                                                      </div>
-                                                    )}
-                                                    {justificationValue.image_regions && justificationValue.image_regions.length > 0 && (
-                                                      <p className="text-xs text-muted-foreground">
-                                                        🖼️ {justificationValue.image_regions.length} image region{justificationValue.image_regions.length > 1 ? 's' : ''}
-                                                      </p>
-                                                    )}
-                                                    {justificationValue.audio_segments && justificationValue.audio_segments.length > 0 && (
-                                                      <p className="text-xs text-muted-foreground">
-                                                        🎵 {justificationValue.audio_segments.length} audio segment{justificationValue.audio_segments.length > 1 ? 's' : ''}
-                                                      </p>
-                                                    )}
-                                                  </div>
-                                                );
+                                  <TooltipProvider delayDuration={100}>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                          <HelpCircle 
+                                            className="h-3.5 w-3.5 ml-1.5 cursor-help opacity-70 hover:opacity-100 hover:text-primary transition-colors" 
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              // NEW: Priority 1 - Call onFieldInteraction if available (for enhanced dialog with specific field)
+                                              if (onFieldInteraction) {
+                                                onFieldInteraction(schemaField.name, justificationValue);
+                                                return;
                                               }
-                                              // Handle string justifications
-                                              return <p className="text-xs">{String(justificationValue)}</p>;
-                                            })()}
+                                              // NEW: Priority 2 - Fall back to onResultSelect with field context if available
+                                              if (onResultSelect && renderContext !== 'dialog' && renderContext !== 'table' && renderContext !== 'default') {
+                                                // Create a result object with field selection context
+                                                const resultWithContext = {
+                                                  ...result,
+                                                  _selectedField: schemaField.name // Add field context
+                                                };
+                                                onResultSelect(resultWithContext as FormattedAnnotation);
+                                              }
+                                            }}
+                                          />
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" align="start" className="max-w-sm z-[1001]">
+                                        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                                          <div className="flex items-center justify-between">
+                                            <p className="text-xs font-semibold">Justification:</p>
                                           </div>
-                                        </ScrollArea>
-                                      </PopoverContent>
-                                  </Popover>
+                                          {(() => {
+                                            // Handle structured justification objects
+                                            if (typeof justificationValue === 'object' && justificationValue !== null) {
+                                              return (
+                                                <div className="space-y-1">
+                                                  {justificationValue.reasoning && (
+                                                    <p className="text-xs">{justificationValue.reasoning}</p>
+                                                  )}
+                                                  {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
+                                                    <div className="space-y-2">
+                                                      <p className="text-xs">
+                                                        📝 {justificationValue.text_spans.length} text span{justificationValue.text_spans.length > 1 ? 's' : ''}
+                                                      </p>
+                                                      <Separator className="my-2" />
+                                                      <div className="text-xs">
+                                                        {justificationValue.text_spans.slice(0, 3).map((span: any, idx: number) => (
+                                                          <div key={idx} className="italic border border-border p-1 rounded text-wrap break-words mb-1">
+                                                            "{span.text_snippet}"
+                                                          </div>
+                                                        ))}
+                                                        {justificationValue.text_spans.length > 3 && (
+                                                          <p className="text-muted-foreground">...and {justificationValue.text_spans.length - 3} more</p>
+                                                        )}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {justificationValue.image_regions && justificationValue.image_regions.length > 0 && (
+                                                    <p className="text-xs text-muted-foreground">
+                                                      🖼️ {justificationValue.image_regions.length} image region{justificationValue.image_regions.length > 1 ? 's' : ''}
+                                                    </p>
+                                                  )}
+                                                  {justificationValue.audio_segments && justificationValue.audio_segments.length > 0 && (
+                                                    <p className="text-xs text-muted-foreground">
+                                                      🎵 {justificationValue.audio_segments.length} audio segment{justificationValue.audio_segments.length > 1 ? 's' : ''}
+                                                    </p>
+                                                  )}
+                                                </div>
+                                              );
+                                            }
+                                            // Handle string justifications
+                                            return <p className="text-xs">{String(justificationValue)}</p>;
+                                          })()}
+                                        </div>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
                               )}
                             </div>
                             <div className="inline-block">{formatFieldValue(result.value, schemaField, highlightValue)}</div>
@@ -438,7 +619,12 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
     renderContext = 'default',
     selectedFieldKeys = null,
     maxFieldsToShow = 10,
-    highlightValue = null
+    highlightValue = null,
+    asset,
+    showAssetContent,
+    onFieldInteraction,
+    activeField,
+    onResultSelect
 }) => {
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
 
@@ -467,6 +653,11 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
                   selectedFieldKeys={selectedFieldKeys}
                   maxFieldsToShow={maxFieldsToShow}
                   highlightValue={highlightValue}
+                  asset={asset}
+                  showAssetContent={showAssetContent}
+                  onFieldInteraction={onFieldInteraction}
+                  activeField={activeField}
+                  onResultSelect={onResultSelect}
                 />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this schema</div>
@@ -495,6 +686,11 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
             selectedFieldKeys={selectedFieldKeys}
             maxFieldsToShow={maxFieldsToShow}
             highlightValue={highlightValue}
+            asset={asset}
+            showAssetContent={showAssetContent}
+            onFieldInteraction={onFieldInteraction}
+            activeField={activeField}
+            onResultSelect={onResultSelect}
           />
         );
       })}
@@ -516,7 +712,12 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
     renderContext = 'default',
     selectedFieldKeys = null,
     maxFieldsToShow,
-    highlightValue = null
+    highlightValue = null,
+    asset,
+    showAssetContent,
+    onFieldInteraction,
+    activeField,
+    onResultSelect
 }) => {
     
   const findSchemaForResult = (res: FormattedAnnotation, sch: AnnotationSchemaRead | AnnotationSchemaRead[]): AnnotationSchemaRead | null => {
@@ -548,6 +749,11 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           selectedFieldKeys={selectedFieldKeys}
           maxFieldsToShow={maxFieldsToShow}
           highlightValue={highlightValue}
+          asset={asset}
+          showAssetContent={showAssetContent}
+          onFieldInteraction={onFieldInteraction}
+          activeField={activeField}
+          onResultSelect={onResultSelect}
         />
       );
     }
@@ -563,6 +769,11 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
         selectedFieldKeys={selectedFieldKeys}
         maxFieldsToShow={maxFieldsToShow}
         highlightValue={highlightValue}
+        asset={asset}
+        showAssetContent={showAssetContent}
+        onFieldInteraction={onFieldInteraction}
+        activeField={activeField}
+        onResultSelect={onResultSelect}
       />
     );
   }
@@ -580,6 +791,11 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           selectedFieldKeys={selectedFieldKeys}
           maxFieldsToShow={maxFieldsToShow}
           highlightValue={highlightValue}
+          asset={asset}
+          showAssetContent={showAssetContent}
+          onFieldInteraction={onFieldInteraction}
+          activeField={activeField}
+          onResultSelect={onResultSelect}
         />
       );
     }

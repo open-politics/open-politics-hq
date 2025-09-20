@@ -31,7 +31,8 @@ from app.models import (
     ShareableLink,
     RunSchemaLink,
     AssetBundleLink,
-    Bundle
+    Bundle,
+    InfospaceBackup
 )
 
 # Add import for Infospace schemas from app.schemas
@@ -46,6 +47,7 @@ from app.api.providers.base import StorageProvider
 from app.core.config import AppSettings # Changed from settings to AppSettings
 # ADDED imports for Package related classes
 from app.api.services.package_service import PackageBuilder, PackageMetadata, DataPackage, PackageImporter
+from app.api.services.asset_service import AssetService
 
 # Moved ShareableService import under TYPE_CHECKING
 if TYPE_CHECKING:
@@ -167,6 +169,9 @@ class InfospaceService:
         try:
             logger.info(f"Service: Starting cascade deletion for infospace {infospace_id}")
             
+            # 0. First, clean up any corrupted backup records that might cause constraint violations
+            self._cleanup_orphaned_backup_records()
+            
             # 1. Delete annotations first (they reference runs, schemas, and assets)
             annotations = self.session.exec(
                 select(Annotation).where(Annotation.infospace_id == infospace_id)
@@ -261,7 +266,37 @@ class InfospaceService:
             for link in shareable_links:
                 self.session.delete(link)
             
-            # 11. Finally, delete the infospace itself
+            # 11. Delete infospace backups (optional infospace_id, but clean up if present)
+            infospace_backups = self.session.exec(
+                select(InfospaceBackup).where(InfospaceBackup.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(infospace_backups)} infospace backups")
+            for backup in infospace_backups:
+                # Try to clean up storage file if storage provider is available
+                if self.storage_provider and backup.storage_path:
+                    try:
+                        # Note: This is a sync call, but most storage providers handle this
+                        import asyncio
+                        if hasattr(self.storage_provider, 'delete_file'):
+                            # Try async delete if available
+                            try:
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    # If we're in an async context, we can't use asyncio.run()
+                                    # Just delete the database record and let cleanup handle storage later
+                                    logger.warning(f"Service: Skipping storage cleanup for backup {backup.id} (async context)")
+                                else:
+                                    asyncio.run(self.storage_provider.delete_file(backup.storage_path))
+                                    logger.info(f"Service: Cleaned up storage for backup {backup.id}")
+                            except Exception:
+                                # Fallback to sync delete if async fails
+                                logger.warning(f"Service: Could not clean up storage for backup {backup.id}, will be handled by cleanup job")
+                    except Exception as e:
+                        logger.warning(f"Service: Failed to clean up storage for backup {backup.id}: {e}")
+                
+                self.session.delete(backup)
+            
+            # 12. Finally, delete the infospace itself
             self.session.delete(db_infospace)
             
             # Commit all deletions
@@ -274,6 +309,40 @@ class InfospaceService:
             self.session.rollback()
             logger.error(f"Service: Error during cascade deletion of infospace {infospace_id}: {e}", exc_info=True)
             raise e
+
+    def _cleanup_orphaned_backup_records(self):
+        """
+        Cleans up any InfospaceBackup records that have a null infospace_id.
+        This typically happens if the infospace was deleted without its backups.
+        """
+        logger.info("Service: Starting cleanup of orphaned backup records.")
+        try:
+            # Find all backup records where infospace_id is null
+            orphaned_backups = self.session.exec(
+                select(InfospaceBackup).where(InfospaceBackup.infospace_id == None)
+            ).all()
+            logger.info(f"Service: Found {len(orphaned_backups)} orphaned backup records to delete.")
+
+            for backup in orphaned_backups:
+                logger.info(f"Service: Deleting orphaned backup record ID: {backup.id}")
+                self.session.delete(backup)
+                # If storage path is not null, try to clean up the file
+                if self.storage_provider and backup.storage_path:
+                    try:
+                        if hasattr(self.storage_provider, 'delete_file'):
+                            import asyncio
+                            if not asyncio.get_event_loop().is_running():
+                                asyncio.run(self.storage_provider.delete_file(backup.storage_path))
+                                logger.info(f"Service: Cleaned up orphaned storage for backup {backup.id}")
+                            else:
+                                logger.warning(f"Service: Skipping orphaned storage cleanup for backup {backup.id} (async context)")
+                    except Exception as e:
+                        logger.warning(f"Service: Could not clean up orphaned storage for backup {backup.id}: {e}")
+                self.session.commit() # Commit each deletion to avoid transaction buildup
+            logger.info("Service: Finished cleanup of orphaned backup records.")
+        except Exception as e:
+            logger.error(f"Service: Error during cleanup of orphaned backup records: {e}", exc_info=True)
+            self.session.rollback() # Rollback on error
 
     def ensure_default_infospace(
         self,
@@ -290,7 +359,8 @@ class InfospaceService:
 
         infospace_create_data = InfospaceCreate(
             name="Default Infospace",
-            description="Your default infospace"
+            description="Your default infospace",
+            icon=""
         )
         return self.create_infospace(user_id=user_id, infospace_in=infospace_create_data)
 
@@ -408,8 +478,8 @@ class InfospaceService:
             infospace_create_data = InfospaceCreate(
                 name=new_infospace_name,
                 description=ws_details.get("description", "Imported infospace"),
-                # icon=ws_details.get("icon"), # Assuming icon is not part of InfospaceCreate
-                # system_prompt=ws_details.get("system_prompt") # Assuming this is not part of InfospaceCreate
+                owner_id=user_id,  
+                icon=ws_details.get("icon"),
                 vector_backend=ws_details.get("vector_backend"),
                 embedding_model=ws_details.get("embedding_model"),
                 embedding_dim=ws_details.get("embedding_dim"),
@@ -420,12 +490,19 @@ class InfospaceService:
             created_infospace = self.create_infospace(user_id=user_id, infospace_in=infospace_create_data)
             logger.info(f"Created new infospace '{created_infospace.name}' (ID: {created_infospace.id}) for import.")
 
+            # Create AssetService for the importer
+            asset_service = AssetService(
+                session=self.session,
+                storage_provider=self.storage_provider
+            )
+            
             importer = PackageImporter(
                 session=self.session,
                 storage_provider=self.storage_provider,
                 target_infospace_id=created_infospace.id, 
                 target_user_id=user_id,
-                settings=self.settings # Pass settings to importer
+                settings=self.settings, # Pass settings to importer
+                asset_service=asset_service
             )
 
             for ds_content in main_package.content.get("sources_content", []):

@@ -12,6 +12,8 @@ interface TextSpan {
   fieldName?: string;
   schemaName?: string;
   justificationReasoning?: string;
+  // For colored highlighting
+  highlightClassName?: string;
 }
 
 interface HighlightedTextProps {
@@ -148,7 +150,7 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <span className={className}>
+      <div className={cn("whitespace-pre-wrap word-break break-words", className)} style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
         {segments.map((segment, index) => {
           if (!segment.highlighted) {
             return (
@@ -160,39 +162,44 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
 
           // Find the corresponding span data for tooltip information
           const spanData = segment.spanIndex !== undefined ? sortedSpans[segment.spanIndex] : null;
+          const spanHighlightClass = spanData?.highlightClassName || highlightClassName;
+          
+          // Create unique ID for this span to enable scrolling
+          const spanId = spanData ? `span-${spanData.start_char_offset}-${spanData.end_char_offset}` : `highlight-${index}`;
           
           if (spanData && (spanData.fieldName || spanData.schemaName || spanData.justificationReasoning)) {
             return (
               <Tooltip key={index}>
                 <TooltipTrigger asChild>
                   <span
+                    id={spanId}
                     className={cn(
-                      highlightClassName,
-                      "cursor-help border-b border-dashed border-current"
+                      spanHighlightClass,
+                      "cursor-help border-b border-dashed border-current px-1 rounded"
                     )}
                   >
                     {segment.text}
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-sm bg-background border-border shadow-lg z-[1050]">
-                  <ScrollArea className="max-h-[200px] w-full">
-                    <div className="space-y-2 p-1">
+                <TooltipContent side="top" className="max-w-md bg-background border-border shadow-lg z-[1050]">
+                  <ScrollArea className="max-h-[300px] w-full overflow-y-auto">
+                    <div className="space-y-2 p-2">
+                      {spanData.fieldName && (
+                        <div className="">
+                          Field: {spanData.fieldName}
+                        </div>
+                      )}
                       {spanData.schemaName && (
                         <div className="text-xs font-semibold text-primary">
                           {spanData.schemaName}
                         </div>
                       )}
-                      {spanData.fieldName && (
-                        <div className="text-xs font-medium text-muted-foreground">
-                          Field: {spanData.fieldName}
-                        </div>
-                      )}
                       {spanData.justificationReasoning && (
-                        <div className="text-xs text-foreground">
+                        <div className="text-xs text-foreground leading-relaxed">
                           {spanData.justificationReasoning}
                         </div>
                       )}
-                      <div className="text-xs text-muted-foreground italic border-t pt-1 mt-1">
+                      <div className="text-xs text-muted-foreground italic border-t pt-2 mt-2">
                         "{spanData.text_snippet}"
                       </div>
                     </div>
@@ -206,13 +213,14 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
           return (
             <span
               key={index}
-              className={highlightClassName}
+              id={spanId}
+              className={cn(spanHighlightClass, "px-1 rounded")}
             >
               {segment.text}
             </span>
           );
         })}
-      </span>
+      </div>
     </TooltipProvider>
   );
 };
@@ -224,7 +232,7 @@ export const TextSpanSnippets: React.FC<{
   spans: TextSpan[];
   className?: string;
   maxSnippets?: number;
-}> = ({ spans, className, maxSnippets = 3 }) => {
+}> = ({ spans, className, maxSnippets = 5 }) => {
   const displaySpans = spans.slice(0, maxSnippets);
   const remainingCount = spans.length - displaySpans.length;
 

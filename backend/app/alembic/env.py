@@ -45,8 +45,10 @@ def get_url():
     password = os.getenv("POSTGRES_PASSWORD", "")
     server = os.getenv("POSTGRES_SERVER", "db")
     port = os.getenv("POSTGRES_PORT", "5432")
-    db = os.getenv("POSTGRES_DB", "app")
-    return f"postgresql+psycopg://{user}:{password}@{server}:{port}/{db}"
+    db = os.getenv("POSTGRES_DB", "app").lstrip("/")
+    ssl_mode = os.getenv("POSTGRES_SSL_MODE")
+    query = f"?sslmode={ssl_mode}" if ssl_mode and ssl_mode.strip() else ""
+    return f"postgresql+psycopg://{user}:{password}@{server}:{port}/{db}{query}"
 
 
 def run_migrations_offline():

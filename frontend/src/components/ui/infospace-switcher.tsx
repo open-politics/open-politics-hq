@@ -85,7 +85,7 @@ export function InfospaceSwitcher() {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton size="lg">
+            <SidebarMenuButton size="lg" className="bg-sidebar text-sidebar-foreground">
               <div className="flex items-center justify-start w-full gap-1 text-sm leading-tight rounded-lg p-2 pl-1">
                 <div className={`flex aspect-square size-6 items-center justify-center rounded-md flex-shrink-0 ${theme === "dark" ? "text-white" : "text-black"}`}>
                   <ChevronsUpDown className="size-4" />
@@ -102,7 +102,7 @@ export function InfospaceSwitcher() {
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-72 border-none rounded-lg"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-72 bg-sidebar text-sidebar-foreground border border-sidebar-border rounded-lg"
             align="start"
             side={isMobile ? "bottom" : "right"}
             sideOffset={4}
@@ -129,7 +129,7 @@ export function InfospaceSwitcher() {
               setIsEditOverlayOpen(true);
             }}>
               <div className="w-full flex items-center gap-2">
-                <div className="flex size-6 items-center justify-center rounded-md bg-background">
+                <div className="flex size-6 items-center justify-center rounded-md bg-sidebar">
                   <Plus className="size-4" />
                 </div>
                 <div className="font-medium text-muted-foreground">
@@ -138,8 +138,8 @@ export function InfospaceSwitcher() {
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2 p-2">
-              <Link href="/desks/home/infospaces/Infospace-manager" className="w-full flex items-center gap-2">
-                <div className="flex size-6 items-center justify-center rounded-md bg-background">
+              <Link href="/hq/infospaces/infospace-manager" className="w-full flex items-center gap-2">
+                <div className="flex size-6 items-center justify-center rounded-md bg-sidebar">
                   <Settings className="size-4" />
                 </div>
                 <div className="font-medium text-muted-foreground">

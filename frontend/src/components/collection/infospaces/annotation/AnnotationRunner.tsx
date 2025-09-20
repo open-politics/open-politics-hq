@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2 } from 'lucide-react';
 import {
   AnnotationSchemaRead,
   AssetRead,
@@ -32,6 +32,8 @@ import { toast as sonnerToast } from 'sonner';
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils";
 import AssetDetailView from '../assets/Views/AssetDetailView';
+import AnnotationResultDisplay from './AnnotationResultDisplay';
+import EnhancedAnnotationDialog from './EnhancedAnnotationDialog';
 import { useTutorialStore } from '../../../../zustand_stores/storeTutorial';
 import {
   Tooltip,
@@ -79,9 +81,6 @@ import AnnotationSchemaCard from './AnnotationSchemaCard';
 import AssetDetailProvider from '../assets/Views/AssetDetailProvider';
 import RunHistoryView from './AnnotationRunHistory';
 import { nanoid } from 'nanoid';
-import { Trash2 } from 'lucide-react';
-
-type SourceRead = any;
 
 export type FilterLogicMode = 'and' | 'or';
 
@@ -90,13 +89,14 @@ interface AnnotationRunnerProps {
   isLoadingRuns: boolean;
   onSelectRun: (runId: number) => void;
   allSchemas: AnnotationSchemaRead[];
-  allSources: SourceRead[];
+  allSources: { id: number; name: string }[];
   activeRun: AnnotationRunRead | null;
   isProcessing: boolean;
   results: FormattedAnnotation[];
   assets: AssetRead[];
   onClearRun: () => void;
   onRunWithNewAssets: (template: { schemaIds: number[], config: any, assetIds: number[] }) => void;
+  onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<AnnotationRead | null>;
 }
 
 // --- Note: PanelRenderer is now imported from separate file ---
@@ -113,15 +113,19 @@ export default function AnnotationRunner({
   assets: currentRunAssets,
   onClearRun,
   onRunWithNewAssets,
+  onRetrySingleResult: onRetrySingleResultProp,
 }: AnnotationRunnerProps) {
   const {
     retryJobFailures,
     isRetryingJob,
-    retrySingleResult,
+    retrySingleResult: hookRetrySingleResult,
     isRetryingResultId,
     updateJob,
     deleteRun,
   } = useAnnotationSystem();
+  
+  // Use prop version if provided, otherwise use hook version
+  const retrySingleResult = onRetrySingleResultProp || hookRetrySingleResult;
   
   const isActuallyProcessing = isProcessingProp || isRetryingJob;
 
@@ -172,10 +176,6 @@ export default function AnnotationRunner({
     }
   }, [activeRun, dashboardConfig, currentRunResults, addPanel]);
 
-  const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
-  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
-  const [selectedMapPointForDialog, setSelectedMapPointForDialog] = useState<MapPoint | null>(null);
-
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [isSchemesCollapsed, setIsSchemesCollapsed] = useState(false);
@@ -183,6 +183,35 @@ export default function AnnotationRunner({
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
   const [viewingSchema, setViewingSchema] = useState<AnnotationSchemaRead | null>(null);
+
+  // Dialog state - changed to support both annotation results and map points
+  const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
+  const [selectedAnnotationResult, setSelectedAnnotationResult] = useState<FormattedAnnotation | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
+  const [selectedMapPointForDialog, setSelectedMapPointForDialog] = useState<MapPoint | null>(null);
+  const [previousAnnotationResult, setPreviousAnnotationResult] = useState<FormattedAnnotation | null>(null); // Track previous annotation when viewing asset
+
+  // NEW: Enhanced annotation dialog state
+  const [isEnhancedDialogOpen, setIsEnhancedDialogOpen] = useState(false);
+  const [enhancedSelectedResult, setEnhancedSelectedResult] = useState<FormattedAnnotation | null>(null);
+  const [enhancedSelectedSchema, setEnhancedSelectedSchema] = useState<AnnotationSchemaRead | null>(null);
+
+  // Clear all dialog selections
+  const closeDetailsDialog = useCallback(() => {
+    setIsResultDialogOpen(false);
+    setSelectedAnnotationResult(null);
+    setSelectedAssetId(null);
+    setSelectedMapPointForDialog(null);
+    setPreviousAnnotationResult(null);
+  }, []);
+
+  // NEW: Close enhanced dialog
+  const closeEnhancedDialog = useCallback(() => {
+    setIsEnhancedDialogOpen(false);
+    setEnhancedSelectedResult(null);
+    setEnhancedSelectedSchema(null);
+  }, []);
+
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isSchemasDialogOpen, setIsSchemasDialogOpen] = useState(false);
   
@@ -192,6 +221,21 @@ export default function AnnotationRunner({
     if (!schemeIds || schemeIds.length === 0) return [];
     return allSchemas.filter(s => schemeIds.includes(s.id));
   }, [activeRun, allSchemas]);
+
+  // NEW: Handle field interactions from charts/visualizations
+  const handleFieldInteraction = useCallback((result: FormattedAnnotation, fieldKey: string) => {
+    const schema = runSchemes.find(s => s.id === result.schema_id) || runSchemes[0];
+    
+    // Add the selected field information to the result for auto-selection in enhanced dialog
+    const resultWithSelectedField = {
+      ...result,
+      _selectedField: fieldKey
+    } as FormattedAnnotation & { _selectedField?: string };
+    
+    setEnhancedSelectedResult(resultWithSelectedField);
+    setEnhancedSelectedSchema(schema);
+    setIsEnhancedDialogOpen(true);
+  }, [runSchemes]);
 
   const runDataSources = useMemo(() => allSources, [allSources]);
 
@@ -257,12 +301,6 @@ export default function AnnotationRunner({
       e.currentTarget.innerText = field === 'name' ? activeRun?.name ?? '' : activeRun?.description ?? '';
       e.currentTarget.blur();
     }
-  };
-
-  const closeDetailsDialog = () => {
-    setIsResultDialogOpen(false);
-    setSelectedAssetId(null);
-    setSelectedMapPointForDialog(null);
   };
 
   const handleDeleteRun = async () => {
@@ -526,6 +564,17 @@ export default function AnnotationRunner({
                           setIsResultDialogOpen(true);
                         }}
                         activeRunId={activeRun?.id}
+                        // NEW: Result interaction callbacks
+                        onResultSelect={(result) => {
+                          // Use enhanced dialog for better annotation viewing experience
+                          const schema = runSchemes.find(s => s.id === result.schema_id) || runSchemes[0];
+                          setEnhancedSelectedResult(result);
+                          setEnhancedSelectedSchema(schema);
+                          setIsEnhancedDialogOpen(true);
+                        }}
+                        onRetrySingleResult={retrySingleResult}
+                        retryingResultId={isRetryingResultId}
+                        onFieldInteraction={handleFieldInteraction}
                       />
                     </div>
                   );
@@ -658,7 +707,9 @@ export default function AnnotationRunner({
         <DialogHeader>
           <DialogTitle>Details</DialogTitle>
           <DialogDescription>
-            {selectedMapPointForDialog 
+            {selectedAnnotationResult
+              ? `Annotation result for Asset ID: ${selectedAnnotationResult.asset_id}`
+              : selectedMapPointForDialog 
               ? `Showing assets for location: ${selectedMapPointForDialog.locationString}`
               : `Detailed view for the selected asset.`
             }
@@ -667,7 +718,14 @@ export default function AnnotationRunner({
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="min-w-0">
             <TextSpanHighlightProvider>
-              { selectedAssetId ? (
+              { selectedAnnotationResult ? (
+                <AnnotationResultDisplay
+                  result={selectedAnnotationResult}
+                  schema={runSchemes.find(s => s.id === selectedAnnotationResult.schema_id) || runSchemes[0]}
+                  renderContext="dialog"
+                  compact={false}
+                />
+              ) : selectedAssetId ? (
                 <AssetDetailView
                     selectedAssetId={selectedAssetId}
                     schemas={runSchemes}
@@ -695,10 +753,46 @@ export default function AnnotationRunner({
           </div>
         </div>
         <DialogFooter>
-            <Button variant="outline" onClick={closeDetailsDialog}>Close</Button>
+          {selectedAnnotationResult && (
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setPreviousAnnotationResult(selectedAnnotationResult);
+                setSelectedAssetId(selectedAnnotationResult.asset_id);
+                setSelectedAnnotationResult(null);
+              }}
+              className="mr-2"
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              View Asset Details
+            </Button>
+          )}
+          {selectedAssetId && previousAnnotationResult && (
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setSelectedAnnotationResult(previousAnnotationResult);
+                setSelectedAssetId(null);
+                setPreviousAnnotationResult(null);
+              }}
+              className="mr-2"
+            >
+              <Sparkles className="mr-2 h-4 w-4" />
+              Back to Annotation
+            </Button>
+          )}
+          <Button variant="outline" onClick={closeDetailsDialog}>Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* NEW: Enhanced Annotation Dialog */}
+    <EnhancedAnnotationDialog
+      isOpen={isEnhancedDialogOpen}
+      onClose={closeEnhancedDialog}
+      result={enhancedSelectedResult}
+      schema={enhancedSelectedSchema}
+    />
 
     <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
       <AlertDialogContent>

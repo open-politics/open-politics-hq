@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,6 +9,8 @@ import { ChevronDown, ChevronRight, Bug, Eye } from 'lucide-react';
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client/models';
 import { getAnnotationFieldValue } from '@/lib/annotations/utils';
+import TextSpanQualityInspector from './TextSpanQualityInspector';
+import { useAssetStore } from '@/zustand_stores/storeAssets';
 
 interface AnnotationDataInspectorProps {
   result: FormattedAnnotation;
@@ -45,6 +47,29 @@ const AnnotationDataInspector: React.FC<AnnotationDataInspectorProps> = ({
       return newSet;
     });
   };
+
+  // Asset store for fetching text content
+  const { getAssetById } = useAssetStore();
+  const [assetText, setAssetText] = useState<string | null>(null);
+  const [isLoadingAsset, setIsLoadingAsset] = useState(false);
+
+  // Fetch asset text content when modal opens
+  React.useEffect(() => {
+    if (isOpen && result.asset_id && !assetText) {
+      setIsLoadingAsset(true);
+      getAssetById(result.asset_id)
+        .then(asset => {
+          setAssetText(asset?.text_content || null);
+        })
+        .catch(error => {
+          console.error('Failed to fetch asset for quality inspection:', error);
+          setAssetText(null);
+        })
+        .finally(() => {
+          setIsLoadingAsset(false);
+        });
+    }
+  }, [isOpen, result.asset_id, assetText, getAssetById]);
 
   const analyzeJustifications = (): JustificationAnalysis[] => {
     const analysis: JustificationAnalysis[] = [];
@@ -207,6 +232,37 @@ const AnnotationDataInspector: React.FC<AnnotationDataInspectorProps> = ({
                       </CollapsibleContent>
                     </Collapsible>
                   ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Text Span Quality Inspector */}
+            {assetText && totalTextSpans > 0 && (
+              <TextSpanQualityInspector
+                textContent={assetText}
+                spans={justificationAnalysis.flatMap(analysis => analysis.textSpans)}
+                title="Text Span Quality Analysis"
+              />
+            )}
+
+            {/* Loading state for asset text */}
+            {isLoadingAsset && (
+              <Card>
+                <CardContent className="py-6">
+                  <div className="flex items-center justify-center text-muted-foreground">
+                    Loading asset text for quality analysis...
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* No asset text available */}
+            {!isLoadingAsset && !assetText && totalTextSpans > 0 && (
+              <Card>
+                <CardContent className="py-6">
+                  <div className="flex items-center justify-center text-muted-foreground">
+                    No text content available for quality analysis
+                  </div>
                 </CardContent>
               </Card>
             )}

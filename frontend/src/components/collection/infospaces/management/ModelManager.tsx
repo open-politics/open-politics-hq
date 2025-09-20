@@ -1,0 +1,669 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Loader2, Download, Trash2, RefreshCw, Filter } from "lucide-react";
+import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { UtilsService } from '@/client/services';
+import { ProviderInfo, ProviderModel } from '@/client/models';
+import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+
+interface Provider {
+  name: string;
+  models: string[];
+}
+
+interface AvailableModel {
+  name: string;
+  size: string;
+  description: string;
+  capabilities?: string[];
+  pulls?: string;
+  base_model?: string;
+  parameters?: string;
+  updated?: string;
+  link?: string;
+}
+
+interface ModelManagerProps {
+  showModels?: boolean;
+  className?: string;
+}
+
+export default function ModelManager({ showModels = true, className = '' }: ModelManagerProps) {
+  const { 
+    selectedProvider, 
+    selectedModel, 
+    setSelectedProvider, 
+    setSelectedModel 
+  } = useApiKeysStore();
+  
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableOllamaModels, setAvailableOllamaModels] = useState<AvailableModel[]>([]);
+  const [isPullingModel, setIsPullingModel] = useState<string | null>(null);
+  const [isRemovingModel, setIsRemovingModel] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isOllamaDialogOpen, setIsOllamaDialogOpen] = useState(false);
+  
+  // Filter states
+  const [searchFilter, setSearchFilter] = useState('');
+  const [capabilityFilter, setCapabilityFilter] = useState('');
+  const [sizeFilter, setSizeFilter] = useState('');
+  const [updatedFilter, setUpdatedFilter] = useState('');
+  const [sortBy, setSortBy] = useState('popular'); // 'popular' | 'recent' | 'name' | 'size'
+
+  const fetchProviders = async () => {
+    console.log('🔍 Fetching providers...');
+    try {
+      const response = await UtilsService.getProviders();
+      console.log('📦 Received providers response:', response);
+      const providerList: Provider[] = response.providers.map((p: ProviderInfo) => ({
+        name: p.provider_name,
+        models: p.models.map((m: ProviderModel) => m.name),
+      }));
+      console.log(`✅ Setting ${providerList.length} providers:`, providerList.map(p => `${p.name} (${p.models.length} models)`));
+      setProviders(providerList);
+      
+      // If no provider is selected, or if the selected provider is no longer valid, set a default.
+      if (!selectedProvider || !providerList.some(p => p.name === selectedProvider)) {
+        const defaultProvider = providerList.find(p => p.name === 'gemini') || providerList[0];
+        if (defaultProvider) {
+          setSelectedProvider(defaultProvider.name);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error fetching providers:', error);
+      toast.error('Failed to fetch AI providers. Please check the connection.');
+    }
+  };
+
+  const fetchAvailableOllamaModels = async () => {
+    console.log('🔍 Fetching available Ollama models...');
+    try {
+      const data = await UtilsService.getOllamaAvailableModels({ 
+        sort: 'popular', 
+        limit: 50 
+      }) as any;
+      console.log('📦 Received data:', data);
+      
+      if (data.error) {
+        console.warn('⚠️ API returned error:', data.error);
+        toast.warning(`Using fallback models: ${data.error}`);
+      }
+      
+      const models = (data.models || []) as AvailableModel[];
+      console.log(`✅ Setting ${models.length} available models`);
+      setAvailableOllamaModels(models);
+      toast.success(`Loaded ${models.length} available models from Ollama library`);
+    } catch (error) {
+      console.error('❌ Error fetching available Ollama models:', error);
+      toast.error('Failed to fetch available Ollama models');
+      // Set basic fallback models
+      const fallbackModels: AvailableModel[] = [
+        {
+          name: "llama3.2:3b",
+          size: "~2.0GB",
+          description: "Meta's balanced performance model",
+          capabilities: ["tools"],
+          pulls: "35.6M"
+        },
+        {
+          name: "mistral:7b", 
+          size: "~4.1GB",
+          description: "Mistral 7B - excellent for reasoning",
+          capabilities: ["tools"],
+          pulls: "19.4M"
+        }
+      ];
+      console.log('🔄 Using fallback models:', fallbackModels);
+      setAvailableOllamaModels(fallbackModels);
+    }
+  };
+
+  useEffect(() => {
+    fetchProviders();
+    fetchAvailableOllamaModels();
+  }, []);
+
+  useEffect(() => {
+    // Update available models when the selectedProvider or the list of providers changes.
+    const provider = providers.find(p => p.name === selectedProvider);
+    const models = provider?.models || [];
+    setAvailableModels(models);
+
+    // If there are models, but no model is selected or the current one is invalid, set a default.
+    if (models.length > 0 && (!selectedModel || !models.includes(selectedModel))) {
+      const defaultModel = models.find(m => m.includes('flash')) || models[0];
+      if (defaultModel) {
+        setSelectedModel(defaultModel);
+      }
+    }
+  }, [selectedProvider, providers, selectedModel, setSelectedModel]);
+
+  const handleProviderChange = (providerName: string) => {
+    setSelectedProvider(providerName);
+    setSelectedModel('');
+  };
+
+  const handleRefreshModels = async () => {
+    setIsRefreshing(true);
+    await fetchProviders();
+    setIsRefreshing(false);
+    toast.success('Models refreshed');
+  };
+
+  const handlePullModel = async (modelName: string) => {
+    setIsPullingModel(modelName);
+    try {
+      await UtilsService.pullOllamaModel({ modelName });
+      toast.success(`Model ${modelName} pulled successfully`);
+      await fetchProviders(); // Refresh the model list
+    } catch (error) {
+      console.error('Error pulling model:', error);
+      toast.error(`Failed to pull model ${modelName}`);
+    } finally {
+      setIsPullingModel(null);
+    }
+  };
+
+  const handleRemoveModel = async (modelName: string) => {
+    setIsRemovingModel(modelName);
+    try {
+      await UtilsService.removeOllamaModel({ modelName });
+      toast.success(`Model ${modelName} removed successfully`);
+      await fetchProviders(); // Refresh the model list
+    } catch (error) {
+      console.error('Error removing model:', error);
+      toast.error(`Failed to remove model ${modelName}`);
+    } finally {
+      setIsRemovingModel(null);
+    }
+  };
+
+  // Helper function to parse time strings like "2 months ago", "1 year ago"
+  const parseTimeAgo = (timeStr: string): number => {
+    if (!timeStr) return 0;
+    const match = timeStr.match(/(\d+)\s*(month|year|week|day)s?\s*ago/i);
+    if (!match) return 0;
+    
+    const value = parseInt(match[1]);
+    const unit = match[2].toLowerCase();
+    
+    switch (unit) {
+      case 'day': return value;
+      case 'week': return value * 7;
+      case 'month': return value * 30;
+      case 'year': return value * 365;
+      default: return 0;
+    }
+  };
+
+  // Filter and sort available models
+  const filteredOllamaModels = availableOllamaModels
+    .filter(model => {
+      // Search filter (name and description)
+      if (searchFilter && !model.name.toLowerCase().includes(searchFilter.toLowerCase()) && 
+          !model.description.toLowerCase().includes(searchFilter.toLowerCase())) {
+        return false;
+      }
+      
+      // Capability filter
+      if (capabilityFilter && capabilityFilter !== 'all') {
+        if (!model.capabilities?.includes(capabilityFilter)) {
+          return false;
+        }
+      }
+      
+      // Size filter
+      if (sizeFilter && sizeFilter !== 'all') {
+        const sizeValue = parseFloat(model.size.replace(/[^0-9.]/g, ''));
+        switch (sizeFilter) {
+          case 'small': // < 2GB
+            if (sizeValue >= 2) return false;
+            break;
+          case 'medium': // 2-10GB
+            if (sizeValue < 2 || sizeValue > 10) return false;
+            break;
+          case 'large': // > 10GB
+            if (sizeValue <= 10) return false;
+            break;
+        }
+      }
+      
+      // Updated filter
+      if (updatedFilter && updatedFilter !== 'all') {
+        const daysAgo = parseTimeAgo(model.updated || '');
+        switch (updatedFilter) {
+          case 'recent': // < 3 months
+            if (daysAgo > 90) return false;
+            break;
+          case 'moderate': // 3-12 months
+            if (daysAgo <= 90 || daysAgo > 365) return false;
+            break;
+          case 'older': // > 1 year
+            if (daysAgo <= 365) return false;
+            break;
+        }
+      }
+      
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'recent':
+          const aDays = parseTimeAgo(a.updated || '');
+          const bDays = parseTimeAgo(b.updated || '');
+          return aDays - bDays; // Smaller days = more recent
+        
+        case 'name':
+          return a.name.localeCompare(b.name);
+        
+        case 'size':
+          const aSize = parseFloat(a.size.replace(/[^0-9.]/g, ''));
+          const bSize = parseFloat(b.size.replace(/[^0-9.]/g, ''));
+          return aSize - bSize;
+        
+        case 'popular':
+        default:
+          // Sort by popularity (parse pull count)
+          const aPulls = parseFloat((a.pulls || '0').replace(/[^0-9.]/g, ''));
+          const bPulls = parseFloat((b.pulls || '0').replace(/[^0-9.]/g, ''));
+          const aMultiplier = (a.pulls || '').includes('M') ? 1000000 : (a.pulls || '').includes('K') ? 1000 : 1;
+          const bMultiplier = (b.pulls || '').includes('M') ? 1000000 : (b.pulls || '').includes('K') ? 1000 : 1;
+          return (bPulls * bMultiplier) - (aPulls * aMultiplier); // Descending
+      }
+    });
+
+  const currentProvider = providers.find(p => p.name === selectedProvider);
+  const isOllamaProvider = selectedProvider === 'ollama';
+
+  return (
+    <div className={`space-y-4 ${className}`}>
+      {/* Provider Selection */}
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className={showModels ? 'w-full md:w-1/2' : 'w-full'}>
+          <label className="text-sm font-medium mb-2 block">AI Provider</label>
+          <Select value={selectedProvider || undefined} onValueChange={handleProviderChange}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select provider" />
+            </SelectTrigger>
+            <SelectContent>
+              {providers.map((provider) => (
+                <SelectItem key={provider.name} value={provider.name}>
+                  <div className="flex items-center justify-between w-full">
+                    <span className="capitalize">{provider.name}</span>
+                    <Badge variant="secondary" className="ml-2">
+                      {provider.models.length} models
+                    </Badge>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        
+        {showModels && (
+          <div className="w-full md:w-1/2">
+            <label className="text-sm font-medium mb-2 block">Model</label>
+            <div className="flex gap-2">
+              <Select value={selectedModel || ''} onValueChange={setSelectedModel} disabled={availableModels.length === 0}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableModels.map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {model}
+                    </SelectItem>
+                  ))}
+                  {availableModels.length === 0 && selectedProvider && (
+                    <div className="text-center text-xs text-muted-foreground p-2">
+                      No models found for {selectedProvider}.
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshModels}
+                disabled={isRefreshing}
+                className="shrink-0"
+              >
+                {isRefreshing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Ollama Model Management */}
+      {isOllamaProvider && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center justify-between">
+              Ollama Model Management
+              <div className="flex gap-2">
+                <Dialog open={isOllamaDialogOpen} onOpenChange={setIsOllamaDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <Download className="h-4 w-4 mr-2" />
+                      Pull Model
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-4xl bg-background/60">
+                    <DialogHeader>
+                      <DialogTitle>Pull Ollama Model</DialogTitle>
+                      <DialogDescription>
+                        Select a model to download from the Ollama registry. This may take several minutes depending on the model size.
+                      </DialogDescription>
+                    </DialogHeader>
+                    
+                    {/* Filter Controls */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg border">
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Search</label>
+                        <Input
+                          placeholder="Search models..."
+                          value={searchFilter}
+                          onChange={(e) => setSearchFilter(e.target.value)}
+                          className="w-full"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Capability</label>
+                        <Select value={capabilityFilter} onValueChange={setCapabilityFilter}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="All capabilities" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All capabilities</SelectItem>
+                            <SelectItem value="tools">🔧 Tools</SelectItem>
+                            <SelectItem value="vision">👁️ Vision</SelectItem>
+                            <SelectItem value="thinking">🧠 Thinking</SelectItem>
+                            <SelectItem value="embedding">📊 Embedding</SelectItem>
+                            <SelectItem value="cloud">☁️ Cloud</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Size</label>
+                        <Select value={sizeFilter} onValueChange={setSizeFilter}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="All sizes" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All sizes</SelectItem>
+                            <SelectItem value="small">📱 Small (&lt; 2GB)</SelectItem>
+                            <SelectItem value="medium">💻 Medium (2-10GB)</SelectItem>
+                            <SelectItem value="large">🖥️ Large (&gt; 10GB)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Sort By</label>
+                        <Select value={sortBy} onValueChange={setSortBy}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Sort by" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="popular">🔥 Most Popular</SelectItem>
+                            <SelectItem value="recent">🆕 Recently Updated</SelectItem>
+                            <SelectItem value="name">📝 Name (A-Z)</SelectItem>
+                            <SelectItem value="size">📏 Size (Small to Large)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    {/* Updated Filter */}
+                    <div className="px-4">
+                      <label className="text-sm font-medium mb-1 block">Last Updated</label>
+                      <Select value={updatedFilter} onValueChange={setUpdatedFilter}>
+                        <SelectTrigger className="w-full md:w-64">
+                          <SelectValue placeholder="Any time" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Any time</SelectItem>
+                          <SelectItem value="recent">🆕 Recent (3 months)</SelectItem>
+                          <SelectItem value="moderate">📅 Moderate (3-12 months)</SelectItem>
+                          <SelectItem value="older">📜 Older (1+ years)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    {/* Quick Filter Presets */}
+                    <div className="flex flex-wrap gap-2 p-3 bg-slate-50 rounded">
+                      <span className="text-xs font-medium text-slate-700 self-center">Quick presets:</span>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => { 
+                          setCapabilityFilter('tools');
+                          setSizeFilter('small');
+                          setSortBy('popular');
+                        }}
+                        className="text-xs h-7"
+                      >
+                        🚀 Popular Small Tools
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => { 
+                          setCapabilityFilter('thinking');
+                          setSortBy('recent');
+                        }}
+                        className="text-xs h-7"
+                      >
+                        🧠 Latest Reasoning
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => { 
+                          setCapabilityFilter('vision');
+                          setSizeFilter('medium');
+                        }}
+                        className="text-xs h-7"
+                      >
+                        👁️ Vision Models
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => { 
+                          setUpdatedFilter('recent');
+                          setSortBy('recent');
+                        }}
+                        className="text-xs h-7"
+                      >
+                        🆕 Recently Updated
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => { 
+                          setCapabilityFilter('embedding');
+                          setSizeFilter('small');
+                        }}
+                        className="text-xs h-7"
+                      >
+                        📊 Embeddings
+                      </Button>
+                    </div>
+                    
+                    {/* Results Summary & Clear Filters */}
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {filteredOllamaModels.length} of {availableOllamaModels.length} models
+                      </div>
+                      {(searchFilter || capabilityFilter || sizeFilter || updatedFilter || sortBy !== 'popular') && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => {
+                            setSearchFilter('');
+                            setCapabilityFilter('');
+                            setSizeFilter('');
+                            setUpdatedFilter('');
+                            setSortBy('popular');
+                          }}
+                        >
+                          <Filter className="h-4 w-4 mr-1" />
+                          Clear Filters
+                        </Button>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-4 max-h-96 overflow-y-auto">
+                      {filteredOllamaModels.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <Filter className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p>No models match your filters</p>
+                          <p className="text-xs">Try adjusting your search or filter criteria</p>
+                        </div>
+                      ) : (
+                        filteredOllamaModels.map((model) => (
+                        <div key={model.name} className="flex items-center justify-between p-4 border rounded-lg hover:border-blue-500">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="font-medium">{model.name}</div>
+                              {model.capabilities && model.capabilities.length > 0 && (
+                                <div className="flex gap-1">
+                                  {model.capabilities.map((cap) => (
+                                    <Badge 
+                                      key={cap} 
+                                      variant={cap === 'tools' ? 'default' : cap === 'vision' ? 'secondary' : 'outline'}
+                                      className="text-xs"
+                                    >
+                                      {cap}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground mb-1">{model.description}</div>
+                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                              <span>Size: {model.size}</span>
+                              {model.pulls && <span>Downloads: {model.pulls}</span>}
+                              {model.parameters && <span>Params: {model.parameters}</span>}
+                              {model.updated && <span>Updated: {model.updated}</span>}
+                            </div>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handlePullModel(model.name)}
+                            disabled={isPullingModel === model.name}
+                            className="ml-4"
+                          >
+                            {isPullingModel === model.name ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                        ))
+                      )}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground mb-3">
+                Currently installed models ({availableModels.length}):
+              </div>
+              {availableModels.length > 0 ? (
+                <div className="grid gap-2">
+                  {availableModels.map((model) => (
+                    <div key={model} className="flex items-center justify-between p-2 border rounded">
+                      <span className="font-mono text-sm">{model}</span>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleRemoveModel(model)}
+                        disabled={isRemovingModel === model}
+                      >
+                        {isRemovingModel === model ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center text-muted-foreground py-4">
+                  No models installed. Pull a model to get started.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Provider-specific information */}
+      {selectedProvider && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg capitalize">{selectedProvider} Information</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 text-sm">
+              {selectedProvider === 'gemini' && (
+                <div>
+                  <p>Google's Gemini models offer excellent reasoning and multimodal capabilities.</p>
+                  <p className="text-muted-foreground">
+                    API Key required. Get yours at: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Google AI Studio</a>
+                  </p>
+                </div>
+              )}
+              {selectedProvider === 'openai' && (
+                <div>
+                  <p>OpenAI's GPT models provide state-of-the-art language understanding and generation.</p>
+                  <p className="text-muted-foreground">
+                    API Key required. Get yours at: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenAI Platform</a>
+                  </p>
+                </div>
+              )}
+              {selectedProvider === 'ollama' && (
+                <div>
+                  <p>Ollama runs models locally for privacy and offline use.</p>
+                  <p className="text-muted-foreground">
+                    Models are downloaded and run on your local infrastructure. No API key required.
+                  </p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}

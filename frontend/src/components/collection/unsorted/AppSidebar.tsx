@@ -32,7 +32,11 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   Database,
-  Search
+  Search,
+  DoorOpen,
+  GithubIcon,
+  Asterisk,
+  Activity
 } from "lucide-react"
 
 import { NavMain } from "@/components/ui/nav-main"
@@ -46,16 +50,22 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
+  SidebarMenuButton,
+  SidebarMenuItem,
   SidebarRail,
-  SidebarTrigger
+  SidebarTrigger,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu
 } from "@/components/ui/sidebar"
 import HistoryList from "@/components/ui/SearchHistory"
+import ModeSwitcher from "@/components/ui/mode-switcher"
 
 
 export const InfospaceItems = [
   {
     title: "Infospace Manager",
-    url: "/desks/home/infospaces/Infospace-manager",
+    url: "/hq/infospaces/Infospace-manager",
     icon: FolderCog,
   },
 ];
@@ -64,53 +74,92 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {}
 
 export function AppSidebar({ ...props }: AppSidebarProps) {
   const { user, isLoading } = useAuth()
+
+
+  const links = [
+    {
+      title: "Landing Page",
+      url: "/",
+      icon: Asterisk,
+    },
+    {
+      title: "documentation",
+      url: "https://docs.open-politics.org",
+      icon: BookOpen,
+    },
+    {
+      title: "Forum",
+      url: "https://forum.open-politics.org",
+      icon: MessageSquare,
+    },
+    {
+      title: "GitHub",
+      url: "https://github.com/open-politics",
+      icon: GithubIcon,
+    }
+  ]
   
   const navMain = React.useMemo(() => [
     {
       title: "Home",
-      url: "/desks/home",
+      url: "/hq",
       icon: Home,
       isActive: true,
     },
+    // {
+    //   title: "OPOL Globe",
+    //   url: "/hq/globe",
+    //   icon: Globe,
+    //   isActive: true,
+    // },
     {
-      title: "OPOL Globe",
-      url: "/desks/home/globe",
-      icon: Globe,
-      isActive: true,
-    },
-    {
-    title: "Classifiers",
-    url: "/desks/home/infospaces/annotation-schemes",
+    title: "Schemas",
+    url: "/hq/infospaces/annotation-schemes",
       icon: Microscope,
       isActive: true,
     },
     {
       title: "Assets",
-      url: "/desks/home/infospaces/asset-manager",
+      url: "/hq/infospaces/asset-manager",
       icon: FileText,
       isActive: true,
     },
     {
       title: "Analysis Runner",
-      url: "/desks/home/infospaces/annotation-runner",
+      url: "/hq/infospaces/annotation-runner",
       icon: SquareTerminal,
       isActive: true,
     },
     {
-      title: "Content Search",
-      url: "/desks/home/infospaces/content-search",
-      icon: Search,
+      title: "Monitors",
+      url: "/hq/infospaces/monitors",
+      icon: Activity,
       isActive: true,
     },
     {
-      title: "Datasets",
-      url: "/desks/home/infospaces/dataset-manager",
-      icon: Database,
-      isActive: false,
-    },
+      title: "Intelligence Chat",
+      url: "/hq/chat",
+      icon: Bot,
+      isActive: true,
+    }
+    // {
+    //   title: "Content Search",
+    //   url: "/hq/infospaces/content-search",
+    //   icon: Search,
+    //   isActive: true,
+    // },
+    // {
+    //   title: "Datasets",
+    //   url: "/hq/infospaces/dataset-manager",
+    //   icon: Database,
+    //   isActive: false,
+    // },
+  ], [])
+  
+  const settingsNav = React.useMemo(() => [
     {
-      title: "Infospace Manager",
-      url: "/desks/home/infospaces/infospace-manager",
+      title: "Infospace Settings",
+      url: "/hq/infospaces/infospace-manager",
       icon: FolderCog,
       isActive: true,
     }
@@ -120,15 +169,38 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
   ], [])
 
   return (
-    <Sidebar collapsible="icon" variant="floating" {...props} className="pt-16">
+    <Sidebar collapsible="icon" variant="floating" {...props} className="">
       <SidebarHeader>
         <InfospaceSwitcher />
       </SidebarHeader>
-      <NavMain items={navMain} />
-      {/* {user?.is_superuser && (
-        <NavProjects projects={projects} />
-      )} */}
-      <SidebarContent>
+      <SidebarContent className="flex flex-col">
+        <NavMain title="Navigation" items={navMain} />
+        {/* {user?.is_superuser && (
+          <NavProjects projects={projects} />
+        )} */}
+        <SidebarGroup className="mt-auto">
+          <SidebarGroupLabel>Links</SidebarGroupLabel>
+          <SidebarMenu>
+            {links.map((link) => (
+              <SidebarMenuItem key={link.title}>
+                <SidebarMenuButton asChild tooltip={link.title}>
+                  <Link href={link.url}>
+                    <link.icon />
+                    <span>{link.title}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+            
+          </SidebarMenu>
+          <SidebarMenu className="mt-2">
+            <SidebarGroupLabel>Theme</SidebarGroupLabel>
+            <SidebarMenuItem>
+              <ModeSwitcher />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+        <NavMain title="Settings" items={settingsNav} />
          {/* <HistoryList userId={user?.id} /> */}
       </SidebarContent>
       <SidebarFooter>
@@ -137,7 +209,8 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
           email: user?.email || "user@example.com", 
           avatar: user?.avatar || undefined,
           is_superuser: user?.is_superuser || false,
-          full_name: user?.full_name || "User"
+          full_name: user?.full_name || "User",
+          profile_picture_url: user?.profile_picture_url || undefined,
            }} />
       </SidebarFooter>
       <SidebarRail />
@@ -146,3 +219,4 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
 }
 
 export default AppSidebar
+

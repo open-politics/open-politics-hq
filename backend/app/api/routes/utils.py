@@ -4,12 +4,15 @@ import fitz
 from io import BytesIO
 from typing import Dict, Any, Optional, List
 
-from app.api.deps import get_current_active_superuser
+from app.api.deps import get_current_active_superuser, get_current_user
 from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
 from app.utils import generate_test_email, send_email
 from app.core.opol_config import opol
 from app.core.config import settings
 import logging
+
+# Type alias for current user
+CurrentUser = get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -154,26 +157,323 @@ async def scrape_article(url: str):
 @router.get("/providers", response_model=ProviderListResponse, status_code=status.HTTP_200_OK)
 async def get_providers() -> ProviderListResponse:
     """
-    Returns a hardcoded list of available classification providers and their models.
-    This is a temporary solution to bypass dynamic discovery issues.
+    Returns a dynamic list of available classification providers and their models.
+    Discovers models from all configured providers (Ollama, OpenAI, Gemini).
     """
-    logger.info("Route: Returning hardcoded classification providers.")
+    logger.info("Route: Discovering classification providers and models.")
     
-    hardcoded_providers: List[ProviderInfo] = [
-        ProviderInfo(
-            provider_name="gemini_native",
-            models=[
-                ProviderModel(name="gemini-2.5-flash", description="Google's most capable model."),
-                ProviderModel(name="gemini-2.5-flash-lite-preview-06-17", description="A smaller, faster model."),
+    try:
+        # Import the model registry from the factory
+        from app.api.providers.factory import create_model_registry
+        from app.core.config import settings
+        
+        # Create and initialize the model registry
+        model_registry = create_model_registry(settings)
+        await model_registry.initialize_providers()
+        
+        # Discover all models
+        all_models = await model_registry.discover_all_models(force_refresh=True)
+        
+        # Convert to the expected response format
+        providers_list: List[ProviderInfo] = []
+        
+        for provider_name, models in all_models.items():
+            provider_models = [
+                ProviderModel(
+                    name=model.name,
+                    description=model.description or f"{provider_name} {model.name}"
+                )
+                for model in models
             ]
-        ),
-        ProviderInfo(
-            provider_name="ollama",
-            models=[
-                ProviderModel(name="llama4.2", description="Meta's Llama 4.2 model."),
-            ]
+            
+            # Always add configured providers, even if they have no models
+            # This allows users to pull models for providers like Ollama
+            providers_list.append(ProviderInfo(
+                provider_name=provider_name,
+                models=provider_models
+            ))
+        
+        logger.info(f"Discovered {len(providers_list)} providers with models")
+        return ProviderListResponse(providers=providers_list)
+        
+    except Exception as e:
+        logger.error(f"Failed to discover providers: {e}")
+        # Fallback to hardcoded list if discovery fails
+        hardcoded_providers: List[ProviderInfo] = [
+            ProviderInfo(
+                provider_name="gemini",
+                models=[
+                    ProviderModel(name="gemini-2.5-flash", description="Google's most capable model."),
+                    ProviderModel(name="gemini-2.5-flash-lite-preview-06-17", description="A smaller, faster model."),
+                ]
+            ),
+            ProviderInfo(
+                provider_name="ollama",
+                models=[
+                    ProviderModel(name="llama3.2", description="Meta's Llama 3.2 model."),
+                ]
+            )
+        ]
+        
+        return ProviderListResponse(providers=hardcoded_providers)
+
+
+@router.post("/ollama/pull-model")
+async def pull_ollama_model(
+    model_name: str,
+    current_user: CurrentUser = Depends(get_current_active_superuser)
+) -> Message:
+    """
+    Pull a model from Ollama registry.
+    Admin only endpoint for security.
+    """
+    logger.info(f"Pulling Ollama model: {model_name}")
+    
+    try:
+        import httpx
+        from app.core.config import settings
+        
+        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for model pulling
+            response = await client.post(
+                f"{ollama_base_url}/api/pull",
+                json={"name": model_name}
+            )
+            response.raise_for_status()
+            
+        logger.info(f"Successfully pulled Ollama model: {model_name}")
+        return Message(message=f"Model {model_name} pulled successfully")
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Ollama API error pulling model {model_name}: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to pull model {model_name}: {e.response.text}"
         )
-    ]
+    except Exception as e:
+        logger.error(f"Error pulling Ollama model {model_name}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to pull model {model_name}: {str(e)}"
+        )
+
+
+@router.get("/ollama/available-models")
+async def get_ollama_available_models(
+    sort: str = "newest",   # "newest" | "popular"
+    limit: int = 50
+) -> Dict[str, Any]:
+    """
+    Fetch models from the *plain* Ollama Library page and return normalized JSON.
+    Only calls https://ollama.com/library (follows redirect from /library/).
+    """
+    import re
+    from typing import Any, Dict, List
+
+    try:
+        import httpx
+        from bs4 import BeautifulSoup
+    except ImportError as e:
+        logger.error("Missing dependency: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Missing dependencies. Please install: httpx and beautifulsoup4."
+        )
+
+    # ------------ helpers ------------
+    PULLS_RE   = re.compile(r"(?P<num>\d[\d,.]*)\s*(?P<suf>[MK])?\s*Pulls", re.I)
+    PARAM_RE   = re.compile(r"\b(\d+(?:\.\d+)?(?:b|m)|\d+x\d+(?:\.\d+)?b)\b", re.I)
+    UPDATED_RE = re.compile(r"\bUpdated\b\s+(?P<when>.+?)(?:$|\s{2,})", re.I)
+    VALID_CAPS = {"tools", "vision", "thinking", "embedding", "cloud"}
+
+    def pulls_to_int(s: str) -> int:
+        if not s: return 0
+        m = PULLS_RE.search(s)
+        if not m: return 0
+        n = float(m.group("num").replace(",", ""))
+        suf = (m.group("suf") or "").upper()
+        if suf == "M": n *= 1_000_000
+        elif suf == "K": n *= 1_000
+        return int(n)
+
+    def short_desc(blob: str) -> str:
+        # keep an initial sentence-like chunk; trim caps & params tokens
+        s = re.split(r"\b(tools|vision|thinking|embedding|cloud)\b", blob, flags=re.I)[0]
+        s = re.split(r"\b\d+(?:\.\d+)?(?:b|m)\b", s, flags=re.I)[0]
+        return s.strip()
+
+    # ------------ fetch ------------
+    url = "https://ollama.com/library"  # plain endpoint
+    headers = {
+        # Safari UA to match your network capture (handles any conditional markup)
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers=headers, follow_redirects=True) as client:
+            r = await client.get(url)  # follows /library/ -> /library 303 automatically
+            if r.status_code != 200:
+                logger.warning("Failed to fetch %s: HTTP %s", url, r.status_code)
+                return {"models": [], "error": f"Failed to fetch {url}", "status": r.status_code}
+            html = r.text
+    except Exception as e:
+        logger.exception("Network error: %s", e)
+        return {"models": [], "error": f"Network error: {e}"}
+
+    # ------------ parse ------------
+    soup = BeautifulSoup(html, "html.parser")
+    rows: List[Dict[str, Any]] = []
+
+    # Each tile is an <a href="/library/<slug>">…</a> containing the human strings
+    for a in soup.find_all("a", href=True):
+        href = (a.get("href") or "").strip()
+        if not href.startswith("/library/"):
+            continue
+        slug = href.rsplit("/", 1)[-1]
+        if not slug:
+            continue
+
+        text = a.get_text(" ", strip=True)
+        if not text:
+            continue
+
+        pulls_text = PULLS_RE.search(text).group(0) if PULLS_RE.search(text) else "Unknown"
+        pulls_num  = pulls_to_int(text)
+        params     = [p.lower() for p in PARAM_RE.findall(text)]
+        # dedupe while preserving order
+        seen = set(); params = [p for p in params if (p not in seen and not seen.add(p))]
+        updated    = UPDATED_RE.search(text).group("when") if UPDATED_RE.search(text) else None
+        caps_found = [c for c in VALID_CAPS if re.search(rf"\b{re.escape(c)}\b", text, re.I)]
+        desc       = short_desc(text) or slug
+
+        if params:
+            for p in params[:3]:
+                rows.append({
+                    "name": f"{slug}:{p}" if p not in slug else slug,
+                    "base_model": slug,
+                    "parameters": p,
+                    "size": estimate_model_size(p),   # uses your existing helper
+                    "capabilities": caps_found,
+                    "pulls": pulls_text,
+                    "pulls_num": pulls_num,
+                    "description": f"{desc} ({p} parameters)" if desc else f"{slug} ({p})",
+                    "updated": updated,
+                    "link": f"https://ollama.com/library/{slug}",
+                })
+        else:
+            rows.append({
+                "name": slug,
+                "base_model": slug,
+                "parameters": "unknown",
+                "size": "Unknown",
+                "capabilities": caps_found,
+                "pulls": pulls_text,
+                "pulls_num": pulls_num,
+                "description": desc or slug,
+                "updated": updated,
+                "link": f"https://ollama.com/library/{slug}",
+            })
+
+    # dedupe final variants by full name; keep highest pulls
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for m in rows:
+        n = m["name"]
+        if n not in by_name or m["pulls_num"] > by_name[n]["pulls_num"]:
+            by_name[n] = m
+    models = list(by_name.values())
+
+    # server-side sort safeguard (the page often defaults to Popular; we allow override)
+    if sort.lower() == "popular":
+        models.sort(key=lambda m: m.get("pulls_num", 0), reverse=True)
+    else:
+        # prefer entries with an "Updated …" stamp; tie-break by pulls
+        def newest_key(m: Dict[str, Any]):
+            has_updated = 1 if (m.get("updated") or "") else 0
+            return (has_updated, m.get("pulls_num", 0))
+        models.sort(key=newest_key, reverse=True)
+
+    # limit & cleanup
+    limit = max(1, min(limit, 200))
+    models = models[:limit]
+    for m in models:
+        m.pop("pulls_num", None)
+
+    return {"source_url": url, "sort": sort.lower(), "models": models}
+
+
+
+def estimate_model_size(param_str: str) -> str:
+    """Estimate model download size based on parameter count"""
+    try:
+        param_str = param_str.lower().replace('b', '').replace('m', '')
+        
+        if 'x' in param_str:  # MoE models like "8x7b"
+            parts = param_str.split('x')
+            if len(parts) == 2:
+                experts = float(parts[0])
+                size_per_expert = float(parts[1])
+                # MoE models are more efficient, roughly 2x the single expert size
+                total_params = size_per_expert * 2
+            else:
+                return "Unknown"
+        else:
+            total_params = float(param_str)
+        
+        # Rough estimation: 1B params ≈ 2GB download (considering quantization)
+        if total_params >= 100:  # 100B+
+            return f"~{int(total_params * 1.8)}GB"
+        elif total_params >= 10:   # 10B-99B  
+            return f"~{int(total_params * 2)}GB"
+        elif total_params >= 1:    # 1B-9B
+            return f"~{total_params * 2:.1f}GB"
+        else:  # <1B (in millions)
+            return f"~{int(total_params * 2000)}MB"
+            
+    except (ValueError, AttributeError):
+        return "Unknown"
+
+
+@router.delete("/ollama/remove-model")
+async def remove_ollama_model(
+    model_name: str,
+    current_user: CurrentUser = Depends(get_current_active_superuser)
+) -> Message:
+    """
+    Remove a model from Ollama.
+    Admin only endpoint for security.
+    """
+    logger.info(f"Removing Ollama model: {model_name}")
     
-    return ProviderListResponse(providers=hardcoded_providers)
+    try:
+        import httpx
+        from app.core.config import settings
+        
+        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.delete(
+                f"{ollama_base_url}/api/delete",
+                json={"name": model_name}
+            )
+            response.raise_for_status()
+            
+        logger.info(f"Successfully removed Ollama model: {model_name}")
+        return Message(message=f"Model {model_name} removed successfully")
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Ollama API error removing model {model_name}: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to remove model {model_name}: {e.response.text}"
+        )
+    except Exception as e:
+        logger.error(f"Error removing Ollama model {model_name}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to remove model {model_name}: {str(e)}"
+        )
+    
     

@@ -14,13 +14,14 @@ These tasks handle:
 import logging
 import asyncio
 from typing import Optional, Dict, Any, List
-from sqlmodel import Session
+from sqlmodel import Session, select, func
 
 from app.core.celery_app import celery
 from app.core.db import engine
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.api.providers.factory import create_storage_provider, create_scraping_provider
-from app.api.services.content_service import ContentService
+from app.api.services.content_ingestion_service import ContentIngestionService
+from app.api.services.asset_service import AssetService
 from app.core.config import settings
 from app.api.tasks.utils import run_async_in_celery
 
@@ -39,21 +40,24 @@ def process_content(self, asset_id: int, options: Optional[Dict[str, Any]] = Non
     
     with Session(engine) as session:
         try:
-            # Get the asset
-            asset = session.get(Asset, asset_id)
+            # Create services
+            storage_provider = create_storage_provider(settings)
+            scraping_provider = create_scraping_provider(settings)
+            asset_service = AssetService(session, storage_provider)
+            content_service = ContentIngestionService(session)
+            
+            # Get the asset using AssetService
+            asset = asset_service.get_asset(asset_id)
             if not asset:
                 return {"success": False, "error": "Asset not found"}
             
-            # Create content service
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            content_service = ContentService(session, storage_provider, scraping_provider)
-            
             # Process the content using the helper function for proper event loop management
-            run_async_in_celery(content_service.process_content, asset, options or {})
+            run_async_in_celery(content_service._process_content, asset, options or {})
             
-            # Count child assets created
-            child_count = session.query(Asset).filter(Asset.parent_asset_id == asset_id).count()
+            # Count child assets created using proper query patterns
+            child_count = session.exec(
+                select(func.count(Asset.id)).where(Asset.parent_asset_id == asset_id)
+            ).one()
             
             logger.info(f"[Content Processing] Success: created {child_count} child assets")
             return {"success": True, "child_count": child_count}
@@ -75,21 +79,24 @@ def reprocess_content(self, asset_id: int, options: Optional[Dict[str, Any]] = N
     
     with Session(engine) as session:
         try:
-            # Get the asset
-            asset = session.get(Asset, asset_id)
+            # Create services
+            storage_provider = create_storage_provider(settings)
+            scraping_provider = create_scraping_provider(settings)
+            asset_service = AssetService(session, storage_provider)
+            content_service = ContentIngestionService(session)
+            
+            # Get the asset using AssetService
+            asset = asset_service.get_asset(asset_id)
             if not asset:
                 return {"success": False, "error": "Asset not found"}
             
-            # Create content service
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            content_service = ContentService(session, storage_provider, scraping_provider)
-            
             # Reprocess the content using the helper function for proper event loop management
-            run_async_in_celery(content_service.reprocess_content, asset, options or {})
+            run_async_in_celery(content_service._process_content, asset, options or {})
             
-            # Count child assets created
-            child_count = session.query(Asset).filter(Asset.parent_asset_id == asset_id).count()
+            # Count child assets created using proper query patterns
+            child_count = session.exec(
+                select(func.count(Asset.id)).where(Asset.parent_asset_id == asset_id)
+            ).one()
             
             logger.info(f"[Content Reprocessing] Success: created {child_count} child assets")
             return {"success": True, "child_count": child_count}
@@ -126,7 +133,7 @@ def ingest_bulk_urls(
             # Create content service
             storage_provider = create_storage_provider(settings)
             scraping_provider = create_scraping_provider(settings)
-            content_service = ContentService(session, storage_provider, scraping_provider)
+            content_service = ContentIngestionService(session)
             
             assets_created = []
             errors = []
@@ -140,15 +147,14 @@ def ingest_bulk_urls(
                         "batch_total": len(urls)
                     })
                     
-                    asset = await content_service.ingest_url(
-                        url=url,
+                    assets = await content_service.ingest_content(
+                        locator=url,
                         infospace_id=infospace_id,
                         user_id=user_id,
                         title=url_title,
-                        scrape_immediately=scrape_immediately,
                         options=url_options
                     )
-                    assets_created.append(asset.id)
+                    assets_created.append(assets[0].id)
                     
                     # Small delay to be respectful to servers
                     if scrape_immediately:
@@ -189,10 +195,16 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
     
     with Session(engine) as session:
         try:
-            # Find assets with failed processing status
-            failed_assets = session.query(Asset).filter(
-                Asset.infospace_id == infospace_id,
-                Asset.processing_status == ProcessingStatus.FAILED
+            # Create services
+            storage_provider = create_storage_provider(settings)
+            asset_service = AssetService(session, storage_provider)
+            
+            # Find assets with failed processing status using proper query patterns
+            failed_assets = session.exec(
+                select(Asset).where(
+                    Asset.infospace_id == infospace_id,
+                    Asset.processing_status == ProcessingStatus.FAILED
+                )
             ).all()
             
             if not failed_assets:
@@ -202,7 +214,7 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
             # Create content service
             storage_provider = create_storage_provider(settings)
             scraping_provider = create_scraping_provider(settings)
-            content_service = ContentService(session, storage_provider, scraping_provider)
+            content_service = ContentIngestionService(session)
             
             retried_count = 0
             success_count = 0
@@ -223,7 +235,7 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
                     session.flush()
                     
                     # Retry processing
-                    run_async_in_celery(content_service.process_content, asset, {})
+                    run_async_in_celery(content_service._process_content, asset, {})
                     success_count += 1
                     retried_count += 1
                     
@@ -255,13 +267,18 @@ def clean_orphaned_child_assets(self, infospace_id: int):
     
     with Session(engine) as session:
         try:
-            # Find child assets whose parent no longer exists
-            orphaned_assets = session.query(Asset).filter(
-                Asset.infospace_id == infospace_id,
-                Asset.parent_asset_id.isnot(None)
-            ).filter(
-                ~Asset.parent_asset_id.in_(
-                    session.query(Asset.id).filter(Asset.infospace_id == infospace_id)
+            # Create services
+            storage_provider = create_storage_provider(settings)
+            asset_service = AssetService(session, storage_provider)
+            
+            # Find child assets whose parent no longer exists using proper query patterns
+            orphaned_assets = session.exec(
+                select(Asset).where(
+                    Asset.infospace_id == infospace_id,
+                    Asset.parent_asset_id.is_not(None),
+                    ~Asset.parent_asset_id.in_(
+                        select(Asset.id).where(Asset.infospace_id == infospace_id)
+                    )
                 )
             ).all()
             
@@ -271,6 +288,8 @@ def clean_orphaned_child_assets(self, infospace_id: int):
             
             cleaned_count = len(orphaned_assets)
             
+            # Note: Using direct session.delete() for bulk cleanup efficiency
+            # rather than AssetService.delete_asset() which does individual lookups
             for asset in orphaned_assets:
                 session.delete(asset)
             
@@ -310,7 +329,7 @@ def ingest_bulk_files(
             # Create content service
             storage_provider = create_storage_provider(settings)
             scraping_provider = create_scraping_provider(settings)
-            content_service = ContentService(session, storage_provider, scraping_provider)
+            content_service = ContentIngestionService(session)
             
             assets_created = []
             errors = []
@@ -333,14 +352,14 @@ def ingest_bulk_files(
                             filename=os.path.basename(file_path)
                         )
                         
-                        asset = await content_service.ingest_file(
-                            file=upload_file,
+                        assets = await content_service.ingest_content(
+                            locator=upload_file,
                             infospace_id=infospace_id,
                             user_id=user_id,
-                            process_immediately=process_immediately,
-                            options=file_options
+                            title=os.path.basename(file_path),
+                            options={"process_immediately": process_immediately, **file_options}
                         )
-                        assets_created.append(asset.id)
+                        assets_created.append(assets[0].id)
                     
                     # Clean up temporary file
                     try:

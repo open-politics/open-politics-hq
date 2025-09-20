@@ -8,24 +8,26 @@ from fastapi import HTTPException
 
 from app.models import AnalysisAdapter, User, Annotation, Asset # Add other models as needed
 from app.core.config import AppSettings
+
 # Import specific service dependencies this service might orchestrate or use
+
 from .annotation_service import AnnotationService 
 from .asset_service import AssetService
-from app.api.providers.base import ClassificationProvider # Example if some adapters need direct provider access
+from app.api.providers.model_registry import ModelRegistryService
 from app.api.analysis.protocols import AnalysisAdapterProtocol # Import the protocol
 
 logger = logging.getLogger(__name__)
 
 class AnalysisService:
     def __init__(self, session: Session, 
-                 classification_provider: ClassificationProvider, # Example provider
+                 model_registry: ModelRegistryService,
                  annotation_service: AnnotationService,
                  asset_service: AssetService,
                  current_user: Optional[User] = None, # Passed from deps if route requires auth
                  settings: Optional[AppSettings] = None # Passed from deps
-                ):
+               ):
         self.session = session
-        self.classification_provider = classification_provider # Store if needed by adapters directly
+        self.model_registry = model_registry
         self.annotation_service = annotation_service
         self.asset_service = asset_service
         self.current_user = current_user

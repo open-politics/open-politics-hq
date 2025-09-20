@@ -28,6 +28,24 @@ celery.conf.beat_schedule = {
         # Optionally args or kwargs if the task needs them
         # 'args': (16, 16),
     },
+    'automatic-backup-all-infospaces': {
+        'task': 'automatic_backup_all_infospaces',
+        'schedule': 86400.0,  # Run daily (24 hours = 86400 seconds)
+        'kwargs': {'backup_type': 'auto'},
+    },
+    'cleanup-expired-backups': {
+        'task': 'cleanup_expired_backups', 
+        'schedule': 43200.0,  # Run twice daily (12 hours = 43200 seconds)
+    },
+    'cleanup-expired-user-backups': {
+        'task': 'cleanup_expired_user_backups',
+        'schedule': 86400.0,  # Run daily (24 hours = 86400 seconds)
+    },
+    'weekly-system-backup': {
+        'task': 'backup_all_users',
+        'schedule': crontab(day_of_week=0, hour=2, minute=0),  # Run Sunday at 2 AM
+        'kwargs': {'backup_type': 'system', 'admin_user_id': 1},
+    },
     # Add more scheduled tasks here if needed
 }
 celery.conf.timezone = 'UTC' # Explicitly set timezone
@@ -43,9 +61,12 @@ celery.conf.update(
     imports=(  # Tasks will only import when a worker starts, not when Celery app is created
         'app.api.tasks.annotate',
         'app.api.tasks.ingest',
-        'app.api.tasks.ingest_recurringly',
         'app.api.tasks.schedule',
         'app.api.tasks.content_tasks',
+        'app.api.tasks.backup',
+        'app.api.tasks.user_backup',
+        'app.api.tasks.monitor_tasks',
+        'app.api.tasks.pipeline_tasks',
     )
 )
 

@@ -1,9 +1,40 @@
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Settings2, Repeat, Star, Loader2, ChevronDown, ChevronRight, History, Calendar, Clock, Play, Files, Microscope, Share2, MoreHorizontal } from 'lucide-react';
+import { 
+  Calendar, 
+  Clock, 
+  User, 
+  Database, 
+  Star, 
+  BookmarkIcon,
+  History,
+  Search,
+  SortAsc,
+  SortDesc,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  Settings,
+  Settings2,
+  MoreHorizontal,
+  Eye,
+  Trash2,
+  Share2,
+  Download,
+  Play,
+  Filter,
+  X,
+  Sparkles,
+  Zap,
+  Repeat,
+  Files,
+  Microscope,
+  Loader2,
+  Upload
+} from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { AnnotationRunRead, ResourceType } from '@/client/models';
 import { Label } from '@/components/ui/label';
@@ -28,6 +59,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
+import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 
 const FavoriteRunCard: React.FC<{
   run: AnnotationRunRead & { timestamp: string; documentCount: number; schemeCount: number };
@@ -35,7 +67,8 @@ const FavoriteRunCard: React.FC<{
   onSelectRun: (runId: number) => void;
   onToggleFavorite: (run: AnnotationRunRead) => void;
   onShare: (runId: number) => void;
-}> = ({ run, activeRunId, onSelectRun, onToggleFavorite, onShare }) => {
+  onExport: (runId: number) => void;
+}> = ({ run, activeRunId, onSelectRun, onToggleFavorite, onShare, onExport }) => {
   const config = run.configuration as any;
   const recurringTaskIdValue: unknown = config?.recurring_task_id;
   const isRecurring = typeof recurringTaskIdValue === 'number';
@@ -77,6 +110,17 @@ const FavoriteRunCard: React.FC<{
           className="h-8 w-8 hover:bg-amber-200/50"
         >
           <Share2 className="h-4 w-4 text-amber-600" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            onExport(run.id);
+          }}
+          className="h-8 w-8 hover:bg-amber-200/50"
+        >
+          <Download className="h-4 w-4 text-amber-600" />
         </Button>
         <Button
           variant="ghost"
@@ -162,7 +206,8 @@ const RunTableRow: React.FC<{
   onSelectRun: (runId: number) => void;
   onToggleFavorite: (run: AnnotationRunRead) => void;
   onShare: (runId: number) => void;
-}> = ({ run, activeRunId, onSelectRun, onToggleFavorite, onShare }) => {
+  onExport: (runId: number) => void;
+}> = ({ run, activeRunId, onSelectRun, onToggleFavorite, onShare, onExport }) => {
   const config = run.configuration as any;
   const recurringTaskIdValue: unknown = config?.recurring_task_id;
   const isRecurring = typeof recurringTaskIdValue === 'number';
@@ -297,6 +342,9 @@ const RunTableRow: React.FC<{
             <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onShare(run.id);}}>
               <Share2 className="mr-2 h-4 w-4" /> Share Dashboard
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={(e) => {e.stopPropagation(); onExport(run.id);}}>
+              <Download className="mr-2 h-4 w-4" /> Export Run
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </TableCell>
@@ -319,6 +367,8 @@ const RunHistoryPanel: React.FC<{
   const favoriteRuns = useFavoriteRunsStore(state => state.favoriteRuns);
   const favoriteRunIds = useMemo(() => favoriteRuns.map(r => r.id), [favoriteRuns]);
   const { activeInfospace } = useInfospaceStore();
+  const { exportAnnotationRun, fetchRuns } = useAnnotationRunStore();
+  const { importResource } = useShareableStore();
 
   const handleToggleFavoriteRun = useCallback((run: AnnotationRunRead) => {
     const infospaceId = activeInfospace?.id || '';
@@ -350,6 +400,66 @@ const RunHistoryPanel: React.FC<{
     
     setSharingRun(run);
   }, [runs]);
+
+  const handleExportRun = useCallback(async (runId: number) => {
+    if (!activeInfospace?.id) {
+      toast.error('No active infospace');
+      return;
+    }
+    
+    const run = runs.find(r => r.id === runId);
+    if (!run) {
+      toast.error('Run not found');
+      return;
+    }
+
+    try {
+      await exportAnnotationRun(activeInfospace.id, runId);
+    } catch (error) {
+      console.error('Error exporting run:', error);
+    }
+  }, [runs, activeInfospace?.id, exportAnnotationRun]);
+
+  // Add import functionality
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleImportClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !activeInfospace?.id) {
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const result = await importResource(file, activeInfospace.id);
+      if (result) {
+        if ('batch_summary' in result) {
+          // Batch import result
+          const summary = result.batch_summary;
+          toast.success(`Import completed: ${summary.successful_imports.length} runs imported, ${summary.failed_imports.length} failed`);
+        } else {
+          // Single import result
+          toast.success(`Successfully imported: ${result.imported_resource_name}`);
+        }
+        // Refresh the runs list after successful import
+        await fetchRuns(activeInfospace.id);
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      // Error toast already handled by the store
+    } finally {
+      setIsImporting(false);
+      // Clear the file input
+      if (event.target) {
+        event.target.value = '';
+      }
+    }
+  }, [activeInfospace?.id, importResource, fetchRuns]);
 
   const displayRuns = useMemo(() => {
     return runs.map(run => {
@@ -397,7 +507,7 @@ const RunHistoryPanel: React.FC<{
   return (
     <div className="flex flex-col h-full">
       {/* Fixed Header Section */}
-      <div className="flex-shrink-0 backdrop-blur-sm border-b border-border/20">
+      <div className="flex-shrink-0 border-b border-border/20">
         <div className="p-4 pb-0">
           {/* Main Header Row */}
           <div className="flex items-center justify-between mb-6">
@@ -424,6 +534,20 @@ const RunHistoryPanel: React.FC<{
                   className="w-96 h-10 bg-background/50 border-primary/50 focus:border-primary/50 focus:bg-background transition-colors"
                 />
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleImportClick}
+                disabled={isImporting}
+                className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
+              >
+                {isImporting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-2" />
+                )}
+                {isImporting ? 'Importing...' : 'Import Run'}
+              </Button>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button 
@@ -431,7 +555,7 @@ const RunHistoryPanel: React.FC<{
                     size="icon"
                     className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
                   >
-                    <Settings2 className="h-4 w-4" />
+                    <Settings className="h-4 w-4" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-56 p-3">
@@ -494,6 +618,7 @@ const RunHistoryPanel: React.FC<{
                           onSelectRun={onSelectRun}
                           onToggleFavorite={handleToggleFavoriteRun}
                           onShare={handleShareRun}
+                          onExport={handleExportRun}
                         />
                       ))}
                     </div>
@@ -517,9 +642,9 @@ const RunHistoryPanel: React.FC<{
         </div>
 
         {/* All Runs Table - Scrollable Content */}
-        <div className="flex-1 overflow-hidden p-8 scrollbar-hide">
+        <div className="flex-1 overflow-hidden p-8 backdrop-blur-sm scrollbar-hide ">
           {nonFavoriteRuns.length > 0 ? (
-            <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-2xl border border-border/60 overflow-hidden backdrop-blur-sm h-full flex flex-col">
+            <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-2xl border border-border/60 overflow-hidden h-full flex flex-col">
               {/* Table Header - Fixed within table */}
               <div className="flex-shrink-0">
                 <Table>
@@ -588,6 +713,7 @@ const RunHistoryPanel: React.FC<{
                         onSelectRun={onSelectRun}
                         onToggleFavorite={handleToggleFavoriteRun}
                         onShare={handleShareRun}
+                        onExport={handleExportRun}
                       />
                     ))}
                   </TableBody>
@@ -595,8 +721,8 @@ const RunHistoryPanel: React.FC<{
               </div>
             </div>
           ) : (
-            <div className="h-full flex items-center justify-center">
-              <div className="text-center text-muted-foreground border rounded-lg bg-muted/20 p-16">
+            <div className="h-full flex items-center justify-center backdrop-blur-sm bg-background/20">
+              <div className="text-center text-muted-foreground border rounded-lg p-16">
                 <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
                   <History className="h-6 w-6 text-muted-foreground" />
                 </div>
@@ -622,6 +748,15 @@ const RunHistoryPanel: React.FC<{
           onClose={() => setSharingRun(null)}
         />
       )}
+      
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".zip,.json"
+        onChange={handleFileChange}
+        style={{ display: 'none' }}
+      />
     </div>
   );
 };

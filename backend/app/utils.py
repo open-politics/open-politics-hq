@@ -3,8 +3,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 
-import emails  # type: ignore
 from jinja2 import Template
 from jose import JWTError, jwt
 
@@ -32,22 +35,38 @@ def send_email(
     html_content: str = "",
 ) -> None:
     assert settings.emails_enabled, "no provided configuration for email variables"
-    message = emails.Message(
-        subject=subject,
-        html=html_content,
-        mail_from=(settings.EMAILS_FROM_NAME, settings.EMAILS_FROM_EMAIL),
-    )
-    smtp_options = {"host": settings.SMTP_HOST, "port": settings.SMTP_PORT}
-    if settings.SMTP_TLS:
-        smtp_options["tls"] = True
-    elif settings.SMTP_SSL:
-        smtp_options["ssl"] = True
-    if settings.SMTP_USER:
-        smtp_options["user"] = settings.SMTP_USER
-    if settings.SMTP_PASSWORD:
-        smtp_options["password"] = settings.SMTP_PASSWORD
-    response = message.send(to=email_to, smtp=smtp_options)
-    logging.info(f"send email result: {response}")
+    
+    print(f"📧 SENDING EMAIL:")
+    print(f"  - To: {email_to}")
+    print(f"  - Subject: {subject}")
+    print(f"  - From: {settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>")
+    print(f"  - SMTP: {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+    
+    try:
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = formataddr((settings.EMAILS_FROM_NAME, settings.EMAILS_FROM_EMAIL))
+        msg['To'] = email_to
+        
+        # Add HTML content
+        html_part = MIMEText(html_content, 'html', 'utf-8')
+        msg.attach(html_part)
+        
+        # Connect to server and send email
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+            if settings.SMTP_TLS:
+                server.starttls()
+            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            
+            server.send_message(msg)
+            print(f"✅ Email sent successfully to {email_to}")
+            
+    except Exception as e:
+        print(f"❌ Email send failed: {e}")
+        print(f"❌ Error type: {type(e).__name__}")
+        raise
 
 
 def generate_test_email(email_to: str) -> EmailData:
@@ -114,3 +133,46 @@ def verify_password_reset_token(token: str) -> str | None:
         return str(decoded_token["sub"])
     except JWTError:
         return None
+
+
+def generate_email_verification_token(email: str) -> str:
+    """Generate a JWT token for email verification."""
+    delta = timedelta(hours=24)  # 24 hours expiry for email verification
+    now = datetime.utcnow()
+    expires = now + delta
+    exp = expires.timestamp()
+    encoded_jwt = jwt.encode(
+        {"exp": exp, "nbf": now, "sub": email, "type": "email_verification"},
+        settings.SECRET_KEY,
+        algorithm="HS256",
+    )
+    return encoded_jwt
+
+
+def verify_email_verification_token(token: str) -> str | None:
+    """Verify an email verification token and return the email if valid."""
+    try:
+        decoded_token = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        if decoded_token.get("type") != "email_verification":
+            return None
+        return str(decoded_token["sub"])
+    except JWTError:
+        return None
+
+
+def generate_email_verification_email(email_to: str, username: str, token: str) -> EmailData:
+    """Generate email verification email content."""
+    project_name = settings.PROJECT_NAME
+    subject = f"{project_name} - Verify Your Email Address"
+    verification_link = f"{settings.server_host}/accounts/verify-email?token={token}"
+    html_content = render_email_template(
+        template_name="email_verification.html",
+        context={
+            "project_name": settings.PROJECT_NAME,
+            "username": username,
+            "email": email_to,
+            "verification_link": verification_link,
+            "valid_hours": 24,
+        },
+    )
+    return EmailData(html_content=html_content, subject=subject)

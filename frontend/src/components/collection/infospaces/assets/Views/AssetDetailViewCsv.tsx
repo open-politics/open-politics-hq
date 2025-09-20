@@ -190,7 +190,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   };
 
   const renderTableView = () => (
-    <div className="border rounded-md max-h-64 w-full overflow-auto">
+    <div className="max-h-80 w-full overflow-auto">
       <table className="text-sm border-collapse w-full table-fixed" style={{ minWidth: '500px' }}>
         <colgroup>
           <col style={{ width: '60px' }} />
@@ -294,8 +294,8 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   );
 
   const renderCardsView = () => (
-    <div className="max-h-[calc(100vh-400px)] overflow-auto w-full">
-      <div className="space-y-3 w-full">
+    <div className="w-full">
+      <div className="space-y-3 max-h-80 overflow-auto w-full">
         {filteredAndSortedAssets.length > 0 ? (
           filteredAndSortedAssets.map((childAsset) => {
             const selected = isSelected(childAsset.id);
@@ -311,8 +311,8 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                 }
                 className={cn(
                   "cursor-pointer transition-colors hover:bg-muted/50 w-full",
-                  selected && "bg-yellow-50 border-yellow-500 border-2",
-                  highlighted && "bg-yellow-50 border-yellow-400 border-l-4"
+                  selected && "border-yellow-500 border-2",
+                  highlighted && "border-yellow-400 border-l-4"
                 )}
                 onClick={() => handleRowClick(childAsset)}
               >
@@ -385,7 +385,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
               <FileSpreadsheet className="h-4 w-4 text-primary" />
               Row Details: {selectedChildAsset.title || `Row ${selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : selectedChildAsset.id}`}
             </CardTitle>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 absolute bottom-3 right-4 z-10 bg-background/95 backdrop-blur-sm py-2 px-3 rounded-lg shadow-sm">
               {/* Navigation */}
               <Button
                 variant="outline"
@@ -561,7 +561,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   };
 
   return (
-    <div className="space-y-4 h-full flex flex-col">
+    <div className="space-y-4 h-full flex flex-col max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
@@ -614,7 +614,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto w-full max-w-full">
+      <div className="flex-1 min-h-0 overflow-auto w-full max-w-4xl mx-auto">
         {isLoadingChildren ? (
           <div className="flex items-center justify-center h-32">
             <Loader2 className="h-6 w-6 animate-spin mr-2" />

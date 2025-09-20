@@ -1,4 +1,4 @@
-""" Core Model
+""" Core Models
 =================================================
 """
 
@@ -35,6 +35,9 @@ class UserBase(SQLModel):
     email: str
     full_name: Optional[str] = None
     tier: UserTier = UserTier.TIER_0
+    profile_picture_url: Optional[str] = None
+    bio: Optional[str] = None
+    description: Optional[str] = None
 
 # ─────────────────────────────────────────────────────────────── Enums ──── #
 
@@ -81,6 +84,8 @@ class ResultStatus(str, enum.Enum):
 class TaskType(str, enum.Enum):
     INGEST = "ingest"
     ANNOTATE = "annotate"
+    MONITOR = "monitor"
+    PIPELINE = "pipeline"
 
 
 class TaskStatus(str, enum.Enum):
@@ -106,6 +111,38 @@ class ResourceType(str, enum.Enum):
     DATASET = "dataset"
     MIXED = "mixed"
 
+
+class BackupType(str, enum.Enum):
+    MANUAL = "manual"
+    AUTO = "auto"
+    SYSTEM = "system"
+
+
+class BackupStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PipelineStepType(str, enum.Enum):
+    ANNOTATE = "ANNOTATE"
+    FILTER = "FILTER"
+    ANALYZE = "ANALYZE"
+    ROUTE = "ROUTE"
+    CURATE = "CURATE"
+    BUNDLE = "BUNDLE"
+
+class SourceType(str, enum.Enum):
+    """Auto-detected source types based on locator patterns."""
+    RSS_FEED = "rss_feed"
+    DIRECT_FILE = "direct_file"
+    WEB_PAGE = "web_page"
+    SEARCH_QUERY = "search_query"
+    URL_LIST = "url_list"
+    SITE_DISCOVERY = "site_discovery"
+    FILE_UPLOAD = "file_upload"
+    TEXT_CONTENT = "text_content"
 
 class SourceStatus(str, enum.Enum):
     PENDING = "pending"
@@ -145,6 +182,21 @@ class User(SQLModel, table=True):
     is_active: bool = True
     is_superuser: bool = False
     full_name: Optional[str] = None
+    
+    # Profile fields
+    profile_picture_url: Optional[str] = Field(default=None)
+    bio: Optional[str] = Field(default=None, max_length=500)  # Short bio
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))  # Longer description
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+    
+    # Email verification fields
+    email_verified: bool = Field(default=False)
+    email_verification_token: Optional[str] = Field(default=None, index=True)
+    email_verification_sent_at: Optional[datetime] = Field(default=None)
+    email_verification_expires_at: Optional[datetime] = Field(default=None)
 
     infospaces: List["Infospace"] = Relationship(back_populates="owner")
     datasets: List["Dataset"] = Relationship(back_populates="user")
@@ -157,6 +209,15 @@ class User(SQLModel, table=True):
     sources: List["Source"] = Relationship(back_populates="user")
     tasks: List["Task"] = Relationship(back_populates="user")
     analysis_adapters_created: List["AnalysisAdapter"] = Relationship(back_populates="creator")
+    created_backups: List["InfospaceBackup"] = Relationship(back_populates="user")
+    user_backups: List["UserBackup"] = Relationship(
+        back_populates="target_user",
+        sa_relationship_kwargs={"foreign_keys": "[UserBackup.target_user_id]"}
+    )
+    created_user_backups: List["UserBackup"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[UserBackup.created_by_user_id]"}
+    )
+    monitors: List["Monitor"] = Relationship(back_populates="user")
 
 
 class Infospace(SQLModel, table=True):
@@ -188,6 +249,8 @@ class Infospace(SQLModel, table=True):
     assets: List["Asset"] = Relationship(back_populates="infospace")
     annotations: List["Annotation"] = Relationship(back_populates="infospace")
     shareable_links: List["ShareableLink"] = Relationship(back_populates="infospace")
+    backups: List["InfospaceBackup"] = Relationship(back_populates="infospace")
+    monitors: List["Monitor"] = Relationship(back_populates="infospace")
 
 # ─────────────────────────────────────────────────────────────── Bundles ──── #
 
@@ -197,6 +260,10 @@ class AssetBundleLink(SQLModel, table=True):
     bundle_id: int = Field(foreign_key="bundle.id", primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+
+class MonitorBundleLink(SQLModel, table=True):
+    monitor_id: int = Field(foreign_key="monitor.id", primary_key=True)
+    bundle_id: int = Field(foreign_key="bundle.id", primary_key=True)
 
 # ─────────────────────────────────────────────────────────────── Sources ──── #
 
@@ -234,9 +301,10 @@ class Asset(SQLModel, table=True):
     kind: AssetKind
     text_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     blob_path: Optional[str] = None
-    source_identifier: Optional[str] = None
+    source_identifier: Optional[str] = Field(default=None, index=True)
     source_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     content_hash: Optional[str] = Field(default=None, index=True)
+    fragments: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
     
     # Processing status for hierarchical assets (CSV, PDF)
     processing_status: ProcessingStatus = ProcessingStatus.READY
@@ -253,11 +321,31 @@ class Asset(SQLModel, table=True):
     # Parent-child relationship
     parent_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id")
     part_index: Optional[int] = Field(default=None, index=True)
+    # Version lineage for dynamic content
+    previous_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", index=True)
     parent_asset: Optional["Asset"] = Relationship(
         back_populates="children_assets",
-        sa_relationship_kwargs=dict(remote_side="Asset.id")
+        sa_relationship_kwargs=dict(
+            foreign_keys="[Asset.parent_asset_id]",
+            remote_side="Asset.id",
+        ),
     )
-    children_assets: List["Asset"] = Relationship(back_populates="parent_asset")
+    children_assets: List["Asset"] = Relationship(
+        back_populates="parent_asset",
+        sa_relationship_kwargs=dict(foreign_keys="[Asset.parent_asset_id]")
+    )
+    # Version lineage relationships
+    previous_asset: Optional["Asset"] = Relationship(
+        back_populates="next_versions",
+        sa_relationship_kwargs=dict(
+            foreign_keys="[Asset.previous_asset_id]",
+            remote_side="Asset.id",
+        ),
+    )
+    next_versions: List["Asset"] = Relationship(
+        back_populates="previous_asset",
+        sa_relationship_kwargs=dict(foreign_keys="[Asset.previous_asset_id]")
+    )
 
     # Relationships
     infospace: Optional[Infospace] = Relationship(back_populates="assets")
@@ -266,6 +354,10 @@ class Asset(SQLModel, table=True):
     bundles: List["Bundle"] = Relationship(back_populates="assets", link_model=AssetBundleLink)
     annotations: List["Annotation"] = Relationship(back_populates="asset")
     chunks: List["AssetChunk"] = Relationship(back_populates="asset")
+
+    __table_args__ = (
+        Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
+    )
 
     @property
     def is_container(self) -> bool:  
@@ -308,6 +400,34 @@ class EmbeddingModel(SQLModel, table=True):
         Index("ix_embeddingmodel_provider_active", "provider", "is_active"),
     )
 
+
+# ───────────────────────────────────────────────────── Analysis Adapters ──── #
+
+class AnalysisAdapter(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = None
+
+    # JSON Schema definitions for input/output contracts
+    input_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    output_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+
+    version: str = Field(default="1.0")
+    module_path: Optional[str] = None  # e.g. "app.api.analysis.adapters.time_series_adapter.TimeSeriesAggregationAdapter"
+    adapter_type: str  # free-form type descriptor ("timeseries", "distribution", "graph", etc.)
+    is_active: bool = Field(default=True, index=True)
+    is_public: bool = Field(default=False)
+
+    creator_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+
+    # Relationships
+    creator: Optional[User] = Relationship(back_populates="analysis_adapters_created")
+
+    __table_args__ = (
+        UniqueConstraint("name", "version"),
+    )
 
 # ──────────────────────────────────────────────────────── Asset Chunks ──── #
 
@@ -363,6 +483,7 @@ class Bundle(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="bundles")
     user: Optional[User] = Relationship(back_populates="bundles")
     assets: List["Asset"] = Relationship(back_populates="bundles", link_model=AssetBundleLink)
+    monitors: List["Monitor"] = Relationship(back_populates="target_bundles", link_model=MonitorBundleLink)
 
     __table_args__ = (
         UniqueConstraint("infospace_id", "name", "version"),
@@ -370,6 +491,10 @@ class Bundle(SQLModel, table=True):
 
 
 # ───────────────────────────────────────────────────── Annotation Schemas ──── #
+
+class MonitorSchemaLink(SQLModel, table=True):
+    monitor_id: int = Field(foreign_key="monitor.id", primary_key=True)
+    schema_id: int = Field(foreign_key="annotationschema.id", primary_key=True)
 
 class AnnotationSchema(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -391,6 +516,7 @@ class AnnotationSchema(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="schemas")
     user: Optional[User] = Relationship(back_populates="schemas")
     annotations: List["Annotation"] = Relationship(back_populates="schema")
+    monitors: List["Monitor"] = Relationship(back_populates="target_schemas", link_model=MonitorSchemaLink)
 
     __table_args__ = (
         Index(
@@ -430,6 +556,10 @@ class AnnotationRun(SQLModel, table=True):
     
     # Import/export lineage
     imported_from_uuid: Optional[str] = Field(default=None, index=True)
+
+    # Link to a monitor if this run was generated by one
+    monitor_id: Optional[int] = Field(default=None, foreign_key="monitor.id")
+    monitor: Optional["Monitor"] = Relationship(back_populates="runs")
 
     infospace: Optional[Infospace] = Relationship(back_populates="runs")
     user: Optional[User] = Relationship(back_populates="runs")
@@ -524,6 +654,240 @@ class Task(SQLModel, table=True):
 
     infospace: Optional[Infospace] = Relationship(back_populates="tasks")
     user: Optional[User] = Relationship(back_populates="tasks")
+    monitor: Optional["Monitor"] = Relationship(back_populates="linked_task")
+
+# ───────────────────────────────────────────────────────────── History (opt.) ──── #
+
+class SearchHistory(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id")
+    query: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    filters: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    result_count: Optional[int] = None
+
+    user: Optional[User] = Relationship()
+
+# ───────────────────────────────────────────────────────────── Index hints ──── #
+# Alembic migrations should create additional GIN/GIST indexes on JSON columns
+# (cells, value, output_contract) if query patterns show the need.
+
+# ─────────────────────────────────────────────────────────── Monitors ──── #
+
+# ─────────────────────────────────────────────────────────── Backups ──── #
+
+class InfospaceBackup(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    name: str
+    description: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+
+    backup_type: BackupType = BackupType.MANUAL
+    storage_path: str
+    file_size_bytes: Optional[int] = None
+    content_hash: Optional[str] = None
+
+    included_sources: int = 0
+    included_assets: int = 0
+    included_schemas: int = 0
+    included_runs: int = 0
+    included_datasets: int = 0
+    included_annotations: int = 0
+
+    status: BackupStatus = BackupStatus.PENDING
+    error_message: Optional[str] = None
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+
+    is_shareable: bool = Field(default=False)
+    share_token: Optional[str] = Field(default=None, index=True)
+
+    infospace: Optional[Infospace] = Relationship(back_populates="backups")
+    user: Optional[User] = Relationship(back_populates="created_backups")
+
+    __table_args__ = (
+        Index("ix_infospacebackup_infospace_user", "infospace_id", "user_id"),
+    )
+
+
+class UserBackup(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    name: str
+    description: Optional[str] = None
+    backup_type: str = "user"
+
+    target_user_id: int = Field(foreign_key="user.id")
+    created_by_user_id: int = Field(foreign_key="user.id")
+
+    storage_path: str
+    file_size_bytes: Optional[int] = None
+    content_hash: Optional[str] = None
+
+    included_infospaces: int = 0
+    included_assets: int = 0
+    included_schemas: int = 0
+    included_runs: int = 0
+    included_annotations: int = 0
+    included_datasets: int = 0
+
+    status: BackupStatus = BackupStatus.PENDING
+    error_message: Optional[str] = None
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+
+    is_shareable: bool = Field(default=False)
+    share_token: Optional[str] = Field(default=None, index=True)
+
+    # Relationships
+    target_user: Optional[User] = Relationship(sa_relationship_kwargs={"foreign_keys": "[UserBackup.target_user_id]"})
+    created_by_user: Optional[User] = Relationship(sa_relationship_kwargs={"foreign_keys": "[UserBackup.created_by_user_id]"})
+
+    __table_args__ = (
+        Index("ix_userbackup_target_created", "target_user_id", "created_by_user_id"),
+    )
+
+class Monitor(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    name: str
+    description: Optional[str] = None
+    
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+    
+    linked_task_id: int = Field(foreign_key="task.id", unique=True)
+    
+    run_config_override: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    views_config: Optional[List[Dict[str, Any]]] = Field(default_factory=list, sa_column=Column(JSONB))
+    aggregation_config: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
+    
+    status: str = Field(default="PAUSED")
+    last_checked_at: Optional[datetime] = None
+    
+    # Relationships
+    infospace: Infospace = Relationship(back_populates="monitors")
+    user: User = Relationship(back_populates="monitors")
+    linked_task: "Task" = Relationship(back_populates="monitor")
+    
+    target_bundles: List["Bundle"] = Relationship(back_populates="monitors", link_model=MonitorBundleLink)
+    target_schemas: List["AnnotationSchema"] = Relationship(back_populates="monitors", link_model=MonitorSchemaLink)
+    runs: List["AnnotationRun"] = Relationship(back_populates="monitor")
+
+# ─────────────────────────────────────────────────────────── Pipelines ──── #
+
+class PipelineStep(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pipeline_id: int = Field(foreign_key="intelligencepipeline.id")
+    step_order: int
+    name: str
+    step_type: str # ANNOTATE, FILTER, ANALYZE, ROUTE, CURATE, BUNDLE
+    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    input_source: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    pipeline: "IntelligencePipeline" = Relationship(back_populates="steps")
+
+class IntelligencePipeline(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    name: str
+    description: Optional[str] = None
+
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+    
+    source_bundle_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))
+    linked_task_id: Optional[int] = Field(default=None, foreign_key="task.id")
+    
+    steps: List["PipelineStep"] = Relationship(back_populates="pipeline")
+    executions: List["PipelineExecution"] = Relationship(back_populates="pipeline")
+
+class PipelineExecution(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pipeline_id: int = Field(foreign_key="intelligencepipeline.id")
+    status: str # RUNNING, COMPLETED, FAILED
+    trigger_type: str # ON_NEW_ASSET, SCHEDULED_FULL_RUN, MANUAL_ADHOC
+    triggering_asset_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+    step_outputs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+
+    pipeline: "IntelligencePipeline" = Relationship(back_populates="executions")
+
+class PipelineProcessedAsset(SQLModel, table=True):
+    pipeline_id: int = Field(foreign_key="intelligencepipeline.id", primary_key=True)
+    input_bundle_id: int = Field(foreign_key="bundle.id", primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id", primary_key=True)
+    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RunAggregate(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="annotationrun.id")
+    field_path: str
+    value_kind: str  # number|string|bool|datetime|array_* etc
+    sketch_kind: str  # count|min|max|mean|var|histogram|hll|topk|timeseries
+    payload: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_runaggregate_payload", "payload", postgresql_using="gin", postgresql_ops={"payload": "jsonb_path_ops"}),
+        Index("ix_runaggregate_run_field", "run_id", "field_path"),
+    )
+
+
+class MonitorAggregate(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    monitor_id: int = Field(foreign_key="monitor.id")
+    field_path: str
+    value_kind: str
+    sketch_kind: str
+    payload: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+
+    __table_args__ = (
+        Index("ix_monitoraggregate_payload", "payload", postgresql_using="gin", postgresql_ops={"payload": "jsonb_path_ops"}),
+        Index("ix_monitoraggregate_monitor_field", "monitor_id", "field_path"),
+    )
+
+# ─────────────────────────────────────────────────────────────── Datasets ──── #
+
+class Dataset(SQLModel, table=True):
+    """Curated collection of Assets (and optional downstream artefacts) within an Infospace."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    name: str
+    description: Optional[str] = None
+
+    # Core links
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+
+    # Asset composition & provenance
+    asset_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+    datarecord_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+    source_job_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+    source_scheme_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+
+    # Arbitrary user metadata / tags
+    custom_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Import/export lineage
+    imported_from_uuid: Optional[str] = Field(default=None, index=True)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+
+    # Relationships (set within runtime via Relationship to avoid circular refs)
+    infospace: Optional[Infospace] = Relationship(back_populates="datasets")
+    user: Optional[User] = Relationship(back_populates="datasets")
 
 # ───────────────────────────────────────────────────────────── Packages ──── #
 
@@ -575,76 +939,4 @@ class ShareableLink(SQLModel, table=True):
 
     def is_valid(self) -> bool:
         return not (self.is_expired() or self.has_exceeded_max_uses())
-
-# ───────────────────────────────────────────────────────────── History (opt.) ──── #
-
-class SearchHistory(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
-    query: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    filters: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
-    result_count: Optional[int] = None
-
-    user: Optional[User] = Relationship()
-
-# ───────────────────────────────────────────────────────────── Index hints ──── #
-# Alembic migrations should create additional GIN/GIST indexes on JSON columns
-# (cells, value, output_contract) if query patterns show the need.
-
-# ─────────────────────────────────────────────────────────────── Datasets ──── #
-
-class Dataset(SQLModel, table=True):
-    """Curated collection of Assets (and optional downstream artefacts) within an Infospace."""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    entity_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
-    name: str
-    description: Optional[str] = None
-
-    # Core links
-    infospace_id: int = Field(foreign_key="infospace.id")
-    user_id: int = Field(foreign_key="user.id")
-
-    # Asset composition & provenance
-    asset_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    datarecord_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    source_job_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    source_scheme_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-
-    # Arbitrary user metadata / tags
-    custom_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-
-    # Import/export lineage
-    imported_from_uuid: Optional[str] = Field(default=None, index=True)
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    # Relationships (set within runtime via Relationship to avoid circular refs)
-    infospace: Optional[Infospace] = Relationship(back_populates="datasets")
-    user: Optional[User] = Relationship(back_populates="datasets")
-
-
-# ───────────────────────────────────────────────────── Analysis Adapters ──── #
-
-class AnalysisAdapter(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(unique=True, index=True)
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
-    
-    input_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
-    output_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
-    
-    version: str = Field(default="1.0")
-    module_path: Optional[str] = Field(default=None)
-    adapter_type: str
-    
-    is_active: bool = Field(default=True)
-    is_public: bool = Field(default=False)
-    
-    creator_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
-    creator: Optional[User] = Relationship(back_populates="analysis_adapters_created")
-    
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
 

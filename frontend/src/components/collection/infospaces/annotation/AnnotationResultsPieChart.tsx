@@ -26,6 +26,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Switch } from "@/components/ui/switch";
 import { GroupedDataPoint } from './AnnotationResultsChart';
 import { VariableSplittingConfig, applySplittingToResults, applyAmbiguityResolution } from './VariableSplittingControls';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Settings2 } from "lucide-react";
 
 // Define a generic SourceRead type to satisfy the linter
 type SourceRead = {
@@ -98,6 +101,10 @@ interface AnnotationResultsPieChartProps {
   // NEW: Variable splitting
   variableSplittingConfig?: VariableSplittingConfig | null;
   onVariableSplittingChange?: (config: VariableSplittingConfig | null) => void;
+  // NEW: Result selection callback
+  onResultSelect?: (result: FormattedAnnotation) => void;
+  // NEW: Field interaction callback for opening enhanced dialog
+  onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
 }
 
 interface PieDataPoint {
@@ -162,34 +169,156 @@ const DocumentResults: React.FC<{
   assets?: AssetRead[];
   sources?: SourceRead[];
   highlightValue?: string | null;
-}> = ({ selectedPoint, results, schemas, assets, sources, highlightValue }) => {
+  onResultSelect?: (result: FormattedAnnotation) => void;
+  onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
+}> = ({ selectedPoint, results, schemas, assets, sources, highlightValue, onResultSelect, onFieldInteraction }) => {
+  // Field selection state for controlling what fields to show
+  const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
+      const initialState: Record<number, string[]> = {};
+      schemas.forEach(schema => {
+          const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+          // Show all fields by default for better overview
+          initialState[schema.id] = targetKeys.map(tk => tk.key);
+      });
+      return initialState;
+  });
+
+  // Update field selection when schemas change
+  useEffect(() => {
+      setSelectedFieldsPerScheme(prev => {
+          const newState: Record<number, string[]> = {};
+          schemas.forEach(schema => {
+              const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+              const keys = targetKeys.map(tk => tk.key);
+              newState[schema.id] = prev[schema.id] ?? keys; // Keep existing selection or use all
+          });
+          return newState;
+      });
+  }, [schemas]);
+
+  const handleFieldToggle = (schemaId: number, fieldKey: string) => {
+      setSelectedFieldsPerScheme(prev => {
+          const currentSelected = prev[schemaId] || [];
+          const isSelected = currentSelected.includes(fieldKey);
+          const newSelected = isSelected 
+              ? currentSelected.filter(key => key !== fieldKey) 
+              : [...currentSelected, fieldKey];
+          
+          // Allow zero fields to hide schema completely if desired
+          return { ...prev, [schemaId]: newSelected };
+      });
+  };
+
   const relevantAssetIds = Array.from(selectedPoint.sourceDocuments.values()).flat();
+  const relevantSchema = schemas.find(s => s.name === selectedPoint.schemeName);
+  
+  if (!relevantSchema) {
+    return (
+      <div className="p-4">
+        <p className="text-red-500">Schema not found: {selectedPoint.schemeName}</p>
+        <p className="text-sm text-muted-foreground mt-2">
+          Available schemas: {schemas.map(s => s.name).join(', ')}
+        </p>
+      </div>
+    );
+  }
+
+  const filteredResults = results.filter(r => 
+    r.schema_id === relevantSchema.id && 
+    relevantAssetIds.includes(r.asset_id)
+  );
+  
+  if (filteredResults.length === 0) {
+    return (
+      <div className="p-4 text-center text-muted-foreground">
+        <p>No annotation results found for this slice.</p>
+        <p className="text-xs mt-2">
+          Looking for schema "{selectedPoint.schemeName}" with {relevantAssetIds.length} assets
+        </p>
+      </div>
+    );
+  }
+
+  const groupedByAsset = filteredResults.reduce<Record<number, FormattedAnnotation[]>>((acc, result) => {
+    if (!acc[result.asset_id]) {
+      acc[result.asset_id] = [];
+    }
+    acc[result.asset_id].push(result);
+    return acc;
+  }, {});
+
+  const availableFields = getTargetKeysForScheme(relevantSchema.id, schemas);
+  const selectedFields = selectedFieldsPerScheme[relevantSchema.id] || [];
 
   return (
     <div className="p-4 space-y-4">
-      <h3 className="font-bold">{selectedPoint.schemeName}: "{selectedPoint.valueString}" ({selectedPoint.totalCount} results)</h3>
-      {relevantAssetIds.map((assetId: number) => {
+      <div className="flex items-center justify-between">
+        <h3 className="font-bold">{selectedPoint.schemeName}: "{selectedPoint.valueString}" ({selectedPoint.totalCount} results)</h3>
+        
+        {/* Field Selection Controls */}
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button variant="outline" size="sm">
+                    <Settings2 className="h-4 w-4 mr-2" />
+                    Fields ({selectedFields.length})
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-0" align="end">
+                <div className="p-3 border-b">
+                    <h4 className="font-medium text-sm">Show Fields for {relevantSchema.name}</h4>
+                </div>
+                <ScrollArea className="max-h-60 p-2">
+                    {availableFields.map(field => (
+                        <div key={field.key} className="flex items-center space-x-2 px-2 py-1.5 text-sm">
+                            <Checkbox
+                                id={`pie-field-${relevantSchema.id}-${field.key}`}
+                                checked={selectedFields.includes(field.key)}
+                                onCheckedChange={() => handleFieldToggle(relevantSchema.id, field.key)}
+                            />
+                            <Label
+                                htmlFor={`pie-field-${relevantSchema.id}-${field.key}`}
+                                className="font-normal cursor-pointer truncate flex-1"
+                            >
+                                {field.name} ({field.type})
+                            </Label>
+                        </div>
+                    ))}
+                </ScrollArea>
+            </PopoverContent>
+        </Popover>
+      </div>
+      
+      <p className="text-sm text-muted-foreground">Found {filteredResults.length} matching results for {Object.keys(groupedByAsset).length} assets.</p>
+      
+      {Object.entries(groupedByAsset).map(([assetIdStr, assetResults]) => {
+        const assetId = parseInt(assetIdStr);
         const asset = assets?.find(a => a.id === assetId);
+        
         if (!asset) return null;
 
-        const assetResults = results.filter(r =>
-          r.asset_id === assetId && r.schema_id === schemas.find(s => s.name === selectedPoint.schemeName)?.id
-        );
-        const relevantSchema = schemas.find(s => s.name === selectedPoint.schemeName);
-        if (!relevantSchema) return null;
-
         return (
-          <div key={asset.id} className="border-t pt-4">
-            <AssetLink assetId={asset.id} className="font-semibold hover:underline">
-              {asset.title || `Asset #${asset.id}`}
+          <div key={assetId} className="border-t pt-4">
+            <AssetLink assetId={assetId} className="font-semibold hover:underline">
+              {asset.title || `Asset #${assetId}`}
             </AssetLink>
             <div className="mt-2 pl-4 border-l-2">
-              <AnnotationResultDisplay
-                result={assetResults}
-                schema={[relevantSchema]}
-                compact={false}
+              <AnnotationResultDisplay 
+                result={assetResults} 
+                schema={[relevantSchema]} 
+                compact={false} 
                 useTabs={false}
+                selectedFieldKeys={selectedFields.length > 0 ? selectedFields : undefined}
+                maxFieldsToShow={undefined}
+                renderContext="dialog"
                 highlightValue={highlightValue}
+                onResultSelect={onResultSelect}
+                onFieldInteraction={(fieldKey, justification) => {
+                  // Handle field interaction by calling the parent callback with the first result
+                  const firstResult = assetResults[0];
+                  if (firstResult && onFieldInteraction) {
+                    onFieldInteraction(firstResult, fieldKey);
+                  }
+                }}
               />
             </div>
           </div>
@@ -214,6 +343,9 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   timeAxisConfig = null,
   variableSplittingConfig = null,
   onVariableSplittingChange,
+  // NEW: Result selection callback
+  onResultSelect,
+  onFieldInteraction,
 }) => {
   // Initialize state from panel settings or defaults
   const [selectedSchemaId, setSelectedSchemaId] = useState<number | null>(
@@ -627,19 +759,26 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
     const totalValues = currentPieData.reduce((sum, item) => sum + item.value, 0);
     const percentage = totalValues > 0 ? (currentPieData[index].value / totalValues) * 100 : 0;
 
-    const sourceDocuments = new Map<number, number[]>();
+    const sourceDocuments = new Map<number | string, number[]>();
+    
     documentsInSlice.forEach(docResult => {
         const asset = assetsMap.get(docResult.asset_id);
-        if (asset && typeof asset.source_id === 'number') {
-            if (!sourceDocuments.has(asset.source_id)) {
-                sourceDocuments.set(asset.source_id, []);
+        
+        if (asset) {
+            // FIXED: Handle assets without source_id by using a fallback value
+            const sourceId = typeof asset.source_id === 'number' ? asset.source_id : 0; // Use 0 as fallback for assets without sources
+            
+            if (!sourceDocuments.has(sourceId)) {
+                sourceDocuments.set(sourceId, []);
             }
-            if (!sourceDocuments.get(asset.source_id)!.includes(docResult.asset_id)) {
-                 sourceDocuments.get(asset.source_id)!.push(docResult.asset_id);
+            if (!sourceDocuments.get(sourceId)!.includes(docResult.asset_id)) {
+                 sourceDocuments.get(sourceId)!.push(docResult.asset_id);
             }
+        } else {
+            console.warn('Asset not found for document:', docResult.asset_id);
         }
     });
-
+    
     const pointForDialog: GroupedDataPoint = {
         valueString: clickedSliceName,
         totalCount: documentsInSlice.length,
@@ -709,7 +848,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
                   </div>
                 </TooltipTrigger>
                 {value.length > maxLegendLabelLength && (
-                  <TooltipContent side="top" className="max-w-xs">
+                  <TooltipContent side="top" className="max-w-xs z-[70]">
                     <p>{value}</p>
                   </TooltipContent>
                 )}
@@ -805,7 +944,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
                   </span>
                 </TooltipTrigger>
                 {(!selectedSourceIds || selectedSourceIds.length < 2 || !sources || sources.length === 0) && (
-                  <TooltipContent side="top">
+                  <TooltipContent side="top" className="z-[70]">
                     <p className="text-xs max-w-xs">Select at least two data sources to enable per-source view.</p>
                   </TooltipContent>
                 )}
@@ -981,11 +1120,13 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
                 )}
                 <DocumentResults
                   selectedPoint={selectedSliceData.pointForDialog}
-                  results={results}
+                  results={timeFilteredResults}
                   schemas={schemas}
                   assets={assets}
                   sources={sources}
                   highlightValue={selectedSliceData.isOtherSlice ? null : selectedSliceData.name}
+                  onResultSelect={onResultSelect}
+                  onFieldInteraction={onFieldInteraction}
                 />
               </div>
             </ScrollArea>

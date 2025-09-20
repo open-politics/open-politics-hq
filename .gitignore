@@ -9,13 +9,13 @@ test_scripts/
 .DS_Store
 node_modules/
 .vscode
+.cursor
 frontend/.env
 frontend/.env.local
 frontend/.next/
 frontend/node_modules/
 .pytest_cache
 run_backup.sh
-2docker-compose.staging.yml
 .idea
 values.yaml
 .store/
@@ -26,3 +26,4 @@ misc/
 
 # Docker
 .dockerignore
+

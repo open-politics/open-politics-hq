@@ -1,4 +1,5 @@
 """Tasks for handling annotations."""
+import json
 import logging
 from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ from app.models import (
 )
 from app.schemas import AnnotationCreate
 from app.core.db import engine
-from app.api.providers.factory import create_classification_provider, create_storage_provider
+from app.api.providers.factory import create_model_registry, create_storage_provider
 from app.api.tasks.utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
 from app.core.config import settings
 
@@ -57,15 +58,17 @@ def get_annotation_processing_config():
             'parallel_enabled': True
         }
 
-def get_cached_provider(provider_type: str, settings_instance):
+async def get_cached_provider(provider_type: str, settings_instance):
     """Get a cached provider instance or create a new one."""
     cache_key = f"{provider_type}_{id(settings_instance)}"
     
     if cache_key not in _provider_cache:
         if provider_type == "storage":
             _provider_cache[cache_key] = create_storage_provider(settings_instance)
-        elif provider_type == "classification":
-            _provider_cache[cache_key] = create_classification_provider(settings_instance)
+        elif provider_type == "model_registry":
+            model_registry = create_model_registry(settings_instance)
+            await model_registry.initialize_providers()
+            _provider_cache[cache_key] = model_registry
         else:
             raise ValueError(f"Unknown provider type: {provider_type}")
         
@@ -382,7 +385,7 @@ async def process_single_asset_schema(
     schema_info: Dict[str, Any],
     run: AnnotationRun,
     run_config: Dict[str, Any],
-    classification_provider,
+    model_registry,
     storage_provider_instance,
     session: Session,
     semaphore: Optional[asyncio.Semaphore] = None
@@ -395,7 +398,7 @@ async def process_single_asset_schema(
         schema_info: Schema information dict containing schema, structure, etc.
         run: The annotation run
         run_config: Run configuration
-        classification_provider: The classification provider instance
+        model_registry: The model registry service instance
         storage_provider_instance: Storage provider instance
         session: Database session
         semaphore: Optional semaphore for concurrency control
@@ -436,13 +439,29 @@ async def process_single_asset_schema(
 
             logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
-            # Call the classification provider
-            provider_response_envelope = await classification_provider.classify(
+            # Call the model registry for structured classification
+            # Get the model name from run config (frontend sends as ai_model) or use default
+            model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+            thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
+            
+            logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
+            
+            provider_response = await model_registry.classify(
                 text_content=text_content_for_provider,
-                output_model_class=OutputModelClass, 
+                schema=OutputModelClass.model_json_schema(),
+                model_name=model_name,
                 instructions=final_schema_instructions,
-                provider_config=full_provider_config_for_classify
+                thinking_enabled=thinking_enabled,
+                **{k: v for k, v in full_provider_config_for_classify.items() 
+                   if k not in ['thinking_config', 'model_name']}
             )
+            
+            # Convert to envelope format for compatibility
+            provider_response_envelope = {
+                "data": json.loads(provider_response.content) if provider_response.content else {},
+                "_model_name": provider_response.model_used,
+                "_thinking_trace": provider_response.thinking_trace
+            }
             
             # Demultiplex results to create annotations
             created_annotations_for_asset = await demultiplex_results(
@@ -468,7 +487,7 @@ async def process_single_asset_schema(
                         annotation_id=None,  # Will be set after annotation is saved
                         field_name="_thinking_trace",
                         reasoning=thinking_trace_content,
-                        model_name=provider_response_envelope.get("_model_name", classification_provider.provider_name),
+                        model_name=provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
                         evidence_payload={"trace_type": "provider_summary"}
                     )
                     result["justifications"] = [thinking_justification]
@@ -506,7 +525,7 @@ async def process_assets_parallel(
     validated_schemas: List[Dict[str, Any]],
     run: AnnotationRun,
     run_config: Dict[str, Any],
-    classification_provider,
+    model_registry,
     storage_provider_instance,
     session: Session,
     concurrency_limit: int = DEFAULT_ANNOTATION_CONCURRENCY
@@ -531,7 +550,7 @@ async def process_assets_parallel(
                 schema_info=schema_info,
                 run=run,
                 run_config=run_config,
-                classification_provider=classification_provider,
+                model_registry=model_registry,
                 storage_provider_instance=storage_provider_instance,
                 session=session,
                 semaphore=semaphore
@@ -584,7 +603,7 @@ async def process_assets_sequential(
     validated_schemas: List[Dict[str, Any]],
     run: AnnotationRun,
     run_config: Dict[str, Any],
-    classification_provider,
+    model_registry,
     storage_provider_instance,
     session: Session
 ) -> Tuple[List[Annotation], List[Justification], List[str]]:
@@ -622,12 +641,29 @@ async def process_assets_sequential(
 
                 logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
-                provider_response_envelope = await classification_provider.classify(
+                # Call the model registry for structured classification
+                # Get the model name from run config (frontend sends as ai_model) or use default
+                model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+                thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
+                
+                logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
+                
+                provider_response = await model_registry.classify(
                     text_content=text_content_for_provider,
-                    output_model_class=OutputModelClass, 
+                    schema=OutputModelClass.model_json_schema(),
+                    model_name=model_name,
                     instructions=final_schema_instructions,
-                    provider_config=full_provider_config_for_classify
+                    thinking_enabled=thinking_enabled,
+                    **{k: v for k, v in full_provider_config_for_classify.items() 
+                       if k not in ['thinking_config', 'model_name']}
                 )
+                
+                # Convert to envelope format for compatibility
+                provider_response_envelope = {
+                    "data": json.loads(provider_response.content) if provider_response.content else {},
+                    "_model_name": provider_response.model_used,
+                    "_thinking_trace": provider_response.thinking_trace
+                }
                 
                 created_annotations_for_asset = await demultiplex_results(
                     result=provider_response_envelope.get("data", provider_response_envelope),
@@ -652,7 +688,7 @@ async def process_assets_sequential(
                             annotation_id=None,  # Will be set after annotation is saved
                             field_name="_thinking_trace",
                             reasoning=thinking_trace_content,
-                            model_name=provider_response_envelope.get("_model_name", classification_provider.provider_name),
+                            model_name=provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
                             evidence_payload={"trace_type": "provider_summary"}
                         )
                         thinking_justification._parent_annotation_ref = parent_doc_annotation
@@ -716,8 +752,8 @@ async def _process_annotation_run_async(run_id: int) -> None:
             provider_start_time = time.time()
             app_settings = settings
             try:
-                classification_provider = get_cached_provider("classification", app_settings)
-                storage_provider_instance = get_cached_provider("storage", app_settings)
+                model_registry = await get_cached_provider("model_registry", app_settings)
+                storage_provider_instance = await get_cached_provider("storage", app_settings)
                 provider_creation_time = time.time() - provider_start_time
                 logger.info(f"Task: Provider creation/retrieval took {provider_creation_time:.3f}s for Run {run.id}")
             except Exception as e_provider:
@@ -745,7 +781,6 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     run.error_message = f"Target Bundle {bundle_id} not found/invalid."
                     session.add(run)
                     session.commit()
-                    return
             
             if not target_asset_ids_to_process:
                 logger.error(f"Task: No target assets for Run {run.id}.")
@@ -753,7 +788,6 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 run.error_message = "No target assets found."
                 session.add(run)
                 session.commit()
-                return
 
             # CSV Row Expansion: Check for CSV parent assets and optionally expand to their CSV_ROW children
             csv_row_processing = run_config.get("csv_row_processing", True)  # Default to True for CSV row processing
@@ -915,8 +949,11 @@ async def _process_annotation_run_async(run_id: int) -> None:
                         # If global prompt is very generic, we might still want to add structure info
                         justification_prompts_parts.append(
                             "When providing justifications as requested, ensure each justification object (e.g., 'fieldName_justification') includes a 'reasoning' text. "
-                            "For evidence: use 'text_spans' (list of objects with 'start_char_offset', 'end_char_offset', 'text_snippet', optional 'asset_uuid'), "
-                            "'image_regions' (list of objects with 'asset_uuid', 'bounding_box' dict {'x', 'y', 'width', 'height', 'label'}), "
+                            "For evidence: use 'text_spans' - IMPORTANT: Provide 2-5 high-quality text spans that directly support your reasoning. "
+                            "Each span should be a complete sentence or meaningful phrase. Ensure character offsets align with sentence boundaries when possible. "
+                            "Prefer fewer, more meaningful spans over many short fragments. Avoid overlapping spans. "
+                            "Format: list of objects with 'start_char_offset', 'end_char_offset', 'text_snippet', optional 'asset_uuid'. "
+                            "Other evidence types: 'image_regions' (list of objects with 'asset_uuid', 'bounding_box' dict {'x', 'y', 'width', 'height', 'label'}), "
                             "'audio_segments' (list of objects with 'asset_uuid', 'start_time_seconds', 'end_time_seconds'), "
                             "or 'additional_evidence' (a dictionary for any other structured data)."
                         )
@@ -926,7 +963,10 @@ async def _process_annotation_run_async(run_id: int) -> None:
                             "For any field requiring justification (e.g., 'fieldName_justification'), structure it with: "
                             "1. A 'reasoning' field (string) containing your explanation. "
                             "2. Optional evidence fields: "
-                            "'text_spans': a list, each item an object with 'start_char_offset' (int), 'end_char_offset' (int), 'text_snippet' (str), and optionally 'asset_uuid' (str). "
+                            "'text_spans': IMPORTANT TEXT EVIDENCE GUIDELINES - Provide 2-5 high-quality text spans that directly support your reasoning. "
+                            "Each span should be a complete sentence or meaningful phrase. Ensure character offsets align with sentence boundaries when possible. "
+                            "Format: list of objects with 'start_char_offset' (int), 'end_char_offset' (int), 'text_snippet' (str), and optionally 'asset_uuid' (str). "
+                            "Prefer fewer, more meaningful spans over many short fragments. Avoid overlapping spans. "
                             "'image_regions': a list, each item an object with 'asset_uuid' (str) and a 'bounding_box' object (with 'x', 'y', 'width', 'height' as floats 0-1, and optional 'label' as str). "
                             "'audio_segments': a list, each item an object with 'asset_uuid' (str), 'start_time_seconds' (float), 'end_time_seconds' (float). "
                             "'additional_evidence': a dictionary for any other structured evidence types."
@@ -1035,7 +1075,7 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     validated_schemas=validated_schemas,
                     run=run,
                     run_config=run_config,
-                    classification_provider=classification_provider,
+                    model_registry=model_registry,
                     storage_provider_instance=storage_provider_instance,
                     session=session,
                     concurrency_limit=concurrency_limit
@@ -1049,7 +1089,7 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     validated_schemas=validated_schemas,
                     run=run,
                     run_config=run_config,
-                    classification_provider=classification_provider,
+                    model_registry=model_registry,
                     storage_provider_instance=storage_provider_instance,
                     session=session
                 )
@@ -1085,6 +1125,18 @@ async def _process_annotation_run_async(run_id: int) -> None:
             run.updated_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
+
+            # Compute aggregates for this run and update monitor aggregates if applicable
+            try:
+                from app.api.services.annotation_service import AnnotationService
+                from app.api.services.asset_service import AssetService
+                asset_service = AssetService(session, storage_provider_instance)
+                annotation_service = AnnotationService(session, model_registry, asset_service)
+                annotation_service.compute_run_aggregates(run_id=run.id)
+                if run.monitor_id:
+                    annotation_service.update_monitor_aggregates(monitor_id=run.monitor_id, run_id=run.id)
+            except Exception as agg_exc:
+                logger.error(f"Task: Aggregation failed for run {run.id}: {agg_exc}", exc_info=True)
             
             total_time = time.time() - start_time
             logger.info(f"Task: AnnotationRun {run.id} finished. Status: {run.status}. Total Annotations: {len(all_created_annotations)}, Justifications: {len(all_created_justifications)}. Total time: {total_time:.2f}s")
@@ -1101,14 +1153,12 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 session.add(run_to_fail)
                 session.commit()
 
-@shared_task
-def retry_failed_annotations(run_id: int) -> None:
+async def _retry_failed_annotations_async(run_id: int) -> None:
     """
-    Retry failed annotations in a run.
-    This task will find annotations from the given run that are in a FAILED status
-    and attempt to re-process them (currently by creating a new placeholder annotation or updating).
+    Async function to retry failed annotations using actual LLM re-processing.
+    Reuses the existing LLM processing pipeline.
     """
-    logger.info(f"Task: Retrying failed annotations for run {run_id}")
+    logger.info(f"Task: Starting async retry of failed annotations for run {run_id}")
     
     with Session(engine) as session:
         try:
@@ -1124,8 +1174,7 @@ def retry_failed_annotations(run_id: int) -> None:
             original_status = run.status
             run.status = RunStatus.RUNNING # Mark run as processing again
             run.updated_at = datetime.now(timezone.utc)
-            # Clear previous error message related to the run itself, individual annotation errors will be logged.
-            run.error_message = None 
+            run.error_message = None # Clear previous error message
             session.add(run)
             session.commit()
             session.refresh(run)
@@ -1141,8 +1190,7 @@ def retry_failed_annotations(run_id: int) -> None:
             if not failed_annotations_to_retry:
                 logger.info(f"Task: No failed annotations found to retry for Run {run_id}.")
                 run.status = original_status # Revert to original status if no failed annotations
-                # Fixed variable name - 'errors' wasn't defined yet
-                if original_status == RunStatus.COMPLETED_WITH_ERRORS: # if all retries succeed
+                if original_status == RunStatus.COMPLETED_WITH_ERRORS:
                      run.status = RunStatus.COMPLETED
                 session.add(run)
                 session.commit()
@@ -1150,45 +1198,142 @@ def retry_failed_annotations(run_id: int) -> None:
 
             logger.info(f"Task: Found {len(failed_annotations_to_retry)} failed annotations to retry for Run {run_id}.")
             
+            # Set up providers (reuse from original processing)
+            app_settings = settings
+            try:
+                model_registry = await get_cached_provider("model_registry", app_settings)
+                storage_provider_instance = await get_cached_provider("storage", app_settings)
+                logger.info(f"Task: Providers initialized for retry of Run {run.id}")
+            except Exception as e_provider:
+                logger.error(f"Task: Failed to create providers for retry of Run {run.id}: {e_provider}", exc_info=True)
+                run.status = RunStatus.FAILED
+                run.error_message = f"Provider initialization failed during retry: {str(e_provider)}"
+                session.add(run)
+                session.commit()
+                return
+
+            run_config = run.configuration or {}
             errors = []
             retried_count = 0
+            successful_retries = 0
 
-            for annotation_to_retry in failed_annotations_to_retry:
+            # Group failed annotations by asset-schema pairs to avoid redundant processing
+            retry_pairs = {}
+            for annotation in failed_annotations_to_retry:
+                key = (annotation.asset_id, annotation.schema_id)
+                if key not in retry_pairs:
+                    retry_pairs[key] = []
+                retry_pairs[key].append(annotation)
+
+            logger.info(f"Task: Retrying {len(retry_pairs)} unique asset-schema pairs for Run {run_id}.")
+
+            for (asset_id, schema_id), annotations_for_pair in retry_pairs.items():
                 try:
-                    asset = session.get(Asset, annotation_to_retry.asset_id)
-                    schema = session.get(AnnotationSchema, annotation_to_retry.schema_id)
+                    asset = session.get(Asset, asset_id)
+                    schema = session.get(AnnotationSchema, schema_id)
 
                     if not asset or not schema or asset.infospace_id != run.infospace_id or schema.infospace_id != run.infospace_id:
-                        logger.warning(f"Task: Skipping retry for Annotation {annotation_to_retry.id} due to invalid Asset or Schema or infospace mismatch.")
-                        errors.append(f"Invalid context for Annotation {annotation_to_retry.id}")
+                        logger.warning(f"Task: Skipping retry for Asset {asset_id}, Schema {schema_id} due to invalid context.")
+                        errors.append(f"Invalid context for Asset {asset_id}, Schema {schema_id}")
                         continue
 
-                    # Placeholder for actual re-annotation logic
-                    new_annotation_value = {"placeholder_field": f"Retry for asset {asset.id} by schema {schema.id} in run {run.id}"}
+                    # Validate and prepare schema (reuse from original processing)
+                    if not validate_hierarchical_schema(schema.output_contract):
+                        logger.error(f"Task: Schema {schema.id} has invalid hierarchical structure during retry. Skipping.")
+                        errors.append(f"Schema {schema.id} invalid structure during retry.")
+                        continue
                     
-                    # Update existing failed annotation
-                    annotation_to_retry.value = new_annotation_value
-                    annotation_to_retry.status = ResultStatus.SUCCESS # Assume success on retry for now
-                    annotation_to_retry.updated_at = datetime.now(timezone.utc)
-                    # Clear previous error specific to this annotation if any was stored (not currently on model)
-                    session.add(annotation_to_retry)
-                    retried_count += 1
-                    logger.debug(f"Task: Retried Annotation {annotation_to_retry.id} for Asset {asset.id}, Schema {schema.id}.")
+                    schema_structure = detect_schema_structure(schema.output_contract)
+                    
+                    # Create output model (reuse from original processing)
+                    try:
+                        OutputModelClass = create_pydantic_model_from_json_schema(
+                            model_name=f"RetryOutput_{schema.name.replace(' ', '_')}_{schema.id}",
+                            json_schema=schema.output_contract,
+                            justification_mode=run_config.get("justification_mode", "NONE"),
+                            field_specific_justification_configs=schema.field_specific_justification_configs or {}
+                        )
+                    except Exception as e_model:
+                        logger.error(f"Task: Failed to create Pydantic model for Schema {schema.id} during retry: {e_model}", exc_info=True)
+                        errors.append(f"Schema {schema.id} model creation failed during retry: {e_model}")
+                        continue
+
+                    if not OutputModelClass.model_fields:
+                        logger.error(f"Task: Schema {schema.id} resulted in empty model during retry. Skipping.")
+                        errors.append(f"Schema {schema.id} is invalid or empty during retry.")
+                        continue
+
+                    # Prepare final instructions (reuse from original processing)
+                    final_schema_instructions = schema.instructions or ""
+                    
+                    # Add system mapping prompt for per-modality fields if needed
+                    if schema_structure.get("per_modality_fields"):
+                        system_mapping_prompt = (
+                            "\\n\\n--- System Data Mapping Instructions ---\\n"
+                            "For each item you generate that corresponds to a specific media input (e.g., an item in a 'per_image' list, 'per_audio' list, etc.), "
+                            "you MUST include a field named '_system_asset_source_uuid'. "
+                            "The value of this '_system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
+                            "This is critical for correctly associating your analysis with the source media."
+                        )
+                        if final_schema_instructions:
+                            final_schema_instructions += system_mapping_prompt
+                        else:
+                            final_schema_instructions = system_mapping_prompt[4:] # Remove leading \n\n if no prior instructions
+
+                    schema_info = {
+                        "schema": schema,
+                        "schema_structure": schema_structure,
+                        "output_model_class": OutputModelClass,
+                        "final_instructions": final_schema_instructions
+                    }
+
+                    # Call the actual LLM processing function
+                    logger.info(f"Task: Processing retry for Asset {asset.id}, Schema {schema.id} in Run {run.id}")
+                    result = await process_single_asset_schema(
+                        asset=asset,
+                        schema_info=schema_info,
+                        run=run,
+                        run_config=run_config,
+                        model_registry=model_registry,
+                        storage_provider_instance=storage_provider_instance,
+                        session=session
+                    )
+
+                    if result.get("success"):
+                        # Delete old failed annotations and add new ones
+                        for old_annotation in annotations_for_pair:
+                            session.delete(old_annotation)
+                        
+                        # Add new annotations from the result
+                        new_annotations = result.get("annotations", [])
+                        if new_annotations:
+                            session.add_all(new_annotations)
+                            successful_retries += len(new_annotations)
+                            logger.info(f"Task: Successfully retried Asset {asset.id}, Schema {schema.id} - created {len(new_annotations)} new annotations")
+                        
+                        # Add justifications if any
+                        new_justifications = result.get("justifications", [])
+                        if new_justifications:
+                            session.add_all(new_justifications)
+                    else:
+                        # LLM processing failed, keep original annotations as FAILED
+                        error_msg = result.get("error", "Unknown error during retry")
+                        logger.error(f"Task: Retry failed for Asset {asset.id}, Schema {schema.id}: {error_msg}")
+                        errors.append(f"Asset {asset.id}/Schema {schema.id}: {error_msg}")
+
+                    retried_count += len(annotations_for_pair)
 
                 except Exception as e:
-                    logger.error(f"Task: Error retrying Annotation {annotation_to_retry.id}: {e}", exc_info=True)
-                    errors.append(f"Annotation {annotation_to_retry.id}: {str(e)}")
-                    # Keep the annotation status as FAILED if retry itself fails
-                    annotation_to_retry.status = ResultStatus.FAILED 
-                    session.add(annotation_to_retry)
+                    logger.error(f"Task: Error retrying Asset {asset_id}, Schema {schema_id}: {e}", exc_info=True)
+                    errors.append(f"Asset {asset_id}/Schema {schema_id}: {str(e)}")
+                    retried_count += len(annotations_for_pair)
             
             # Finalize run status based on retry outcomes
             if errors:
                 run.status = RunStatus.COMPLETED_WITH_ERRORS
                 run.error_message = "\n".join(errors)
             else:
-                # If there were no new errors, and all failed annotations were processed (even if some couldn't be retried due to context issues)
-                # check if any annotations are still FAILED for this run
+                # Check if any annotations are still FAILED for this run
                 still_failed_count = session.exec(
                     select(func.count(Annotation.id)).where(Annotation.run_id == run.id, Annotation.status == ResultStatus.FAILED)
                 ).one_or_none() or 0
@@ -1199,18 +1344,48 @@ def retry_failed_annotations(run_id: int) -> None:
                 else:
                     run.status = RunStatus.COMPLETED
             
-            run.completed_at = datetime.now(timezone.utc) # Update completed_at for this retry cycle
+            run.completed_at = datetime.now(timezone.utc)
             run.updated_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
-            logger.info(f"Task: Retry for AnnotationRun {run_id} finished. Status: {run.status}. Annotations retried: {retried_count}.")
+            logger.info(f"Task: Retry for AnnotationRun {run_id} finished. Status: {run.status}. Annotations retried: {retried_count}, Successful: {successful_retries}.")
 
         except Exception as e:
-            logger.exception(f"Task: Unexpected critical error during retry for AnnotationRun {run_id}: {e}")
+            logger.exception(f"Task: Unexpected critical error during async retry for AnnotationRun {run_id}: {e}")
             run_to_fail_retry = session.get(AnnotationRun, run_id)
             if run_to_fail_retry:
                 run_to_fail_retry.status = RunStatus.FAILED
                 run_to_fail_retry.error_message = f"Critical task error during retry: {str(e)}"
                 run_to_fail_retry.updated_at = datetime.now(timezone.utc)
                 session.add(run_to_fail_retry)
-                session.commit() 
+                session.commit()
+
+
+@shared_task
+def retry_failed_annotations(run_id: int) -> None:
+    """
+    Retry failed annotations in a run using actual LLM re-processing.
+    This task will find annotations from the given run that are in a FAILED status
+    and attempt to re-process them using the same LLM pipeline as the original run.
+    """
+    logger.info(f"Task: Sync wrapper started for retry of failed annotations in run {run_id}")
+    
+    try:
+        # Use the helper function for proper event loop management
+        run_async_in_celery(_retry_failed_annotations_async, run_id)
+    except Exception as e:
+        logger.exception(f"Task: Critical unhandled error in async retry processing for run {run_id}: {e}")
+        # If the async task fails with an unhandled exception, mark the run as FAILED.
+        with Session(engine) as session:
+            try:
+                run = session.get(AnnotationRun, run_id)
+                if run:
+                    run.status = RunStatus.FAILED
+                    run.error_message = f"Critical task execution error during retry: {str(e)}"
+                    run.completed_at = datetime.now(timezone.utc)
+                    run.updated_at = datetime.now(timezone.utc)
+                    session.add(run)
+                    session.commit()
+            except Exception as db_exc:
+                logger.error(f"Task: Could not even update run {run_id} to FAILED status during retry: {db_exc}")
+        raise  # Re-raise the exception so Celery knows the task failed 

@@ -28,6 +28,24 @@ export default function AdminPage() {
               >
                 <CardTitle className="text-xl font-bold">Infospace Management</CardTitle>
               </div>
+              <div
+                className="block p-4 border border-gray-300 rounded hover:bg-secondary/60 transition-all duration-300 cursor-pointer"
+                onClick={() => router.push('/accounts/admin/backups')}
+              >
+                <CardTitle className="text-xl font-bold">Infospace Backups</CardTitle>
+              </div>
+              <div
+                className="block p-4 border border-gray-300 rounded hover:bg-secondary/60 transition-all duration-300 cursor-pointer"
+                onClick={() => router.push('/accounts/admin/user-backups')}
+              >
+                <CardTitle className="text-xl font-bold">User Backups (Disaster Recovery)</CardTitle>
+              </div>
+              <div
+                className="block p-4 border border-gray-300 rounded hover:bg-secondary/60 transition-all duration-300 cursor-pointer"
+                onClick={() => router.push('/accounts/admin/registration')}
+              >
+                <CardTitle className="text-xl font-bold">Registration Management</CardTitle>
+              </div>
             </div>
           </CardContent>
         </Card>

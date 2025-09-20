@@ -16,7 +16,7 @@ from app.api.deps import (
     SessionDep,
     CurrentUser,
     StorageProviderDep,
-    ContentServiceDep,
+    ContentIngestionServiceDep,
 )
 from app.api.services.service_utils import validate_infospace_access
 from app.api.providers.factory import create_scraping_provider, create_storage_provider
@@ -24,7 +24,7 @@ from app.core.config import settings
 from sqlmodel import select
 from app.api.tasks.content_tasks import process_content, ingest_bulk_urls
 from app.core.celery_app import celery
-from app.api.services.content_service import ContentService
+from app.api.services.content_ingestion_service import ContentIngestionService
 from app.api.services.bundle_service import BundleService
 from app.core.db import engine
 from sqlmodel import Session
@@ -49,13 +49,22 @@ class ReprocessOptions(BaseModel):
     max_rows: Optional[int] = None
     timeout: Optional[int] = 30
 
+class ArticleComposition(BaseModel):
+    title: str
+    content: str
+    summary: Optional[str] = None
+    embedded_assets: Optional[List[Dict[str, Any]]] = None
+    referenced_bundles: Optional[List[int]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    event_timestamp: Optional[datetime] = None
+
 @router.post("", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
 async def create_asset(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentServiceDep,
+    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     asset_in: AssetCreate
 ) -> Any:
@@ -71,39 +80,42 @@ async def create_asset(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
         
-        # Route based on content type
+        locator: Any = None
+        options: Dict[str, Any] = {}
+
         if asset_in.source_identifier and (
             asset_in.source_identifier.startswith('http://') or 
             asset_in.source_identifier.startswith('https://')
         ):
-            # Handle URL ingestion
-            asset = await content_service.ingest_url(
-                url=asset_in.source_identifier,
-                infospace_id=infospace_id,
-                user_id=current_user.id,
-                title=asset_in.title,
-                scrape_immediately=True
-            )
+            locator = asset_in.source_identifier
+            options['scrape_immediately'] = True
         elif asset_in.text_content:
-            # Handle text content ingestion
-            asset = content_service.ingest_text(
-                text_content=asset_in.text_content,
+            locator = asset_in.text_content
+            options['event_timestamp'] = asset_in.event_timestamp
+        
+        if locator:
+            assets = await content_service.ingest_content(
+                locator=locator,
                 infospace_id=infospace_id,
                 user_id=current_user.id,
                 title=asset_in.title,
-                event_timestamp=asset_in.event_timestamp
+                options=options
             )
+            asset = assets[0] if assets else None
         else:
-            # Handle basic asset creation (fallback to AssetService for compatibility)
+            # Fallback to AssetService for basic asset creation
             from app.api.services.asset_service import AssetService
-            asset_service = AssetService(session, content_service.storage)
+            storage_provider = create_storage_provider(settings)
+            asset_service = AssetService(session, storage_provider)
             
-            # Ensure required fields are set
             asset_in.user_id = current_user.id
             asset_in.infospace_id = infospace_id
             
             asset = asset_service.create_asset(asset_in)
-        
+
+        if not asset:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from provided data.")
+
         return AssetRead.model_validate(asset)
         
     except Exception as e:
@@ -118,7 +130,7 @@ async def upload_file(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentServiceDep,
+    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
@@ -130,15 +142,18 @@ async def upload_file(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
         
-        asset = await content_service.ingest_file(
-            file=file,
+        assets = await content_service.ingest_content(
+            locator=file,
             infospace_id=infospace_id,
             user_id=current_user.id,
             title=title,
-            process_immediately=process_immediately
+            options={"process_immediately": process_immediately}
         )
         
-        return AssetRead.model_validate(asset)
+        if not assets:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from uploaded file.")
+
+        return AssetRead.model_validate(assets[0])
         
     except Exception as e:
         logger.error(f"File upload failed: {e}")
@@ -152,7 +167,7 @@ async def ingest_url(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentServiceDep,
+    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     url: str,
     title: Optional[str] = None,
@@ -164,15 +179,18 @@ async def ingest_url(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
         
-        asset = await content_service.ingest_url(
-            url=url,
+        assets = await content_service.ingest_content(
+            locator=url,
             infospace_id=infospace_id,
             user_id=current_user.id,
             title=title,
-            scrape_immediately=scrape_immediately
+            options={"scrape_immediately": scrape_immediately}
         )
+
+        if not assets:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from URL.")
         
-        return AssetRead.model_validate(asset)
+        return AssetRead.model_validate(assets[0])
         
     except Exception as e:
         logger.error(f"URL ingestion failed: {e}")
@@ -186,7 +204,7 @@ async def ingest_text(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentServiceDep,
+    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     text_content: str,
     title: Optional[str] = None,
@@ -198,15 +216,18 @@ async def ingest_text(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
         
-        asset = content_service.ingest_text(
-            text_content=text_content,
+        assets = await content_service.ingest_content(
+            locator=text_content,
             infospace_id=infospace_id,
             user_id=current_user.id,
             title=title,
-            event_timestamp=event_timestamp
+            options={"event_timestamp": event_timestamp}
         )
         
-        return AssetRead.model_validate(asset)
+        if not assets:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from text.")
+
+        return AssetRead.model_validate(assets[0])
         
     except Exception as e:
         logger.error(f"Text ingestion failed: {e}")
@@ -215,12 +236,48 @@ async def ingest_text(
             detail=f"Text ingestion failed: {str(e)}"
         )
 
+@router.post("/compose-article", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
+async def compose_article(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep,
+    infospace_id: int,
+    composition: ArticleComposition
+) -> Any:
+    """
+    Compose a free-form article with embedded assets and bundle references.
+    """
+    try:
+        validate_infospace_access(session, infospace_id, current_user.id)
+        
+        article = content_service.compose_article(
+            title=composition.title,
+            content=composition.content,
+            infospace_id=infospace_id,
+            user_id=current_user.id,
+            summary=composition.summary,
+            embedded_assets=composition.embedded_assets,
+            referenced_bundles=composition.referenced_bundles,
+            metadata=composition.metadata,
+            event_timestamp=composition.event_timestamp
+        )
+        
+        return AssetRead.model_validate(article)
+        
+    except Exception as e:
+        logger.error(f"Article composition failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Article composition failed: {str(e)}"
+        )
+
 @router.post("/bulk-ingest-urls", response_model=List[AssetRead])
 async def bulk_ingest_urls(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentServiceDep,
+    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     bulk_request: BulkUrlIngestion
 ) -> Any:
@@ -243,12 +300,14 @@ async def bulk_ingest_urls(
             return {"message": f"Bulk ingestion of {len(bulk_request.urls)} URLs started in background"}
         
         # For smaller batches, process immediately
-        assets = await content_service.ingest_bulk_urls(
-            urls=bulk_request.urls,
+        assets = await content_service.ingest_content(
+            locator=bulk_request.urls,
             infospace_id=infospace_id,
             user_id=current_user.id,
-            base_title=bulk_request.base_title,
-            scrape_immediately=bulk_request.scrape_immediately
+            options={
+                "base_title": bulk_request.base_title,
+                "scrape_immediately": bulk_request.scrape_immediately
+            }
         )
         
         return [AssetRead.model_validate(asset) for asset in assets]
@@ -265,7 +324,7 @@ async def reprocess_asset(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentServiceDep,
+    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     asset_id: int,
     options: ReprocessOptions
@@ -475,7 +534,7 @@ def delete_asset(
 
 @router.get("/supported-types", response_model=Dict[str, List[str]])
 def get_supported_content_types(
-    content_service: ContentServiceDep
+    content_service: ContentIngestionServiceDep
 ) -> Any:
     """
     Get list of supported content types.
@@ -488,7 +547,8 @@ async def create_assets_background_bulk(
     infospace_id: int,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep
 ):
     """
     Upload multiple files as individual assets using background processing.
@@ -506,7 +566,7 @@ async def create_assets_background_bulk(
     with Session(engine) as session:
         storage_provider = create_storage_provider(settings)
         scraping_provider = create_scraping_provider(settings)
-        content_service = ContentService(session, storage_provider, scraping_provider)
+        content_service_instance = ContentIngestionService(session=session)
         
         # Upload files and create assets
         task_ids = []
@@ -515,17 +575,17 @@ async def create_assets_background_bulk(
         for file in files:
             try:
                 # Create asset immediately (fast operation)
-                asset = await content_service.ingest_file(
-                    file=file,
+                assets = await content_service_instance.ingest_content(
+                    locator=file,
                     infospace_id=infospace_id,
                     user_id=current_user.id,
-                    process_immediately=False,  # Don't process yet
-                    options=upload_options
+                    options={"process_immediately": False, **upload_options}
                 )
+                asset = assets[0]
                 asset_ids.append(asset.id)
                 
                 # Trigger background processing if needed
-                if content_service._needs_processing(asset.kind):
+                if content_service_instance._needs_processing(asset.kind):
                     task = process_content.delay(asset.id, upload_options)
                     task_ids.append({
                         "asset_id": asset.id,
@@ -592,7 +652,8 @@ async def add_files_to_bundle_background(
     bundle_id: int,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep
 ):
     """
     Add files to existing bundle using background processing.
@@ -613,9 +674,7 @@ async def add_files_to_bundle_background(
             raise HTTPException(status_code=404, detail="Bundle not found")
         
         # Create content service
-        storage_provider = create_storage_provider(settings)
-        scraping_provider = create_scraping_provider(settings)
-        content_service = ContentService(session, storage_provider, scraping_provider)
+        content_service_instance = ContentIngestionService(session=session)
         
         # Upload files and add to bundle
         task_ids = []
@@ -623,13 +682,13 @@ async def add_files_to_bundle_background(
         for file in files:
             try:
                 # Create asset
-                asset = await content_service.ingest_file(
-                    file=file,
+                assets = await content_service_instance.ingest_content(
+                    locator=file,
                     infospace_id=infospace_id,
                     user_id=current_user.id,
-                    process_immediately=False,
-                    options=upload_options
+                    options={"process_immediately": False, **upload_options}
                 )
+                asset = assets[0]
                 
                 # Add to bundle
                 bundle_service.add_asset_to_bundle(
@@ -640,7 +699,7 @@ async def add_files_to_bundle_background(
                 )
                 
                 # Trigger background processing if needed
-                if content_service._needs_processing(asset.kind):
+                if content_service_instance._needs_processing(asset.kind):
                     task = process_content.delay(asset.id, upload_options)
                     task_ids.append({
                         "asset_id": asset.id,

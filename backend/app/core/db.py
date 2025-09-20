@@ -840,6 +840,61 @@ def init_db(session: Session) -> None:
     else:
         logger.info("Graph RAG analysis adapter already exists")
 
+    # Fragment Curation Adapter
+    fragment_curation_adapter_exists = session.exec(
+        select(AnalysisAdapter).where(AnalysisAdapter.name == "fragment_curation_adapter")
+    ).first()
+
+    if not fragment_curation_adapter_exists:
+        fragment_curation_adapter = AnalysisAdapter(
+            name="fragment_curation_adapter",
+            description="Manually promotes a selected insight to an asset's permanent metadata. This is a human-in-the-loop tool for curating asset intelligence fragments.",
+            module_path="app.api.analysis.adapters.fragment_curation_adapter.FragmentCurationAdapter",
+            input_schema_definition={
+                "type": "object",
+                "properties": {
+                    "target_asset_id": {
+                        "type": "integer",
+                        "description": "The ID of the asset to update.",
+                    },
+                    "fragment_key": {
+                        "type": "string",
+                        "description": "The natural language name for the intelligence fragment (e.g., 'Key People', 'OSINT Relevance').",
+                    },
+                    "fragment_value": {
+                        "type": "object",
+                        "description": "The data being promoted. Can be any valid JSON type.",
+                    },
+                    "source_ref": {
+                        "type": "string",
+                        "description": "A reference to the data's origin (e.g., 'annotation/123', 'user/jane.doe').",
+                    },
+                    "curated_by_ref": {
+                        "type": "string",
+                        "description": "A reference to the user or process that curated the fragment (e.g., 'user/john.doe').",
+                    },
+                },
+                "required": ["target_asset_id", "fragment_key", "fragment_value", "source_ref"],
+            },
+            output_schema_definition={
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "integer"},
+                    "promoted_fragment_key": {"type": "string"},
+                    "final_fragments": {"type": "object"},
+                },
+            },
+            adapter_type="curation",
+            version="1.0",
+            is_active=True,
+            is_public=True,
+            creator_user_id=user.id,
+        )
+        session.add(fragment_curation_adapter)
+        logger.info("Created Fragment Curation analysis adapter")
+    else:
+        logger.info("Fragment Curation analysis adapter already exists")
+
     session.commit()
 
     # --- Create Initial Embedding Models from Configuration ---

@@ -3,15 +3,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FaGithub } from "react-icons/fa6";
-import { Switch } from "@/components/ui/switch";
-import { NewspaperIcon, Globe2, ZoomIn, Menu, X, ChevronRight } from "lucide-react";
+import { NewspaperIcon, Globe2, ZoomIn, Menu, X, ChevronRight, Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Code, Database } from "lucide-react";
 import { Mail, MessageSquare } from 'lucide-react';
 import { Button } from "@/components/ui/button";
-import { ModeSwitcher } from "@/components/ui/mode-switcher";
 import {
   Sidebar,
   SidebarContent,
@@ -20,16 +18,21 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarTrigger
+  SidebarTrigger,
+  useSidebar
 } from "@/components/ui/sidebar"; 
 import { NavUser } from '../../ui/nav-user';
-import Image from 'next/image';
 import TextWriter from "@/components/ui/extra-animated-base-components/text-writer";
 
 const Header = () => {
-  const { theme, setTheme, systemTheme } = useTheme();
+  const { theme, setTheme, systemTheme, resolvedTheme } = useTheme();
+
+  const toggleTheme = React.useCallback(() => {
+    setTheme(resolvedTheme === "dark" ? "light" : "dark")
+  }, [resolvedTheme, setTheme])
   const { logout, user, isLoggedIn } = useAuth();
   const [mounted, setMounted] = useState(false);
+  const { toggleSidebar } = useSidebar();
 
   useEffect(() => {
     setMounted(true);
@@ -93,9 +96,9 @@ const Header = () => {
                 </PopoverTrigger>
                 <PopoverContent className="w-48 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
                   <div className="flex flex-col space-y-0.5">
-                    <a href="https://discord.gg/AhqmEUr99T" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
+                    <a href="https://forum.open-politics.org" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
                       <MessageSquare className="h-4 w-4" />
-                      <span>Discord</span>
+                      <span>Forum/ Chat/ Discussion</span>
                     </a>
                     <a href="mailto:engage@open-politics.org" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
                       <Mail className="h-4 w-4" />
@@ -130,13 +133,13 @@ const Header = () => {
               {isLoggedIn  ? (
                 <div className="flex items-center space-x-2">
                   <Button variant="ghost" asChild className="ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg">
-                    <Link href="/desks/home">
+                    <Link href="/hq">
                       <TextWriter
                         text={<div className="flex items-center gap-1">
                           <NewspaperIcon className="w-4 h-4" />
                           <Globe2 className="w-4 h-4" />
                           <ZoomIn className="w-4 h-4" />
-                          <span>Desk</span>
+                          <span>HQ</span>
                         </div>}
                         typingDelay={100}
                         startDelay={500}
@@ -145,29 +148,41 @@ const Header = () => {
                       />
                     </Link>
                   </Button>
-                  <Button variant="ghost" onClick={logout}>Logout</Button>
                 </div>
               ) : (
                 <Button variant="ghost" asChild>
                   <Link href="/accounts/login">Login</Link>
                 </Button>
               )}
+              
+              {/* Manual theme switcher (not mode-switcher  ) */}
+              <Button variant="ghost" onClick={toggleTheme}>
+                {resolvedTheme === "dark" ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </Button>
 
-              <ModeSwitcher />
             </div>
 
             {/* Mobile Navigation */}
             <div className="md:hidden">
-                <SidebarTrigger
-                  expandedIcon={<ChevronRight className="size-6" />}
-                  collapsedIcon={<Menu className="size-6" />}
-                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={toggleSidebar}
+                >
+                  <Menu className="h-4 w-4" />
+                  <span className="sr-only">Toggle Navigation Menu</span>
+                </Button>
                 <Sidebar collapsible="icon" side="right" variant="floating" className='md:hidden' >
                   <SidebarHeader className="h-16 flex items-center px-4 border-b">
                     <SidebarMenu>
                       <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
-                          <Link href="/desks/home" className="flex items-center space-x-2">
+                          <Link href="/hq" className="flex items-center space-x-2">
                             <span className="font-semibold">Open Politics</span>
                           </Link>
                         </SidebarMenuButton>
@@ -203,9 +218,9 @@ const Header = () => {
 
                       <SidebarMenuItem>
                           <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                              <a href="https://discord.gg/AhqmEUr99T" target="_blank" rel="noopener noreferrer">
+                              <a href="https://forum.open-politics.org" target="_blank" rel="noopener noreferrer">
                                   <MessageSquare className="h-4 w-4 mr-2" />
-                                  <span>Discord</span>
+                                  <span>Forum/ Discussion</span>
                               </a>
                           </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -240,29 +255,26 @@ const Header = () => {
                       {isLoggedIn ? (
                         <>
                           <SidebarMenuItem>
-                            <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                              <Link href="/desks/home">
-                                <NewspaperIcon className="h-4 w-4 mr-1" />
-                                <Globe2 className="h-4 w-4 mr-1" />
-                                <ZoomIn className="h-4 w-4 mr-2" />
-                                <span>Desk</span>
+                            <SidebarMenuButton asChild className="ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg">
+                              <Link href="/hq">
+                                <TextWriter
+                                  text={<div className="flex items-center gap-1">
+                                    <span>HQ</span>
+                                  </div>}
+                                  typingDelay={100}
+                                  startDelay={500}
+                                  className="animate-shimmer-once"
+                                  cursorColor="transparent"
+                                />
                               </Link>
                             </SidebarMenuButton>
                           </SidebarMenuItem>
-                          {user?.is_superuser && (
-                            <SidebarMenuItem>
-                              <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                                <Link href="/accounts/admin/users">
-                                  <span>Admin</span>
-                                </Link>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          )}
-                          <SidebarMenuItem>
+                          {/* Not needed, is in the main nav user */}
+                          {/* <SidebarMenuItem>
                             <SidebarMenuButton onClick={logout} className="w-full justify-start">
                               Logout
                             </SidebarMenuButton>
-                          </SidebarMenuItem>
+                          </SidebarMenuItem> */}
                         </>
                       ) : (
                         <SidebarMenuItem>
@@ -277,11 +289,13 @@ const Header = () => {
                       <div className="my-2 border-t border-border"></div>
 
                       <div className="flex items-center justify-between py-2">
-                        <span>Dark Mode</span>
-                        <Switch
-                          checked={theme === 'dark'}
-                          onCheckedChange={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                        />
+                        <Button variant="ghost" onClick={toggleTheme}>
+                          {resolvedTheme === "dark" ? (
+                            <Sun className="h-4 w-4" />
+                          ) : (
+                            <Moon className="h-4 w-4" />
+                          )}
+                        </Button>
                       </div>
                     </SidebarMenu>
                   </SidebarContent>
@@ -292,6 +306,7 @@ const Header = () => {
                         name: user?.full_name || 'User',
                         email: user?.email || '',
                         avatar: user?.avatar || '',
+                        profile_picture_url: user?.profile_picture_url || '',
                         is_superuser: user?.is_superuser || false,
                         full_name: user?.full_name || '',
                       }} />

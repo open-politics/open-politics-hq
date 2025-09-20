@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.image.minio.nodes }}
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: "{{ .Values.image.minio.image }}:{{ .Values.image.minio.tag }}"
+          ports:
+            - containerPort: {{ .Values.minio.service.port }}
+              name: api
+            - containerPort: {{ .Values.minio.consoleService.port }}
+              name: console
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: MINIO_ROOT_PASSWORD
+          command:
+{{ toYaml .Values.minio.command | indent 12 }}
+          args:
+{{ toYaml .Values.minio.args | indent 12 }}
+          volumeMounts:
+            - name: minio-storage
+              mountPath: /data
+          resources:
+            limits:
+              cpu: 500m
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 512Mi
+      volumes:
+        - name: minio-storage
+          persistentVolumeClaim:
+            claimName: minio-pvc

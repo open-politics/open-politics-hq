@@ -118,44 +118,14 @@ class SearchProvider(Protocol):
         pass
 
 
+# DEPRECATED: ClassificationProvider replaced by LanguageModelProvider
+# Kept temporarily for backward compatibility during migration
 class ClassificationProvider(ABC):
     """
-    Abstract Base Class for classification providers.
+    DEPRECATED: Use LanguageModelProvider instead.
+    This interface is kept for backward compatibility only.
     """
-
-    @abstractmethod
-    async def classify(self,
-                 text_content: Optional[str], # Main text of the asset being annotated
-                 output_model_class: Type[BaseModel], # Pydantic model for expected output
-                 instructions: Optional[str] = None, # Instructions for the LLM
-                 # Pass other modalities (images, parent context, etc.) via provider_config
-                 provider_config: Optional[Dict[str, Any]] = None,
-                 api_key_override: Optional[str] = None # Allow per-call API key override for the underlying LLM
-                ) -> Dict[str, Any]:
-        """
-        Classify the given text content and/or media according to the output_model_class structure and instructions.
-
-        Args:
-            text_content: Optional primary text content to classify.
-            output_model_class: The Pydantic model defining the desired output structure.
-            instructions: Optional instructions for the LLM (e.g., system prompt, task description).
-            provider_config: Optional dictionary for provider-specific settings.
-                             This may include:
-                             - 'media_inputs': List[Dict[str, Any]] where each dict contains
-                                               {'uuid': str, 'data': bytes, 'mime_type': str, 'kind': AssetKind, 'original_filename': str}
-                                               for multimodal input.
-                             - 'contextual_texts': List[str] for additional textual context.
-                             - Other LLM-specific parameters (e.g., temperature, model_name_override).
-            api_key_override: Optional API key for the underlying provider (if supported and different from initial config).
-
-        Returns:
-            A dictionary representing the structured classification result, matching output_model_class.
-
-        Raises:
-            ValueError: If essential arguments are missing or invalid.
-            RuntimeError: If the classification process fails.
-        """
-        pass
+    pass
 
 
 @runtime_checkable
@@ -251,5 +221,94 @@ class GeospatialProvider(Protocol):
             
         Returns:
             GeoJSON formatted data
+        """
+        pass
+
+
+# ─────────────────────────────────────────── Language Models ──── #
+
+from dataclasses import dataclass
+from typing import AsyncIterator
+
+@dataclass
+class ModelInfo:
+    """Information about a language model and its capabilities."""
+    name: str
+    provider: str
+    supports_structured_output: bool = False
+    supports_tools: bool = False
+    supports_streaming: bool = False
+    supports_thinking: bool = False
+    supports_multimodal: bool = False
+    max_tokens: Optional[int] = None
+    context_length: Optional[int] = None
+    description: Optional[str] = None
+
+@dataclass
+class GenerationResponse:
+    """Standardized response from language model generation."""
+    content: str
+    model_used: str
+    usage: Optional[Dict[str, int]] = None
+    tool_calls: Optional[List[Dict]] = None
+    thinking_trace: Optional[str] = None  # For reasoning models
+    finish_reason: Optional[str] = None
+    raw_response: Optional[Dict] = None  # Provider-specific full response
+
+@runtime_checkable
+class LanguageModelProvider(Protocol):
+    """
+    Unified interface for language model providers supporting chat, structured output, and tools.
+    
+    This interface treats all language model interactions as API calls with different JSON payloads:
+    - Classification → structured JSON output via response_format
+    - Chat → conversational JSON response
+    - Tool calls → structured JSON with function calls
+    - Streaming → same JSON, just chunked
+    """
+    
+    async def discover_models(self) -> List[ModelInfo]:
+        """
+        Dynamically discover available models with their capabilities.
+        
+        Returns:
+            List of ModelInfo objects describing available models
+        """
+        pass
+    
+    async def generate(self, 
+                      messages: List[Dict[str, str]],
+                      model_name: str,
+                      response_format: Optional[Dict] = None,  # JSON schema for structured output
+                      tools: Optional[List[Dict]] = None,      # Function definitions
+                      stream: bool = False,
+                      thinking_enabled: bool = False,          # Provider-specific thinking mode
+                      **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
+        """
+        Generate response with provider-specific handling of all features.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            model_name: Name of the model to use
+            response_format: JSON schema for structured output (provider-specific format)
+            tools: List of tool/function definitions (provider-specific format)
+            stream: Whether to stream the response
+            thinking_enabled: Whether to enable thinking/reasoning mode
+            **kwargs: Additional provider-specific parameters
+            
+        Returns:
+            GenerationResponse object or async iterator for streaming
+        """
+        pass
+    
+    def get_model_info(self, model_name: str) -> Optional[ModelInfo]:
+        """
+        Get information about a specific model.
+        
+        Args:
+            model_name: Name of the model
+            
+        Returns:
+            ModelInfo object if model exists, None otherwise
         """
         pass 

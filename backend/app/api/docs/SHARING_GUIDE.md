@@ -442,4 +442,5 @@ curl -X GET "http://localhost:8000/api/v1/shareables/volume?granularity=day"
 **Related Documentation:**
 - [Implementation Status](./IMPLEMENTATION_STATUS.md) - Sharing system status
 - [System Architecture](./SYSTEM_ARCHITECTURE.md) - Data model relationships
-- [Content Service Guide](./CONTENT_SERVICE_GUIDE.md) - Asset management for exports 
+- [Content Ingestion Guide](./CONTENT_INGESTION_GUIDE.md) - Asset management for exports
+- [Backup & Restore Guide](./BACKUP_RESTORE_GUIDE.md) - User-controlled backup system 

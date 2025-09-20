@@ -278,11 +278,3 @@ class DatasetService:
         )
         
         return self.create_dataset(user_id=user_id, infospace_id=infospace_id, dataset_in=dataset_create_obj)
-
-# Removed dummy factory function
-
-# Factory function REMOVED - Now in deps.py
-# def get_dataset_service() -> DatasetService:
-#     """Returns an instance of the DatasetService with dependencies injected via Depends()."""
-#     # The constructor will get dependencies via Depends() from FastAPI
-#     return DatasetService() 

@@ -222,12 +222,20 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
   }, [activeInfospace, loadRun]);
   
-  const retrySingleResult = useCallback(async (resultId: number): Promise<AnnotationRead | null> => {
+  const retrySingleResult = useCallback(async (resultId: number, customPrompt?: string): Promise<AnnotationRead | null> => {
       if (!activeInfospace?.id) return null;
       setIsRetryingResultId(resultId);
       try {
-        const result = await AnnotationsService.retrySingleAnnotation({infospaceId: activeInfospace.id, annotationId: resultId});
-        toast.success("Annotation re-processed successfully.");
+        // Use the generated service method with proper request body
+        const result = await AnnotationsService.retrySingleAnnotation({
+          infospaceId: activeInfospace.id, 
+          annotationId: resultId,
+          requestBody: {
+            custom_prompt: customPrompt || null
+          }
+        });
+        
+        toast.success(customPrompt ? "Annotation re-processed with custom guidance." : "Annotation re-processed successfully.");
         return result;
       } catch(e: any) {
         toast.error("Failed to retry annotation.", { description: e.body?.detail || e.message });

@@ -17,8 +17,11 @@ import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { adaptSchemaReadToSchemaFormData as transformApiToFormData } from '@/lib/annotations/adapters';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useIsMobile } from '@/hooks/use-mobile';
+import AnnotationSchemaCard from './AnnotationSchemaCard';
+import { SchemePreview } from './schemaCreation/SchemePreview';
 
 // Interface for export dialog state
 interface ExportDialogState {
@@ -39,6 +42,7 @@ const AnnotationSchemaManager: React.FC = () => {
         error: schemasError
     } = useAnnotationSystem();
     const { toast } = useToast();
+    const isMobile = useIsMobile();
 
     const [searchTerm, setSearchTerm] = useState('');
     const [showArchived, setShowArchived] = useState(false);
@@ -48,7 +52,7 @@ const AnnotationSchemaManager: React.FC = () => {
     const [schemaToDelete, setSchemaToDelete] = useState<AnnotationSchemaRead | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>(isMobile ? 'grid' : 'list');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedSchemaIds, setSelectedSchemaIds] = useState<Set<number>>(new Set());
     const [exportDialogState, setExportDialogState] = useState<ExportDialogState>({
@@ -58,6 +62,7 @@ const AnnotationSchemaManager: React.FC = () => {
       currentFilename: ''
     });
     const [isBulkArchiveDialogOpen, setIsBulkArchiveDialogOpen] = useState(false);
+    const [viewingSchema, setViewingSchema] = useState<AnnotationSchemaRead | null>(null);
 
     useEffect(() => {
       setSelectedSchemaIds(new Set());
@@ -66,6 +71,11 @@ const AnnotationSchemaManager: React.FC = () => {
     useEffect(() => {
         loadSchemas({ includeArchived: showArchived });
     }, [loadSchemas, showArchived]);
+
+    // Automatically switch to grid view on mobile, list view on desktop
+    useEffect(() => {
+        setViewMode(isMobile ? 'grid' : 'list');
+    }, [isMobile]);
 
     const handleOpenEditor = (mode: 'create' | 'edit' | 'watch', schema?: AnnotationSchemaRead) => {
         setEditorMode(mode);
@@ -310,63 +320,83 @@ const AnnotationSchemaManager: React.FC = () => {
     const isIndeterminate = numSelected > 0 && numSelected < numFiltered;
 
     return (
-        <div className="flex flex-col h-full p-4 bg-muted/10">
-            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+        <div className="flex flex-col h-full p-4 ">
+            {/* Header with title and primary action */}
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <div className="flex items-center gap-4">
-                    <h2 className="text-xl font-semibold">Manage Annotation Schemas</h2>
-                    <ToggleGroup type="single" value={viewMode} onValueChange={(value) => value && setViewMode(value as any)} size="sm">
-                        <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
-                        <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
-                    </ToggleGroup>
+                    <h2 className="text-2xl font-bold">Annotation Schemas</h2>
+                    {!isMobile && (
+                        <ToggleGroup type="single" value={viewMode} onValueChange={(value) => value && setViewMode(value as any)} size="sm">
+                            <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
+                            <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
+                        </ToggleGroup>
+                    )}
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                    <div className="relative w-48 sm:w-64">
-                       <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                       <Input
-                           type="text"
-                           placeholder="Search schemas..."
-                           value={searchTerm}
-                           onChange={(e) => setSearchTerm(e.target.value)}
-                           className="pl-8 h-9"
-                       />
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <Checkbox
-                            id="show-archived"
-                            checked={showArchived}
-                            onCheckedChange={(checked) => setShowArchived(!!checked)}
-                        />
-                        <Label htmlFor="show-archived" className="text-sm font-medium whitespace-nowrap">
-                            Show Archived
-                        </Label>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={handleImportClick} disabled={isImporting}>
-                        {isImporting ? (
-                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                           <Upload className="h-4 w-4 mr-2" />
-                        )}
-                        Import
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={handleExportSelected} disabled={numSelected === 0 || isLoadingSchemas}>
-                       <Download className="h-4 w-4 mr-2" />
-                       Export Selected ({numSelected})
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={handleExportAll} disabled={schemas.length === 0 || isLoadingSchemas}>
-                       <Download className="h-4 w-4 mr-2" />
-                       Export All ({schemas.length})
-                    </Button>
-                    <Button size="sm" onClick={() => handleOpenEditor('create')}>
-                        <PlusCircle className="h-4 w-4 mr-2" />
-                        Create Schema
-                    </Button>
-                    <div className="flex items-center gap-2 border-l pl-2 ml-2">
-                      <Button size="sm" variant="destructive" onClick={() => setIsBulkArchiveDialogOpen(true)} disabled={numSelected === 0}>
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Archive ({numSelected})
-                      </Button>
+            </div>
+
+            {/* Search and Filter Controls */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                <div className="flex-1 relative min-w-0">
+                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                   <Input
+                       type="text"
+                       placeholder="Search schemas by name or description..."
+                       value={searchTerm}
+                       onChange={(e) => setSearchTerm(e.target.value)}
+                       className="pl-10 h-10"
+                   />
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    <Checkbox
+                        id="show-archived"
+                        checked={showArchived}
+                        onCheckedChange={(checked) => setShowArchived(!!checked)}
+                    />
+                    <Label htmlFor="show-archived" className="text-sm font-medium whitespace-nowrap">
+                        Show Archived
+                    </Label>
+                </div>
+            </div>
+
+            {/* Action Bar - Secondary Actions */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-6 p-3 rounded-lg border backdrop-blur-sm">
+                {/* File Operations Group */}
+                <div className="flex items-center gap-2">          
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">File Operations</span>
+                    <div className="flex gap-1">
+                        <Button size="sm" variant="outline" onClick={handleImportClick} disabled={isImporting} className="h-8">
+                            {isImporting ? (
+                               <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                            ) : (
+                               <Download className="h-3 w-3 mr-1.5" />
+                            )}
+                            Import
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={handleExportAll} disabled={schemas.length === 0 || isLoadingSchemas} className="h-8">
+                           <Upload className="h-3 w-3 mr-1.5" />
+                           Export All ({schemas.length})
+                        </Button>
                     </div>
                 </div>
+
+                {/* Selection-Based Actions Group */}
+                {numSelected > 0 && (
+                    <div className="flex items-center gap-2 border-l border-border pl-3 ml-3">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            {numSelected} Selected
+                        </span>
+                        <div className="flex gap-1">
+                            <Button size="sm" variant="outline" onClick={handleExportSelected} className="h-8">
+                               <Download className="h-3 w-3 mr-1.5" />
+                               Export
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => setIsBulkArchiveDialogOpen(true)} className="h-8">
+                                <Trash2 className="h-3 w-3 mr-1.5" />
+                                Archive
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </div>
 
              {isLoadingSchemas && !schemasError && (
@@ -386,10 +416,10 @@ const AnnotationSchemaManager: React.FC = () => {
             )}
 
             {!isLoadingSchemas && !schemasError && viewMode === 'list' && (
-                 <div className="flex-grow overflow-hidden border rounded-lg bg-card">
-                    <ScrollArea className="h-full">
-                       <Table>
-                          <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm shadow-sm">
+                 <div className="flex-grow overflow-hidden border rounded-lg">
+                    <ScrollArea className="h-full backdrop-blur-sm overflow-x-auto">
+                       <Table className="backdrop-blur-sm">
+                          <TableHeader className="sticky top-0 z-10 backdrop-blur-xl shadow-sm">
                               <TableRow>
                                   <TableHead className="w-[50px] px-2">
                                      <Checkbox
@@ -407,16 +437,26 @@ const AnnotationSchemaManager: React.FC = () => {
                                   <TableHead className="w-[150px] text-right pr-4">Actions</TableHead>
                               </TableRow>
                           </TableHeader>
-                          <TableBody>
+                          <TableBody className="">
+                            <TableRow>
+                                {/* Clickable row for creating a new schema */}
+                                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                                    <Button onClick={() => handleOpenEditor('create')} className="h-8 px-3 text-xs font-medium">
+                                        <PlusCircle className="h-4 w-4 mr-1.5" />
+                                        Create Schema
+                                    </Button>
+                                </TableCell>
+                            </TableRow>
                               {filteredSchemas.length > 0 ? (
                                   filteredSchemas.map((schema) => (
                                       <TableRow 
                                           key={schema.id}
                                           data-state={selectedSchemaIds.has(schema.id) ? "selected" : ""}
-                                          className={cn(!schema.is_active && "bg-muted/50 text-muted-foreground")}
+                                          className={cn(!schema.is_active && " text-muted-foreground cursor-pointer")}
+                                          onClick={() => setViewingSchema(schema)}
                                       >
                                           <TableCell className="px-2">
-                                            <div className="flex items-center h-full">
+                                            <div className="flex items-center h-full" onClick={(e) => e.stopPropagation()}>
                                               <Checkbox
                                                   checked={selectedSchemaIds.has(schema.id)}
                                                   onCheckedChange={(checked) => handleRowSelect(schema.id, !!checked)}
@@ -435,24 +475,57 @@ const AnnotationSchemaManager: React.FC = () => {
                                               {schema.updated_at ? formatDistanceToNow(new Date(schema.updated_at), { addSuffix: true }) : '-'}
                                           </TableCell>
                                           <TableCell className="text-right pr-4">
-                                              <div className="flex justify-end gap-1">
-                                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditor('watch', schema)} title="View">
-                                                      <Eye className="h-4 w-4" />
-                                                  </Button>
-                                                  {schema.is_active ? (
-                                                    <>
-                                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditor('edit', schema)} title="Edit">
-                                                          <Edit className="h-4 w-4" />
+                                              <div className="flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                                  {/* Primary actions group */}
+                                                  <div className="flex gap-0.5">
+                                                      <Button 
+                                                          variant="ghost" 
+                                                          size="icon" 
+                                                          className="h-8 w-8 text-muted-foreground hover:text-foreground" 
+                                                          onClick={() => handleOpenEditor('watch', schema)} 
+                                                          title="View Schema"
+                                                      >
+                                                          <Eye className="h-4 w-4" />
                                                       </Button>
-                                                       <AlertDialogTrigger asChild>
-                                                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteClick(schema)} title="Archive">
-                                                              <Trash2 className="h-4 w-4" />
+                                                      {schema.is_active && (
+                                                          <Button 
+                                                              variant="ghost" 
+                                                              size="icon" 
+                                                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-primary/10" 
+                                                              onClick={() => handleOpenEditor('edit', schema)} 
+                                                              title="Edit Schema"
+                                                          >
+                                                              <Edit className="h-4 w-4" />
                                                           </Button>
-                                                       </AlertDialogTrigger>
-                                                    </>
-                                                  ) : (
-                                                    <Button variant="ghost" size="sm" onClick={() => handleRestoreClick(schema)}>Restore</Button>
-                                                  )}
+                                                      )}
+                                                  </div>
+                                                  
+                                                  {/* Secondary actions - separated */}
+                                                  <div className="flex gap-0.5 ml-1 border-l border-border pl-1">
+                                                      {schema.is_active ? (
+                                                          <AlertDialogTrigger asChild>
+                                                              <Button 
+                                                                  variant="ghost" 
+                                                                  size="icon" 
+                                                                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" 
+                                                                  onClick={() => handleDeleteClick(schema)} 
+                                                                  title="Archive Schema"
+                                                              >
+                                                                  <Trash2 className="h-4 w-4" />
+                                                              </Button>
+                                                          </AlertDialogTrigger>
+                                                      ) : (
+                                                          <Button 
+                                                              variant="outline" 
+                                                              size="sm" 
+                                                              className="h-8 px-3 text-xs font-medium"
+                                                              onClick={() => handleRestoreClick(schema)}
+                                                              title="Restore Schema"
+                                                          >
+                                                              Restore
+                                                          </Button>
+                                                      )}
+                                                  </div>
                                               </div>
                                           </TableCell>
                                       </TableRow>
@@ -471,8 +544,22 @@ const AnnotationSchemaManager: React.FC = () => {
             )}
             
             {!isLoadingSchemas && !schemasError && viewMode === 'grid' && (
-                <ScrollArea className="flex-grow">
+                <ScrollArea className="flex-grow backdrop-blur-sm">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        <Card 
+                            className="flex flex-col transition-all border border-dashed border-primary/50 bg-background/70 hover:border-primary hover:shadow-md cursor-pointer group"
+                            onClick={() => handleOpenEditor('create')}
+                        >
+                            <CardHeader className="flex flex-row items-center justify-center gap-4 pb-2">
+                                <div className="flex flex-col items-center text-center space-y-2">
+                                    <PlusCircle className="h-8 w-8 text-primary/50 group-hover:text-primary transition-colors" />
+                                    <CardTitle className="text-base">Create New Schema</CardTitle>
+                                    <CardDescription className="text-sm">
+                                        Set up a new annotation schema for your documents
+                                    </CardDescription>
+                                </div>
+                            </CardHeader>
+                        </Card>
                         {filteredSchemas.map(schema => (
                             <SchemaCard
                                 key={schema.id}
@@ -482,6 +569,7 @@ const AnnotationSchemaManager: React.FC = () => {
                                 onOpenEditor={handleOpenEditor}
                                 onDeleteClick={handleDeleteClick}
                                 onRestoreClick={handleRestoreClick}
+                                onViewSchema={setViewingSchema}
                             />
                         ))}
                     </div>
@@ -580,6 +668,24 @@ const AnnotationSchemaManager: React.FC = () => {
                 accept=".json"
                 style={{ display: 'none' }}
            />
+
+           <AnnotationSchemaCard
+               show={!!viewingSchema}
+               onClose={() => setViewingSchema(null)}
+               title={`Schema: ${viewingSchema?.name}`}
+               mode="watch"
+           >
+               {viewingSchema && <SchemePreview scheme={viewingSchema} />}
+               <div className="flex flex-row gap-2"> 
+               <Button variant="outline" onClick={() => setViewingSchema(null)}>Close</Button>
+               <Button variant="default" onClick={() => {
+                   if (viewingSchema) {
+                       setViewingSchema(null);
+                       handleOpenEditor('edit', viewingSchema);
+                   }
+               }}>Edit</Button>
+               </div>
+           </AnnotationSchemaCard>
          </div>
      );
  };
@@ -593,27 +699,41 @@ const AnnotationSchemaManager: React.FC = () => {
 interface SchemaCardProps {
     schema: AnnotationSchemaRead;
     isSelected: boolean;
+    isSkeleton?: boolean;
     onSelect: (id: number, checked: boolean) => void;
     onOpenEditor: (mode: 'create' | 'edit' | 'watch', schema?: AnnotationSchemaRead) => void;
     onDeleteClick: (schema: AnnotationSchemaRead) => void;
     onRestoreClick: (schema: AnnotationSchemaRead) => void;
+    onViewSchema: (schema: AnnotationSchemaRead) => void;
 }
 
 const SchemaCard: React.FC<SchemaCardProps> = ({
     schema,
     isSelected,
+    isSkeleton,
     onSelect,
     onOpenEditor,
     onDeleteClick,
     onRestoreClick,
+    onViewSchema,
 }) => {
     return (
+        <>
+        {isSkeleton ? (
+            <Card className="flex flex-col transition-all border border-border bg-background/70">   
+                <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2 cursor-pointer">
+                    <div className="flex-1 space-y-1">
+                        <CardTitle className="text-base truncate">Create a new schema...</CardTitle>
+                    </div>
+                </CardHeader>
+            </Card>
+        ) : (
         <Card className={cn(
-            "flex flex-col transition-all", 
-            !schema.is_active && "bg-muted/50 text-muted-foreground",
+            "flex flex-col transition-all border border-border bg-background/70", 
+            !schema.is_active && "text-muted-foreground",
             isSelected && "border-primary ring-1 ring-primary"
         )}>
-            <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
+            <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2 cursor-pointer" onClick={() => onViewSchema(schema)}>
                 <div className="flex-1 space-y-1">
                     <CardTitle className="text-base truncate" title={schema.name}>
                         {schema.name}
@@ -622,11 +742,14 @@ const SchemaCard: React.FC<SchemaCardProps> = ({
                         {schema.description || "No description."}
                     </p>
                 </div>
-                <Checkbox
-                    checked={isSelected}
-                    onCheckedChange={(checked) => onSelect(schema.id, !!checked)}
-                    aria-label="Select schema"
-                />
+                <div onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={(checked) => onSelect(schema.id, !!checked)}
+                        aria-label="Select schema"
+                        disabled={isSkeleton}
+                    />
+                </div>
             </CardHeader>
             <CardContent className="flex-grow space-y-2 text-xs">
                  {!schema.is_active && <Badge variant="outline">Archived</Badge>}
@@ -643,26 +766,61 @@ const SchemaCard: React.FC<SchemaCardProps> = ({
                     <span>{schema.updated_at ? formatDistanceToNow(new Date(schema.updated_at), { addSuffix: true }) : '-'}</span>
                 </div>
             </CardContent>
-            <CardFooter className="flex justify-end gap-1 p-2">
-                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenEditor('watch', schema)} title="View">
-                    <Eye className="h-4 w-4" />
-                </Button>
-                {schema.is_active ? (
-                <>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenEditor('edit', schema)} title="Edit">
-                        <Edit className="h-4 w-4" />
+            <CardFooter className="flex justify-between items-center p-3 pt-0">
+                {/* Primary actions - left side */}
+                <div className="flex gap-1">
+                    <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground" 
+                        onClick={() => onOpenEditor('watch', schema)} 
+                        title="View Schema"
+                    >
+                        <Eye className="h-4 w-4" />
                     </Button>
-                    <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/10" onClick={() => onDeleteClick(schema)} title="Archive">
-                            <Trash2 className="h-4 w-4" />
+                    {schema.is_active && (
+                        <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-primary/10" 
+                            onClick={() => onOpenEditor('edit', schema)} 
+                            title="Edit Schema"
+                        >
+                            <Edit className="h-4 w-4" />
                         </Button>
-                    </AlertDialogTrigger>
-                </>
-                ) : (
-                <Button variant="ghost" size="sm" onClick={() => onRestoreClick(schema)}>Restore</Button>
-                )}
+                    )}
+                </div>
+                
+                {/* Secondary actions - right side */}
+                <div className="flex gap-1">
+                    {schema.is_active ? (
+                        <AlertDialogTrigger asChild>
+                            <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" 
+                                onClick={() => onDeleteClick(schema)} 
+                                title="Archive Schema"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
+                        </AlertDialogTrigger>
+                    ) : (
+                        <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-8 px-3 text-xs font-medium"
+                            onClick={() => onRestoreClick(schema)}
+                            title="Restore Schema"
+                        >
+                            Restore
+                        </Button>
+                    )}
+                </div>
             </CardFooter>
         </Card>
+        )}
+        </>
     );
 };
 

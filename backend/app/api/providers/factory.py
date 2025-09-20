@@ -18,9 +18,13 @@ from app.api.providers.impl.storage_minio import MinioStorageProvider
 # from app.api.providers.impl.storage_s3 import S3StorageProvider # Example for S3
 # from app.api.providers.impl.storage_local import LocalFileSystemStorageProvider # Example for Local FS
 
-from app.api.providers.impl.classification_gemini_native import GeminiNativeClassificationProvider
-from app.api.providers.impl.classification_opol import OpolClassificationProvider
-# from app.api.providers.impl.classification_openai import OpenAIClassificationProvider # Example
+# Language model providers (unified interface)
+from app.api.providers.model_registry import ModelRegistryService
+from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
+from app.api.providers.impl.language_ollama import OllamaLanguageModelProvider  
+from app.api.providers.impl.language_gemini import GeminiLanguageModelProvider
+
+
 
 from app.api.providers.impl.scraping_opol import OpolScrapingProvider
 # from app.api.providers.impl.scraping_playwright import PlaywrightScrapingProvider # Example
@@ -66,35 +70,49 @@ def create_storage_provider(settings: AppSettings) -> StorageProvider:
     else:
         raise ValueError(f"Unsupported storage provider type configured: {settings.STORAGE_PROVIDER_TYPE}")
 
-def create_classification_provider(settings: AppSettings) -> ClassificationProvider:
-    provider_type = settings.CLASSIFICATION_PROVIDER_TYPE.lower()
-    default_model_name = settings.DEFAULT_CLASSIFICATION_MODEL_NAME
-    logger.info(f"Factory: Creating classification provider of type: {provider_type} with default model: {default_model_name}")
-
-    if provider_type == "gemini_native":
-        if not settings.GOOGLE_API_KEY:
-            raise ValueError("GOOGLE_API_KEY is required for gemini_native classification provider.")
-        return GeminiNativeClassificationProvider(api_key=settings.GOOGLE_API_KEY, model_name=default_model_name)
+def create_model_registry(settings: AppSettings) -> ModelRegistryService:
+    """
+    Create and configure the unified model registry with all available providers.
     
-    elif provider_type == "opol_google_via_fastclass":
-        return OpolClassificationProvider(
-            provider_for_fastclass="Google", 
-            model_name_for_fastclass=default_model_name, # Or a more specific setting like OPOL_GOOGLE_MODEL
-            api_key_for_fastclass=settings.GOOGLE_API_KEY, # Assuming OPOL needs key for Google
-            opol_mode=settings.OPOL_MODE,
-            opol_api_key=settings.OPOL_API_KEY
+    This replaces the old create_classification_provider function.
+    """
+    registry = ModelRegistryService()
+    
+    # Configure OpenAI provider if API key is available
+    if hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
+        registry.configure_provider(
+            name="openai",
+            provider_class=OpenAILanguageModelProvider,
+            config={"api_key": settings.OPENAI_API_KEY},
+            enabled=True
         )
-    elif provider_type == "opol_ollama_via_fastclass":
-        return OpolClassificationProvider(
-            provider_for_fastclass="Ollama", 
-            model_name_for_fastclass=settings.OLLAMA_DEFAULT_MODEL or default_model_name,
-            ollama_base_url=settings.OLLAMA_BASE_URL, # Pass this to OPOL provider
-            opol_mode=settings.OPOL_MODE,
-            opol_api_key=settings.OPOL_API_KEY
+        logger.info("Configured OpenAI provider")
+    
+    # Configure Ollama provider - always available in Docker setup
+    ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+    registry.configure_provider(
+        name="ollama", 
+        provider_class=OllamaLanguageModelProvider,
+        config={"base_url": ollama_base_url},
+        enabled=True
+    )
+    logger.info(f"Configured Ollama provider with base_url: {ollama_base_url}")
+    
+    # Configure Gemini provider if API key is available
+    if hasattr(settings, 'GOOGLE_API_KEY') and settings.GOOGLE_API_KEY:
+        default_model = getattr(settings, 'DEFAULT_CLASSIFICATION_MODEL_NAME', None)
+        registry.configure_provider(
+            name="gemini",
+            provider_class=GeminiLanguageModelProvider,
+            config={
+                "api_key": settings.GOOGLE_API_KEY,
+                "model_name": default_model
+            },
+            enabled=True
         )
-    # Add elif for other types like "openai" if you implement OpenAIClassificationProvider
-    else:
-        raise ValueError(f"Unsupported classification provider type configured: {settings.CLASSIFICATION_PROVIDER_TYPE}")
+        logger.info("Configured Gemini provider")
+    
+    return registry
 
 def create_scraping_provider(settings: AppSettings) -> ScrapingProvider:
     provider_type = settings.SCRAPING_PROVIDER_TYPE.lower()

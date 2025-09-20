@@ -13,9 +13,10 @@ import Textarea from 'react-textarea-autosize'
 import { generateId } from 'ai'
 import { useAppState } from '@/lib/utils/app-state'
 import { ModelSelector } from './model-selector'
-import { models } from '@/lib/types/models'
 import { useLocalStorage } from '@/lib/hooks/use-local-storage'
-import { getDefaultModelId } from '@/lib/utils/index'
+import { IntelligenceChatService } from '@/client/services'
+import { ModelInfo } from '@/client/models'
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { toast } from 'sonner'
 
 interface ChatPanelProps {
@@ -37,8 +38,32 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
 
   const [selectedModelId, setSelectedModelId] = useLocalStorage<string>(
     'selectedModel',
-    getDefaultModelId(models)
+    'gemini-2.5-flash-preview-05-20' // Default to Gemini which supports tools
   )
+  
+  const { activeInfospace } = useInfospaceStore()
+  
+  // Load default model from backend if none selected
+  useEffect(() => {
+    async function loadDefaultModel() {
+      if (!activeInfospace?.id || selectedModelId !== 'gemini-2.5-flash-preview-05-20') return
+      
+      try {
+        const response = await IntelligenceChatService.listAvailableModels()
+        const models = response.models || []
+        
+        if (models.length > 0) {
+          // Prefer tool-supporting models for intelligence chat
+          const defaultModel = models.find(m => m.supports_tools) || models[0]
+          setSelectedModelId(defaultModel.name)
+        }
+      } catch (err) {
+        console.error('Failed to load default model:', err)
+      }
+    }
+
+    loadDefaultModel()
+  }, [activeInfospace?.id, selectedModelId, setSelectedModelId])
 
   const [isComposing, setIsComposing] = useState(false) // Composition state
   const [enterDisabled, setEnterDisabled] = useState(false) // Disable Enter after composition ends
@@ -117,7 +142,7 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
     setMessages([])
     setAIMessage({ messages: [], chatId: '' })
     setInput('')
-    router.push('/desks/home/chat')
+    router.push('/hq/chat')
   }
 
   useEffect(() => {

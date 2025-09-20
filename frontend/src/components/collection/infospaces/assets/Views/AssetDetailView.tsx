@@ -54,6 +54,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import AssetDetailViewCsv from './AssetDetailViewCsv';
 import AssetDetailViewPdf from './AssetDetailViewPdf';
 import AssetDetailViewTextBlock from './AssetDetailViewTextBlock';
+import ComposedArticleView from '../Composer/ComposedArticleView';
 // import MboxViewer from './viewers/MboxViewer';
 // import CsvViewer from './viewers/CsvViewer';
 // import useSpecializedView from '@/hooks/useSpecializedView';
@@ -98,7 +99,7 @@ const AssetDetailView = ({
   const [selectedChildAsset, setSelectedChildAsset] = useState<AssetRead | null>(null);
   const [childSearchTerm, setChildSearchTerm] = useState('');
 
-  // Text span highlighting
+  // Text span highlighting 
   const { getHighlightsForAsset, hasHighlights } = useTextSpanHighlight();
 
   // Media blob URLs for authenticated access
@@ -220,9 +221,10 @@ const AssetDetailView = ({
   const fetchMediaBlob = useCallback(async (blobPath: string): Promise<string | null> => {
     if (!blobPath || !activeInfospace?.id) return null;
 
-    // Check if we already have a blob URL for this path
-    if (mediaBlobUrls.has(blobPath)) {
-      return mediaBlobUrls.get(blobPath)!;
+    // Check if we already have a blob URL for this path (use current state without dependency)
+    const currentCache = mediaBlobUrls;
+    if (currentCache.has(blobPath)) {
+      return currentCache.get(blobPath)!;
     }
 
     // Check if we already have a pending promise for this path
@@ -269,7 +271,7 @@ const AssetDetailView = ({
     // Cache the promise so other callers can wait for the same result
     fetchPromiseCache.current.set(blobPath, fetchPromise);
     return fetchPromise;
-  }, [activeInfospace?.id, mediaBlobUrls]);
+  }, [activeInfospace?.id]); // Remove mediaBlobUrls from dependencies to prevent infinite re-renders
 
   // Function to fetch CSV content as text
   const fetchCSVContent = useCallback(async (blobPath: string): Promise<string | null> => {
@@ -494,7 +496,7 @@ const AssetDetailView = ({
         
         <div className="flex-1 overflow-auto w-full min-w-0">
           <table className="w-full text-sm border-collapse table-fixed">
-            <thead className="bg-muted/50 sticky top-0">
+            <thead className="bg-muted/80 sticky top-0">
               <tr>
                 {headers.map((header, index) => (
                   <th key={index} className="px-2 py-1 text-left font-medium text-xs">
@@ -632,16 +634,25 @@ const AssetDetailView = ({
         }
       };
       
-      loadPDF();
+      // Only load if we don't already have the PDF URL, to prevent infinite reloading
+      if (!pdfSrc || (pageNumber && !pdfSrc.includes(`#page=${pageNumber}`))) {
+        loadPDF();
+      }
       
-      // Cleanup function to revoke blob URL
+      // Cleanup function to revoke blob URL - moved to a separate effect to avoid stale closure
+      // The cleanup is now handled properly when the component unmounts
+    }, [blobPath, pageNumber, fetchMediaBlob]); // Include fetchMediaBlob to ensure proper dependency tracking
+
+    // Separate effect for cleanup to avoid stale closure issues
+    useEffect(() => {
       return () => {
+        // Cleanup current PDF source when component unmounts or blobPath changes
         if (pdfSrc) {
           console.log(`[AuthenticatedPDF] Cleaning up blob URL: ${pdfSrc}`);
           URL.revokeObjectURL(pdfSrc.split('#')[0]); // Remove fragment before revoking
         }
       };
-    }, [blobPath, pageNumber]);
+    }, [pdfSrc]);
 
     if (isLoading) {
       return (
@@ -853,7 +864,7 @@ const AssetDetailView = ({
     const isEditingThisField = editingAsset?.assetId === asset.id && editingAsset?.field === field;
     const displayValue = field === 'title' ? asset.title : asset.event_timestamp;
     const inputType = field === 'event_timestamp' ? 'datetime-local' : 'text';
-    const label = field === 'title' ? 'Title' : 'Event Timestamp';
+    const label = field === 'title' ? 'Title' : 'Timestamp';
 
     const currentDisplayValue = field === 'event_timestamp' ? getFormattedTimestamp(displayValue) : (displayValue || 'N/A');
 
@@ -906,19 +917,39 @@ const AssetDetailView = ({
     const shouldHighlight = textSpans.length > 0;
 
     return (
-      <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
-        <div className="whitespace-pre-wrap break-words w-full max-w-full">
-          {shouldHighlight ? (
-            <HighlightedText 
-              text={text} 
-              spans={textSpans}
-              highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 rounded text-yellow-900 dark:text-yellow-100 z-[1001]"
-            />
-          ) : (
-            text
-          )}
-        </div>
-      </ScrollArea>
+      <div className="space-y-2">
+        {!shouldHighlight && onLoadIntoRunner && (
+          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md p-3">
+            <div className="flex items-center gap-2 text-sm">
+              <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <span className="text-blue-800 dark:text-blue-200">
+                Load an annotation run to see text evidence highlighting
+              </span>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => onLoadIntoRunner && onLoadIntoRunner(0, 'Select Run')}
+                className="ml-auto text-xs h-7"
+              >
+                Load Run
+              </Button>
+            </div>
+          </div>
+        )}
+        <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
+          <div className="whitespace-pre-wrap break-words w-full max-w-full">
+            {shouldHighlight ? (
+              <HighlightedText 
+                text={text} 
+                spans={textSpans}
+                highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 rounded text-yellow-900 dark:text-yellow-100 z-[1001]"
+              />
+            ) : (
+              text
+            )}
+          </div>
+        </ScrollArea>
+      </div>
     );
   };
 
@@ -1095,16 +1126,8 @@ const AssetDetailView = ({
 
       return (
       <div className="p-4 bg-muted/30 h-full flex flex-col">
-        <h3 className="text-lg font-semibold mb-3 flex items-center">
-          <ImageIcon className="h-5 w-5 mr-2 text-primary" />
-          Image Asset
-        </h3>
         <div className="space-y-2 mb-4 text-sm">
           {renderEditableField(asset, 'title')}
-          <p><strong>Kind:</strong> {asset.kind}</p>
-          <p><strong>ID:</strong> {asset.id}</p>
-          {asset.source_metadata?.filename && <p><strong>Filename:</strong> {String(asset.source_metadata.filename)}</p>}
-          {asset.blob_path && <p><strong>File Path:</strong> {asset.blob_path}</p>}
           {renderEditableField(asset, 'event_timestamp')}
         </div>
         <div className="flex-1 flex items-center justify-center bg-background rounded p-4">
@@ -1138,15 +1161,8 @@ const AssetDetailView = ({
 
   const PdfAssetContent = ({ asset, renderEditableField, AuthenticatedPDF, hasChildren, childAssets, setActiveTab, handleChildAssetClick }: { asset: AssetRead, renderEditableField: any, AuthenticatedPDF: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any }) => (
   <div className="p-4 bg-muted/30 h-full flex flex-col">
-    <h3 className="text-lg font-semibold mb-3 flex items-center">
-      <FileText className="h-5 w-5 mr-2 text-primary" />
-      PDF Document
-    </h3>
     <div className="space-y-2 mb-4 text-sm">
       {renderEditableField(asset, 'title')}
-      <p><strong>Kind:</strong> {asset.kind}</p>
-      <p><strong>ID:</strong> {asset.id}</p>
-      {asset.source_metadata?.filename && <p><strong>Filename:</strong> {String(asset.source_metadata.filename)}</p>}
       {(asset.source_metadata?.page_count !== undefined && asset.source_metadata?.page_count !== null) && <p><strong>Pages:</strong> {String(asset.source_metadata.page_count)}</p>}
       {renderEditableField(asset, 'event_timestamp')}
         </div>
@@ -1164,67 +1180,6 @@ const AssetDetailView = ({
             Click a page preview or use the "PDF Pages" tab to view details
           </span>
         </div>
-        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {childAssets.slice(0, 6).map((childAsset, index) => (
-            <Card
-              key={childAsset.id}
-              className={cn(
-                "cursor-pointer transition-all hover:shadow-lg group relative",
-                selectedChildAsset?.id === childAsset.id && "ring-2 ring-primary shadow-lg"
-              )}
-              onClick={() => handleChildAssetClick(childAsset)}
-            >
-              <CardContent className="p-0">
-                {/* Page Preview Placeholder */}
-                <div className="aspect-[3/4] rounded-t-lg overflow-hidden bg-muted/20 flex flex-col items-center justify-center relative">
-                  {/* PDF Page Preview - Show blob content if available */}
-                  {childAsset.blob_path ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
-                      <FileText className="h-8 w-8 mb-2" />
-                      <span className="text-xs font-medium">Page {(childAsset.part_index || 0) + 1}</span>
-                    </div>
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
-                      <FileText className="h-8 w-8 mb-2 opacity-50" />
-                      <span className="text-xs">Page {(childAsset.part_index || 0) + 1}</span>
-                    </div>
-                  )}
-                  
-                  {/* Selection indicator */}
-                  {selectedChildAsset?.id === childAsset.id && (
-                    <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1">
-                      <Eye className="h-3 w-3" />
-                    </div>
-                  )}
-                </div>
-                
-                {/* Page Info */}
-                <div className="p-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <Badge variant="secondary" className="text-xs">
-                      Page {(childAsset.part_index || 0) + 1}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      ID: {childAsset.id}
-                    </span>
-                  </div>
-                  
-                  {/* Text preview - truncated */}
-                  {childAsset.text_content && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {childAsset.text_content.substring(0, 60)}...
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          {childAssets.length > 6 && (
-            <div className="rounded p-2 text-xs text-muted-foreground flex items-center justify-center border border-dashed border-muted">
-              +{childAssets.length - 6} more pages
-            </div>
-          )}
-        </div>
       </div>
     )}
       </div>
@@ -1232,7 +1187,6 @@ const AssetDetailView = ({
 
 const VideoAssetContent = ({ asset, renderEditableField, AuthenticatedVideo }: { asset: AssetRead, renderEditableField: any, AuthenticatedVideo: any }) => (
     <div className="p-4 bg-muted/30 h-full flex flex-col">
-        <h3 className="text-lg font-semibold mb-3 flex items-center"><Video className="h-5 w-5 mr-2 text-primary" />Video Asset</h3>
         <div className="space-y-2 mb-4 text-sm">
             {renderEditableField(asset, 'title')}
             <p><strong>Kind:</strong> {asset.kind}</p>
@@ -1306,7 +1260,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
   return (
     <div className="h-full flex flex-col">
       {/* Article Header */}
-      <div className="flex-none px-8 pb-6 bg-background">
+      <div className="flex-none px-8 pb-6 ">
         <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
           <Globe className="h-4 w-4" />
           <span>Article</span>
@@ -1551,14 +1505,8 @@ const CsvOverviewContent = ({ asset, renderEditableField, AuthenticatedCSV, hasC
 
     return (
       <div className="p-4 bg-muted/30 h-full flex flex-col w-full max-w-full min-w-0">
-          <h3 className="text-lg font-semibold mb-3 flex items-center"><FileSpreadsheet className="h-5 w-5 mr-2 text-primary" />CSV File Overview</h3>
           <div className="space-y-2 mb-4 text-sm w-full max-w-full">
               {renderEditableField(asset, 'title')}
-              <p><strong>Kind:</strong> {asset.kind}</p>
-              <p><strong>ID:</strong> {asset.id}</p>
-              <p className="min-w-0"><strong>Filename:</strong> <span className="break-all">{String(asset.source_metadata?.filename)}</span></p>
-              <p><strong>Total Rows:</strong> {String(asset.source_metadata?.row_count)}</p>
-              {asset.blob_path && <p className="min-w-0"><strong>File Path:</strong> <span className="break-all text-xs">{asset.blob_path}</span></p>}
               {renderEditableField(asset, 'event_timestamp')}
           </div>
           {asset.blob_path && typeof asset.blob_path === 'string' ? (
@@ -1655,9 +1603,30 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
     if (isLoadingAsset) return <div className="p-8 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading asset...</div>;
     if (assetError) return <div className="p-8 text-red-600 text-center">{assetError}</div>;
 
+    // Check if this is a composed article
+    const isComposedArticle = asset.kind === 'article' && asset.source_metadata?.composition_type === 'free_form_article';
+
     switch (asset.kind) {
       case 'article':
-        return <ArticleAssetContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} renderTextDisplay={renderTextDisplay} />;
+        // Use ComposedArticleView for composed articles, fallback to legacy for others
+        if (isComposedArticle) {
+          return (
+            <ComposedArticleView 
+              asset={asset} 
+              onEdit={() => {
+                // Trigger edit mode - we'll need to pass this up to the parent
+                console.log('Edit composed article:', asset.id);
+                onEdit(asset);
+              }}
+              onAssetClick={(clickedAsset) => {
+                // Handle embedded asset clicks - could open in detail view
+                console.log('Clicked embedded asset:', clickedAsset.id);
+              }}
+            />
+          );
+        } else {
+          return <ArticleAssetContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} renderTextDisplay={renderTextDisplay} />;
+        }
       case 'image':
         return <ImageAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedImage={AuthenticatedImage} />;
       case 'pdf':
@@ -2240,10 +2209,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
         <>
           {/* Top Section: Header/Metadata */}
           <div className="flex-none p-4 border-b">
-            <div className="flex justify-between items-start mb-1">
-              <h2 className="text-lg font-semibold">{asset.title || `Asset ${asset.id}`}</h2>
-            </div>
             <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+              <h2 className="text-lg font-semibold">{asset.title || `Asset ${asset.id}`}</h2>
               <Badge variant="outline" className="capitalize">{asset.kind}</Badge>
               <span>ID: {asset.id}</span>
               {hasChildren && (
@@ -2265,23 +2232,23 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
           <div className="flex-1 min-h-0 overflow-y-auto">
             <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'content' | 'children')} className="w-full h-full flex flex-col">
               <TabsList className={cn(
-                "grid w-full flex-none sticky top-0 bg-background z-10 px-4 pt-2 mb-1",
+                "grid w-full flex-none sticky top-0 z-10 px-4 pt-2 mb-1",
                 isHierarchicalAsset && hasChildren ? "grid-cols-2" : "grid-cols-1"
               )}>
                 <TabsTrigger value="content">
                   {(() => {
                     const useSpecializedView = asset?.kind === 'csv';
                     if (useSpecializedView) {
-                      return 'CSV Data';
+                      return 'Overview';
                     }
                     
                     switch (asset?.kind) {
-                      case 'csv': return 'CSV Overview';
+                      case 'csv': return 'Overview';
                       case 'article': return 'Article Overview';
-                      case 'image': return 'Image View';
-                      case 'video': return 'Video Player';
-                      case 'audio': return 'Audio Player';
-                      case 'web': return 'Article';
+                      case 'image': return 'Image';
+                      case 'video': return 'Video';
+                      case 'audio': return 'Audio';
+                      case 'web': return 'Web Article';
                       default: return 'Asset Content';
                     }
                   })()}
@@ -2291,8 +2258,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     <TableIcon className="h-4 w-4" />
                     {(() => {
                       switch (asset?.kind) {
-                        case 'csv': return `CSV Rows (${childAssets.length})`;
-                        case 'pdf': return `PDF Pages (${childAssets.length})`;
+                        case 'csv': return `Rows (${childAssets.length})`;
+                        case 'pdf': return `Pages (${childAssets.length})`;
                         case 'article': return `Related Assets (${childAssets.length})`;
                         case 'mbox': return `Emails (${childAssets.length})`;
                         case 'web': {

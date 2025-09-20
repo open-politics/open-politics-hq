@@ -11,7 +11,7 @@ const config = {
   prefix: "",
   theme: {
   	container: {
-  		center: 'true',
+  		center: true,
   		padding: '2rem',
   		screens: {
   			'2xl': '1400px'
@@ -58,8 +58,12 @@ const config = {
   				primary: 'hsl(var(--sidebar-primary))',
   				'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
   				accent: 'hsl(var(--sidebar-accent))',
+  				'accent-hover': 'hsl(var(--sidebar-accent-hover))',
   				'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+  				'accent-hover-foreground': 'hsl(var(--sidebar-accent-hover-foreground))',
   				border: 'hsl(var(--sidebar-border))',
+  				'border-foreground': 'hsl(var(--sidebar-border-foreground))',
+  				'border-hover': 'hsl(var(--sidebar-border-hover))',
   				ring: 'hsl(var(--sidebar-ring))'
   			}
   		},
@@ -71,24 +75,54 @@ const config = {
   		keyframes: {
   			'accordion-down': {
   				from: {
-  					height: '0'
+  					height: '0',
+  					opacity: '0'
   				},
   				to: {
-  					height: 'var(--radix-accordion-content-height)'
+  					height: 'var(--radix-accordion-content-height)',
+  					opacity: '1'
   				}
   			},
   			'accordion-up': {
   				from: {
-  					height: 'var(--radix-accordion-content-height)'
+  					height: 'var(--radix-accordion-content-height)',
+  					opacity: '1'
   				},
   				to: {
-  					height: '0'
+  					height: '0',
+  					opacity: '0'
+  				}
+  			},
+  			'slide-down': {
+  				from: {
+  					height: '0',
+  					opacity: '0',
+  					transform: 'translateY(-10px)'
+  				},
+  				to: {
+  					height: 'auto',
+  					opacity: '1',
+  					transform: 'translateY(0)'
+  				}
+  			},
+  			'slide-up': {
+  				from: {
+  					height: 'auto',
+  					opacity: '1',
+  					transform: 'translateY(0)'
+  				},
+  				to: {
+  					height: '0',
+  					opacity: '0',
+  					transform: 'translateY(-10px)'
   				}
   			}
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+  			'accordion-up': 'accordion-up 0.2s ease-out',
+  			'slide-down': 'slide-down 0.3s ease-out',
+  			'slide-up': 'slide-up 0.3s ease-out'
   		}
   	}
   },

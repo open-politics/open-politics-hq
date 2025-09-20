@@ -73,7 +73,7 @@ const HomePage: React.FC<HiProps> = () => {
 
   return (
     <LandingLayout>
-      <div className="flex flex-col mt-36 md:mt-0 md:min-h-screen justify-between">
+      <div className="flex flex-col mt-16 md:mt-0 md:min-h-screen justify-between">
         {/* Main Content Section */}
         <section className="flex flex-col items-center justify-center flex-grow p-8">
           <div className="text-center mb-8">
@@ -114,13 +114,13 @@ const HomePage: React.FC<HiProps> = () => {
               asChild 
               className="group relative overflow-hidden ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg transition-all duration-300"
             >
-              <Link href="/desks/home">
+              <Link href="/hq">
                 <TextWriter
                   text={<div className="flex items-center gap-1 relative z-10">
                     <NewspaperIcon className="w-4 h-4" />
                     <Globe2 className="w-4 h-4" />
                     <ZoomIn className="w-4 h-4" />
-                    <span>Desk</span>
+                    <span>HQ</span>
                   </div>}
                   typingDelay={100}
                   startDelay={500}

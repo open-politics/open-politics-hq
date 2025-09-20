@@ -15,18 +15,46 @@ from .base import (
     StorageProvider,
     ScrapingProvider,
     SearchProvider,
-    ClassificationProvider,
     GeospatialProvider,
-    EmbeddingProvider
+    EmbeddingProvider,
+    # New unified language model interfaces
+    LanguageModelProvider,
+    ModelInfo,
+    GenerationResponse
 )
 
-# Removed provider factory imports
+# New model registry service
+from .model_registry import ModelRegistryService
+
+# Factory functions
+from .factory import (
+    create_storage_provider,
+    create_scraping_provider,
+    create_search_provider,
+    create_embedding_provider,
+    create_geospatial_provider,
+    create_model_registry,  # Unified model registry
+)
 
 __all__ = [
+    # Core provider interfaces
     "StorageProvider",
-    "ScrapingProvider",
+    "ScrapingProvider", 
     "SearchProvider",
-    "ClassificationProvider",
     "GeospatialProvider",
     "EmbeddingProvider",
+    
+    # New unified language model system
+    "LanguageModelProvider",
+    "ModelInfo", 
+    "GenerationResponse",
+    "ModelRegistryService",
+    
+    # Factory functions
+    "create_storage_provider",
+    "create_scraping_provider",
+    "create_search_provider", 
+    "create_embedding_provider",
+    "create_geospatial_provider",
+    "create_model_registry",
 ]

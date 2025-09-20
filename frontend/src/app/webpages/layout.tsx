@@ -1,10 +1,12 @@
 'use client'
 
 import Footer from "@/components/collection/unsorted/Footer"
+import Header from "@/components/collection/unsorted/Header"
 
 export default function MdxLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col relative z-20 pt-16">
+      <Header />
       <div className="
         flex-1
         container mx-auto

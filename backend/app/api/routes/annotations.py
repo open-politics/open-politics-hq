@@ -14,6 +14,7 @@ from app.schemas import (
     AnnotationUpdate,
     AnnotationsOut,
     Message,
+    AnnotationRetryRequest,
 )
 from app.api.deps import (
     SessionDep,
@@ -343,6 +344,7 @@ def retry_single_annotation(
     current_user: CurrentUser,
     infospace_id: int,
     annotation_id: int,
+    annotation_retry_request: AnnotationRetryRequest,
     session: SessionDep,
     annotation_service: AnnotationServiceDep,
 ) -> AnnotationRead:
@@ -354,7 +356,8 @@ def retry_single_annotation(
         updated_annotation = annotation_service.retry_single_annotation(
             annotation_id=annotation_id,
             user_id=current_user.id,
-            infospace_id=infospace_id
+            infospace_id=infospace_id,
+            custom_prompt=annotation_retry_request.custom_prompt
         )
         return AnnotationRead.model_validate(updated_annotation)
 

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.env.config.BACKEND_PORT }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.configmaps.stack.name }}
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          command: ["/app/start.sh"]
+          resources:
+            limits:
+              cpu: {{ .Values.resources.backend.limits.cpu }}
+              memory: {{ .Values.resources.backend.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.backend.requests.cpu }}
+              memory: {{ .Values.resources.backend.requests.memory }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz/liveness
+              port: {{ .Values.env.config.BACKEND_PORT }}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthz/readiness
+              port: {{ .Values.env.config.BACKEND_PORT }}
+            initialDelaySeconds: 90
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3

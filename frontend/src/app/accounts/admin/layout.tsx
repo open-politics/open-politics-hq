@@ -6,7 +6,7 @@ import withAdminAuth from '@/hooks/withAdminAuth';
 function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="admin-layout">
-      <main>{children}</main>
+      <main className="mt-16">{children}</main>
     </div>
   );
 }

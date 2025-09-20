@@ -49,6 +49,18 @@ export type AnnotationRead = {
 
 
 
+/**
+ * Request payload for retrying a single annotation with optional custom prompt.
+ */
+export type AnnotationRetryRequest = {
+	/**
+	 * Optional additional guidance or prompt override for this specific retry
+	 */
+	custom_prompt?: string | null;
+};
+
+
+
 export type AnnotationRunCreate = {
 	name: string;
 	description?: string | null;
@@ -191,8 +203,14 @@ export type AnnotationsOut = {
 
 
 
-export type ArticleResponse = {
-	contents: Array<Record<string, unknown>>;
+export type ArticleComposition = {
+	title: string;
+	content: string;
+	summary?: string | null;
+	embedded_assets?: Array<Record<string, unknown>> | null;
+	referenced_bundles?: Array<number> | null;
+	metadata?: Record<string, unknown> | null;
+	event_timestamp?: string | null;
 };
 
 
@@ -297,6 +315,22 @@ export type AssetsOut = {
 
 
 
+export type BackupRestoreRequest = {
+	backup_id: number;
+	target_infospace_name?: string | null;
+	conflict_strategy?: string;
+};
+
+
+
+export type BackupShareRequest = {
+	backup_id: number;
+	is_shareable?: boolean;
+	expiration_hours?: number | null;
+};
+
+
+
 export type Body_assets_add_files_to_bundle_background = {
 	files: Array<Blob | File>;
 	options?: string;
@@ -337,6 +371,13 @@ export type Body_filestorage_file_upload = {
 
 
 
+export type Body_filters_test_filter = {
+	filter_config: Record<string, unknown>;
+	test_data: Array<Record<string, unknown>>;
+};
+
+
+
 export type Body_login_login_access_token = {
 	grant_type?: string | null;
 	username: string;
@@ -348,14 +389,27 @@ export type Body_login_login_access_token = {
 
 
 
-export type Body_shareables_export_resource = {
+export type Body_sharing_export_resource = {
 	resource_type: ResourceType;
 	resource_id: number;
 };
 
 
 
-export type Body_shareables_import_resource = {
+export type Body_sharing_import_resource = {
+	file: Blob | File;
+};
+
+
+
+export type Body_sso_complete_discourse_sso = {
+	sso: string;
+	sig: string;
+};
+
+
+
+export type Body_users_upload_profile_picture = {
 	file: Blob | File;
 };
 
@@ -429,6 +483,45 @@ export type BundleUpdate = {
 	tags?: Array<string> | null;
 	purpose?: string | null;
 	bundle_metadata?: Record<string, unknown> | null;
+};
+
+
+
+/**
+ * Individual message in a conversation.
+ */
+export type ChatMessage = {
+	role: string;
+	content: string;
+};
+
+
+
+/**
+ * Request for intelligence analysis chat.
+ */
+export type ChatRequest = {
+	messages: Array<ChatMessage>;
+	model_name: string;
+	infospace_id: number;
+	stream?: boolean;
+	temperature?: number | null;
+	max_tokens?: number | null;
+	thinking_enabled?: boolean;
+};
+
+
+
+/**
+ * Response from intelligence analysis chat.
+ */
+export type ChatResponse = {
+	content: string;
+	model_used: string;
+	usage?: Record<string, unknown> | null;
+	tool_calls?: Array<Record<string, unknown>> | null;
+	thinking_trace?: string | null;
+	finish_reason?: string | null;
 };
 
 
@@ -676,6 +769,75 @@ export type ImportFromTokenRequest = {
 
 
 
+export type InfospaceBackupCreate = {
+	name: string;
+	description?: string | null;
+	expires_at?: string | null;
+	backup_type?: string | null;
+	include_sources?: boolean;
+	include_schemas?: boolean;
+	include_runs?: boolean;
+	include_datasets?: boolean;
+	include_annotations?: boolean;
+};
+
+
+
+export type InfospaceBackupRead = {
+	name: string;
+	description?: string | null;
+	expires_at?: string | null;
+	id: number;
+	uuid: string;
+	infospace_id: number;
+	user_id: number;
+	backup_type: string;
+	storage_path: string;
+	file_size_bytes?: number | null;
+	content_hash?: string | null;
+	included_sources?: number;
+	included_assets?: number;
+	included_schemas?: number;
+	included_runs?: number;
+	included_datasets?: number;
+	status: string;
+	error_message?: string | null;
+	created_at: string;
+	completed_at?: string | null;
+	is_shareable?: boolean;
+	share_token?: string | null;
+	/**
+	 * Check if backup has expired.
+	 */
+	readonly is_expired: boolean;
+	/**
+	 * Check if backup is ready for use.
+	 */
+	readonly is_ready: boolean;
+	/**
+	 * Generate download URL if backup is shareable.
+	 */
+	readonly download_url: string | null;
+};
+
+
+
+export type InfospaceBackupUpdate = {
+	name?: string | null;
+	description?: string | null;
+	is_shareable?: boolean | null;
+	expires_at?: string | null;
+};
+
+
+
+export type InfospaceBackupsOut = {
+	data: Array<InfospaceBackupRead>;
+	count: number;
+};
+
+
+
 export type InfospaceCreate = {
 	name: string;
 	description?: string | null;
@@ -723,8 +885,109 @@ export type InfospacesOut = {
 
 
 
+export type IntelligencePipelineCreate = {
+	name: string;
+	description?: string | null;
+	source_bundle_ids: Array<number>;
+	steps: Array<PipelineStepCreate>;
+};
+
+
+
+export type IntelligencePipelineRead = {
+	name: string;
+	description?: string | null;
+	source_bundle_ids: Array<number>;
+	id: number;
+	uuid: string;
+	infospace_id: number;
+	user_id: number;
+	linked_task_id: number | null;
+	steps: Array<PipelineStepRead>;
+};
+
+
+
+export type IntelligencePipelineUpdate = {
+	name?: string | null;
+	description?: string | null;
+	source_bundle_ids?: Array<number> | null;
+	steps?: Array<PipelineStepCreate> | null;
+};
+
+
+
 export type Message = {
 	message: string;
+};
+
+
+
+/**
+ * Information about a language model.
+ */
+export type ModelInfo = {
+	name: string;
+	provider: string;
+	description?: string | null;
+	supports_structured_output?: boolean;
+	supports_tools?: boolean;
+	supports_streaming?: boolean;
+	supports_thinking?: boolean;
+	supports_multimodal?: boolean;
+	max_tokens?: number | null;
+	context_length?: number | null;
+};
+
+
+
+/**
+ * Response listing available models.
+ */
+export type ModelListResponse = {
+	models: Array<ModelInfo>;
+	providers: Array<string>;
+};
+
+
+
+export type MonitorCreate = {
+	name: string;
+	description?: string | null;
+	schedule: string;
+	target_bundle_ids: Array<number>;
+	target_schema_ids: Array<number>;
+	run_config_override?: Record<string, unknown> | null;
+};
+
+
+
+export type MonitorRead = {
+	name: string;
+	description?: string | null;
+	schedule: string;
+	target_bundle_ids: Array<number>;
+	target_schema_ids: Array<number>;
+	run_config_override?: Record<string, unknown> | null;
+	id: number;
+	uuid: string;
+	infospace_id: number;
+	user_id: number;
+	linked_task_id: number;
+	status: string;
+	last_checked_at?: string | null;
+};
+
+
+
+export type MonitorUpdate = {
+	name?: string | null;
+	description?: string | null;
+	schedule?: string | null;
+	target_bundle_ids?: Array<number> | null;
+	target_schema_ids?: Array<number> | null;
+	run_config_override?: Record<string, unknown> | null;
+	status?: string | null;
 };
 
 
@@ -763,6 +1026,58 @@ export type PermissionLevel = 'read_only' | 'edit' | 'full_access';
 
 
 
+export type PipelineExecutionRead = {
+	id: number;
+	pipeline_id: number;
+	status: string;
+	trigger_type: string;
+	started_at: string;
+	completed_at: string | null;
+	triggering_asset_ids: Array<number> | null;
+};
+
+
+
+export type PipelineStepCreate = {
+	name: string;
+	step_order: number;
+	/**
+	 * Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE
+	 */
+	step_type: string;
+	/**
+	 * Configuration for the step
+	 */
+	configuration: Record<string, unknown>;
+	/**
+	 * Source of input for this step
+	 */
+	input_source: Record<string, unknown>;
+};
+
+
+
+export type PipelineStepRead = {
+	name: string;
+	step_order: number;
+	/**
+	 * Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE
+	 */
+	step_type: string;
+	/**
+	 * Configuration for the step
+	 */
+	configuration: Record<string, unknown>;
+	/**
+	 * Source of input for this step
+	 */
+	input_source: Record<string, unknown>;
+	id: number;
+	pipeline_id: number;
+};
+
+
+
 /**
  * Status for asset processing (creating child assets).
  */
@@ -792,6 +1107,17 @@ export type ProviderModel = {
 
 export type QueryType = {
 	type: string;
+};
+
+
+
+export type RegistrationStats = {
+	total_users: number;
+	users_created_today: number;
+	users_created_this_week: number;
+	users_created_this_month: number;
+	open_registration_enabled: boolean;
+	last_registration: string | null;
 };
 
 
@@ -851,10 +1177,6 @@ export type SearchHistoryRead = {
 	user_id: number;
 	timestamp: string;
 };
-
-
-
-export type SearchType = 'text' | 'semantic' | 'structured';
 
 
 
@@ -922,9 +1244,125 @@ export type SharedResourcePreview = {
 
 
 
+export type SourceCreate = {
+	name: string;
+	kind: string;
+	details?: Record<string, unknown>;
+};
+
+
+
+export type SourceRead = {
+	name: string;
+	kind: string;
+	details?: Record<string, unknown>;
+	id: number;
+	uuid: string;
+	infospace_id: number;
+	user_id: number;
+	status: string;
+	created_at: string;
+	updated_at: string;
+	error_message: string | null;
+	source_metadata?: Record<string, unknown> | null;
+};
+
+
+
+export type SourceTransferRequest = {
+	source_ids: Array<number>;
+	target_infospace_id: number;
+	target_user_id: number;
+};
+
+
+
+export type SourceTransferResponse = {
+	message: string;
+	source_id: number;
+	infospace_id: number;
+};
+
+
+
+export type SourceUpdate = {
+	name?: string | null;
+	kind?: string | null;
+	details?: Record<string, unknown> | null;
+};
+
+
+
+export type SourcesOut = {
+	data: Array<SourceRead>;
+	count: number;
+};
+
+
+
+export type TaskCreate = {
+	name: string;
+	type: TaskType;
+	schedule: string;
+	configuration?: Record<string, unknown>;
+};
+
+
+
+export type TaskRead = {
+	name: string;
+	type: TaskType;
+	schedule: string;
+	configuration?: Record<string, unknown>;
+	id: number;
+	infospace_id: number;
+	status: TaskStatus;
+	last_run_at: string | null;
+	consecutive_failure_count: number;
+};
+
+
+
+export type TaskStatus = 'active' | 'paused' | 'error';
+
+
+
+export type TaskType = 'ingest' | 'annotate' | 'monitor' | 'pipeline';
+
+
+
+export type TaskUpdate = {
+	name?: string | null;
+	type?: TaskType | null;
+	schedule?: string | null;
+	configuration?: Record<string, unknown> | null;
+	status?: TaskStatus | null;
+	is_enabled?: boolean | null;
+};
+
+
+
+export type TasksOut = {
+	data: Array<TaskRead>;
+	count: number;
+};
+
+
+
 export type Token = {
 	access_token: string;
 	token_type?: string;
+};
+
+
+
+/**
+ * Request to execute a tool call.
+ */
+export type ToolCallRequest = {
+	tool_name: string;
+	arguments: Record<string, unknown>;
+	infospace_id: number;
 };
 
 
@@ -936,13 +1374,91 @@ export type UpdatePassword = {
 
 
 
+export type UserBackupCreate = {
+	name: string;
+	description?: string | null;
+	backup_type?: string;
+	target_user_id: number;
+	expires_at?: string | null;
+};
+
+
+
+export type UserBackupRead = {
+	name: string;
+	description?: string | null;
+	backup_type: string;
+	id: number;
+	uuid: string;
+	target_user_id: number;
+	created_by_user_id: number;
+	storage_path: string;
+	file_size_bytes?: number | null;
+	content_hash?: string | null;
+	included_infospaces?: number;
+	included_assets?: number;
+	included_schemas?: number;
+	included_runs?: number;
+	included_annotations?: number;
+	included_datasets?: number;
+	status: string;
+	error_message?: string | null;
+	created_at: string;
+	completed_at?: string | null;
+	is_shareable?: boolean;
+	share_token?: string | null;
+	is_expired: boolean;
+	is_ready: boolean;
+	/**
+	 * Generate download URL if shareable.
+	 */
+	readonly download_url: string | null;
+};
+
+
+
+export type UserBackupRestoreRequest = {
+	backup_id: number;
+	target_user_email?: string | null;
+	conflict_strategy?: string;
+};
+
+
+
+export type UserBackupShareRequest = {
+	backup_id: number;
+	is_shareable?: boolean;
+	expiration_hours?: number | null;
+};
+
+
+
+export type UserBackupUpdate = {
+	name?: string | null;
+	description?: string | null;
+	is_shareable?: boolean | null;
+};
+
+
+
+export type UserBackupsOut = {
+	data: Array<UserBackupRead>;
+	count: number;
+};
+
+
+
 export type UserCreate = {
 	email: string;
 	full_name?: string | null;
 	tier?: UserTier;
+	profile_picture_url?: string | null;
+	bio?: string | null;
+	description?: string | null;
 	password: string;
 	is_superuser?: boolean;
 	is_active?: boolean;
+	send_welcome_email?: boolean;
 };
 
 
@@ -951,6 +1467,9 @@ export type UserCreateOpen = {
 	email: string;
 	password: string;
 	full_name?: string | null;
+	profile_picture_url?: string | null;
+	bio?: string | null;
+	description?: string | null;
 };
 
 
@@ -959,9 +1478,59 @@ export type UserOut = {
 	email: string;
 	full_name?: string | null;
 	tier?: UserTier;
+	profile_picture_url?: string | null;
+	bio?: string | null;
+	description?: string | null;
 	id: number;
 	is_active?: boolean;
 	is_superuser?: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
+
+
+/**
+ * User profile statistics.
+ */
+export type UserProfileStats = {
+	user_id: number;
+	infospaces_count: number;
+	assets_count: number;
+	annotations_count: number;
+	member_since: string;
+};
+
+
+
+/**
+ * Dedicated schema for profile-only updates (no email/password).
+ */
+export type UserProfileUpdate = {
+	full_name?: string | null;
+	profile_picture_url?: string | null;
+	/**
+	 * Short bio (max 500 characters)
+	 */
+	bio?: string | null;
+	/**
+	 * Longer description (max 2000 characters)
+	 */
+	description?: string | null;
+};
+
+
+
+/**
+ * Public user profile (no sensitive information).
+ */
+export type UserPublicProfile = {
+	id: number;
+	full_name?: string | null;
+	profile_picture_url?: string | null;
+	bio?: string | null;
+	description?: string | null;
+	created_at: string;
 };
 
 
@@ -974,7 +1543,11 @@ export type UserUpdate = {
 	full_name?: string | null;
 	email?: string | null;
 	password?: string | null;
+	is_active?: boolean | null;
 	tier?: UserTier | null;
+	profile_picture_url?: string | null;
+	bio?: string | null;
+	description?: string | null;
 };
 
 
@@ -982,6 +1555,15 @@ export type UserUpdate = {
 export type UserUpdateMe = {
 	full_name?: string | null;
 	email?: string | null;
+	profile_picture_url?: string | null;
+	/**
+	 * Short bio (max 500 characters)
+	 */
+	bio?: string | null;
+	/**
+	 * Longer description (max 2000 characters)
+	 */
+	description?: string | null;
 };
 
 
@@ -998,4 +1580,12 @@ export type ValidationError = {
 	msg: string;
 	type: string;
 };
+
+
+
+export type app__api__v1__entities__routes__SearchType = 'text' | 'semantic';
+
+
+
+export type app__api__v1__search__routes__SearchType = 'text' | 'semantic' | 'structured';
 

@@ -1,0 +1,8 @@
+apiVersion: v2
+icon: https://open-politics.org/favicon.png
+name: cluster-chart
+description: A Helm chart for deploying the Open Politics Project Webapp - HQ 
+type: application
+version: 0.1.0
+appVersion: "1.0"
+email: "info@your-domain.com"

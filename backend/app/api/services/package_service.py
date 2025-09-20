@@ -32,7 +32,7 @@ from app.schemas import AssetRead, SourceRead
 
 from app.api.services.asset_service import AssetService
 from app.api.services.annotation_service import AnnotationService
-from app.api.services.content_service import ContentService
+from app.api.services.content_ingestion_service import ContentIngestionService
 from app.api.services.bundle_service import BundleService
 from app.api.services.dataset_service import DatasetService
 
@@ -1525,7 +1525,7 @@ class PackageService:
         storage_provider: StorageProvider,
         asset_service: AssetService,
         annotation_service: AnnotationService,
-        ingestion_service: ContentService,
+        ingestion_service: ContentIngestionService,
         bundle_service: BundleService,
         dataset_service: DatasetService,
         settings: AppSettings
