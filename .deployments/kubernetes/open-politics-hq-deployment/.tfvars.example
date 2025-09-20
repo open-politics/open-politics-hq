@@ -1,6 +1,6 @@
 # Hetzner Cloud API Token
 # Get this from: https://console.hetzner.com/projects -> Access -> API Tokens
-hcloud_token = "t0Tw464S94fX5y9XBAJRn0Ne3AtGPflwnZ0WukiOFilpPiXldSqVklaGXaZKpgIF"
+hcloud_token = ""
 
 # Number of worker nodes (adjust based on your needs)
 worker_count = 2
