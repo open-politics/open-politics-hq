@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 
 interface Provider {
@@ -57,6 +58,7 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
   const [isRemovingModel, setIsRemovingModel] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isOllamaDialogOpen, setIsOllamaDialogOpen] = useState(false);
+  const [customModelName, setCustomModelName] = useState('');
   
   // Filter states
   const [searchFilter, setSearchFilter] = useState('');
@@ -372,9 +374,36 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
                     <DialogHeader>
                       <DialogTitle>Pull Ollama Model</DialogTitle>
                       <DialogDescription>
-                        Select a model to download from the Ollama registry. This may take several minutes depending on the model size.
+                        Select a model to download from the Ollama registry, or enter a custom model name.
                       </DialogDescription>
                     </DialogHeader>
+                    
+                    {/* Custom Model Input */}
+                    <div className="p-4 border rounded-lg mb-4">
+                      <label className="text-sm font-medium mb-2 block">Custom Model Name</label>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Enter model name (e.g. llama2:13b)"
+                          value={customModelName}
+                          onChange={(e) => setCustomModelName(e.target.value)}
+                        />
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            if (customModelName.trim()) {
+                              handlePullModel(customModelName.trim());
+                              setIsOllamaDialogOpen(false);
+                            }
+                          }}
+                          disabled={!customModelName.trim()}
+                        >
+                          Pull Custom Model
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        You can enter any valid model name, even if it's not listed below
+                      </p>
+                    </div>
                     
                     {/* Filter Controls */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg border">

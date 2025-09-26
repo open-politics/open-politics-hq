@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ArticlesService, LocationsService } from '@/client/services';
+import { SearchService, LocationsService } from '@/client/services';
 import { useLocationData } from './useLocationData';
 import { useCoordinatesStore } from '@/zustand_stores/storeCoordinates';
 import { useArticleTabNameStore } from './useArticleTabNameStore';
@@ -78,8 +78,8 @@ export function useSearch(
 
   const fetchOPOLContents = useCallback(async (query: string) => {
     try {
-      const data = await ArticlesService.getArticles({
-        query: query,
+      const data: any = await SearchService.getContents({
+        searchQuery: query,
         limit: 20,
         skip: 0,
       });
@@ -188,7 +188,7 @@ export function useSearch(
           try {
             const google = createGoogleGenerativeAI();
             const llmResult = await generateText({
-              model: google('gemini-2.0-flash'),
+              model: google('gemini-2.0-flash') as any,
               prompt: `Generate a summary of the following articles: ${opolResults
                 .map((article) => article.paragraphs)
                 .join('\n')}. Analysis Type: ${analysisType}`,

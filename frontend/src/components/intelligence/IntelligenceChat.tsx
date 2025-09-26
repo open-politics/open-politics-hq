@@ -3,16 +3,19 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, Send, Bot, User, Search, FileText, BarChart3, Database } from 'lucide-react'
-import { useIntelligenceChat, ChatMessage } from '@/hooks/useIntelligenceChat'
+import { useIntelligenceChat, ChatMessage, ToolExecution } from '@/hooks/useIntelligenceChat'
+import { ToolExecutionList } from './ToolExecutionIndicator'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { IntelligenceChatService } from '@/client/services'
 import { ModelInfo } from '@/client/models'
+import ProviderModelSelector from '@/components/ui/ProviderModelSelector'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -20,33 +23,29 @@ interface IntelligenceChatProps {
   className?: string
 }
 
-interface ToolCallDisplay {
-  id: string
-  tool_name: string
-  arguments: Record<string, unknown>
-  result?: unknown
-  status: 'pending' | 'completed' | 'failed'
-}
 
 export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [input, setInput] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [models, setModels] = useState<ModelInfo[]>([])
   const [isLoadingModels, setIsLoadingModels] = useState(true)
-  const [toolCalls, setToolCalls] = useState<ToolCallDisplay[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const [temperature, setTemperature] = useState<string>('')
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(true)
+  const [streamEnabled, setStreamEnabled] = useState<boolean>(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
   
   const { activeInfospace } = useInfospaceStore()
   const {
     messages,
     isLoading,
     error,
+    activeToolExecutions,
     sendMessage,
     executeToolCall,
-    clearMessages
+    clearMessages,
+    stop
   } = useIntelligenceChat({
     model_name: selectedModel,
     thinking_enabled: thinkingEnabled
@@ -91,7 +90,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     e.preventDefault()
     if (!input.trim() || isLoading || isLoadingModels) return
     if (!selectedModel) {
-      toast.error('Please select a model that supports tools')
+      toast.error('Please select a model')
       return
     }
 
@@ -102,7 +101,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     await sendMessage(userInput, { 
       model_name: selectedModel,
       temperature: Number.isFinite(tempNum as number) ? (tempNum as number) : undefined,
-      thinking_enabled: thinkingEnabled
+      thinking_enabled: thinkingEnabled,
+      stream: streamEnabled
     })
   }
 
@@ -157,57 +157,9 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               </details>
             )}
             
-            {message.tool_calls && message.tool_calls.length > 0 && (
-              <div className="mt-2 space-y-2">
-                <div className="text-xs opacity-70">Tool calls:</div>
-                {message.tool_calls.map((toolCall: any, index) => {
-                  const name = toolCall?.function?.name || toolCall?.name || 'unknown_tool'
-                  const argsStr = toolCall?.function?.arguments || toolCall?.arguments || '{}'
-                  let args: Record<string, unknown> = {}
-                  try { args = JSON.parse(argsStr) } catch { args = {} }
-                  const existing = toolCalls.find(tc => tc.id === (toolCall.id || `${name}-${index}`))
-                  return (
-                    <div key={toolCall.id || `${name}-${index}`} className="border rounded-md p-2 bg-background">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="secondary" className="text-xs flex items-center gap-1">
-                          {getToolIcon(name)}
-                          <span>{name}</span>
-                        </Badge>
-                        <span className="text-[10px] opacity-60">{existing?.status || 'pending'}</span>
-                      </div>
-                      <pre className="text-xs whitespace-pre-wrap opacity-80 max-h-40 overflow-auto">{JSON.stringify(args, null, 2)}</pre>
-                      <div className="mt-2 flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            const id = toolCall.id || `${name}-${index}`
-                            setToolCalls(prev => {
-                              const next = prev.filter(t => t.id !== id)
-                              next.push({ id, tool_name: name, arguments: args, status: 'pending' })
-                              return next
-                            })
-                            try {
-                              const result = await executeToolCall(name, args)
-                              setToolCalls(prev => prev.map(t => t.id === id ? { ...t, result, status: 'completed' } : t))
-                            } catch (err) {
-                              setToolCalls(prev => prev.map(t => t.id === id ? { ...t, result: { error: (err as any)?.message || 'Tool failed' }, status: 'failed' } : t))
-                            }
-                          }}
-                        >
-                          Run tool
-                        </Button>
-                        {existing?.result != null && (
-                          <details className="text-xs">
-                            <summary className="cursor-pointer opacity-70">View result</summary>
-                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap">{JSON.stringify(existing.result, null, 2)}</pre>
-                          </details>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
+            {message.tool_executions && message.tool_executions.length > 0 && (
+              <div className="mt-2">
+                <ToolExecutionList executions={message.tool_executions} compact={true} />
               </div>
             )}
             
@@ -234,7 +186,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   }
 
   return (
-    <Card className={cn("flex flex-col h-[600px]", className)}>
+    <Card className={cn("flex flex-col h-[600px] bg-background/60 backdrop-blur-sm", className)}>
       <CardHeader className="flex-none">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -246,24 +198,11 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
             <Button variant="outline" size="sm" onClick={() => setShowSettings(v => !v)}>
               Settings
             </Button>
-            {isLoadingModels ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Loading models...
-              </div>
-            ) : (
-              <select
-                value={selectedModel}
-                onChange={(e) => handleModelChange(e.target.value)}
-                className="text-xs border rounded px-2 py-1"
-              >
-                {models.map(model => (
-                  <option key={model.name} value={model.name}>
-                    {model.provider}: {model.name}
-                  </option>
-                ))}
-              </select>
-            )}
+            <ProviderModelSelector
+              value={selectedModel}
+              onChange={handleModelChange}
+              className=""
+            />
             
             <Button
               variant="outline"
@@ -278,34 +217,25 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
         
         <div className="text-sm text-muted-foreground">
           Ask questions about your data. I can search, analyze, and create reports.
-          {selectedModel && models.length > 0 && (
-            <div className="mt-1">
-              {models.find(m => m.name === selectedModel)?.supports_tools ? (
-                <span className="text-green-600 text-xs">✓ Tool support enabled</span>
-              ) : (
-                <span className="text-yellow-600 text-xs">⚠ Chat only (no tools)</span>
-              )}
-            </div>
-          )}
+          {selectedModel && models.length > 0 && (() => {
+            const m = models.find(mm => mm.name === selectedModel)
+            const provider = m?.provider || ''
+            const name = (m?.name || '').toLowerCase()
+            const likelySupportsTools = !!(m?.supports_tools || provider === 'openai' || name.includes('llama3') || name.includes('qwen') || name.includes('mistral') || name.includes('mixtral') || name.includes('gemma') || name.includes('command-r'))
+            return (
+              <div className="mt-1">
+                {likelySupportsTools ? (
+                  <span className="text-green-600 text-xs">✓ Tool support enabled</span>
+                ) : (
+                  <span className="text-yellow-600 text-xs">⚠ Chat only (no tools)</span>
+                )}
+              </div>
+            )
+          })()}
         </div>
         {showSettings && (
           <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            <div>
-              <Label htmlFor="model">Language Model</Label>
-              <select
-                id="model"
-                value={selectedModel}
-                onChange={(e) => handleModelChange(e.target.value)}
-                className="mt-1 w-full border rounded px-2 py-1"
-              >
-                <option value="" disabled>Select a model</option>
-                {models.map(model => (
-                  <option key={model.name} value={model.name}>
-                    {model.provider}: {model.name} {model.supports_tools ? '(tools)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Model selection is handled in the header to avoid duplication */}
             <div>
               <Label htmlFor="temperature">Temperature</Label>
               <Input id="temperature" placeholder="default" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
@@ -314,6 +244,10 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
             <div className="flex items-end gap-2">
               <Switch id="thinking" checked={thinkingEnabled} onCheckedChange={setThinkingEnabled} />
               <Label htmlFor="thinking">Enable Thinking</Label>
+            </div>
+            <div className="flex items-end gap-2">
+              <Switch id="stream" checked={streamEnabled} onCheckedChange={setStreamEnabled} />
+              <Label htmlFor="stream">Stream Responses</Label>
             </div>
           </div>
         )}
@@ -342,6 +276,13 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
           ) : (
             <div className="space-y-1">
               {messages.map(renderMessage)}
+              {/* Active tool executions */}
+              {activeToolExecutions.length > 0 && (
+                <div className="p-4 border-t border-b bg-muted/20">
+                  <ToolExecutionList executions={activeToolExecutions} compact={false} />
+                </div>
+              )}
+              
               {isLoading && (
                 <div className="flex gap-3 p-4">
                   <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-full bg-muted">
@@ -349,7 +290,10 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                   </div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Thinking...
+                    {activeToolExecutions.filter(e => e.status === 'running').length > 0 
+                      ? 'Running tools...' 
+                      : 'Thinking...'
+                    }
                   </div>
                 </div>
               )}
@@ -359,13 +303,19 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
         </ScrollArea>
 
         <div className="flex-none p-4 border-t">
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <Input
+          <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
+            <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about your data..."
-              disabled={isLoading || isLoadingModels || !selectedModel}
-              className="flex-1"
+              placeholder="Ask about your data... (Shift+Enter for newline)"
+              disabled={isLoadingModels || !selectedModel}
+              className="flex-1 min-h-[60px] resize-none"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  formRef.current?.requestSubmit()
+                }
+              }}
             />
             <Button
               type="submit"
@@ -378,6 +328,20 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                 <Send className="h-4 w-4" />
               )}
             </Button>
+            {isLoading && (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={!selectedModel}
+                onClick={(e) => {
+                  e.preventDefault()
+                  stop()
+                }}
+                className="ml-1"
+              >
+                Stop
+              </Button>
+            )}
           </form>
           
           {error && (

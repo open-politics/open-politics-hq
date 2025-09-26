@@ -1085,6 +1085,13 @@ export type ProcessingStatus = 'ready' | 'pending' | 'processing' | 'failed';
 
 
 
+export type PromoteFragmentRequest = {
+	fragment_key: string;
+	fragment_value: unknown;
+};
+
+
+
 export type ProviderInfo = {
 	provider_name: string;
 	models: Array<ProviderModel>;

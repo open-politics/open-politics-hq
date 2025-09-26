@@ -350,7 +350,7 @@ class ContentIngestionService:
     
     # ─────────────── SEARCH OPERATIONS ─────────────── #
     
-    async def _search_assets_text(self, query: str, infospace_id: int, limit: int, options: Dict[str, Any]) -> List[Asset]:
+    async def search_assets_text(self, query: str, infospace_id: int, limit: int, options: Dict[str, Any]) -> List[Asset]:
         """Text-based search in existing assets"""
         asset_kinds = options.get('asset_kinds', [])
         
@@ -379,7 +379,7 @@ class ContentIngestionService:
         
         return list(assets)
     
-    async def _search_assets_semantic(self, query: str, infospace_id: int, limit: int, options: Dict[str, Any]) -> List[Asset]:
+    async def search_assets_semantic(self, query: str, infospace_id: int, limit: int, options: Dict[str, Any]) -> List[Asset]:
         """Semantic search using embeddings"""
         try:
             from app.api.services.embedding_service import EmbeddingService
@@ -411,7 +411,7 @@ class ContentIngestionService:
             
         except Exception as e:
             logger.warning(f"Semantic search failed, falling back to text search: {e}")
-            return await self._search_assets_text(query, infospace_id, limit, options)
+            return await self.search_assets_text(query, infospace_id, limit, options)
     
     async def _search_with_provider(self, query: str, limit: int, options: Dict[str, Any]) -> List[SearchResult]:
         """Search using external search provider"""

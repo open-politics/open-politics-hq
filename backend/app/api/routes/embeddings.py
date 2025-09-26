@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session
@@ -6,7 +7,8 @@ from sqlmodel import Session
 from app.api.deps import (
     SessionDep,
     CurrentUser,
-    EmbeddingProviderDep
+    EmbeddingProviderDep,
+    EmbeddingServiceDep
 )
 from app.api.services.embedding_service import EmbeddingService
 from app.models import EmbeddingModel, EmbeddingProvider, AssetChunk
@@ -22,17 +24,12 @@ from app.schemas import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-def get_embedding_service(
-    session: SessionDep,
-    embedding_provider: EmbeddingProviderDep
-) -> EmbeddingService:
-    """Dependency to get embedding service."""
-    return EmbeddingService(session, embedding_provider)
+# Embedding service dependency is now handled in deps.py
 
 @router.get("/models", response_model=List[EmbeddingModelRead])
 async def list_embedding_models(
     current_user: CurrentUser,
-    embedding_service: EmbeddingService = Depends(get_embedding_service),
+    embedding_service: EmbeddingServiceDep,
     active_only: bool = Query(True, description="Only return active models")
 ):
     """List all available embedding models."""
@@ -62,11 +59,49 @@ async def get_available_models(
             detail="Failed to get available models from provider"
         )
 
+@router.get("/health")
+async def check_embedding_provider_health(
+    current_user: CurrentUser,
+    embedding_provider: EmbeddingProviderDep
+):
+    """Check the health of the embedding provider."""
+    try:
+        # Check if provider has health check method
+        if hasattr(embedding_provider, 'health_check'):
+            is_healthy = await embedding_provider.health_check()
+            
+            health_info = {
+                "healthy": is_healthy,
+                "provider_type": type(embedding_provider).__name__
+            }
+            
+            # Get additional server info if available
+            if hasattr(embedding_provider, 'get_server_info'):
+                server_info = await embedding_provider.get_server_info()
+                health_info.update(server_info)
+            
+            return health_info
+        else:
+            # Basic check - try to get available models
+            models = embedding_provider.get_available_models()
+            return {
+                "healthy": True,
+                "provider_type": type(embedding_provider).__name__,
+                "models_configured": len(models)
+            }
+    except Exception as e:
+        logger.error(f"Error checking embedding provider health: {e}")
+        return {
+            "healthy": False,
+            "provider_type": type(embedding_provider).__name__,
+            "error": str(e)
+        }
+
 @router.post("/models", response_model=EmbeddingModelRead)
 async def create_embedding_model(
     model_data: EmbeddingModelCreate,
     current_user: CurrentUser,
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
+    embedding_service: EmbeddingServiceDep
 ):
     """Create a new embedding model."""
     try:
@@ -89,7 +124,7 @@ async def create_embedding_model(
 async def get_embedding_model_stats(
     model_id: int,
     current_user: CurrentUser,
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
+    embedding_service: EmbeddingServiceDep
 ):
     """Get statistics for an embedding model."""
     try:
@@ -114,7 +149,7 @@ async def generate_embeddings(
     request: EmbeddingGenerateRequest,
     current_user: CurrentUser,
     session: SessionDep,
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
+    embedding_service: EmbeddingServiceDep
 ):
     """Generate embeddings for a list of asset chunks."""
     try:
@@ -160,7 +195,7 @@ async def generate_embeddings(
 async def similarity_search(
     request: EmbeddingSearchRequest,
     current_user: CurrentUser,
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
+    embedding_service: EmbeddingServiceDep
 ):
     """Perform similarity search using embeddings."""
     try:
@@ -213,6 +248,61 @@ async def embed_text(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to embed text: {str(e)}"
         )
+
+@router.post("/test")
+async def test_embedding_provider(
+    current_user: CurrentUser,
+    embedding_provider: EmbeddingProviderDep,
+    test_text: str = "This is a test sentence for embedding generation.",
+    model_name: Optional[str] = None
+):
+    """Test the embedding provider with a sample text."""
+    try:
+        # Use default model if none specified
+        if not model_name:
+            if hasattr(embedding_provider, 'default_model'):
+                model_name = embedding_provider.default_model
+            else:
+                # Try to get first available model
+                available_models = embedding_provider.get_available_models()
+                if available_models:
+                    model_name = available_models[0].get('name', 'nomic-embed-text')
+                else:
+                    model_name = 'nomic-embed-text'
+        
+        # Generate embedding
+        start_time = time.time()
+        embedding = await embedding_provider.embed_single(test_text, model_name)
+        end_time = time.time()
+        
+        if embedding:
+            return {
+                "success": True,
+                "test_text": test_text,
+                "model_name": model_name,
+                "dimension": len(embedding),
+                "generation_time_ms": round((end_time - start_time) * 1000, 2),
+                "sample_values": embedding[:5] if len(embedding) >= 5 else embedding,
+                "provider_type": type(embedding_provider).__name__
+            }
+        else:
+            return {
+                "success": False,
+                "error": "No embedding generated",
+                "test_text": test_text,
+                "model_name": model_name,
+                "provider_type": type(embedding_provider).__name__
+            }
+            
+    except Exception as e:
+        logger.error(f"Error testing embedding provider: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "test_text": test_text,
+            "model_name": model_name,
+            "provider_type": type(embedding_provider).__name__
+        }
 
 @router.delete("/models/{model_id}")
 async def deactivate_embedding_model(

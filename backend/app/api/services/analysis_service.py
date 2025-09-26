@@ -107,6 +107,39 @@ class AnalysisService:
             logger.exception(f"Error executing adapter '{adapter_name}': {e}")
             raise HTTPException(status_code=500, detail=f"Error executing adapter '{adapter_name}': {str(e)}")
 
+    async def promote_fragment(
+        self,
+        infospace_id: int,
+        asset_id: int,
+        fragment_key: str,
+        fragment_value: Any
+    ) -> Annotation:
+        """
+        Promotes a fragment of information to a permanent, curated feature of an asset.
+        This creates an auditable annotation and adds the fragment to the asset's metadata.
+        """
+        if not self.current_user:
+            raise HTTPException(status_code=403, detail="User context is required to promote a fragment.")
+            
+        logger.info(f"AnalysisService: Promoting fragment '{fragment_key}' for asset {asset_id} in infospace {infospace_id}")
+        
+        try:
+            # The core logic is in AnnotationService, this service layer just orchestrates.
+            annotation = self.annotation_service.curate_fragment(
+                user_id=self.current_user.id,
+                infospace_id=infospace_id,
+                asset_id=asset_id,
+                field_name=fragment_key,
+                value=fragment_value
+            )
+            return annotation
+        except ValueError as ve:
+            logger.error(f"Failed to promote fragment due to validation error: {ve}", exc_info=True)
+            raise HTTPException(status_code=400, detail=str(ve))
+        except Exception as e:
+            logger.exception(f"Unexpected error promoting fragment for asset {asset_id}: {e}")
+            raise HTTPException(status_code=500, detail="An unexpected error occurred while promoting the fragment.")
+
     # --- Methods for managing AnalysisAdapter registrations (CRUD) --- 
     # These would typically be admin-level operations.
     def create_adapter_registration(

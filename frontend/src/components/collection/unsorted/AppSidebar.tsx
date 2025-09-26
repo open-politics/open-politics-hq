@@ -137,7 +137,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       isActive: true,
     },
     {
-      title: "Intelligence Chat",
+      title: "Chat",
       url: "/hq/chat",
       icon: Bot,
       isActive: true,

@@ -51,28 +51,64 @@ async def intelligence_chat(
         if request.max_tokens is not None:
             kwargs["max_tokens"] = request.max_tokens
         
+        # Default OpenAI model to gpt-5 if none provided (or empty string)
+        # We treat model_name as required by schema, but harden here for safety
+        model_name = (request.model_name or '').strip()
+        if not model_name:
+            # Try to discover models to ensure availability
+            try:
+                models = await conversation_service.get_available_models(user_id=current_user.id)
+                # Prefer OpenAI gpt-5 if present
+                preferred = next((m for m in models if m.get('provider') == 'openai' and str(m.get('name','')).startswith('gpt-5')), None)
+                if preferred:
+                    model_name = preferred['name']
+                else:
+                    # Fallback: first tool-supporting model or first available
+                    tool_model = next((m for m in models if m.get('supports_tools')), None)
+                    model_name = (tool_model or (models[0] if models else {})).get('name') or ''
+            except Exception:
+                # Hard default if discovery fails
+                model_name = 'gpt-5'
+        
         if request.stream:
             # For streaming, we need to handle it differently
             async def generate_stream():
+                # SSE prelude to defeat proxy buffering
+                yield ": stream-start\n\n"
                 async for response in await conversation_service.intelligence_chat(
                     messages=messages,
-                    model_name=request.model_name,
+                    model_name=model_name,
                     user_id=current_user.id,
                     infospace_id=request.infospace_id,
                     stream=True,
                     thinking_enabled=request.thinking_enabled,
                     **kwargs
                 ):
-                    yield f"data: {response.model_dump_json()}\n\n"
+                    # response is a dataclass; serialize minimally for SSE
+                    payload = {
+                        "content": response.content,
+                        "model_used": response.model_used,
+                        "usage": response.usage,
+                        "tool_calls": response.tool_calls,
+                        "thinking_trace": response.thinking_trace,
+                        "finish_reason": response.finish_reason,
+                    }
+                    import json as _json
+                    yield f"data: {_json.dumps(payload)}\n\n"
                 yield "data: [DONE]\n\n"
             
-            return StreamingResponse(generate_stream(), media_type="text/plain")
+            return StreamingResponse(generate_stream(), media_type="text/event-stream", headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Pragma": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            })
         
         else:
             # Non-streaming response
             response = await conversation_service.intelligence_chat(
                 messages=messages,
-                model_name=request.model_name,
+                model_name=model_name,
                 user_id=current_user.id,
                 infospace_id=request.infospace_id,
                 stream=False,
@@ -165,16 +201,21 @@ async def list_available_models(
 
 @router.get("/tools")
 async def list_universal_tools(
-    conversation_service: ConversationServiceDep
+    current_user: CurrentUser,
+    conversation_service: ConversationServiceDep,
+    infospace_id: int = 1  # Default infospace for tool discovery
 ):
     """
     List universal intelligence analysis tool definitions.
     
-    These are the capabilities available to AI models. No authentication required
-    as this only returns tool schemas, not data access.
+    These are the capabilities available to AI models.
+    FastMCP automatically generates schemas from function signatures.
     """
     try:
-        tools = conversation_service.get_universal_tools()
+        tools = await conversation_service.get_universal_tools(
+            user_id=current_user.id,
+            infospace_id=infospace_id
+        )
         
         return {
             "tools": tools,

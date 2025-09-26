@@ -3,10 +3,11 @@ Intelligence Analysis Conversation Service
 """
 import logging
 import json
-from typing import List, Optional, Dict, Any, AsyncIterator, Union
-from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any, AsyncIterator, Union, Callable, Awaitable
+from datetime import datetime, timezone, timedelta
 from sqlmodel import Session, select, and_, or_
 import asyncio
+from jose import jwt
 
 from app.api.providers.model_registry import ModelRegistryService
 from app.api.providers.base import GenerationResponse
@@ -16,9 +17,22 @@ from app.api.services.asset_service import AssetService
 from app.api.services.annotation_service import AnnotationService
 from app.api.services.content_ingestion_service import ContentIngestionService
 from app.schemas import AnnotationRunCreate
+from app.api.mcp.client import IntelligenceMCPClient, get_mcp_client
+from app.core import security
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+def create_mcp_context_token(user_id: int, infospace_id: int) -> str:
+    """Creates a short-lived JWT to securely pass context to the MCP server."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {
+        "exp": expire,
+        "sub": str(user_id),
+        "infospace_id": infospace_id
+    }
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
+    return encoded_jwt
 
 class IntelligenceConversationService:
     """
@@ -44,205 +58,33 @@ class IntelligenceConversationService:
         self.content_ingestion_service = content_ingestion_service
         logger.info("IntelligenceConversationService initialized")
     
-    def get_universal_tools(self) -> List[Dict[str, Any]]:
+    async def get_universal_tools(self, user_id: int, infospace_id: int) -> List[Dict[str, Any]]:
         """
-        Get universal intelligence analysis tool definitions.
+        Get universal intelligence analysis capabilities (tools + resources).
         
-        These are the capabilities available to AI models across all infospaces.
-        Tool execution happens within infospace context, but definitions are universal.
+        FastMCP automatically generates schemas from function signatures.
+        This combines both tools (actions) and resources (data access) for the AI.
         """
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_assets",
-                    "description": "Search for assets using text queries or semantic similarity",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query to find relevant assets"
-                            },
-                            "search_method": {
-                                "type": "string",
-                                "enum": ["text", "semantic", "hybrid"],
-                                "default": "hybrid",
-                                "description": "Search method: 'text' for keyword search, 'semantic' for vector similarity, 'hybrid' for both"
-                            },
-                            "asset_kinds": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Optional filter by asset types (pdf, web, image, etc.)"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "default": 10,
-                                "description": "Maximum number of assets to return"
-                            },
-                            "distance_threshold": {
-                                "type": "number",
-                                "default": 0.8,
-                                "description": "Similarity threshold for semantic search (0-1)"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_asset_details",
-                    "description": "Get detailed information about specific assets",
-                    "parameters": {
-                        "type": "object", 
-                        "properties": {
-                            "asset_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                                "description": "List of asset IDs to retrieve"
-                            }
-                        },
-                        "required": ["asset_ids"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_annotations",
-                    "description": "Get existing annotations for assets",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "asset_ids": {
-                                "type": "array", 
-                                "items": {"type": "integer"},
-                                "description": "Asset IDs to get annotations for"
-                            },
-                            "schema_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"}, 
-                                "description": "Optional filter by annotation schema IDs"
-                            }
-                        },
-                        "required": ["asset_ids"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "analyze_assets",
-                    "description": "Create new annotations by analyzing assets with a specific schema",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "asset_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                                "description": "Assets to analyze"
-                            },
-                            "schema_id": {
-                                "type": "integer", 
-                                "description": "Annotation schema to use for analysis"
-                            },
-                            "custom_instructions": {
-                                "type": "string",
-                                "description": "Optional custom analysis instructions"
-                            }
-                        },
-                        "required": ["asset_ids", "schema_id"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_schemas",
-                    "description": "List available annotation schemas in the infospace",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                }
-            },
-            {
-                "type": "function", 
-                "function": {
-                    "name": "list_bundles",
-                    "description": "List available asset bundles in the infospace",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "create_report",
-                    "description": "Create a new report asset with provenance",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "title": {
-                                "type": "string",
-                                "description": "Title of the report"
-                            },
-                            "content": {
-                                "type": "string",
-                                "description": "Content of the report"
-                            },
-                            "source_asset_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                                "description": "List of asset IDs that served as sources for the report"
-                            },
-                            "source_bundle_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                                "description": "List of bundle IDs that served as sources for the report"
-                            },
-                            "source_run_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                                "description": "List of analysis run IDs that served as sources for the report"
-                            }
-                        },
-                        "required": ["title", "content"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "curate_asset_fragment",
-                    "description": "Save a specific piece of information as a permanent, curated fragment on an asset's metadata.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "asset_id": {
-                                "type": "integer",
-                                "description": "ID of the asset to curate"
-                            },
-                            "fragment_key": {
-                                "type": "string",
-                                "description": "Unique key for the fragment (e.g., 'summary', 'facts')"
-                            },
-                            "fragment_value": {
-                                "type": "string",
-                                "description": "The piece of information to save as the fragment"
-                            }
-                        },
-                        "required": ["asset_id", "fragment_key", "fragment_value"]
-                    }
-                }
-            }
-        ]
+        try:
+            async with get_mcp_client(
+                session=self.session,
+                asset_service=self.asset_service,
+                annotation_service=self.annotation_service,
+                content_ingestion_service=self.content_ingestion_service,
+                user_id=user_id,
+                infospace_id=infospace_id
+            ) as mcp_client:
+                # Get both tools and resources
+                tools = await mcp_client.get_available_tools()
+                
+                # No longer need to manually handle resources; they are now tools
+                all_capabilities = tools
+                logger.info(f"Retrieved {len(tools)} total capabilities from MCP server")
+                return all_capabilities
+                
+        except Exception as e:
+            logger.error(f"Failed to get universal tools: {e}")
+            return []
 
     async def get_infospace_tool_context(self, infospace_id: int, user_id: int) -> Dict[str, Any]:
         """
@@ -321,6 +163,7 @@ class IntelligenceConversationService:
                                user_id: int,
                                infospace_id: int,
                                stream: bool = False,
+                               thinking_enabled: bool = False,
                                **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Intelligence analysis chat with full tool orchestration.
@@ -341,28 +184,28 @@ class IntelligenceConversationService:
         # Validate access
         validate_infospace_access(self.session, infospace_id, user_id)
         
+        # Create a secure context token for this conversation
+        context_token = create_mcp_context_token(user_id, infospace_id)
+        
         # Check if the model exists and get its capabilities
         model_info = await self.model_registry.get_model_info(model_name)
         if not model_info:
-            # Try to discover models if not in cache
             await self.model_registry.discover_all_models()
             model_info = await self.model_registry.get_model_info(model_name)
-            
         if not model_info:
             raise ValueError(f"Model '{model_name}' not found. Please check available models at /api/v1/chat/models")
-            
-        supports_tools = model_info.supports_tools
+
+        # Use model-reported capability; do not assume tools
+        supports_tools = bool(getattr(model_info, "supports_tools", False))
         
-        # Get universal tools only if model supports them
-        tools = self.get_universal_tools() if supports_tools else None
+        # Only provide tools when supported
+        tools = await self.get_universal_tools(user_id, infospace_id) if supports_tools else None
         
         # Add system context about the infospace
         infospace = self.session.get(Infospace, infospace_id)
         system_context = self._build_infospace_context(infospace)
         
-        # Modify system context based on tool support
-        if not supports_tools:
-            system_context += "\n\nNote: This model doesn't support tool calls, so I can only provide conversational responses based on the context you provide. For interactive data analysis, please use a model that supports tools."
+        # No additional notes; we assume tool support
         
         # Prepare messages with context
         context_messages = [{"role": "system", "content": system_context}] + messages
@@ -370,66 +213,20 @@ class IntelligenceConversationService:
         logger.info(f"Intelligence chat: user={user_id}, infospace={infospace_id}, model={model_name}, tools={len(tools) if tools else 0}, supports_tools={supports_tools}")
         
         try:
-            # Initial generation
-            initial = await self.model_registry.generate(
+            # The entire generation process, including tool loops, is now delegated to the provider
+            return await self.model_registry.generate(
                 messages=context_messages,
                 model_name=model_name,
                 tools=tools,
                 stream=stream,
+                thinking_enabled=thinking_enabled,
+                # Pass the context token to the provider for auth header
+                mcp_headers={"Authorization": f"Bearer {context_token}"},
+                # Pass the tool executor to the provider for non-MCP tools
+                tool_executor=lambda name, args: self.execute_tool_call(name, args, user_id, infospace_id),
                 **kwargs
             )
 
-            # Auto-execute tool calls for non-streaming path
-            if not stream and isinstance(initial, GenerationResponse) and initial.tool_calls:
-                tool_summaries: List[str] = []
-                for call in initial.tool_calls:
-                    try:
-                        name = (
-                            call.get("function", {}).get("name")
-                            if isinstance(call, dict) else None
-                        ) or call.get("name")
-                        args_str = (
-                            call.get("function", {}).get("arguments")
-                            if isinstance(call, dict) else None
-                        ) or call.get("arguments") or "{}"
-                        arguments = {}
-                        try:
-                            if isinstance(args_str, str) and args_str.strip():
-                                arguments = json.loads(args_str)
-                        except Exception:
-                            arguments = {}
-                        if name:
-                            result = await self.execute_tool_call(
-                                tool_name=name,
-                                arguments=arguments,
-                                user_id=user_id,
-                                infospace_id=infospace_id,
-                            )
-                            tool_summaries.append(f"{name}: {json.dumps(result)[:2000]}")
-                    except Exception as tool_e:
-                        tool_summaries.append(f"tool_error: {str(tool_e)}")
-
-                if tool_summaries:
-                    # Feed results back to the model for a final answer
-                    followup_messages = context_messages + [
-                        {"role": "assistant", "content": (initial.content or "")},
-                        {"role": "assistant", "content": "\n".join(["Tool results:"] + tool_summaries)},
-                        {"role": "user", "content": "Using the tool results above, provide a concise answer for the user."},
-                    ]
-                    final = await self.model_registry.generate(
-                        messages=followup_messages,
-                        model_name=model_name,
-                        tools=None,
-                        stream=False,
-                        **kwargs
-                    )
-
-                    # Ensure non-empty content
-                    if isinstance(final, GenerationResponse) and not final.content:
-                        final.content = "\n".join(tool_summaries)[:4000]
-                    return final
-
-            return initial
         except Exception as e:
             error_str = str(e)
             
@@ -447,6 +244,7 @@ class IntelligenceConversationService:
                         model_name=model_name,
                         tools=None,  # No tools
                         stream=stream,
+                        mcp_headers={"Authorization": f"Bearer {context_token}"},
                         **kwargs
                     )
                 except Exception as fallback_e:
@@ -466,6 +264,7 @@ class IntelligenceConversationService:
                         model_name=model_name,
                         tools=tools,
                         stream=stream,
+                        mcp_headers={"Authorization": f"Bearer {context_token}"},
                         **clean_kwargs
                     )
                 except Exception as clean_e:
@@ -481,10 +280,14 @@ class IntelligenceConversationService:
                                user_id: int,
                                infospace_id: int) -> Dict[str, Any]:
         """
-        Execute a tool call made by the AI model.
+        Execute a tool call or resource read made by the AI model using MCP.
+        
+        Handles both:
+        - MCP tools (actions like search_assets, analyze_assets)  
+        - MCP resources (data access like list_bundles, get_asset_details)
         
         Args:
-            tool_name: Name of the tool to execute
+            tool_name: Name of the tool/resource to execute
             arguments: Arguments for the tool call
             user_id: ID of the user
             infospace_id: ID of the infospace
@@ -494,99 +297,103 @@ class IntelligenceConversationService:
         """
         validate_infospace_access(self.session, infospace_id, user_id)
         
-        logger.info(f"Executing tool: {tool_name} with args: {arguments}")
+        logger.info(f"Executing MCP capability: {tool_name} with args: {arguments}")
         
         try:
-            if tool_name == "search_assets":
-                return await self._tool_search_assets(arguments, infospace_id)
-            
-            elif tool_name == "get_asset_details":
-                return await self._tool_get_asset_details(arguments, infospace_id)
-            
-            elif tool_name == "get_annotations":
-                return await self._tool_get_annotations(arguments, infospace_id)
-            
-            elif tool_name == "analyze_assets":
-                return await self._tool_analyze_assets(arguments, user_id, infospace_id)
-            
-            elif tool_name == "list_schemas":
-                return await self._tool_list_schemas(infospace_id)
-            
-            elif tool_name == "list_bundles":
-                return await self._tool_list_bundles(infospace_id)
-            
-            elif tool_name == "create_report":
-                return await self._tool_create_report(arguments, user_id, infospace_id)
-            
-            elif tool_name == "curate_asset_fragment":
-                return await self._tool_curate_asset_fragment(arguments, user_id, infospace_id)
-            
-            else:
-                raise ValueError(f"Unknown tool: {tool_name}")
+            async with get_mcp_client(
+                session=self.session,
+                asset_service=self.asset_service,
+                annotation_service=self.annotation_service,
+                content_ingestion_service=self.content_ingestion_service,
+                user_id=user_id,
+                infospace_id=infospace_id
+            ) as mcp_client:
+                # We no longer need to distinguish between tool execution and resource reading,
+                # as all capabilities are now exposed as tools.
+                result = await mcp_client.execute_tool(tool_name, arguments)
+                if isinstance(result, dict) and result.get("error"):
+                    logger.error(f"MCP tool execution failed for '{tool_name}': {result['error']}")
+                else:
+                    logger.info(f"MCP tool execution successful for: {tool_name}")
+                return result
                 
         except Exception as e:
-            logger.error(f"Tool execution failed: {tool_name} - {e}")
-            return {"error": f"Tool execution failed: {str(e)}"}
+            logger.error(f"MCP capability execution failed: {tool_name} - {e}", exc_info=True)
+            return {"error": f"Capability execution failed: {str(e)}"}
     
-    # ─────────────── TOOL EXECUTION METHODS ─────────────── #
+    # ─────────────── LEGACY TOOL EXECUTION METHODS (DEPRECATED - USE MCP) ─────────────── #
+    # These methods are kept for backward compatibility but should not be used directly.
+    # All tool execution now goes through the MCP client and server.
     
     async def _tool_search_assets(self, arguments: Dict[str, Any], infospace_id: int) -> Dict[str, Any]:
-        """Execute unified search_assets tool call with multiple search methods"""
+        """Execute unified search_assets tool call with multiple search methods.
+        Always returns a dict including an "assets" array of serialized assets.
+        """
         query = arguments.get("query", "")
         search_method = arguments.get("search_method", "hybrid")
         asset_kinds = arguments.get("asset_kinds", [])
         limit = arguments.get("limit", 10)
         distance_threshold = arguments.get("distance_threshold", 0.8)
-        
+
         logger.info(f"Asset search: query='{query}', method={search_method}, limit={limit}")
-        
+
         options = {"asset_kinds": asset_kinds, "distance_threshold": distance_threshold}
 
-        if search_method == "text":
-            return await self.content_ingestion_service._search_assets_text(query, infospace_id, limit, options)
-        
-        elif search_method == "semantic":
-            return await self.content_ingestion_service._search_assets_semantic(query, infospace_id, limit, options)
-        
-        elif search_method == "hybrid":
-            # Combine text and semantic search results
-            text_assets_task = self.content_ingestion_service._search_assets_text(query, infospace_id, limit // 2, options)
-            semantic_assets_task = self.content_ingestion_service._search_assets_semantic(query, infospace_id, limit // 2, options)
+        def _serialize_asset(a: Asset) -> Dict[str, Any]:
+            try:
+                return {
+                    "id": a.id,
+                    "title": a.title,
+                    "kind": a.kind.value if getattr(a, "kind", None) else None,
+                    "text_content": getattr(a, "text_content", None),
+                    "source_metadata": getattr(a, "source_metadata", None),
+                    "created_at": a.created_at.isoformat() if getattr(a, "created_at", None) else None,
+                    "event_timestamp": a.event_timestamp.isoformat() if getattr(a, "event_timestamp", None) else None,
+                }
+            except Exception:
+                return {"id": getattr(a, "id", None), "title": getattr(a, "title", None)}
 
-            text_results, semantic_results = await asyncio.gather(text_assets_task, semantic_assets_task)
-            
-            # Merge and deduplicate results
-            all_assets = {}
-            
-            # Add text results
-            for asset in text_results.get("assets", []):
-                asset["search_method"] = "text"
-                all_assets[asset["id"]] = asset
-            
-            # Add semantic results (don't duplicate)
-            for asset in semantic_results.get("assets", []):
-                if asset["id"] not in all_assets:
-                    asset["search_method"] = "semantic"
-                    all_assets[asset["id"]] = asset
+        if search_method == "text":
+            assets = await self.content_ingestion_service._search_assets_text(query, infospace_id, limit, options)
+            return {"assets": [_serialize_asset(a) for a in assets], "total_found": len(assets), "search_method": "text"}
+
+        elif search_method == "semantic":
+            assets = await self.content_ingestion_service._search_assets_semantic(query, infospace_id, limit, options)
+            return {"assets": [_serialize_asset(a) for a in assets], "total_found": len(assets), "search_method": "semantic"}
+
+        elif search_method == "hybrid":
+            text_task = self.content_ingestion_service._search_assets_text(query, infospace_id, max(1, limit // 2), options)
+            sem_task = self.content_ingestion_service._search_assets_semantic(query, infospace_id, max(1, limit // 2), options)
+            text_list, sem_list = await asyncio.gather(text_task, sem_task)
+
+            merged: Dict[int, Dict[str, Any]] = {}
+            for a in text_list:
+                sa = _serialize_asset(a)
+                sa["search_method"] = "text"
+                if sa.get("id") is not None:
+                    merged[sa["id"]] = sa
+            for a in sem_list:
+                sa = _serialize_asset(a)
+                _id = sa.get("id")
+                if _id in merged:
+                    merged[_id]["search_method"] = "hybrid"
                 else:
-                    # Mark as found by both methods
-                    all_assets[asset["id"]]["search_method"] = "hybrid"
-            
-            # Sort by relevance (hybrid matches first, then by creation date)
-            sorted_assets = sorted(
-                all_assets.values(),
-                key=lambda x: (x["search_method"] == "hybrid", x["created_at"]),
-                reverse=True
-            )
-            
+                    sa["search_method"] = "semantic"
+                    if _id is not None:
+                        merged[_id] = sa
+
+            def sort_key(x: Dict[str, Any]):
+                return (x.get("search_method") == "hybrid", x.get("created_at") or "")
+            sorted_assets = sorted(merged.values(), key=sort_key, reverse=True)
+
             return {
                 "assets": sorted_assets[:limit],
                 "total_found": len(sorted_assets),
                 "search_method": "hybrid",
-                "text_results": len(text_results.get("assets", [])),
-                "semantic_results": len(semantic_results.get("assets", []))
+                "text_results": len(text_list),
+                "semantic_results": len(sem_list),
             }
-        
+
         else:
             raise ValueError(f"Unknown search method: {search_method}")
     

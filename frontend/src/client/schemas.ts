@@ -3907,6 +3907,20 @@ export const $ProcessingStatus = {
 	enum: ['ready','pending','processing','failed',],
 } as const;
 
+export const $PromoteFragmentRequest = {
+	properties: {
+		fragment_key: {
+	type: 'string',
+	isRequired: true,
+},
+		fragment_value: {
+	properties: {
+	},
+	isRequired: true,
+},
+	},
+} as const;
+
 export const $ProviderInfo = {
 	properties: {
 		provider_name: {

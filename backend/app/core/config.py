@@ -41,6 +41,7 @@ class AppSettings(BaseSettings):
     OPOL_DEV_MODE: bool = os.environ.get("OPOL_DEV_MODE", "False") == "True"
     OPOL_MODE: str = os.environ.get("OPOL_MODE", "container")
     OPOL_API_KEY: str | None = os.environ.get("OPOL_API_KEY")
+    PELIAS_PLACEHOLDER_PORT: int = os.environ.get("PELIAS_PLACEHOLDER_PORT", 8721)
     
     if OPOL_DEV_MODE:
         os.environ["PYTHONPATH"] = "/app/opol:/app"

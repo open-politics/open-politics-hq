@@ -386,10 +386,19 @@ def get_pipeline_service(
 PipelineServiceDep = Annotated[PipelineService, Depends(get_pipeline_service)]
 
 def get_embedding_service(
+    request: Request,
     session: SessionDep,
     embedding_provider: EmbeddingProviderDep
 ) -> EmbeddingService:
-    return EmbeddingService(session=session, embedding_provider=embedding_provider)
+    """Dependency to get embedding service with request caching."""
+    service_name = "embedding_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+    instance = EmbeddingService(session=session, embedding_provider=embedding_provider)
+    setattr(request.state, service_name, instance)
+    return instance
+
+EmbeddingServiceDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
 
 async def get_conversation_service(
     request: Request, session: SessionDep, model_registry: ModelRegistryDep,

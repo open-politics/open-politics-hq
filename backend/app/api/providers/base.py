@@ -7,7 +7,7 @@ allowing the application to switch between different implementations without
 changing the core business logic.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union, BinaryIO, Protocol, runtime_checkable, Type
+from typing import Any, Dict, List, Optional, Union, BinaryIO, Protocol, runtime_checkable, Type, Callable, Awaitable
 from fastapi import UploadFile
 from datetime import datetime
 from pydantic import BaseModel
@@ -283,6 +283,7 @@ class LanguageModelProvider(Protocol):
                       tools: Optional[List[Dict]] = None,      # Function definitions
                       stream: bool = False,
                       thinking_enabled: bool = False,          # Provider-specific thinking mode
+                      tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Generate response with provider-specific handling of all features.
@@ -294,6 +295,7 @@ class LanguageModelProvider(Protocol):
             tools: List of tool/function definitions (provider-specific format)
             stream: Whether to stream the response
             thinking_enabled: Whether to enable thinking/reasoning mode
+            tool_executor: Async function to execute a tool call.
             **kwargs: Additional provider-specific parameters
             
         Returns:

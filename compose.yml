@@ -126,6 +126,36 @@ services:
     volumes:
       - ./backend:/app
 
+  
+  engine-pelias-placeholder:
+    image: pelias/placeholder
+    restart: always
+    command: >
+      sh -c '
+        if [ ! -s /data/placeholder/store.sqlite3 ]; then
+          echo "Placeholder data not found or empty. Downloading..."
+          rm -f /data/placeholder/store.sqlite3
+          mkdir -p /data/placeholder
+          wget -O /data/placeholder/store.sqlite3.gz https://data.geocode.earth/placeholder/store.sqlite3.gz
+          gunzip /data/placeholder/store.sqlite3.gz
+        else
+          echo "Placeholder data found."
+        fi
+        ls -l /data/placeholder
+        ./cmd/server.sh
+      '
+    environment:
+      - PORT=${PELIAS_PLACEHOLDER_PORT}
+      - WORKERS=4
+    ports:
+      - "${PELIAS_PLACEHOLDER_PORT}:${PELIAS_PLACEHOLDER_PORT}"
+    volumes:
+      - .store/data/placeholder:/data/placeholder
+    networks:
+      - default
+    env_file:
+      - .env
+
 volumes:
   app-db-data:
   redis_data:

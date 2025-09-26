@@ -1,31 +1,26 @@
 # 🌐 Open Politics HQ
 
-> "Open Source Political Intelligence" - What is that and why do we need it?  
+> Open source intelligence platform for political research  
 > 🎬 [Watch Presentation](https://media.ccc.de/v/dg-111)
 
-## About & how we are aiming to help with
+## What is Open Politics HQ?
 
 ![Exactly](.github/assets/images/exactly.png)
 
-We're building a comprehensive open-source intelligence platform where civic research meets data science. Built for a range of tasks that require that involve gathering, analysing, and political data. We're democratising political analysis capabilities through accessible tools that help citizens navigate an increasingly complex information landscape.
+Open Politics HQ is an intelligence analysis platform that helps researchers process political information at scale. It combines AI language models with data analysis tools to extract insights from documents, news articles, and other content.
 
-Our integrated stack of data science tools gather, analyse, and visualise political data with clarity and depth. We combine the natural language capabilities of modern AI with structured analytical methods to make sense of the vast political information landscape.
+**Core capabilities:**
+- Upload and process PDFs, web articles, CSVs, images, and media files
+- Define analysis tasks in natural language to extract structured data
+- Chat with AI assistants that can search and analyze your data
+- Create dashboards with charts, maps, and visualizations
+- Set up automated monitoring for new content
 
-## Our Approach
-
-We're building tools that support:
-
-**Analytical depth** - Working with news and political information through entity extraction, geospatial analysis, and relationship mapping
-
-**Community transparency** - Developing in the open so everyone can contribute, inspect, and improve our methods
-
-**Universal accessibility** - Creating multiple ways to interact with political data, from interactive visualisations to text-based interfaces
-
-**Methodical research** - Combining technical innovation with structured analytical approaches to political information
-
-**Collaborative analysis** - Sharing resources with team members and the public through flexible permission levels and shareable links
-
-Whether you're analysing news coverage, tracking political advocacy efforts, generating visual reports, exploring geospatial data, or mapping structured arguments from coalition talks, we build tools that help make sense of today's information environment.
+**Built for:**
+- Political researchers and journalists
+- Policy analysts and advocacy groups  
+- Academic researchers studying political processes
+- Citizens tracking government activity and policy changes
 
 #### Status
 - 📝 **Development**: In late Beta

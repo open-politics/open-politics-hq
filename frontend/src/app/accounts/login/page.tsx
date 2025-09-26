@@ -76,7 +76,7 @@ export default function LoginPage() {
             <CardDescription>Welcome back! Please enter your details.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form id="login-form" onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm">Email</label>
                 <Input
@@ -126,7 +126,7 @@ export default function LoginPage() {
               )}
               <Button 
                 type="submit" 
-                className="w-full"
+                className="w-full md:hidden"
                 disabled={loginMutation.isPending}
               >
                 {loginMutation.isPending ? 'Logging in...' : 'Login'}
@@ -151,14 +151,20 @@ export default function LoginPage() {
             </p>
           </CardFooter>
         </div>
-        <div className="hidden md:flex flex-col justify-center bg-gray-900 bg-opacity-50 p-12 text-white">
+        <div className="hidden md:flex flex-col justify-center bg-background/60 bg-opacity-50 p-12">
         <h2 className="text-3xl font-bold">Open Politics HQ</h2>
-        <p className="mt-4 text-gray-300 font-mono text-sm">
-            &gt; ...
-        </p>
-          <p className="mt-4 text-gray-300 font-mono text-sm">
-            
-          </p>
+        <div className="mt-6 flex items-center gap-3 font-mono text-sm">
+          <span>&gt;</span>
+          <Button
+            className="w-32 md:w-48 border-blue-500"
+            type="submit" 
+            form="login-form" 
+            disabled={loginMutation.isPending}
+            variant="outline"
+          >
+            {loginMutation.isPending ? 'Logging in...' : 'Login'}
+          </Button>
+        </div>
         </div>
       </Card>
     </div>

@@ -2,10 +2,41 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { RegistrationStats,AnalysisAdapterRead,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,Message,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRead,AnnotationRetryRequest,AnnotationsOut,AnnotationUpdate,ArticleComposition,AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,ReprocessOptions,BackupRestoreRequest,BackupShareRequest,InfospaceBackupCreate,InfospaceBackupRead,InfospaceBackupsOut,InfospaceBackupUpdate,InfospaceRead,BundleCreate,BundleRead,BundleUpdate,ChatRequest,ChatResponse,ModelListResponse,ToolCallRequest,AssetChunkRead,ChunkAssetRequest,ChunkAssetsRequest,ChunkingResultResponse,ChunkingStatsResponse,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,EmbeddingGenerateRequest,EmbeddingModelCreate,EmbeddingModelRead,EmbeddingProvider,EmbeddingSearchRequest,EmbeddingSearchResponse,EmbeddingStatsResponse,Body_filestorage_file_upload,FileUploadResponse,Body_filters_test_filter,InfospaceCreate,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,MonitorCreate,MonitorRead,MonitorUpdate,IntelligencePipelineCreate,IntelligencePipelineRead,IntelligencePipelineUpdate,PipelineExecutionRead,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_sharing_export_resource,Body_sharing_import_resource,DatasetPackageSummary,ExportBatchRequest,ExportMixedBatchRequest,ImportFromTokenRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SharedResourcePreview,SourceCreate,SourceRead,SourcesOut,SourceTransferRequest,SourceTransferResponse,SourceUpdate,Body_sso_complete_discourse_sso,TaskCreate,TaskRead,TasksOut,TaskStatus,TaskType,TaskUpdate,UserBackupCreate,UserBackupRead,UserBackupRestoreRequest,UserBackupShareRequest,UserBackupsOut,UserBackupUpdate,Body_users_upload_profile_picture,UpdatePassword,UserCreate,UserCreateOpen,UserProfileStats,UserProfileUpdate,UserPublicProfile,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,app__api__v1__entities__routes__SearchType,Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest } from './models';
+import type { RegistrationStats,AnalysisAdapterRead,AnnotationRead,PromoteFragmentRequest,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,Message,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRetryRequest,AnnotationsOut,AnnotationUpdate,ArticleComposition,AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,ReprocessOptions,BackupRestoreRequest,BackupShareRequest,InfospaceBackupCreate,InfospaceBackupRead,InfospaceBackupsOut,InfospaceBackupUpdate,InfospaceRead,BundleCreate,BundleRead,BundleUpdate,ChatRequest,ChatResponse,ModelListResponse,ToolCallRequest,AssetChunkRead,ChunkAssetRequest,ChunkAssetsRequest,ChunkingResultResponse,ChunkingStatsResponse,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,EmbeddingGenerateRequest,EmbeddingModelCreate,EmbeddingModelRead,EmbeddingProvider,EmbeddingSearchRequest,EmbeddingSearchResponse,EmbeddingStatsResponse,Body_filestorage_file_upload,FileUploadResponse,Body_filters_test_filter,InfospaceCreate,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,MonitorCreate,MonitorRead,MonitorUpdate,IntelligencePipelineCreate,IntelligencePipelineRead,IntelligencePipelineUpdate,PipelineExecutionRead,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_sharing_export_resource,Body_sharing_import_resource,DatasetPackageSummary,ExportBatchRequest,ExportMixedBatchRequest,ImportFromTokenRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SharedResourcePreview,SourceCreate,SourceRead,SourcesOut,SourceTransferRequest,SourceTransferResponse,SourceUpdate,Body_sso_complete_discourse_sso,TaskCreate,TaskRead,TasksOut,TaskStatus,TaskType,TaskUpdate,UserBackupCreate,UserBackupRead,UserBackupRestoreRequest,UserBackupShareRequest,UserBackupsOut,UserBackupUpdate,Body_users_upload_profile_picture,UpdatePassword,UserCreate,UserCreateOpen,UserProfileStats,UserProfileUpdate,UserPublicProfile,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,app__api__v1__entities__routes__SearchType,Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest } from './models';
 
 export type AdminData = {
         
+    }
+
+export type AnalysisServiceData = {
+        PromoteFragment: {
+                    assetId: number
+infospaceId: number
+requestBody: PromoteFragmentRequest
+                    
+                };
+ExecuteAnalysisAdapter: {
+                    /**
+ * The registered name of the adapter
+ */
+adapterName: string
+requestBody: Record<string, unknown>
+                    
+                };
+PromoteFragment1: {
+                    assetId: number
+infospaceId: number
+requestBody: PromoteFragmentRequest
+                    
+                };
+ExecuteAnalysisAdapter1: {
+                    /**
+ * The registered name of the adapter
+ */
+adapterName: string
+requestBody: Record<string, unknown>
+                    
+                };
     }
 
 export type AnalysisAdaptersData = {
@@ -1353,6 +1384,10 @@ ListAvailableModels: {
                     capability?: string | null
                     
                 };
+ListUniversalTools: {
+                    infospaceId?: number
+                    
+                };
 GetInfospaceToolContext: {
                     infospaceId: number
                     
@@ -1367,6 +1402,10 @@ ExecuteToolCall1: {
                 };
 ListAvailableModels1: {
                     capability?: string | null
+                    
+                };
+ListUniversalTools1: {
+                    infospaceId?: number
                     
                 };
 GetInfospaceToolContext1: {
@@ -1635,6 +1674,11 @@ provider: EmbeddingProvider
 text: string
                     
                 };
+TestEmbeddingProvider: {
+                    modelName?: string | null
+testText?: string
+                    
+                };
 DeactivateEmbeddingModel: {
                     modelId: number
                     
@@ -1666,6 +1710,11 @@ EmbedText1: {
                     modelName: string
 provider: EmbeddingProvider
 text: string
+                    
+                };
+TestEmbeddingProvider1: {
+                    modelName?: string | null
+testText?: string
                     
                 };
 DeactivateEmbeddingModel1: {
@@ -3088,6 +3137,14 @@ RemoveOllamaModel: {
                     modelName: string
                     
                 };
+GeocodeLocation: {
+                    location: string
+                    
+                };
+GetCountryData: {
+                    country: unknown
+                    
+                };
 TestEmail1: {
                     emailTo: string
                     
@@ -3115,6 +3172,14 @@ sort?: string
                 };
 RemoveOllamaModel1: {
                     modelName: string
+                    
+                };
+GeocodeLocation1: {
+                    location: string
+                    
+                };
+GetCountryData1: {
+                    country: unknown
                     
                 };
     }
@@ -3149,6 +3214,14 @@ RemoveOllamaModel: {
                     modelName: string
                     
                 };
+GeocodeLocation: {
+                    location: string
+                    
+                };
+GetCountryData: {
+                    country: unknown
+                    
+                };
 TestEmail1: {
                     emailTo: string
                     
@@ -3176,6 +3249,14 @@ sort?: string
                 };
 RemoveOllamaModel1: {
                     modelName: string
+                    
+                };
+GeocodeLocation1: {
+                    location: string
+                    
+                };
+GetCountryData1: {
+                    country: unknown
                     
                 };
     }
@@ -3493,6 +3574,138 @@ export class AdminService {
 
 }
 
+export class AnalysisServiceService {
+
+	/**
+	 * Promote Fragment
+	 * Promote a fragment of information to a permanent feature of an asset.
+ * This creates an auditable annotation and adds the fragment to the asset's metadata.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static promoteFragment(data: AnalysisServiceData['PromoteFragment']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}/fragments',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Analysis Adapters
+	 * List all active and available analysis adapters.
+	 * @returns AnalysisAdapterRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnalysisAdapters(): CancelablePromise<Array<AnalysisAdapterRead>> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/analysis/adapters',
+		});
+	}
+
+	/**
+	 * Execute Analysis Adapter
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static executeAnalysisAdapter(data: AnalysisServiceData['ExecuteAnalysisAdapter']): CancelablePromise<Record<string, unknown>> {
+		const {
+adapterName,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/analysis/adapters/{adapter_name}/execute',
+			path: {
+				adapter_name: adapterName
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Promote Fragment
+	 * Promote a fragment of information to a permanent feature of an asset.
+ * This creates an auditable annotation and adds the fragment to the asset's metadata.
+	 * @returns AnnotationRead Successful Response
+	 * @throws ApiError
+	 */
+	public static promoteFragment1(data: AnalysisServiceData['PromoteFragment1']): CancelablePromise<AnnotationRead> {
+		const {
+infospaceId,
+assetId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/{asset_id}/fragments',
+			path: {
+				infospace_id: infospaceId, asset_id: assetId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * List Analysis Adapters
+	 * List all active and available analysis adapters.
+	 * @returns AnalysisAdapterRead Successful Response
+	 * @throws ApiError
+	 */
+	public static listAnalysisAdapters1(): CancelablePromise<Array<AnalysisAdapterRead>> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/analysis/adapters',
+		});
+	}
+
+	/**
+	 * Execute Analysis Adapter
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static executeAnalysisAdapter1(data: AnalysisServiceData['ExecuteAnalysisAdapter1']): CancelablePromise<Record<string, unknown>> {
+		const {
+adapterName,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/analysis/adapters/{adapter_name}/execute',
+			path: {
+				adapter_name: adapterName
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
 export class AnalysisAdaptersService {
 
 	/**
@@ -3504,7 +3717,7 @@ export class AnalysisAdaptersService {
 	public static listAnalysisAdapters(): CancelablePromise<Array<AnalysisAdapterRead>> {
 				return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/analysis/analysis/adapters',
+			url: '/api/v1/analysis/adapters',
 		});
 	}
 
@@ -3520,7 +3733,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/analysis/analysis/{adapter_name}/execute',
+			url: '/api/v1/analysis/adapters/{adapter_name}/execute',
 			path: {
 				adapter_name: adapterName
 			},
@@ -3541,7 +3754,7 @@ requestBody,
 	public static listAnalysisAdapters1(): CancelablePromise<Array<AnalysisAdapterRead>> {
 				return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v2/analysis/analysis/adapters',
+			url: '/api/v2/analysis/adapters',
 		});
 	}
 
@@ -3557,7 +3770,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v2/analysis/analysis/{adapter_name}/execute',
+			url: '/api/v2/analysis/adapters/{adapter_name}/execute',
 			path: {
 				adapter_name: adapterName
 			},
@@ -9104,15 +9317,24 @@ capability,
 	 * List Universal Tools
 	 * List universal intelligence analysis tool definitions.
  * 
- * These are the capabilities available to AI models. No authentication required
- * as this only returns tool schemas, not data access.
+ * These are the capabilities available to AI models.
+ * FastMCP automatically generates schemas from function signatures.
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static listUniversalTools(): CancelablePromise<unknown> {
-				return __request(OpenAPI, {
+	public static listUniversalTools(data: IntelligenceChatData['ListUniversalTools'] = {}): CancelablePromise<unknown> {
+		const {
+infospaceId = 1,
+} = data;
+		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v1/chat/tools',
+			query: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
 		});
 	}
 
@@ -9222,15 +9444,24 @@ capability,
 	 * List Universal Tools
 	 * List universal intelligence analysis tool definitions.
  * 
- * These are the capabilities available to AI models. No authentication required
- * as this only returns tool schemas, not data access.
+ * These are the capabilities available to AI models.
+ * FastMCP automatically generates schemas from function signatures.
 	 * @returns unknown Successful Response
 	 * @throws ApiError
 	 */
-	public static listUniversalTools1(): CancelablePromise<unknown> {
-				return __request(OpenAPI, {
+	public static listUniversalTools1(data: IntelligenceChatData['ListUniversalTools1'] = {}): CancelablePromise<unknown> {
+		const {
+infospaceId = 1,
+} = data;
+		return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v2/chat/tools',
+			query: {
+				infospace_id: infospaceId
+			},
+			errors: {
+				422: `Validation Error`,
+			},
 		});
 	}
 
@@ -10082,6 +10313,19 @@ requestBody,
 	}
 
 	/**
+	 * Check Embedding Provider Health
+	 * Check the health of the embedding provider.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static checkEmbeddingProviderHealth(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/embeddings/health',
+		});
+	}
+
+	/**
 	 * Get Embedding Model Stats
 	 * Get statistics for an embedding model.
 	 * @returns EmbeddingStatsResponse Successful Response
@@ -10170,6 +10414,29 @@ provider,
 	}
 
 	/**
+	 * Test Embedding Provider
+	 * Test the embedding provider with a sample text.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static testEmbeddingProvider(data: EmbeddingsData['TestEmbeddingProvider'] = {}): CancelablePromise<unknown> {
+		const {
+testText = 'This is a test sentence for embedding generation.',
+modelName,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/embeddings/test',
+			query: {
+				test_text: testText, model_name: modelName
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Deactivate Embedding Model
 	 * Deactivate an embedding model (soft delete).
 	 * @returns unknown Successful Response
@@ -10244,6 +10511,19 @@ requestBody,
 				return __request(OpenAPI, {
 			method: 'GET',
 			url: '/api/v2/embeddings/models/available',
+		});
+	}
+
+	/**
+	 * Check Embedding Provider Health
+	 * Check the health of the embedding provider.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static checkEmbeddingProviderHealth1(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/embeddings/health',
 		});
 	}
 
@@ -10328,6 +10608,29 @@ provider,
 			url: '/api/v2/embeddings/embed-text',
 			query: {
 				text, model_name: modelName, provider
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Test Embedding Provider
+	 * Test the embedding provider with a sample text.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static testEmbeddingProvider1(data: EmbeddingsData['TestEmbeddingProvider1'] = {}): CancelablePromise<unknown> {
+		const {
+testText = 'This is a test sentence for embedding generation.',
+modelName,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/embeddings/test',
+			query: {
+				test_text: testText, model_name: modelName
 			},
 			errors: {
 				422: `Validation Error`,
@@ -16900,6 +17203,48 @@ modelName,
 	}
 
 	/**
+	 * Geocode Location
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static geocodeLocation(data: UtilsData['GeocodeLocation']): CancelablePromise<unknown> {
+		const {
+location,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/geocode_location',
+			query: {
+				location
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Country Data
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getCountryData(data: UtilsData['GetCountryData']): CancelablePromise<unknown> {
+		const {
+country,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/get_country_data',
+			query: {
+				country
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Test Email
 	 * Test emails.
 	 * @returns Message Successful Response
@@ -17104,6 +17449,48 @@ modelName,
 			url: '/api/v2/utils/ollama/remove-model',
 			query: {
 				model_name: modelName
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Geocode Location
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static geocodeLocation1(data: UtilsData['GeocodeLocation1']): CancelablePromise<unknown> {
+		const {
+location,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/geocode_location',
+			query: {
+				location
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Country Data
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getCountryData1(data: UtilsData['GetCountryData1']): CancelablePromise<unknown> {
+		const {
+country,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/get_country_data',
+			query: {
+				country
 			},
 			errors: {
 				422: `Validation Error`,
@@ -17328,6 +17715,48 @@ modelName,
 	}
 
 	/**
+	 * Geocode Location
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static geocodeLocation(data: UtilitiesData['GeocodeLocation']): CancelablePromise<unknown> {
+		const {
+location,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/geocode_location',
+			query: {
+				location
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Country Data
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getCountryData(data: UtilitiesData['GetCountryData']): CancelablePromise<unknown> {
+		const {
+country,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/get_country_data',
+			query: {
+				country
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Test Email
 	 * Test emails.
 	 * @returns Message Successful Response
@@ -17532,6 +17961,48 @@ modelName,
 			url: '/api/v2/utils/ollama/remove-model',
 			query: {
 				model_name: modelName
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Geocode Location
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static geocodeLocation1(data: UtilitiesData['GeocodeLocation1']): CancelablePromise<unknown> {
+		const {
+location,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/geocode_location',
+			query: {
+				location
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Country Data
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getCountryData1(data: UtilitiesData['GetCountryData1']): CancelablePromise<unknown> {
+		const {
+country,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/get_country_data',
+			query: {
+				country
 			},
 			errors: {
 				422: `Validation Error`,

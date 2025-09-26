@@ -132,8 +132,9 @@ export default function AnnotationRunnerDock({
   const [annotationConcurrency, setAnnotationConcurrency] = useState(5);
   const [enableParallelProcessing, setEnableParallelProcessing] = useState(true);
   const [justificationOverride, setJustificationOverride] = useState<'schema' | 'all'>('schema');
+  const [tempApiKey, setTempApiKey] = useState('');
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
-  const { apiKeys, selectedProvider, selectedModel } = useApiKeysStore();
+  const { apiKeys, selectedProvider, selectedModel, setApiKey, setSelectedProvider } = useApiKeysStore();
 
   // Helper function to check if AI is properly configured
   const isAiConfigured = useMemo(() => {
@@ -290,6 +291,25 @@ export default function AnnotationRunnerDock({
       setCsvRowProcessing(true); // Reset to default
     }
   }, [csvProcessingInfo.csvAssetCount]);
+
+  // Handler for saving API keys
+  const handleSaveApiKey = useCallback(() => {
+    if (selectedProvider && tempApiKey.trim()) {
+      setApiKey(selectedProvider, tempApiKey.trim());
+      setTempApiKey('');
+      toast.success(`API key saved for ${selectedProvider}`);
+    } else {
+      toast.error('Please select a provider and enter an API key');
+    }
+  }, [selectedProvider, tempApiKey, setApiKey]);
+
+  // Helper function to mask API keys for display
+  const maskApiKey = useCallback((key: string) => {
+    if (!key) return '';
+    if (key.length <= 8) return key;
+    // Show first 4 and last 4 characters with a fixed number of asterisks for better UI
+    return `${key.slice(0, 4)}****${key.slice(-4)}`;
+  }, []);
 
   // Debug: Monitor store changes
   useEffect(() => {
@@ -538,8 +558,67 @@ export default function AnnotationRunnerDock({
                           {/* AI Model Configuration */}
                           <div className="space-y-3">
                             <Label className="text-sm font-medium">AI Model Configuration</Label>
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                               <ProviderSelector />
+                              
+                              {/* API Key Management */}
+                              {selectedProvider && selectedProvider !== 'ollama' && (
+                                <div className="space-y-2 max-w-full">
+                                  <div className="flex items-center justify-between">
+                                    <Label className="text-xs font-medium text-muted-foreground">
+                                      API Key for {selectedProvider}
+                                    </Label>
+                                    {selectedProvider === 'gemini_native' && (
+                                      <a 
+                                        href="https://aistudio.google.com/app/apikey" 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                      >
+                                        Get API key
+                                      </a>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Input
+                                      type="password"
+                                      placeholder={`Enter API key for ${selectedProvider}`}
+                                      value={tempApiKey}
+                                      onChange={(e) => setTempApiKey(e.target.value)}
+                                      className="text-xs"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleSaveApiKey();
+                                        }
+                                      }}
+                                    />
+                                    <Button 
+                                      onClick={handleSaveApiKey}
+                                      disabled={!tempApiKey.trim()}
+                                      size="sm"
+                                      className="px-3"
+                                    >
+                                      Save
+                                    </Button>
+                                  </div>
+                                  
+                                  {/* Show saved API keys */}
+                                  {Object.entries(apiKeys).length > 0 && (
+                                    <div className="space-y-1">
+                                      {Object.entries(apiKeys).map(([provider, key]) => (
+                                        <div key={provider} className="flex items-center gap-2 text-xs min-w-0">
+                                          <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></div>
+                                          <span className="text-green-700 font-medium truncate">
+                                            {provider}: {maskApiKey(key)}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {/* Configuration Status */}
                               {isAiConfigured ? (
                                 <div className="flex items-center gap-2 p-2 rounded-md bg-green-50 border border-green-200">
                                   <div className="w-2 h-2 rounded-full bg-green-500"></div>

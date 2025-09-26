@@ -4,15 +4,41 @@ import asyncio # Added for checking async functions
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Body, Path
 from sqlmodel import Session, select # Added select
+from pydantic import BaseModel
 
-from app.models import AnalysisAdapter # Ensure this is correctly imported
-from app.api.deps import SessionDep, CurrentUser # Ensure these are correctly imported
-from app.schemas import AnalysisAdapterRead # We'll need a Pydantic model for the response
+from app.models import AnalysisAdapter, Annotation # Ensure this is correctly imported
+from app.api.deps import SessionDep, CurrentUser, AnalysisServiceDep # Ensure these are correctly imported
+from app.schemas import AnalysisAdapterRead, AnnotationRead # We'll need a Pydantic model for the response
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/analysis", tags=["Analysis Adapters"])
+router = APIRouter()
 
-@router.get("/adapters", response_model=List[AnalysisAdapterRead])
+class PromoteFragmentRequest(BaseModel):
+    fragment_key: str
+    fragment_value: Any
+
+@router.post("/infospaces/{infospace_id}/assets/{asset_id}/fragments", response_model=AnnotationRead, tags=["Analysis Service"])
+async def promote_fragment(
+    *,
+    infospace_id: int,
+    asset_id: int,
+    request: PromoteFragmentRequest,
+    analysis_service: AnalysisServiceDep,
+    current_user: CurrentUser
+):
+    """
+    Promote a fragment of information to a permanent feature of an asset.
+    This creates an auditable annotation and adds the fragment to the asset's metadata.
+    """
+    annotation = await analysis_service.promote_fragment(
+        infospace_id=infospace_id,
+        asset_id=asset_id,
+        fragment_key=request.fragment_key,
+        fragment_value=request.fragment_value
+    )
+    return annotation
+
+@router.get("/analysis/adapters", response_model=List[AnalysisAdapterRead], tags=["Analysis Adapters"])
 async def list_analysis_adapters(
     session: SessionDep,
     current_user: CurrentUser
@@ -23,7 +49,7 @@ async def list_analysis_adapters(
     adapters = session.exec(select(AnalysisAdapter).where(AnalysisAdapter.is_active == True)).all()
     return adapters
 
-@router.post("/{adapter_name}/execute")
+@router.post("/analysis/adapters/{adapter_name}/execute", tags=["Analysis Adapters"])
 async def execute_analysis_adapter(
     *,
     session: SessionDep,

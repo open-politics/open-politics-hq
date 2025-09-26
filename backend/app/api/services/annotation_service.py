@@ -2,7 +2,7 @@
 import logging
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select, func, and_
 from fastapi import Depends
 
 from app.models import (
@@ -346,6 +346,36 @@ class AnnotationService:
         )
         
         return list(self.session.exec(query))
+    
+    def get_annotations(
+        self,
+        asset_ids: List[int],
+        infospace_id: int,
+        schema_ids: Optional[List[int]] = None
+    ) -> List[Annotation]:
+        """Get annotations for multiple assets, with optional schema filtering."""
+        query_conditions = [
+            Annotation.infospace_id == infospace_id,
+            Annotation.asset_id.in_(asset_ids)
+        ]
+        
+        if schema_ids:
+            query_conditions.append(Annotation.schema_id.in_(schema_ids))
+        
+        annotations = self.session.exec(
+            select(Annotation).where(and_(*query_conditions))
+        ).all()
+        
+        return list(annotations)
+
+    def list_schemas(self, infospace_id: int) -> List[AnnotationSchema]:
+        """List all active annotation schemas in an infospace."""
+        schemas = self.session.exec(
+            select(AnnotationSchema)
+            .where(AnnotationSchema.infospace_id == infospace_id)
+            .where(AnnotationSchema.is_active == True)
+        ).all()
+        return list(schemas)
     
     def get_annotations_for_run(
         self,
@@ -990,11 +1020,8 @@ class AnnotationService:
 
         return db_run 
 
-    def curate_fragment(
-        self, user_id: int, infospace_id: int, asset_id: int, field_name: str, value: Any
-    ) -> Annotation:
-        """Creates an auditable record for a manual curation action."""
-        # 1. Find or create a special "Curation" schema if it doesn't exist
+    def _get_or_create_curation_schema(self, infospace_id: int, user_id: int) -> AnnotationSchema:
+        """Get or create the schema for manual curations."""
         schema_name = "Manual Curation"
         schema = self.session.exec(
             select(AnnotationSchema).where(AnnotationSchema.name == schema_name, AnnotationSchema.infospace_id == infospace_id)
@@ -1005,28 +1032,51 @@ class AnnotationService:
                 description="A generic schema for manual curation of facts and fragments.",
                 output_contract={
                     "type": "object",
-                    "properties": {
-                        field_name: {"type": "string"}
-                    },
+                    "properties": {},
+                    "additionalProperties": True,
                 },
                 instructions="This is a system schema for recording manually curated data.",
             )
-            # This is a simplified call. Assuming a method to create schemas exists.
-            # A real implementation might need to call a schema service or handle it directly.
-            schema = AnnotationSchema.model_validate(schema_create, update={"user_id": user_id, "infospace_id": infospace_id})
-            self.session.add(schema)
+            schema = self.create_annotation_schema(
+                name=schema_create.name,
+                description=schema_create.description,
+                output_contract=schema_create.output_contract,
+                instructions=schema_create.instructions,
+                user_id=user_id,
+                infospace_id=infospace_id,
+            )
+        return schema
+
+    def _get_or_create_curation_run(self, infospace_id: int, user_id: int, schema_id: int) -> AnnotationRun:
+        """Get or create the run for manual curations."""
+        run_name = "Manual Curation Run"
+        run = self.session.exec(
+            select(AnnotationRun).where(AnnotationRun.name == run_name, AnnotationRun.infospace_id == infospace_id)
+        ).first()
+        if not run:
+            run_create = AnnotationRunCreate(
+                name=run_name,
+                description="A run for all manual curation actions.",
+                schema_ids=[schema_id],
+                target_asset_ids=[]
+            )
+            run = self.create_run(user_id, infospace_id, run_create)
+        elif schema_id not in [s.id for s in run.target_schemas]:
+            run.target_schemas.append(self.session.get(AnnotationSchema, schema_id))
+            self.session.add(run)
             self.session.commit()
-            self.session.refresh(schema)
+            self.session.refresh(run)
+        return run
 
+    def curate_fragment(
+        self, user_id: int, infospace_id: int, asset_id: int, field_name: str, value: Any
+    ) -> Annotation:
+        """Creates an auditable record for a manual curation action."""
+        # 1. Get or create the special "Curation" schema
+        schema = self._get_or_create_curation_schema(infospace_id, user_id)
 
-        # 2. Create a dedicated AnnotationRun for this single action
-        run_name = f"Curation on Asset {asset_id} at {datetime.now(timezone.utc).isoformat()}"
-        run_create = AnnotationRunCreate(
-            name=run_name, 
-            schema_ids=[schema.id], 
-            target_asset_ids=[asset_id]
-        )
-        run = self.create_run(user_id, infospace_id, run_create)
+        # 2. Get or create a dedicated AnnotationRun for all curations
+        run = self._get_or_create_curation_run(infospace_id, user_id, schema.id)
 
         # 3. Create the annotation that represents the curated fact
         annotation = self.create_annotation(

@@ -35,33 +35,76 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
             return []
             
         model = model_name or self.default_model
+        
+        # Check if model is available
+        if not await self.check_model_availability(model):
+            logger.warning(f"Model {model} not available, attempting to pull it")
+            if not await self.pull_model_if_needed(model):
+                logger.error(f"Failed to pull model {model}, using empty embeddings")
+                return [[] for _ in texts]
+        
         embeddings = []
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Use longer timeout for embedding generation
+        timeout = httpx.Timeout(60.0, connect=10.0)
+        
+        async with httpx.AsyncClient(timeout=timeout) as client:
             for text in texts:
                 try:
+                    # Truncate text if too long (basic safety measure)
+                    max_length = 8000  # Conservative limit
+                    truncated_text = text[:max_length] if len(text) > max_length else text
+                    
                     response = await client.post(
                         f"{self.base_url}/api/embeddings",
                         json={
                             "model": model,
-                            "prompt": text
+                            "prompt": truncated_text
                         }
                     )
                     response.raise_for_status()
                     
                     data = response.json()
-                    if "embedding" in data:
+                    if "embedding" in data and data["embedding"]:
                         embeddings.append(data["embedding"])
                     else:
-                        logger.error(f"No embedding returned for text: {text[:50]}...")
+                        logger.error(f"No embedding returned for text: {truncated_text[:50]}...")
                         embeddings.append([])
                         
+                except httpx.TimeoutException as e:
+                    logger.error(f"Timeout error for Ollama embedding: {e}")
+                    embeddings.append([])
                 except httpx.RequestError as e:
                     logger.error(f"Request error for Ollama embedding: {e}")
                     embeddings.append([])
                 except httpx.HTTPStatusError as e:
                     logger.error(f"HTTP error for Ollama embedding: {e.response.status_code} - {e.response.text}")
-                    embeddings.append([])
+                    # If it's a model not found error, try to pull the model
+                    if e.response.status_code == 404:
+                        logger.info(f"Model {model} not found, attempting to pull")
+                        if await self.pull_model_if_needed(model):
+                            # Retry the request once
+                            try:
+                                retry_response = await client.post(
+                                    f"{self.base_url}/api/embeddings",
+                                    json={
+                                        "model": model,
+                                        "prompt": truncated_text
+                                    }
+                                )
+                                retry_response.raise_for_status()
+                                retry_data = retry_response.json()
+                                if "embedding" in retry_data and retry_data["embedding"]:
+                                    embeddings.append(retry_data["embedding"])
+                                else:
+                                    embeddings.append([])
+                            except Exception as retry_e:
+                                logger.error(f"Retry failed for Ollama embedding: {retry_e}")
+                                embeddings.append([])
+                        else:
+                            embeddings.append([])
+                    else:
+                        embeddings.append([])
                 except Exception as e:
                     logger.error(f"Unexpected error for Ollama embedding: {e}")
                     embeddings.append([])
@@ -123,4 +166,37 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         except Exception as e:
             logger.error(f"Error pulling Ollama model {model_name}: {e}")
             
-        return False 
+        return False
+
+    async def health_check(self) -> bool:
+        """Check if Ollama server is accessible."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{self.base_url}/api/tags")
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            logger.error(f"Ollama health check failed: {e}")
+            return False
+
+    async def get_server_info(self) -> Dict[str, Any]:
+        """Get information about the Ollama server."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{self.base_url}/api/tags")
+                response.raise_for_status()
+                data = response.json()
+                
+                return {
+                    "server_accessible": True,
+                    "models_available": len(data.get("models", [])),
+                    "model_list": [model["name"] for model in data.get("models", [])],
+                    "base_url": self.base_url
+                }
+        except Exception as e:
+            logger.error(f"Failed to get Ollama server info: {e}")
+            return {
+                "server_accessible": False,
+                "error": str(e),
+                "base_url": self.base_url
+            } 

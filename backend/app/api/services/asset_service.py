@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, List, Dict, Any
 from sqlmodel import Session, select
+import asyncio
 
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate, AssetUpdate
@@ -155,6 +156,19 @@ class AssetService:
         
         return self.session.exec(query).all()
 
+    def get_assets_by_ids(self, asset_ids: List[int], infospace_id: int) -> List[Asset]:
+        """Get multiple assets by ID, ensuring they belong to the specified infospace."""
+        if not asset_ids:
+            return []
+        
+        assets = self.session.exec(
+            select(Asset)
+            .where(Asset.id.in_(asset_ids))
+            .where(Asset.infospace_id == infospace_id)
+        ).all()
+        
+        return list(assets)
+
     def update_asset(self, asset_id: int, asset_update: AssetUpdate) -> Optional[Asset]:
         """Update an existing asset."""
         asset = self.session.get(Asset, asset_id)
@@ -210,6 +224,67 @@ class AssetService:
         except Exception as e:
             logger.error(f"Failed to trigger reprocessing for asset {asset.id}: {e}")
             return False
+
+    async def search_assets(
+        self,
+        user_id: int,
+        infospace_id: int,
+        query: str,
+        search_method: str,
+        asset_kinds: List[AssetKind],
+        limit: int,
+        distance_threshold: float,
+    ) -> List[Asset]:
+        """
+        Unified asset search with text, semantic, and hybrid methods.
+        
+        Args:
+            user_id: ID of the user performing the search
+            infospace_id: ID of the infospace to search within
+            query: The search query string
+            search_method: 'text', 'semantic', or 'hybrid'
+            asset_kinds: List of AssetKind enums to filter by
+            limit: Maximum number of results to return
+            distance_threshold: Similarity threshold for semantic search
+        
+        Returns:
+            A list of Asset objects matching the search criteria.
+        """
+        from app.api.services.content_ingestion_service import ContentIngestionService
+        
+        content_ingestion_service = ContentIngestionService(session=self.session)
+        
+        options = {
+            "asset_kinds": [kind.value for kind in asset_kinds],
+            "distance_threshold": distance_threshold
+        }
+        
+        if search_method == "text":
+            return await content_ingestion_service.search_assets_text(
+                query, infospace_id, limit, options
+            )
+        elif search_method == "semantic":
+            return await content_ingestion_service.search_assets_semantic(
+                query, infospace_id, limit, options
+            )
+        elif search_method == "hybrid":
+            text_task = content_ingestion_service.search_assets_text(
+                query, infospace_id, max(1, limit // 2), options
+            )
+            sem_task = content_ingestion_service.search_assets_semantic(
+                query, infospace_id, max(1, limit // 2), options
+            )
+            text_list, sem_list = await asyncio.gather(text_task, sem_task)
+            
+            merged_assets = {asset.id: asset for asset in text_list}
+            for asset in sem_list:
+                if asset.id not in merged_assets:
+                    merged_assets[asset.id] = asset
+            
+            # Simple merge and limit for now, can be improved with ranking
+            return list(merged_assets.values())[:limit]
+        else:
+            raise ValueError(f"Unknown search method: {search_method}")
 
     def count_assets_by_infospace(self, infospace_id: int, user_id: int) -> int:
         """Count total assets in an infospace for a user."""

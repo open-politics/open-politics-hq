@@ -93,6 +93,14 @@ class BundleService:
             .order_by(Bundle.name)
         ).all()
 
+    def list_bundles(self, infospace_id: int) -> List[Bundle]:
+        """List all bundles in an infospace."""
+        return self.session.exec(
+            select(Bundle)
+            .where(Bundle.infospace_id == infospace_id)
+            .order_by(Bundle.name)
+        ).all()
+
     def update_bundle(
         self,
         *,

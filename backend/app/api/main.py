@@ -35,11 +35,12 @@ from app.api.v1 import (
     search,
 )
 
+
 api_router = APIRouter()
 
 # V1/ Main APIs - Using app.api.routes directly now for user-centric features
 api_router.include_router(admin.router, tags=["admin"])
-api_router.include_router(analysis.router, prefix="/analysis", tags=["Analysis Adapters"])
+api_router.include_router(analysis.router, tags=["Analysis Service"])
 api_router.include_router(annotation_runs.router, prefix="/annotation_jobs", tags=["annotation_jobs"])
 api_router.include_router(annotation_schemas.router, tags=["AnnotationSchemas"])
 api_router.include_router(annotations.router, prefix="/annotations", tags=["annotations"])

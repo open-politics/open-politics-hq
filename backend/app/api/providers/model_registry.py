@@ -2,7 +2,7 @@
 Model Registry Service for Language Model Provider Management
 """
 import logging
-from typing import Dict, List, Optional, Tuple, Union, AsyncIterator
+from typing import Dict, List, Optional, Tuple, Union, AsyncIterator, Callable, Awaitable, Any
 from dataclasses import dataclass
 
 from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationResponse
@@ -140,6 +140,7 @@ class ModelRegistryService:
                       tools: Optional[List[Dict]] = None,
                       stream: bool = False,
                       thinking_enabled: bool = False,
+                      tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Generate response using the appropriate provider for the model.
@@ -161,6 +162,7 @@ class ModelRegistryService:
                 tools=tools,
                 stream=stream,
                 thinking_enabled=thinking_enabled,
+                tool_executor=tool_executor,
                 **kwargs
             )
         except Exception as e:

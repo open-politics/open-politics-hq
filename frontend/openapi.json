@@ -32,10 +32,78 @@
         ]
       }
     },
-    "/api/v1/analysis/analysis/adapters": {
+    "/api/v1/infospaces/{infospace_id}/assets/{asset_id}/fragments": {
+      "post": {
+        "tags": [
+          "Analysis Service",
+          "Analysis Service"
+        ],
+        "summary": "Promote Fragment",
+        "description": "Promote a fragment of information to a permanent feature of an asset.\nThis creates an auditable annotation and adds the fragment to the asset's metadata.",
+        "operationId": "promote_fragment",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteFragmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnotationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/analysis/adapters": {
       "get": {
         "tags": [
-          "Analysis Adapters",
+          "Analysis Service",
           "Analysis Adapters"
         ],
         "summary": "List Analysis Adapters",
@@ -51,7 +119,7 @@
                     "$ref": "#/components/schemas/AnalysisAdapterRead"
                   },
                   "type": "array",
-                  "title": "Response Analysis Adapters-List Analysis Adapters"
+                  "title": "Response Analysis Service-List Analysis Adapters"
                 }
               }
             }
@@ -64,10 +132,10 @@
         ]
       }
     },
-    "/api/v1/analysis/analysis/{adapter_name}/execute": {
+    "/api/v1/analysis/adapters/{adapter_name}/execute": {
       "post": {
         "tags": [
-          "Analysis Adapters",
+          "Analysis Service",
           "Analysis Adapters"
         ],
         "summary": "Execute Analysis Adapter",
@@ -110,7 +178,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Analysis Adapters-Execute Analysis Adapter"
+                  "title": "Response Analysis Service-Execute Analysis Adapter"
                 }
               }
             }
@@ -4713,14 +4781,41 @@
           "Intelligence Chat"
         ],
         "summary": "List Universal Tools",
-        "description": "List universal intelligence analysis tool definitions.\n\nThese are the capabilities available to AI models. No authentication required\nas this only returns tool schemas, not data access.",
+        "description": "List universal intelligence analysis tool definitions.\n\nThese are the capabilities available to AI models.\nFastMCP automatically generates schemas from function signatures.",
         "operationId": "list_universal_tools",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Infospace Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -5864,6 +5959,31 @@
         ]
       }
     },
+    "/api/v1/embeddings/health": {
+      "get": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Check Embedding Provider Health",
+        "description": "Check the health of the embedding provider.",
+        "operationId": "check_embedding_provider_health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/embeddings/models/{model_id}/stats": {
       "get": {
         "tags": [
@@ -6042,6 +6162,69 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/EmbeddingProvider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/embeddings/test": {
+      "post": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Test Embedding Provider",
+        "description": "Test the embedding provider with a sample text.",
+        "operationId": "test_embedding_provider",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "test_text",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "This is a test sentence for embedding generation.",
+              "title": "Test Text"
+            }
+          },
+          {
+            "name": "model_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Name"
             }
           }
         ],
@@ -12672,6 +12855,87 @@
         }
       }
     },
+    "/api/v1/utils/geocode_location": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Geocode Location",
+        "operationId": "geocode_location",
+        "parameters": [
+          {
+            "name": "location",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/utils/get_country_data": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Get Country Data",
+        "operationId": "get_country_data",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "title": "Country"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/entities/{location}/articles": {
       "get": {
         "tags": [
@@ -14187,10 +14451,78 @@
         ]
       }
     },
-    "/api/v2/analysis/analysis/adapters": {
+    "/api/v2/infospaces/{infospace_id}/assets/{asset_id}/fragments": {
+      "post": {
+        "tags": [
+          "Analysis Service",
+          "Analysis Service"
+        ],
+        "summary": "Promote Fragment",
+        "description": "Promote a fragment of information to a permanent feature of an asset.\nThis creates an auditable annotation and adds the fragment to the asset's metadata.",
+        "operationId": "promote_fragment",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteFragmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnotationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/analysis/adapters": {
       "get": {
         "tags": [
-          "Analysis Adapters",
+          "Analysis Service",
           "Analysis Adapters"
         ],
         "summary": "List Analysis Adapters",
@@ -14206,7 +14538,7 @@
                     "$ref": "#/components/schemas/AnalysisAdapterRead"
                   },
                   "type": "array",
-                  "title": "Response Analysis Adapters-List Analysis Adapters"
+                  "title": "Response Analysis Service-List Analysis Adapters"
                 }
               }
             }
@@ -14219,10 +14551,10 @@
         ]
       }
     },
-    "/api/v2/analysis/analysis/{adapter_name}/execute": {
+    "/api/v2/analysis/adapters/{adapter_name}/execute": {
       "post": {
         "tags": [
-          "Analysis Adapters",
+          "Analysis Service",
           "Analysis Adapters"
         ],
         "summary": "Execute Analysis Adapter",
@@ -14265,7 +14597,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Analysis Adapters-Execute Analysis Adapter"
+                  "title": "Response Analysis Service-Execute Analysis Adapter"
                 }
               }
             }
@@ -18868,14 +19200,41 @@
           "Intelligence Chat"
         ],
         "summary": "List Universal Tools",
-        "description": "List universal intelligence analysis tool definitions.\n\nThese are the capabilities available to AI models. No authentication required\nas this only returns tool schemas, not data access.",
+        "description": "List universal intelligence analysis tool definitions.\n\nThese are the capabilities available to AI models.\nFastMCP automatically generates schemas from function signatures.",
         "operationId": "list_universal_tools",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Infospace Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -20019,6 +20378,31 @@
         ]
       }
     },
+    "/api/v2/embeddings/health": {
+      "get": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Check Embedding Provider Health",
+        "description": "Check the health of the embedding provider.",
+        "operationId": "check_embedding_provider_health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
     "/api/v2/embeddings/models/{model_id}/stats": {
       "get": {
         "tags": [
@@ -20197,6 +20581,69 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/EmbeddingProvider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/embeddings/test": {
+      "post": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Test Embedding Provider",
+        "description": "Test the embedding provider with a sample text.",
+        "operationId": "test_embedding_provider",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "test_text",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "This is a test sentence for embedding generation.",
+              "title": "Test Text"
+            }
+          },
+          {
+            "name": "model_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Name"
             }
           }
         ],
@@ -26827,6 +27274,87 @@
         }
       }
     },
+    "/api/v2/utils/geocode_location": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Geocode Location",
+        "operationId": "geocode_location",
+        "parameters": [
+          {
+            "name": "location",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/utils/get_country_data": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Get Country Data",
+        "operationId": "get_country_data",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "title": "Country"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v2/entities/{location}/articles": {
       "get": {
         "tags": [
@@ -33295,6 +33823,23 @@
         ],
         "title": "ProcessingStatus",
         "description": "Status for asset processing (creating child assets)."
+      },
+      "PromoteFragmentRequest": {
+        "properties": {
+          "fragment_key": {
+            "type": "string",
+            "title": "Fragment Key"
+          },
+          "fragment_value": {
+            "title": "Fragment Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fragment_key",
+          "fragment_value"
+        ],
+        "title": "PromoteFragmentRequest"
       },
       "ProviderInfo": {
         "properties": {

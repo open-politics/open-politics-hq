@@ -5,9 +5,10 @@ import logging
 import json
 import httpx
 import re
-from typing import Dict, List, Optional, AsyncIterator, Union, Any
+from typing import Dict, List, Optional, AsyncIterator, Union, Any, Callable, Awaitable
 
 from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationResponse
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,78 +27,37 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             },
-            timeout=60.0
+            timeout=300.0
         )
         self._model_cache = {}
         logger.info(f"OpenAI provider initialized with base_url: {self.base_url}")
     
     async def discover_models(self) -> List[ModelInfo]:
-        """OpenAI: GET /v1/models with enhanced capability detection"""
+        """OpenAI: GET /v1/models (kept minimal; single model assumed during testing)."""
         try:
             response = await self.client.get(f"{self.base_url}/models")
             response.raise_for_status()
             data = response.json()
-            
-            # Get enhanced model information from OpenAI's model capabilities
-            enhanced_capabilities = await self._get_enhanced_model_capabilities()
-            
-            models = []
+            models: List[ModelInfo] = []
             for model_data in data.get("data", []):
                 model_name = model_data["id"]
-                
-                # Only include models that support chat completions
-                if not self._is_chat_model(model_name):
-                    continue
-                
-                # Use enhanced capabilities if available, otherwise fall back to heuristics
-                caps = None
-                
-                # Try exact match first
-                if model_name in enhanced_capabilities:
-                    caps = enhanced_capabilities[model_name]
-                else:
-                    # Try pattern matching for model variations
-                    for pattern, pattern_caps in enhanced_capabilities.items():
-                        if model_name.startswith(pattern):
-                            caps = pattern_caps
-                            break
-                
-                if caps:
-                    supports_structured_output = caps.get("structured_output", self._supports_structured_output(model_name))
-                    supports_tools = caps.get("tools", self._supports_tools(model_name))
-                    supports_thinking = caps.get("thinking", self._supports_thinking(model_name))
-                    supports_multimodal = caps.get("multimodal", self._supports_multimodal(model_name))
-                    max_tokens = caps.get("max_tokens", self._get_max_tokens(model_name))
-                    context_length = caps.get("context_length", self._get_context_length(model_name))
-                    description = caps.get("description", f"OpenAI {model_name}")
-                else:
-                    # Fall back to heuristics
-                    supports_structured_output = self._supports_structured_output(model_name)
-                    supports_tools = self._supports_tools(model_name)
-                    supports_thinking = self._supports_thinking(model_name)
-                    supports_multimodal = self._supports_multimodal(model_name)
-                    max_tokens = self._get_max_tokens(model_name)
-                    context_length = self._get_context_length(model_name)
-                    description = f"OpenAI {model_name}"
-                
-                model_info = ModelInfo(
+                info = ModelInfo(
                     name=model_name,
                     provider="openai",
-                    supports_structured_output=supports_structured_output,
-                    supports_tools=supports_tools,
-                    supports_streaming=True,  # All OpenAI chat models support streaming
-                    supports_thinking=supports_thinking,
-                    supports_multimodal=supports_multimodal,
-                    max_tokens=max_tokens,
-                    context_length=context_length,
-                    description=description
+                    supports_structured_output=True,
+                    supports_tools=True,
+                    supports_streaming=True,
+                    supports_thinking=True,
+                    supports_multimodal=True,
+                    max_tokens=None,
+                    context_length=None,
+                    description=f"OpenAI {model_name}"
                 )
-                models.append(model_info)
-                self._model_cache[model_name] = model_info
-            
-            logger.info(f"Discovered {len(models)} OpenAI models with enhanced capability detection")
+                models.append(info)
+                self._model_cache[model_name] = info
+            logger.info(f"Discovered {len(models)} OpenAI models (capabilities assumed during testing)")
             return models
-            
+         
         except Exception as e:
             logger.error(f"Failed to discover OpenAI models: {e}")
             return []
@@ -109,209 +69,271 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                       tools: Optional[List[Dict]] = None,
                       stream: bool = False,
                       thinking_enabled: bool = False,
+                      tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         
-        # Route reasoning (o1/o3) models to the Responses API; others to Chat Completions
-        if self._use_responses_api(model_name):
+        if response_format:
+            logger.info(f"GENERATE_DEBUG: OpenAI generate called with response_format for model {model_name}")
+        
+        # ALWAYS use Responses API - it's the only API we want to use
+        # The Responses API is a superset of Chat Completions and handles everything better
             # Reasoning models do not support tools/function calling
             # They may support MCP tools via Responses API; include if provided
             # Remove params not supported by reasoning models
-            clean_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "top_p", "top_k", "max_tokens", "frequency_penalty", "presence_penalty"]}
+            # Only pass through a very small set of known-safe parameters to Responses API
+            clean_kwargs: Dict[str, Any] = {}
+            # Map max_tokens -> max_output_tokens if provided
+            if "max_tokens" in kwargs and isinstance(kwargs.get("max_tokens"), int):
+                clean_kwargs["max_output_tokens"] = kwargs.get("max_tokens")
+            if "temperature" in kwargs and isinstance(kwargs.get("temperature"), (int, float)):
+                clean_kwargs["temperature"] = kwargs.get("temperature")
+            
+            # DO NOT pass through any other kwargs to avoid unsupported parameters
+            # Explicitly filter out response_format since we handle it separately via text.format
+
+            # For Responses API, separate system instructions from input messages
+            system_instructions = None
+            input_messages = messages
+            if messages and messages[0].get("role") == "system":
+                system_instructions = messages[0].get("content")
+                input_messages = messages[1:]
+
+            # Allow direct override with already-formatted Responses input (e.g., tool loop)
+            responses_input_override: Optional[Union[str, List[Dict[str, Any]]]] = kwargs.pop("responses_input", None)
+
+            # Non-streaming with tools: implement tool loop
+            if not stream and tools and tool_executor:
+                return await self._tool_loop_generate(
+                    messages=messages,
+                    model_name=model_name,
+                    tools=tools,
+                    thinking_enabled=thinking_enabled,
+                    tool_executor=tool_executor,
+                    response_format=response_format,
+                    **kwargs
+                )
+            
+            # Always allow tools during testing
+            if tools:
+                # No capability heuristics, always pass tools
+                pass
+
             payload: Dict[str, Any] = {
                 "model": model_name,
-                # Use a robust plain-text input constructed from messages
-                "input": self._messages_to_input(messages),
+                "input": responses_input_override if responses_input_override is not None else self._messages_to_responses_input(system_instructions, input_messages),
                 "stream": stream,
+                # Keep the payload minimal; add only known-safe parameters
                 **clean_kwargs,
             }
+            
+            # Get context token from kwargs to build dynamic MCP server URL
+            mcp_context_token = kwargs.get("mcp_context_token")
+            mcp_headers = kwargs.get("mcp_headers")
 
-            # Structured outputs for Responses API
-            if response_format:
-                payload["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "response_schema",
-                        "schema": response_format,
-                        "strict": True,
-                    },
+            # Add reasoning if thinking is enabled - use correct format from docs
+            if thinking_enabled and payload.get("tools"):
+                # Per research, the flagship gpt-5 model requires the reasoning parameter
+                # to be present when tools are used.
+                payload["reasoning"] = {
+                    "effort": "medium"
                 }
 
-            # Pass only MCP tools through to Responses API
+            # Responses API: handle both MCP tools and function tools
             if tools:
-                mcp_tools = [t for t in tools if isinstance(t, dict) and t.get("type") == "mcp"]
-                if mcp_tools:
-                    payload["tools"] = mcp_tools
-
-            if stream:
-                return self._stream_generate_responses(payload)
-            else:
-                return await self._generate_responses(payload)
-
-        # Build Chat Completions payload for standard models
-        payload = {
-            "model": model_name,
-            "messages": messages,
-            "stream": stream,
-            **kwargs
-        }
-        
-        # OpenAI structured output format
-        if response_format:
-            payload["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "response_schema",
-                    "schema": response_format,
-                    "strict": True
+                responses_tools = self._prepare_tools_for_responses(tools, mcp_context_token, mcp_headers)
+                if responses_tools:
+                    payload["tools"] = responses_tools
+            
+            # Add structured output format if provided (Responses API uses text.format)
+            if response_format:
+                # Ensure we don't override existing text config, merge instead
+                if "text" not in payload:
+                    payload["text"] = {}
+                # Clean the schema to remove unsupported fields like 'default'
+                clean_schema = self._clean_json_schema_for_openai(response_format)
+                payload["text"]["format"] = {
+                    "type": "json_schema",
+                    "name": clean_schema.get("title", "StructuredOutput"),
+                    "schema": clean_schema
                 }
-            }
-        
-        # OpenAI tools format (exclude MCP entries)
-        if tools:
-            non_mcp_tools = [t for t in tools if not (isinstance(t, dict) and t.get("type") == "mcp")]
-            if non_mcp_tools:
-                payload["tools"] = self._normalize_tools(non_mcp_tools)
-                # Nudge the model to actually use tools
-                payload.setdefault("tool_choice", "auto")
-        
-        # OpenAI thinking mode (for o1/o3 models)
-        if thinking_enabled and self._supports_thinking(model_name):
-            # o1 models automatically include reasoning, but we can encourage it
-            if not any(msg["role"] == "system" for msg in messages):
-                messages.insert(0, {
-                    "role": "system", 
-                    "content": "Please show your step-by-step reasoning before providing your final answer."
-                })
-        
-        if stream:
-            return self._stream_generate(payload)
-        else:
-            return await self._generate(payload)
-    
-    async def _generate(self, payload: Dict) -> GenerationResponse:
-        """Handle non-streaming generation"""
-        try:
-            response = await self.client.post(f"{self.base_url}/chat/completions", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            
-            choice = data["choices"][0]
-            message = choice["message"]
-            
-            return GenerationResponse(
-                content=(message.get("content") or ""),
-                model_used=data.get("model", payload.get("model", "")),
-                usage=data.get("usage"),
-                tool_calls=message.get("tool_calls"),
-                thinking_trace=self._extract_thinking_trace(data),
-                finish_reason=choice.get("finish_reason"),
-                raw_response=data
-            )
-            
-        except httpx.HTTPStatusError as e:
-            text = e.response.text
-            logger.error(f"OpenAI API error: {e.response.status_code} - {text}")
-            # Fallback: some projects expect legacy 'functions' instead of 'tools'
-            if (
-                e.response.status_code == 400
-                and payload.get("tools")
-                and ("tools[0].name" in text or "tools[0].function.name" in text or "missing_required_parameter" in text)
-            ):
+                
+            # Try the request, but if it fails, try with simplified payload
+            try:
+                if stream:
+                    return self._stream_generate_responses(payload)
+                else:
+                    return await self._generate_responses(payload)
+            except Exception as e:
+                logger.warning(f"Full payload failed: {str(e)}. Trying simplified payload...")
+                logger.warning(f"Exception type: {type(e).__name__}")
+
+                # Create simplified payload without tools/thinking but keep structured output
+                simple_payload = {
+                    "model": model_name,
+                    "input": responses_input_override if responses_input_override is not None else self._messages_to_responses_input(system_instructions, input_messages),
+                    "stream": stream,
+                }
+                if system_instructions:
+                    simple_payload["instructions"] = system_instructions
+                
+                # Keep structured output format in simplified payload
+                if response_format:
+                    if "text" not in simple_payload:
+                        simple_payload["text"] = {}
+                    # Clean the schema to remove unsupported fields like 'default'
+                    clean_schema = self._clean_json_schema_for_openai(response_format)
+                    simple_payload["text"]["format"] = {
+                        "type": "json_schema",
+                        "name": clean_schema.get("title", "StructuredOutput"),
+                        "schema": clean_schema
+                    }
+
+                logger.info(f"Trying simplified payload: {json.dumps(simple_payload, indent=2)}")
                 try:
-                    legacy_payload = dict(payload)
-                    tools = legacy_payload.pop("tools", [])
-                    legacy_payload["functions"] = self._tools_to_legacy_functions(tools)
-                    # default to auto
-                    legacy_payload["function_call"] = "auto"
-                    response2 = await self.client.post(f"{self.base_url}/chat/completions", json=legacy_payload)
-                    response2.raise_for_status()
-                    data = response2.json()
-                    choice = data.get("choices", [{}])[0]
-                    message = choice.get("message", {}) if isinstance(choice, dict) else {}
-                    return GenerationResponse(
-                        content=(message.get("content") or ""),
-                        model_used=data.get("model", payload.get("model", "")),
-                        usage=data.get("usage"),
-                        tool_calls=message.get("tool_calls"),
-                        thinking_trace=self._extract_thinking_trace(data),
-                        finish_reason=choice.get("finish_reason"),
-                        raw_response=data,
-                    )
-                except Exception as e2:
-                    logger.error(f"Legacy functions fallback failed: {e2}")
-            raise RuntimeError(f"OpenAI generation failed: {text}")
-        except Exception as e:
-            logger.error(f"OpenAI generation error: {e}")
-            raise RuntimeError(f"OpenAI generation failed: {str(e)}")
+                    if stream:
+                        return self._stream_generate_responses(simple_payload)
+                    else:
+                        return await self._generate_responses(simple_payload)
+                except Exception as simple_e:
+                    logger.error(f"Even simplified payload failed: {str(simple_e)}")
+                    logger.error(f"This suggests the Responses API endpoint is not available for this account")
+                    raise simple_e
     
-    async def _stream_generate(self, payload: Dict) -> AsyncIterator[GenerationResponse]:
-        """Handle streaming generation"""
-        try:
-            async with self.client.stream("POST", f"{self.base_url}/chat/completions", json=payload) as response:
-                response.raise_for_status()
+    async def _tool_loop_generate(self,
+                                 messages: List[Dict[str, str]],
+                                 model_name: str,
+                                 tools: List[Dict],
+                                 thinking_enabled: bool,
+                                 tool_executor: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
+                                 response_format: Optional[Dict] = None,
+                                 **kwargs) -> GenerationResponse:
+        """Handle non-streaming generation with a tool execution loop."""
+        
+        system_instructions = None
+        input_messages = list(messages)  # Work with a copy
+        if input_messages and input_messages[0].get("role") == "system":
+            system_instructions = input_messages.pop(0).get("content")
+
+        # Initialize the conversation history correctly, once.
+        conversation_history = self._messages_to_responses_input(system_instructions, input_messages)
+        
+        # Limit tool loop iterations to prevent infinite loops
+        for _ in range(5): 
+            # First, generate a response from the model
+            generation_payload = {
+                "model": model_name,
+                "input": conversation_history,
+                "stream": False,
+                "tools": self._normalize_tools_for_responses(tools),
+                "reasoning": {"effort": "medium"} if thinking_enabled else None
+            }
+            
+            # Add structured output format if provided
+            if response_format:
+                if "text" not in generation_payload:
+                    generation_payload["text"] = {}
+                # Clean the schema to remove unsupported fields like 'default'
+                clean_schema = self._clean_json_schema_for_openai(response_format)
+                generation_payload["text"]["format"] = {
+                    "type": "json_schema",
+                    "name": clean_schema.get("title", "StructuredOutput"),
+                    "schema": clean_schema
+                }
+            
+            # Clean up None values
+            generation_payload = {k: v for k, v in generation_payload.items() if v is not None}
+
+            resp_obj = await self._generate_responses(generation_payload)
+            
+            # Append model's output to the conversation history
+            if resp_obj.raw_response and resp_obj.raw_response.get("output"):
+                conversation_history.extend(resp_obj.raw_response.get("output", []))
+
+            # Check for tool calls
+            tool_calls = resp_obj.tool_calls
+            if not tool_calls:
+                return resp_obj
+
+            # Execute tool calls
+            for tool_call in tool_calls:
+                function_info = tool_call.get("function", {})
+                tool_name = function_info.get("name")
                 
-                accumulated_content = ""
-                accumulated_tool_calls = []
-                thinking_trace = ""
-                model_used = payload["model"]
-                
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        chunk_data = line[6:]
-                        if chunk_data.strip() == "[DONE]":
-                            break
-                        
-                        try:
-                            chunk = json.loads(chunk_data)
-                            choice = chunk["choices"][0]
-                            delta = choice.get("delta", {})
-                            
-                            # Handle content
-                            if "content" in delta and delta["content"]:
-                                content_delta = delta["content"]
-                                accumulated_content += content_delta
-                                
-                                # Check if this is thinking content for reasoning models
-                                if self._is_thinking_content(content_delta, model_used):
-                                    thinking_trace += content_delta
-                            
-                            # Handle tool calls (complex in streaming)
-                            if "tool_calls" in delta:
-                                self._accumulate_tool_calls(accumulated_tool_calls, delta["tool_calls"])
-                            
-                            yield GenerationResponse(
-                                content=accumulated_content,
-                                model_used=model_used,
-                                tool_calls=accumulated_tool_calls if accumulated_tool_calls else None,
-                                thinking_trace=thinking_trace if thinking_trace else None,
-                                finish_reason=choice.get("finish_reason"),
-                                raw_response=chunk
-                            )
-                            
-                        except json.JSONDecodeError:
-                            continue
-                            
-        except httpx.HTTPStatusError as e:
-            logger.error(f"OpenAI streaming error: {e.response.status_code} - {e.response.text}")
-            raise RuntimeError(f"OpenAI streaming failed: {e.response.text}")
-        except Exception as e:
-            logger.error(f"OpenAI streaming error: {e}")
-            raise RuntimeError(f"OpenAI streaming failed: {str(e)}")
+                try:
+                    args_str = function_info.get("arguments", "{}")
+                    arguments = json.loads(args_str)
+                except json.JSONDecodeError:
+                    arguments = {}
+
+                if tool_name:
+                    try:
+                        tool_result = await tool_executor(tool_name, arguments)
+                        conversation_history.append({
+                            "type": "function_call_output",
+                            "call_id": tool_call.get("id"),
+                            "output": json.dumps(tool_result)
+                        })
+                    except Exception as e:
+                        error_result = {"error": f"Tool execution failed: {str(e)}"}
+                        conversation_history.append({
+                            "type": "function_call_output",
+                            "call_id": tool_call.get("id"),
+                            "output": json.dumps(error_result)
+                        })
+
+        # If loop finishes, we need to make one final call to get the model's response
+        final_payload = {
+            "model": model_name,
+            "input": conversation_history,
+            "stream": False,
+            "reasoning": {"effort": "medium"} if thinking_enabled else None
+        }
+        return await self._generate_responses({k: v for k, v in final_payload.items() if v is not None})
+
+    # Removed legacy /chat/completions code paths; always use /responses
 
     async def _generate_responses(self, payload: Dict) -> GenerationResponse:
         """Handle non-streaming generation via the Responses API (o1/o3)."""
         try:
+            logger.info(f"OpenAI Responses API payload: {json.dumps(payload, indent=2)}")
+            logger.info(f"Making request to: {self.base_url}/responses")
             response = await self.client.post(f"{self.base_url}/responses", json=payload)
             response.raise_for_status()
             data = response.json()
+            
+            # DEBUG: Log the full response to understand the structure
+            logger.info(f"DEBUG: Full OpenAI response data: {json.dumps(data, indent=2)}")
 
-            # The Responses API typically returns output_text and model
-            content = (
-                data.get("output_text")
-                or data.get("content")
-                or data.get("response", {}).get("output_text")
-                or ""
-            )
+            # The Responses API returns content in output[].content[].text
+            content = ""
+            
+            # Extract content from the nested structure
+            output_items = data.get("output", [])
+            for item in output_items:
+                if item.get("type") == "message":
+                    content_blocks = item.get("content", [])
+                    for block in content_blocks:
+                        if block.get("type") == "output_text":
+                            content = block.get("text", "")
+                            break
+                    if content:
+                        break
+            
+            # Fallback to other possible locations
+            if not content:
+                content = (
+                    data.get("output_text")
+                    or data.get("content")
+                    or data.get("response", {}).get("output_text")
+                    or ""
+                )
+            
+            # DEBUG: Log what content we extracted
+            logger.info(f"DEBUG: Extracted content: {repr(content[:200])}")
+            logger.info(f"DEBUG: Content length: {len(content) if content else 0}")
+
+            # Extract function tool calls if present
+            tool_calls = self._extract_function_tool_calls_from_responses(data)
 
             return GenerationResponse(
                 content=content,
@@ -319,11 +341,24 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                 usage=data.get("usage"),
                 thinking_trace=self._extract_thinking_trace_responses(data),
                 finish_reason=data.get("finish_reason"),
+                tool_calls=tool_calls,
                 raw_response=data,
             )
         except httpx.HTTPStatusError as e:
-            logger.error(f"OpenAI Responses API error: {e.response.status_code} - {e.response.text}")
-            raise RuntimeError(f"OpenAI generation failed: {e.response.text}")
+            try:
+                error_detail = e.response.text
+                logger.error(f"OpenAI Responses API error: {e.response.status_code}")
+                logger.error(f"Error response: {error_detail}")
+                # Try to parse as JSON to get detailed error
+                try:
+                    error_json = json.loads(error_detail)
+                    logger.error(f"OpenAI detailed error: {json.dumps(error_json, indent=2)}")
+                except:
+                    pass
+                logger.error(f"Failed payload was: {json.dumps(payload, indent=2)}")
+            except Exception:
+                logger.error(f"OpenAI Responses API error: {e.response.status_code} - {str(e)}")
+            raise RuntimeError(f"OpenAI generation failed: {e.response.text if hasattr(e.response, 'text') else str(e)}")
         except Exception as e:
             logger.error(f"OpenAI Responses generation error: {e}")
             raise RuntimeError(f"OpenAI generation failed: {str(e)}")
@@ -331,6 +366,8 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
     async def _stream_generate_responses(self, payload: Dict) -> AsyncIterator[GenerationResponse]:
         """Handle streaming via the Responses API (o1/o3)."""
         try:
+            logger.info(f"OpenAI Responses API streaming payload: {json.dumps(payload, indent=2)}")
+            logger.info(f"Making request to: {self.base_url}/responses")
             async with self.client.stream("POST", f"{self.base_url}/responses", json=payload) as response:
                 response.raise_for_status()
 
@@ -338,6 +375,8 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                 model_used = payload["model"]
                 thinking_trace = ""
                 tool_events: List[Dict[str, Any]] = []
+                # Accumulate function tool calls as they stream
+                function_calls: Dict[str, Dict[str, Any]] = {}
 
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
@@ -347,105 +386,183 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                         break
                     try:
                         event = json.loads(chunk_data)
-                        # Responses API emits delta events like response.output_text.delta
-                        if event.get("type", "").endswith("output_text.delta"):
-                            delta = event.get("delta", "") or event.get("item", {}).get("delta", "")
+                        event_type = event.get("type", "")
+                        
+                        # Handle text content deltas
+                        if event_type == "response.output_text.delta":
+                            delta = event.get("delta", "")
                             if delta:
                                 accumulated_content += delta
-                        # Capture any reasoning/trace fields if available
-                        if (event.get("type", "").startswith("response.") and
-                            "reasoning" in event):
-                            thinking_trace += event.get("reasoning", "")
+                        
+                        # Handle reasoning/thinking traces
+                        elif event_type in (
+                            "response.reasoning_summary_text.delta", 
+                            "response.reasoning_text.delta"
+                        ):
+                            delta = event.get("delta", "")
+                            if delta:
+                                thinking_trace += delta
 
-                        # Capture MCP tool events
-                        et = event.get("type", "")
-                        if et in (
+                        # Handle function tool call lifecycle
+                        elif event_type == "response.output_item.added":
+                            item = event.get("item", {})
+                            if item.get("type") == "function_call":
+                                item_id = item.get("id") or event.get("item_id")
+                                name = item.get("name")
+                                call_id = item.get("call_id")
+                                if item_id and name:
+                                    function_calls[item_id] = {
+                                        "id": item_id,
+                                        "call_id": call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": name,
+                                            "arguments": "",
+                                        },
+                                    }
+                        elif event_type == "response.function_call_arguments.delta":
+                            item_id = event.get("item_id")
+                            delta = event.get("delta", "")
+                            if item_id and item_id in function_calls and isinstance(delta, str):
+                                function_calls[item_id]["function"]["arguments"] += delta
+                        elif event_type == "response.function_call_arguments.done":
+                            item = event.get("item", {})
+                            item_id = item.get("id") or event.get("item_id")
+                            args_full = item.get("arguments") or event.get("arguments")
+                            if item_id and item_id in function_calls and isinstance(args_full, str):
+                                function_calls[item_id]["function"]["arguments"] = args_full
+
+                        # Handle MCP tool events (for completeness)
+                        elif event_type in (
                             "response.mcp_call_arguments.delta",
                             "response.mcp_call_arguments.done",
                             "response.mcp_call.in_progress",
                             "response.mcp_call.completed",
                             "response.mcp_call.failed",
-                            "mcp_list_tools.in_progress",
-                            "mcp_list_tools.completed",
-                            "mcp_list_tools.failed",
                         ):
                             tool_events.append(event)
 
+                        # Always yield the current state for streaming
+                        current_tool_calls = None
+                        if function_calls:
+                            current_tool_calls = list(function_calls.values())
+                        elif tool_events:
+                            current_tool_calls = self._mcp_events_to_tool_calls(tool_events)
+                            
                         yield GenerationResponse(
                             content=accumulated_content,
                             model_used=model_used,
                             thinking_trace=thinking_trace or None,
-                            tool_calls=self._mcp_events_to_tool_calls(tool_events) if tool_events else None,
+                            tool_calls=current_tool_calls,
                             raw_response=event,
                         )
                     except json.JSONDecodeError:
                         continue
         except httpx.HTTPStatusError as e:
-            logger.error(f"OpenAI Responses streaming error: {e.response.status_code} - {e.response.text}")
-            raise RuntimeError(f"OpenAI streaming failed: {e.response.text}")
+            # Attempt one retry without reasoning if 400 likely due to reasoning
+            error_text = None
+            try:
+                error_bytes = await e.response.aread()
+                try:
+                    error_text = (
+                        error_bytes.decode("utf-8", errors="replace")
+                        if isinstance(error_bytes, (bytes, bytearray))
+                        else str(error_bytes)
+                    )
+                except Exception:
+                    error_text = str(error_bytes)
+            except Exception:
+                error_text = str(e)
+
+            logger.error(f"OpenAI Responses streaming error: {e.response.status_code} - {error_text}")
+            logger.error(f"Request headers: {dict(self.client.headers)}")
+            logger.error(f"Failed payload was: {json.dumps(payload, indent=2)}")
+
+            should_retry_without_reasoning = False
+            try:
+                err_json = json.loads(error_text) if error_text else None
+                err_param = ((err_json or {}).get("error") or {}).get("param")
+                if e.response.status_code == 400 and (err_param == "reasoning" or err_param == "reasoning.summary" or (error_text and "reasoning" in error_text)):
+                    should_retry_without_reasoning = True
+            except Exception:
+                if e.response.status_code == 400 and error_text and "reasoning" in error_text:
+                    should_retry_without_reasoning = True
+
+            if should_retry_without_reasoning and "reasoning" in payload:
+                retry_payload = dict(payload)
+                retry_payload.pop("reasoning", None)
+                logger.info("Retrying Responses streaming without reasoning due to 400 error")
+                async with self.client.stream("POST", f"{self.base_url}/responses", json=retry_payload) as response:
+                    response.raise_for_status()
+                    accumulated_content = ""
+                    model_used = retry_payload["model"]
+                    thinking_trace = ""
+                    tool_events: List[Dict[str, Any]] = []
+                    function_calls: Dict[str, Dict[str, Any]] = {}
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        chunk_data = line[6:]
+                        if chunk_data.strip() == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(chunk_data)
+                            event_type = event.get("type", "")
+                            if event_type == "response.output_text.delta":
+                                delta = event.get("delta", "")
+                                if delta:
+                                    accumulated_content += delta
+                            elif event_type in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+                                delta = event.get("delta", "")
+                                if delta:
+                                    thinking_trace += delta
+                            elif event_type == "response.output_item.added":
+                                item = event.get("item", {})
+                                if item.get("type") == "function_call":
+                                    item_id = item.get("id") or event.get("item_id")
+                                    name = item.get("name")
+                                    call_id = item.get("call_id")
+                                    if item_id and name:
+                                        function_calls[item_id] = {
+                                            "id": item_id,
+                                            "call_id": call_id,
+                                            "type": "function",
+                                            "function": {"name": name, "arguments": ""},
+                                        }
+                            elif event_type == "response.function_call_arguments.delta":
+                                item_id = event.get("item_id")
+                                delta = event.get("delta", "")
+                                if item_id and item_id in function_calls and isinstance(delta, str):
+                                    function_calls[item_id]["function"]["arguments"] += delta
+                            elif event_type == "response.function_call_arguments.done":
+                                item = event.get("item", {})
+                                item_id = item.get("id") or event.get("item_id")
+                                args_full = item.get("arguments") or event.get("arguments")
+                                if item_id and item_id in function_calls and isinstance(args_full, str):
+                                    function_calls[item_id]["function"]["arguments"] = args_full
+                            elif event_type in ("response.mcp_call_arguments.delta", "response.mcp_call_arguments.done", "response.mcp_call.in_progress", "response.mcp_call.completed", "response.mcp_call.failed"):
+                                tool_events.append(event)
+                            current_tool_calls = None
+                            if function_calls:
+                                current_tool_calls = list(function_calls.values())
+                            elif tool_events:
+                                current_tool_calls = self._mcp_events_to_tool_calls(tool_events)
+                            yield GenerationResponse(
+                                content=accumulated_content,
+                                model_used=model_used,
+                                thinking_trace=thinking_trace or None,
+                                tool_calls=current_tool_calls,
+                                raw_response=event,
+                            )
+                        except json.JSONDecodeError:
+                            continue
+                return
+
+            raise RuntimeError(f"OpenAI streaming failed: {error_text}")
         except Exception as e:
             logger.error(f"OpenAI Responses streaming error: {e}")
             raise RuntimeError(f"OpenAI streaming failed: {str(e)}")
     
-    def _extract_thinking_trace(self, response: Dict) -> Optional[str]:
-        """OpenAI: Extract thinking traces from o1/o3 models"""
-        try:
-            choice = response.get("choices", [{}])[0]
-            message = choice.get("message", {}) if isinstance(choice, dict) else {}
-            content = message.get("content", "") or ""
-            model_used = response.get("model") or ""
-            
-            # For o1/o3 models, thinking is often embedded in the content
-            if model_used and self._is_reasoning_model(model_used):
-                # Simple heuristic: separate reasoning from final answer
-                reasoning_indicators = [
-                    "Let me think", "I need to consider", "First, let me", "To solve this",
-                    "Let me work through", "I'll approach this", "Breaking this down"
-                ]
-                
-                if any(isinstance(content, str) and content.startswith(indicator) for indicator in reasoning_indicators):
-                    # Try to separate reasoning from final answer
-                    lines = content.split('\n') if isinstance(content, str) else []
-                    reasoning_lines = []
-                    answer_lines = []
-                    in_answer = False
-                    
-                    for line in lines:
-                        if any(isinstance(line, str) and line.startswith(marker) for marker in ["Therefore", "So the answer", "Final answer", "In conclusion"]):
-                            in_answer = True
-                        
-                        if in_answer:
-                            answer_lines.append(line)
-                        else:
-                            reasoning_lines.append(line)
-                    
-                    if reasoning_lines and len(reasoning_lines) > 1:  # Only if substantial reasoning
-                        return '\n'.join(reasoning_lines).strip()
-        except Exception:
-            return None
-        
-        return None
-
-    def _normalize_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Normalize universal tool specs to OpenAI function-calling shape.
-
-        Accepts either already-OpenAI-shaped tools ({type:function, function:{name,...}})
-        or bare function dicts ({name, description, parameters}).
-        """
-        normalized: List[Dict[str, Any]] = []
-        for tool in tools:
-            try:
-                if isinstance(tool, dict) and tool.get("type") == "function" and isinstance(tool.get("function"), dict) and tool["function"].get("name"):
-                    normalized.append(tool)
-                elif isinstance(tool, dict) and tool.get("name") and tool.get("parameters"):
-                    normalized.append({"type": "function", "function": tool})
-                else:
-                    logger.warning(f"Skipping invalid tool definition: {tool}")
-            except Exception:
-                logger.warning("Skipping invalid tool definition encountered during normalization")
-                continue
-        return normalized
-
     def _mcp_events_to_tool_calls(self, events: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
         """Convert MCP tool streaming events into a compact tool_calls list."""
         calls: Dict[str, Dict[str, Any]] = {}
@@ -455,268 +572,257 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             if not item_id:
                 # list tools events have no item_id; skip for tool_calls
                 continue
-            call = calls.setdefault(item_id, {"id": item_id, "type": "function", "function": {"name": "mcp_tool", "arguments": ""}})
+            call = calls.setdefault(item_id, {"id": item_id, "type": "function", "function": {"name": "", "arguments": ""}})
+            
+            # Extract tool name from events that provide it
+            if et in ("response.mcp_call.in_progress", "response.mcp_call.completed", "response.mcp_call.failed"):
+                item = e.get("item", {})
+                if item.get("name"):
+                    call["function"]["name"] = item["name"]
+    
             if et == "response.mcp_call_arguments.delta":
                 # Append delta to arguments string
                 delta = e.get("delta", "")
-                call["function"]["arguments"] += delta
+                if isinstance(delta, str):
+                    call["function"]["arguments"] += delta
             elif et == "response.mcp_call_arguments.done":
                 args = e.get("arguments", "")
                 call["function"]["arguments"] = args
-        return list(calls.values()) if calls else None
+        
+        # Filter out calls where a name was never found
+        named_calls = [c for c in calls.values() if c.get("function", {}).get("name")]
+        return named_calls if named_calls else None
 
-    def _tools_to_legacy_functions(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert 'tools' (function type) into legacy 'functions' array."""
-        legacy: List[Dict[str, Any]] = []
-        for t in tools:
+    def _clean_json_schema_for_openai(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recursively remove unsupported fields from a JSON schema for OpenAI compatibility.
+        OpenAI's structured output API has strict requirements:
+        1. Remove 'default' fields (not supported)
+        2. Add 'additionalProperties: false' for ALL objects (including nested ones in anyOf/oneOf/allOf)
+        3. Ensure 'required' array includes ALL property keys (OpenAI requirement)
+        """
+        if not isinstance(schema, dict):
+            return schema
+        
+        # Create a clean copy, removing 'default' at the current level
+        clean_schema = {k: v for k, v in schema.items() if k != 'default'}
+        
+        # Add additionalProperties: false for object types (required by OpenAI structured output)
+        # OpenAI requires this on ALL objects, regardless of how they're defined
+        should_add_additional_properties = (
+            # Has properties (most common case)
+            'properties' in clean_schema or
+            # Explicitly typed as object
+            clean_schema.get('type') == 'object' or
+            # Has object-like characteristics
+            any(key in clean_schema for key in ['required', 'patternProperties', 'propertyNames']) or
+            # No type specified but looks like an object schema
+            (not clean_schema.get('type') and any(key in clean_schema for key in ['properties', 'required']))
+        )
+        
+        if should_add_additional_properties:
+            # ALWAYS set to False, even if it already exists with a different value
+            clean_schema['additionalProperties'] = False
+            logger.info(f"SCHEMA_DEBUG: Set additionalProperties=false to schema (type={clean_schema.get('type')}, has_properties={bool(clean_schema.get('properties'))})")
+        
+        # For objects with properties, ensure ALL properties are in the required array
+        if 'properties' in clean_schema and isinstance(clean_schema['properties'], dict):
+            # Get all property names
+            all_property_names = list(clean_schema['properties'].keys())
+            
+            # OpenAI structured output requires ALL properties to be in required array
+            clean_schema['required'] = all_property_names
+            logger.info(f"SCHEMA_DEBUG: Set required array to all properties: {all_property_names}")
+            
+            # Recursively clean nested properties
+            clean_schema['properties'] = {
+                prop_name: self._clean_json_schema_for_openai(prop_def)
+                for prop_name, prop_def in clean_schema['properties'].items()
+            }
+            
+        # Handle array items
+        if 'items' in clean_schema and isinstance(clean_schema['items'], dict):
+            clean_schema['items'] = self._clean_json_schema_for_openai(clean_schema['items'])
+        
+        # Handle anyOf, oneOf, allOf (union types) - these can contain nested objects
+        for union_key in ['anyOf', 'oneOf', 'allOf']:
+            if union_key in clean_schema and isinstance(clean_schema[union_key], list):
+                logger.info(f"SCHEMA_DEBUG: Processing {union_key} with {len(clean_schema[union_key])} items")
+                cleaned_items = []
+                for i, union_item in enumerate(clean_schema[union_key]):
+                    logger.info(f"SCHEMA_DEBUG: Processing {union_key}[{i}]: type={union_item.get('type')}, has_properties={bool(union_item.get('properties'))}")
+                    cleaned_item = self._clean_json_schema_for_openai(union_item)
+                    logger.info(f"SCHEMA_DEBUG: After cleaning {union_key}[{i}]: additionalProperties={cleaned_item.get('additionalProperties')}")
+                    cleaned_items.append(cleaned_item)
+                clean_schema[union_key] = cleaned_items
+        
+        # Handle conditional schemas (if/then/else)
+        for conditional_key in ['if', 'then', 'else']:
+            if conditional_key in clean_schema and isinstance(clean_schema[conditional_key], dict):
+                clean_schema[conditional_key] = self._clean_json_schema_for_openai(clean_schema[conditional_key])
+        
+        # Handle not schema
+        if 'not' in clean_schema and isinstance(clean_schema['not'], dict):
+            clean_schema['not'] = self._clean_json_schema_for_openai(clean_schema['not'])
+            
+        # Handle $defs (definitions) section
+        if '$defs' in clean_schema and isinstance(clean_schema['$defs'], dict):
+            clean_schema['$defs'] = {
+                def_name: self._clean_json_schema_for_openai(def_value)
+                for def_name, def_value in clean_schema['$defs'].items()
+            }
+            
+        return clean_schema
+
+    def _prepare_tools_for_responses(self, tools: List[Dict[str, Any]], mcp_context_token: Optional[str] = None, mcp_headers: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        """Prepare tools for the OpenAI Responses API.
+        
+        OpenAI now has native MCP support, so we can pass MCP tools directly.
+        We also handle traditional function tools for backward compatibility.
+        """
+        responses_tools: List[Dict[str, Any]] = []
+        
+        # Check if we have our intelligence MCP tools
+        has_mcp_tools = any(tool.get("type") == "mcp" for tool in tools)
+        
+        if has_mcp_tools:
+            if not mcp_context_token and not mcp_headers:
+                logger.warning("MCP tools are present, but no mcp_context_token or mcp_headers were provided. MCP server may lack context or fail auth.")
+            
+            # For our intelligence analysis tools, create a single MCP server entry
+            # Get the MCP server URL from environment or use default
+            import os 
+            mcp_server_url = f"https://9daa487da4a9.ngrok-free.app/tools/mcp"
+            
+            mcp_server_tool = {
+                "type": "mcp",
+                "server_label": "intelligence_analysis",
+                "server_url": mcp_server_url,
+                "allowed_tools": [tool.get("name") for tool in tools if tool.get("type") == "mcp"],
+                "require_approval": "never"
+            }
+
+            if mcp_headers:
+                mcp_server_tool["headers"] = mcp_headers
+
+            responses_tools.append(mcp_server_tool)
+            logger.info(f"OpenAI Responses: Created MCP server tool with {len(mcp_server_tool['allowed_tools'])} allowed tools at {mcp_server_url}")
+        
+        # Handle traditional function tools
+        for tool in tools:
             try:
-                if isinstance(t, dict) and t.get("type") == "function" and isinstance(t.get("function"), dict):
-                    func = t["function"]
-                    # Keep only fields expected in legacy function spec
-                    legacy.append({
+                if isinstance(tool, dict) and tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+                    # Flatten the nested structure for the Responses API
+                    func = tool["function"]
+                    parameters = func.get("parameters")
+                    flattened_tool = {
+                        "type": "function",
                         "name": func.get("name"),
                         "description": func.get("description"),
-                        "parameters": func.get("parameters"),
+                        "parameters": self._clean_json_schema_for_openai(parameters) if parameters else None,
+                    }
+                    if flattened_tool.get("name"):
+                        responses_tools.append(flattened_tool)
+                elif isinstance(tool, dict) and tool.get("name") and tool.get("parameters") and tool.get("type") != "mcp":
+                    # This is already a bare/flattened function dict, but ensure type is set
+                    parameters = tool.get("parameters")
+                    responses_tools.append({
+                        "type": "function",
+                        "name": tool.get("name"),
+                        "description": tool.get("description"),
+                        "parameters": self._clean_json_schema_for_openai(parameters) if parameters else None,
                     })
-            except Exception:
+                elif tool.get("type") == "mcp":
+                    # Skip individual MCP tools as they're handled above
+                    continue
+                else:
+                    logger.warning(f"Skipping invalid Responses tool definition: {tool}")
+            except Exception as e:
+                logger.warning(f"Skipping invalid Responses tool encountered during normalization: {e}")
                 continue
-        return legacy
-    
-    def _accumulate_tool_calls(self, accumulated: List[Dict], new_calls: List[Dict]):
-        """Handle streaming tool call accumulation (OpenAI specific)"""
-        for new_call in new_calls:
-            call_index = new_call.get("index", 0)
-            
-            # Ensure we have enough slots
-            while len(accumulated) <= call_index:
-                accumulated.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
-            
-            # Accumulate the call data
-            if "id" in new_call:
-                accumulated[call_index]["id"] = new_call["id"]
-            
-            if "function" in new_call:
-                func = new_call["function"]
-                if "name" in func:
-                    accumulated[call_index]["function"]["name"] += func["name"]
-                if "arguments" in func:
-                    accumulated[call_index]["function"]["arguments"] += func["arguments"]
-    
-    def _is_thinking_content(self, content: str, model_name: str) -> bool:
-        """Check if content appears to be thinking/reasoning"""
-        if not self._is_reasoning_model(model_name):
-            return False
         
-        thinking_patterns = [
-            "Let me think", "I need to", "First,", "To solve", "Breaking this down",
-            "Let me work through", "I'll approach", "Considering"
-        ]
-        return any(pattern in content for pattern in thinking_patterns)
-    
-    def get_model_info(self, model_name: str) -> Optional[ModelInfo]:
-        """Get cached model info"""
-        return self._model_cache.get(model_name)
-    
-    # Helper methods for capability detection
-    def _is_chat_model(self, model_name: str) -> bool:
-        """Check if model supports chat completions based on OpenAI API response"""
-        # Only exclude models that are clearly not for chat completions
-        non_chat_models = [
-            "text-embedding", "whisper", "dall-e", "tts"
-        ]
-        
-        # If it's returned by the /models endpoint and isn't clearly a non-chat model,
-        # assume it supports chat completions. Let the API tell us if we're wrong.
-        is_non_chat = any(non_chat in model_name for non_chat in non_chat_models)
-        
-        return not is_non_chat
-    
-    def _supports_thinking(self, model_name: Optional[str]) -> bool:
-        """OpenAI reasoning models (o1, o3, future gpt-5)"""
-        if not model_name:
-            return False
-        return model_name.startswith(("o1-", "o3-", "gpt-5"))
-    
-    def _is_reasoning_model(self, model_name: str) -> bool:
-        """Same as supports_thinking for OpenAI"""
-        return self._supports_thinking(model_name)
-    
-    def _supports_structured_output(self, model_name: Optional[str]) -> bool:
-        """Most OpenAI chat models support structured output"""
-        if not model_name:
-            return False
-        return model_name.startswith(("gpt-4", "gpt-3.5", "gpt-4o", "gpt-4.1", "o1-", "o3-"))
-    
-    def _supports_tools(self, model_name: Optional[str]) -> bool:
-        """OpenAI models that support function calling"""
-        if not model_name:
-            return False
-        # o1/o3 models currently don't support function calling
-        return (
-            (model_name.startswith(("gpt-4", "gpt-3.5", "gpt-4o", "gpt-4.1")))
-            and not model_name.startswith(("o1-", "o3-"))
-        )
-    
-    def _supports_multimodal(self, model_name: Optional[str]) -> bool:
-        """OpenAI models with vision capabilities"""
-        if not model_name:
-            return False
-        return (
-            "vision" in model_name
-            or model_name.startswith("gpt-4o")
-            or model_name.startswith("gpt-4.1")
-        )
-    
-    def _get_max_tokens(self, model_name: Optional[str]) -> Optional[int]:
-        """Get max tokens for model (rough estimates)"""
-        if not model_name:
-            return None
-        if model_name.startswith("gpt-4"):
-            return 4096 if "gpt-4o" not in model_name else 16384
-        elif model_name.startswith("gpt-3.5"):
-            return 4096
-        elif model_name.startswith(("o1-", "o3-")):
-            return 65536  # Higher for reasoning models
-        elif model_name.startswith(("gpt-4.1")):
-            return 16384
-        return None
-    
-    def _get_context_length(self, model_name: Optional[str]) -> Optional[int]:
-        """Get context length for model (rough estimates)"""
-        if not model_name:
-            return None
-        if model_name.startswith("gpt-4"):
-            return 128000 if "gpt-4o" in model_name else 32000
-        elif model_name.startswith("gpt-3.5"):
-            return 16385
-        elif model_name.startswith(("o1-", "o3-")):
-            return 128000
-        elif model_name.startswith("gpt-4.1"):
-            return 128000
-        return None
-    
-    async def _get_enhanced_model_capabilities(self) -> Dict[str, Dict[str, Any]]:
-        """Get enhanced model capabilities with up-to-date information"""
-        # OpenAI model capabilities database - patterns for flexibility
-        capabilities_db = {
-            # GPT-5 family (latest generation)
-            "gpt-5": {
-                "structured_output": True,
-                "tools": True,
-                "thinking": True,
-                "multimodal": True,
-                "max_tokens": 32768,
-                "context_length": 200000,
-                "description": "OpenAI GPT-5 - Latest generation model with advanced capabilities"
-            },
-            # GPT-4 family
-            "gpt-4o": {
-                "structured_output": True,
-                "tools": True,
-                "thinking": False,
-                "multimodal": True,
-                "max_tokens": 16384,
-                "context_length": 128000,
-                "description": "OpenAI GPT-4o - Multimodal with vision capabilities"
-            },
-            "gpt-4o-mini": {
-                "structured_output": True,
-                "tools": True,
-                "thinking": False,
-                "multimodal": True,
-                "max_tokens": 16384,
-                "context_length": 128000,
-                "description": "OpenAI GPT-4o-mini - Efficient multimodal model"
-            },
-            "gpt-4.1": {
-                "structured_output": True,
-                "tools": True,
-                "thinking": False,
-                "multimodal": True,
-                "max_tokens": 16384,
-                "context_length": 128000,
-                "description": "OpenAI GPT-4.1 - Advanced multimodal model"
-            },
-            "gpt-4": {
-                "structured_output": True,
-                "tools": True,
-                "thinking": False,
-                "multimodal": False,
-                "max_tokens": 4096,
-                "context_length": 32000,
-                "description": "OpenAI GPT-4 - Advanced reasoning and analysis"
-            },
-            # GPT-3.5 family
-            "gpt-3.5": {
-                "structured_output": True,
-                "tools": True,
-                "thinking": False,
-                "multimodal": False,
-                "max_tokens": 4096,
-                "context_length": 16385,
-                "description": "OpenAI GPT-3.5 - Efficient and reliable"
-            },
-            # Reasoning models (o1/o3 family)
-            "o1": {
-                "structured_output": True,
-                "tools": False,  # o1 models don't support function calling
-                "thinking": True,
-                "multimodal": False,
-                "max_tokens": 65536,
-                "context_length": 128000,
-                "description": "OpenAI o1 - Advanced reasoning model"
-            },
-            "o3": {
-                "structured_output": True,
-                "tools": False,  # o3 models don't support function calling  
-                "thinking": True,
-                "multimodal": False,
-                "max_tokens": 65536,
-                "context_length": 128000,
-                "description": "OpenAI o3 - Next-generation reasoning model"
-            }
-        }
-        
-        # Create a mapping that handles partial matches
-        enhanced_capabilities = {}
-        for model_pattern, capabilities in capabilities_db.items():
-            enhanced_capabilities[model_pattern] = capabilities
-            
-            # Also add common variations
-            if model_pattern == "gpt-4o":
-                enhanced_capabilities["gpt-4o-2024-08-06"] = capabilities
-                enhanced_capabilities["gpt-4o-2024-05-13"] = capabilities
-            elif model_pattern == "gpt-4o-mini":
-                enhanced_capabilities["gpt-4o-mini-2024-07-18"] = capabilities
-            elif model_pattern == "gpt-4-turbo":
-                enhanced_capabilities["gpt-4-turbo-2024-04-09"] = capabilities
-                enhanced_capabilities["gpt-4-1106-preview"] = capabilities
-                enhanced_capabilities["gpt-4-0125-preview"] = capabilities
-            elif model_pattern == "gpt-3.5-turbo":
-                enhanced_capabilities["gpt-3.5-turbo-0125"] = capabilities
-                enhanced_capabilities["gpt-3.5-turbo-1106"] = capabilities
-        
-        return enhanced_capabilities
+        logger.info(f"OpenAI Responses: Prepared {len(responses_tools)} tools for API")
+        return responses_tools
 
-    def _use_responses_api(self, model_name: Optional[str]) -> bool:
-        """Whether to route the request through the Responses API."""
-        if not model_name:
-            return False
-        return model_name.startswith(("o1-", "o3-"))
+    def _extract_function_tool_calls_from_responses(self, data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+        """Extract function tool calls from a non-streaming Responses API payload into Chat-Completions-like shape."""
+        try:
+            calls: List[Dict[str, Any]] = []
+            output_items = data.get("output") or data.get("response", {}).get("output") or []
+            if isinstance(output_items, list):
+                for item in output_items:
+                    try:
+                        if isinstance(item, dict) and item.get("type") == "function_call":
+                            item_id = item.get("id") or item.get("call_id")
+                            name = item.get("name")
+                            args = item.get("arguments") or ""
+                            call_id = item.get("call_id")
+                            if name:
+                                calls.append({
+                                    "id": item_id or f"call_{name}",
+                                    "call_id": call_id,
+                                    "type": "function",
+                                    "function": {"name": name, "arguments": args},
+                                })
+                    except Exception:
+                        continue
+            return calls or None
+        except Exception:
+            return None
 
-    def _messages_to_input(self, messages: List[Dict[str, str]]) -> str:
-        """Convert messages to a plain text input suitable for the Responses API."""
-        parts: List[str] = []
+    def _messages_to_responses_input(self, system_instructions: Optional[str], messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """Convert messages to the expected Responses API input format.
+        
+        The v1/responses endpoint requires a specific nested structure for input messages,
+        where each message's content is an array of content parts. The system prompt is
+        also passed as a message with the 'system' role.
+        """
+        response_input = []
+
+        # Add the system prompt first, if it exists
+        if system_instructions:
+            response_input.append({
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_instructions}]
+            })
+
+        # Process the rest of the messages
         for m in messages:
-            role = m.get("role", "user").capitalize()
-            content = m.get("content", "")
-            parts.append(f"{role}: {content}")
-        return "\n\n".join(parts)
+            role = m.get("role", "user")
+            # Skip any duplicate system messages that might be in the list
+            if role == "system":
+                continue
+
+            content_text = m.get("content", "")
+            content_parts = [{"type": "input_text", "text": content_text}]
+            
+            response_input.append({
+                "type": "message",
+                "role": role,
+                "content": content_parts
+            })
+            
+        return response_input
 
     def _extract_thinking_trace_responses(self, data: Dict[str, Any]) -> Optional[str]:
         """Best-effort extraction of reasoning/trace from Responses API payloads."""
-        # No standard field; return None by default
+        try:
+            output_items = data.get("output", [])
+            for item in output_items:
+                if item.get("type") == "reasoning":
+                    summary_parts = item.get("summary", [])
+                    # Look for summary text, which contains the reasoning
+                    for part in summary_parts:
+                        if part.get("type") == "summary_text":
+                            return part.get("text")
+        except (TypeError, AttributeError):
+            pass  # Ignore parsing errors if structure is unexpected
         return None
+
+    def get_model_info(self, model_name: str) -> Optional[ModelInfo]:
+        """Get cached model info"""
+        return self._model_cache.get(model_name)
 
 
 

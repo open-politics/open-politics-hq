@@ -31,6 +31,7 @@ pytest
 pytest-asyncio
 mypy
 ruff
+fastmcp
 pre-commit
 types-passlib
 minio
@@ -47,3 +48,4 @@ watchfiles>=0.18.1
 Werkzeug>=3.0.0
 pgvector
 feedparser
+newspaper4k

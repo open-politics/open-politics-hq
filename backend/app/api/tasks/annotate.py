@@ -270,9 +270,17 @@ async def demultiplex_results(
     """Map hierarchical results back to appropriate assets"""
     annotations = []
     
+    # DEBUG: Log what we received
+    logger.info(f"DEBUG: demultiplex_results called for Run {run.id}, Asset {parent_asset.id}")
+    logger.info(f"DEBUG: result keys: {list(result.keys()) if result else 'None'}")
+    logger.info(f"DEBUG: result type: {type(result)}, content preview: {str(result)[:200] if result else 'None'}")
+    logger.info(f"DEBUG: schema_structure document_fields: {bool(schema_structure.get('document_fields'))}")
+    
     # Create annotation for parent asset from document fields
     if schema_structure["document_fields"] and "document" in result:
         parent_annotation_value = result["document"]
+        logger.info(f"DEBUG: Found document result, type: {type(parent_annotation_value)}, value: {parent_annotation_value}")
+        
         if isinstance(parent_annotation_value, dict):
             parent_annotation = Annotation(
                 asset_id=parent_asset.id,
@@ -284,8 +292,26 @@ async def demultiplex_results(
                 user_id=run.user_id
             )
             annotations.append(parent_annotation)
+            logger.info(f"DEBUG: Created parent annotation for Asset {parent_asset.id}, Run {run.id}")
         else:
             logger.warning(f"LLM result for 'document' in Run {run.id}, Asset {parent_asset.id} was not a dict. Got: {type(parent_annotation_value)}. Skipping parent annotation.")
+    else:
+        logger.info(f"DEBUG: No 'document' key in result or no document_fields. Available keys: {list(result.keys()) if result else 'None'}")
+        
+        # FALLBACK: If no hierarchical structure, treat the entire result as document-level
+        if not schema_structure["per_modality_fields"] and result:
+            logger.info(f"DEBUG: No hierarchical structure detected, using entire result as document annotation")
+            parent_annotation = Annotation(
+                asset_id=parent_asset.id,
+                schema_id=schema.id,
+                run_id=run.id,
+                value=result,
+                status=ResultStatus.SUCCESS,
+                infospace_id=run.infospace_id,
+                user_id=run.user_id
+            )
+            annotations.append(parent_annotation)
+            logger.info(f"DEBUG: Created fallback annotation for Asset {parent_asset.id}, Run {run.id}")
     
     for modality, _ in schema_structure["per_modality_fields"].items():
         result_key_for_modality = f"per_{modality}"
@@ -351,6 +377,7 @@ async def demultiplex_results(
                 )
                 annotations.append(child_annotation)
     
+    logger.info(f"DEBUG: demultiplex_results returning {len(annotations)} annotations for Run {run.id}, Asset {parent_asset.id}")
     return annotations
 
 @shared_task
@@ -462,6 +489,12 @@ async def process_single_asset_schema(
                 "_model_name": provider_response.model_used,
                 "_thinking_trace": provider_response.thinking_trace
             }
+            
+            # DEBUG: Log provider response details
+            logger.info(f"DEBUG: Provider response for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
+            logger.info(f"DEBUG: Raw provider response content: {provider_response.content}")
+            logger.info(f"DEBUG: Parsed envelope data: {provider_response_envelope.get('data')}")
+            logger.info(f"DEBUG: Schema structure being used: {schema_structure}")
             
             # Demultiplex results to create annotations
             created_annotations_for_asset = await demultiplex_results(
@@ -664,6 +697,12 @@ async def process_assets_sequential(
                     "_model_name": provider_response.model_used,
                     "_thinking_trace": provider_response.thinking_trace
                 }
+                
+                # DEBUG: Log provider response details (sequential path)
+                logger.info(f"DEBUG: Sequential - Provider response for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
+                logger.info(f"DEBUG: Sequential - Raw provider response content: {provider_response.content}")
+                logger.info(f"DEBUG: Sequential - Parsed envelope data: {provider_response_envelope.get('data')}")
+                logger.info(f"DEBUG: Sequential - Schema structure being used: {schema_structure}")
                 
                 created_annotations_for_asset = await demultiplex_results(
                     result=provider_response_envelope.get("data", provider_response_envelope),
