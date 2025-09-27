@@ -519,7 +519,7 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             # For our intelligence analysis tools, create a single MCP server entry
             # Get the MCP server URL from environment or use default
             import os 
-            mcp_server_url = f"https://9daa487da4a9.ngrok-free.app/tools/mcp"
+            mcp_server_url = f"http://localhost:{os.getenv('BACKEND_PORT')}/tools/mcp"
             
             mcp_server_tool = {
                 "type": "mcp",

@@ -55,7 +55,8 @@ class IntelligenceMCPClient:
         
         # The FastAPI and MCP server are running on the same port.
         server_port = os.getenv("BACKEND_PORT", 8022)
-        mcp_url = f"https://9daa487da4a9.ngrok-free.app/tools/mcp"
+        
+        mcp_url = f"http://localhost:{server_port}/tools/mcp"
 
         self.mcp_client = Client(
             mcp_url,

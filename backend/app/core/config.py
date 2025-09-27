@@ -53,7 +53,8 @@ class AppSettings(BaseSettings):
         if self.ENVIRONMENT == "local":
             return f"http://{self.DOMAIN}"
         return f"https://{self.DOMAIN}"
-
+    
+    
     BACKEND_CORS_ORIGINS: Annotated[
         list[AnyUrl] | str, BeforeValidator(parse_cors)
     ] = ["http://localhost:3000", "http://localhost:8000"]
