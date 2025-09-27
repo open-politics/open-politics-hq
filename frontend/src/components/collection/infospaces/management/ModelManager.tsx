@@ -293,13 +293,13 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
   const isOllamaProvider = selectedProvider === 'ollama';
 
   return (
-    <div className={`space-y-4 ${className}`}>
+    <div className={`space-y-3 ${className}`}>
       {/* Provider Selection */}
-      <div className="flex flex-col md:flex-row gap-4">
+      <div className="flex flex-col md:flex-row gap-3">
         <div className={showModels ? 'w-full md:w-1/2' : 'w-full'}>
-          <label className="text-sm font-medium mb-2 block">AI Provider</label>
+          <label className="text-sm font-medium mb-1 block text-gray-700 dark:text-gray-300">AI Provider</label>
           <Select value={selectedProvider || undefined} onValueChange={handleProviderChange}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full text-sm">
               <SelectValue placeholder="Select provider" />
             </SelectTrigger>
             <SelectContent>
@@ -307,7 +307,7 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
                 <SelectItem key={provider.name} value={provider.name}>
                   <div className="flex items-center justify-between w-full">
                     <span className="capitalize">{provider.name}</span>
-                    <Badge variant="secondary" className="ml-2">
+                    <Badge variant="secondary" className="ml-2 text-xs">
                       {provider.models.length} models
                     </Badge>
                   </div>
@@ -319,10 +319,10 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
         
         {showModels && (
           <div className="w-full md:w-1/2">
-            <label className="text-sm font-medium mb-2 block">Model</label>
+            <label className="text-sm font-medium mb-1 block text-gray-700 dark:text-gray-300">Model</label>
             <div className="flex gap-2">
               <Select value={selectedModel || ''} onValueChange={setSelectedModel} disabled={availableModels.length === 0}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full text-sm">
                   <SelectValue placeholder="Select model" />
                 </SelectTrigger>
                 <SelectContent>
@@ -358,15 +358,15 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
 
       {/* Ollama Model Management */}
       {isOllamaProvider && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center justify-between">
+        <Card className="border border-slate-200 dark:border-slate-700 bg-slate-50/20 dark:bg-slate-950/10">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-medium flex items-center justify-between text-gray-900 dark:text-gray-100">
               Ollama Model Management
               <div className="flex gap-2">
                 <Dialog open={isOllamaDialogOpen} onOpenChange={setIsOllamaDialogOpen}>
                   <DialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Download className="h-4 w-4 mr-2" />
+                    <Button variant="outline" size="sm" className="text-sm">
+                      <Download className="h-4 w-4 mr-1" />
                       Pull Model
                     </Button>
                   </DialogTrigger>
@@ -574,7 +574,7 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
                         </div>
                       ) : (
                         filteredOllamaModels.map((model) => (
-                        <div key={model.name} className="flex items-center justify-between p-4 border rounded-lg hover:border-blue-500">
+                        <div key={model.name} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-300 dark:hover:border-blue-600 bg-gray-50/10 dark:bg-gray-950/20 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-all duration-200">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                               <div className="font-medium">{model.name}</div>
@@ -622,33 +622,34 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
               </div>
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-0">
             <div className="space-y-2">
-              <div className="text-sm text-muted-foreground mb-3">
+              <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
                 Currently installed models ({availableModels.length}):
               </div>
               {availableModels.length > 0 ? (
                 <div className="grid gap-2">
                   {availableModels.map((model) => (
-                    <div key={model} className="flex items-center justify-between p-2 border rounded">
-                      <span className="font-mono text-sm">{model}</span>
+                    <div key={model} className="flex items-center justify-between p-2 border border-slate-200 dark:border-slate-600 rounded bg-slate-100/20 dark:bg-slate-900/50">
+                      <span className="font-mono text-sm text-gray-900 dark:text-gray-100">{model}</span>
                       <Button
                         variant="destructive"
                         size="sm"
                         onClick={() => handleRemoveModel(model)}
                         disabled={isRemovingModel === model}
+                        className="text-xs"
                       >
                         {isRemovingModel === model ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-3 w-3" />
                         )}
                       </Button>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-center text-muted-foreground py-4">
+                <div className="text-center text-gray-500 dark:text-gray-400 py-3 text-sm">
                   No models installed. Pull a model to get started.
                 </div>
               )}
@@ -659,32 +660,32 @@ export default function ModelManager({ showModels = true, className = '' }: Mode
 
       {/* Provider-specific information */}
       {selectedProvider && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg capitalize">{selectedProvider} Information</CardTitle>
+        <Card className="border border-gray-200 dark:border-gray-700 bg-gray-50/20 dark:bg-gray-950/10">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-medium capitalize text-gray-900 dark:text-gray-100">{selectedProvider} Information</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-2 text-sm">
+          <CardContent className="pt-0">
+            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
               {selectedProvider === 'gemini' && (
                 <div>
                   <p>Google's Gemini models offer excellent reasoning and multimodal capabilities.</p>
-                  <p className="text-muted-foreground">
-                    API Key required. Get yours at: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Google AI Studio</a>
+                  <p className="text-gray-500 dark:text-gray-500">
+                    API Key required. Get yours at: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">Google AI Studio</a>
                   </p>
                 </div>
               )}
               {selectedProvider === 'openai' && (
                 <div>
                   <p>OpenAI's GPT models provide state-of-the-art language understanding and generation.</p>
-                  <p className="text-muted-foreground">
-                    API Key required. Get yours at: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">OpenAI Platform</a>
+                  <p className="text-gray-500 dark:text-gray-500">
+                    API Key required. Get yours at: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">OpenAI Platform</a>
                   </p>
                 </div>
               )}
               {selectedProvider === 'ollama' && (
                 <div>
                   <p>Ollama runs models locally for privacy and offline use.</p>
-                  <p className="text-muted-foreground">
+                  <p className="text-gray-500 dark:text-gray-500">
                     Models are downloaded and run on your local infrastructure. No API key required.
                   </p>
                 </div>

@@ -872,7 +872,6 @@ export default function AssetSelector({
                   </div>
                 ) : (
                   <>
-                    {item.asset?.kind && <Badge variant="outline" className={cn("text-xs flex-shrink-0", getAssetBadgeClass(item.asset.kind))}>{formatAssetKind(item.asset.kind)}</Badge>}
                     <span className="text-sm font-medium truncate">{item.name}</span>
                     <div className="md:hidden flex items-center gap-1">
                       {renderItemActions ? renderItemActions(item) : (

@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2 } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2, Microscope, Image as ImageIcon, Video, Music, Globe, Type, Mail, Eye } from 'lucide-react';
 import {
   AnnotationSchemaRead,
   AssetRead,
@@ -83,6 +83,100 @@ import RunHistoryView from './AnnotationRunHistory';
 import { nanoid } from 'nanoid';
 
 export type FilterLogicMode = 'and' | 'or';
+
+// Helper function to get asset icon
+const getAssetIcon = (kind: string) => {
+  switch (kind) {
+    case 'pdf':
+      return <FileText className="w-4 h-4" />;
+    case 'csv':
+      return <TableIcon className="w-4 h-4" />;
+    case 'image':
+      return <ImageIcon className="w-4 h-4" />;
+    case 'video':
+      return <Video className="w-4 h-4" />;
+    case 'audio':
+      return <Music className="w-4 h-4" />;
+    case 'web':
+    case 'article':
+      return <Globe className="w-4 h-4" />;
+    case 'text':
+    case 'text_chunk':
+      return <Type className="w-4 h-4" />;
+    case 'email':
+    case 'mbox':
+      return <Mail className="w-4 h-4" />;
+    default:
+      return <FileText className="w-4 h-4" />;
+  }
+};
+
+// Simple asset list component for the runner
+interface RunAssetListProps {
+  assets: AssetRead[];
+  onAssetView: (asset: AssetRead) => void;
+}
+
+const RunAssetList: React.FC<RunAssetListProps> = ({ assets, onAssetView }) => {
+  return (
+    <div className="space-y-3">
+      {assets.map((asset) => (
+        <Card key={asset.id} className="p-4 border border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 hover:bg-green-100/30 dark:hover:bg-green-900/20 transition-colors">
+          <div className="flex items-start justify-between">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-1.5 rounded-md bg-green-500/20 dark:bg-green-500/20 text-green-700 dark:text-green-400">
+                  {getAssetIcon(asset.kind)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-base truncate text-gray-900 dark:text-gray-100">
+                    {asset.title || `Asset ${asset.id}`}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800 text-xs">
+                      {asset.kind.replace('_', ' ').toUpperCase()}
+                    </Badge>
+                    <span className="text-xs text-gray-500 dark:text-gray-500">
+                      ID: {asset.id}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {asset.text_content && (
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">
+                  {asset.text_content.substring(0, 200)}...
+                </p>
+              )}
+              
+              <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
+                <span>Created: {format(new Date(asset.created_at), 'MMM d, yyyy')}</span>
+                {asset.updated_at && asset.updated_at !== asset.created_at && (
+                  <span>Updated: {format(new Date(asset.updated_at), 'MMM d, yyyy')}</span>
+                )}
+                {asset.source_metadata?.filename && typeof asset.source_metadata.filename === 'string' ? (
+                  <span>File: {asset.source_metadata.filename}</span>
+                ) : null}
+              </div>
+            </div>
+            
+            <div className="flex gap-2 ml-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onAssetView(asset)}
+                className="border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 text-green-700 dark:text-green-400 hover:bg-green-100/50 dark:hover:bg-green-900/20"
+              >
+                <Eye className="w-4 h-4 mr-1" />
+                View Details
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+};
 
 interface AnnotationRunnerProps {
   allRuns: AnnotationRunRead[];
@@ -214,6 +308,7 @@ export default function AnnotationRunner({
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isSchemasDialogOpen, setIsSchemasDialogOpen] = useState(false);
+  const [isAssetsDialogOpen, setIsAssetsDialogOpen] = useState(false);
   
   const runSchemes = useMemo(() => {
     const config = activeRun?.configuration as any;
@@ -437,8 +532,18 @@ export default function AnnotationRunner({
               size="sm" 
               onClick={() => setIsSchemasDialogOpen(true)}
               disabled={!activeRun?.id || runSchemes.length === 0}
+              className="border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10 text-sky-700 dark:text-sky-400 hover:bg-sky-100/50 dark:hover:bg-sky-900/20"
             >
-              <LayoutDashboard className="h-4 w-4 mr-1" /> View Schemas ({runSchemes.length})
+              <Microscope className="h-4 w-4 mr-1" /> View Schemas ({runSchemes.length})
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => setIsAssetsDialogOpen(true)}
+              disabled={!activeRun?.id || currentRunAssets.length === 0}
+              className="border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 text-green-700 dark:text-green-400 hover:bg-green-100/50 dark:hover:bg-green-900/20"
+            >
+              <FileText className="h-4 w-4 mr-1" /> View Assets ({currentRunAssets.length})
             </Button>
             <Button 
               variant="outline" 
@@ -652,14 +757,19 @@ export default function AnnotationRunner({
           ) : (
             <div className="space-y-4">
               {runSchemes.map((schema) => (
-                <Card key={schema.id} className="p-4">
+                <Card key={schema.id} className="p-4 border border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-lg truncate">{schema.name}</h3>
-                      <p className="text-sm text-muted-foreground mt-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="p-1.5 rounded-md bg-sky-500/20 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400">
+                          <Microscope className="w-4 h-4" />
+                        </div>
+                        <h3 className="font-semibold text-lg truncate text-gray-900 dark:text-gray-100">{schema.name}</h3>
+                      </div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                         {schema.description || 'No description available'}
                       </p>
-                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 dark:text-gray-500">
                         <span>ID: {schema.id}</span>
                         <span>Created: {format(new Date(schema.created_at), 'MMM d, yyyy')}</span>
                         {schema.updated_at && schema.updated_at !== schema.created_at && (
@@ -675,6 +785,7 @@ export default function AnnotationRunner({
                           setViewingSchema(schema);
                           setIsSchemasDialogOpen(false);
                         }}
+                        className="border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10 text-sky-700 dark:text-sky-400 hover:bg-sky-100/50 dark:hover:bg-sky-900/20"
                       >
                         View Details
                       </Button>
@@ -687,6 +798,39 @@ export default function AnnotationRunner({
         </ScrollArea>
         <DialogFooter>
           <Button variant="outline" onClick={() => setIsSchemasDialogOpen(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={isAssetsDialogOpen} onOpenChange={setIsAssetsDialogOpen}>
+      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Assets Used in This Run</DialogTitle>
+          <DialogDescription>
+            This run processes {currentRunAssets.length} asset{currentRunAssets.length !== 1 ? 's' : ''}. Click "View Details" to see the full asset content.
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="flex-1 p-4">
+          {currentRunAssets.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No assets found for this run.</p>
+            </div>
+          ) : (
+            <RunAssetList 
+              assets={currentRunAssets} 
+              onAssetView={(asset) => {
+                setSelectedAssetId(asset.id);
+                setIsResultDialogOpen(true);
+                setIsAssetsDialogOpen(false);
+              }}
+            />
+          )}
+        </ScrollArea>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setIsAssetsDialogOpen(false)}>
             Close
           </Button>
         </DialogFooter>

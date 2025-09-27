@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PlusCircle, Edit, Trash2, Eye, Search, XCircle, Loader2, AlertTriangle, Upload, Download, LayoutGrid, List } from 'lucide-react';
+import { PlusCircle, Edit, Blocks, Trash2, Eye, Search, XCircle, Loader2, Microscope, ListTree, AlertTriangle, Upload, Download, LayoutGrid, List } from 'lucide-react';
 import { AnnotationSchemaRead } from '@/client/models';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
@@ -76,6 +76,8 @@ const AnnotationSchemaManager: React.FC = () => {
     useEffect(() => {
         setViewMode(isMobile ? 'grid' : 'list');
     }, [isMobile]);
+
+
 
     const handleOpenEditor = (mode: 'create' | 'edit' | 'watch', schema?: AnnotationSchemaRead) => {
         setEditorMode(mode);
@@ -324,7 +326,18 @@ const AnnotationSchemaManager: React.FC = () => {
             {/* Header with title and primary action */}
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <div className="flex items-center gap-4">
-                    <h2 className="text-2xl font-bold">Annotation Schemas</h2>
+                    <div className="flex items-center gap-3">
+                        <div className="p-2.5 flex items-center gap-2 rounded-xl bg-sky-50/20 dark:bg-sky-950/10 border border-sky-200 dark:border-sky-800 shadow-sm">
+                            <Microscope className="h-6 w-6 text-sky-700 dark:text-sky-400" />
+                            <Blocks className="h-6 w-6 text-sky-700 dark:text-sky-400" />
+                        </div>
+                        <div>
+                            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Annotation Schemas</h2>
+                            <p className="text-gray-600 dark:text-gray-400 text-sm">
+                                Manage your classification schemes and analysis templates
+                            </p>
+                        </div>
+                    </div>
                     {!isMobile && (
                         <ToggleGroup type="single" value={viewMode} onValueChange={(value) => value && setViewMode(value as any)} size="sm">
                             <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>

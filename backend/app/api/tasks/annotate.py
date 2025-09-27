@@ -114,6 +114,77 @@ def validate_hierarchical_schema(output_contract: dict) -> bool:
         
     return True
 
+def simplify_schema_for_model(schema: dict, model_name: str) -> dict:
+    """
+    Simplify complex schemas for less capable models like Ollama.
+    
+    Args:
+        schema: Original JSON schema
+        model_name: Name of the model being used
+        
+    Returns:
+        Potentially simplified schema
+    """
+    # Check if this is an Ollama model that might struggle with complexity
+    is_ollama = "ollama" in model_name.lower() or any(x in model_name.lower() for x in ["gpt-oss", "llama", "mistral", "phi"])
+    
+    if not is_ollama:
+        return schema
+    
+    # For complex political analysis schemas, simplify them
+    if isinstance(schema, dict) and "document_fields" in schema:
+        doc_fields = schema["document_fields"]
+        if isinstance(doc_fields, dict) and "properties" in doc_fields:
+            doc_props = doc_fields["properties"]
+            if isinstance(doc_props, dict) and "document" in doc_props:
+                document_schema = doc_props["document"]
+                if isinstance(document_schema, dict) and "properties" in document_schema:
+                    properties = document_schema["properties"]
+                    
+                    # If schema has more than 5 fields, it might be too complex for smaller models
+                    if len(properties) > 5:
+                        logger.info(f"Simplifying complex schema with {len(properties)} fields for Ollama model {model_name}")
+                        
+                        # Keep only the most essential fields for political analysis
+                        essential_fields = {}
+                        field_priority = [
+                            "Position Summary", "PositionSummary", "position_summary",
+                            "Location", "location", 
+                            "migration_attitude", "Migration Attitude",
+                            "Talking Point Topics", "TalkingPointTopics", "talking_point_topics"
+                        ]
+                        
+                        # Add essential fields if they exist
+                        for field_name in field_priority:
+                            if field_name in properties:
+                                essential_fields[field_name] = properties[field_name]
+                                # Simplify the description to be more concise
+                                if "description" in essential_fields[field_name]:
+                                    desc = essential_fields[field_name]["description"]
+                                    if len(desc) > 200:  # Long descriptions can overwhelm smaller models
+                                        essential_fields[field_name]["description"] = desc[:200] + "..."
+                        
+                        # If we found essential fields, use simplified schema
+                        if essential_fields:
+                            simplified_schema = {
+                                "document_fields": {
+                                    "type": "object",
+                                    "properties": {
+                                        "document": {
+                                            "type": "object",
+                                            "properties": essential_fields,
+                                            "required": ["Position Summary"] if "Position Summary" in essential_fields else list(essential_fields.keys())[:1]
+                                        }
+                                    }
+                                },
+                                "per_modality_fields": schema.get("per_modality_fields", {})
+                            }
+                            
+                            logger.info(f"Simplified schema from {len(properties)} to {len(essential_fields)} fields for Ollama")
+                            return simplified_schema
+    
+    return schema
+
 def detect_schema_structure(output_contract: dict) -> dict:
     """Detect which sections apply to which asset types"""
     structure = {
@@ -166,8 +237,14 @@ async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDe
         # If direct async read is not available from the stream object itself, we need a helper.
 
         # Correct handling for Minio which returns a urllib3.response.HTTPResponse:
-        content = await asyncio.to_thread(file_stream.read) 
-        file_stream.close() # Important to close the stream
+        try:
+            content = await asyncio.to_thread(file_stream.read) 
+        finally:
+            # Ensure stream is always closed, even if read fails
+            try:
+                file_stream.close()
+            except Exception as close_error:
+                logger.warning(f"Error closing file stream for asset {asset.id}: {close_error}")
         logger.info(f"Successfully fetched {len(content)} bytes for asset {asset.id}")
         return content
     except FileNotFoundError:
@@ -273,7 +350,7 @@ async def demultiplex_results(
     # DEBUG: Log what we received
     logger.info(f"DEBUG: demultiplex_results called for Run {run.id}, Asset {parent_asset.id}")
     logger.info(f"DEBUG: result keys: {list(result.keys()) if result else 'None'}")
-    logger.info(f"DEBUG: result type: {type(result)}, content preview: {str(result)[:200] if result else 'None'}")
+    logger.info(f"DEBUG: result type: {type(result)}, content preview: {str(result)[:200] if result is not None else 'None'}")
     logger.info(f"DEBUG: schema_structure document_fields: {bool(schema_structure.get('document_fields'))}")
     
     # Create annotation for parent asset from document fields
@@ -345,10 +422,20 @@ async def demultiplex_results(
                         logger.error(f"Could not cast provided internal UUID to string. Skipping child annotation for item {i}, modality '{modality}', Run {run.id}.")
                         continue
             
+                # Convert modality string to AssetKind enum if needed
+                try:
+                    if isinstance(modality, str):
+                        asset_kind = AssetKind(modality.lower())
+                    else:
+                        asset_kind = modality
+                except ValueError:
+                    logger.error(f"Invalid modality '{modality}' for Run {run.id}, Asset {parent_asset.id}. Skipping child annotation.")
+                    continue
+                
                 found_asset = db.query(Asset).filter(
                     Asset.uuid == llm_provided_uuid,
                     Asset.parent_asset_id == parent_asset.id,
-                    Asset.kind == modality
+                    Asset.kind == asset_kind
                 ).first()
                 
                 if found_asset:
@@ -484,8 +571,22 @@ async def process_single_asset_schema(
             )
             
             # Convert to envelope format for compatibility
+            try:
+                parsed_data = json.loads(provider_response.content) if provider_response.content else {}
+                
+                # Check if we got empty content but a successful response
+                if not provider_response.content or provider_response.content.strip() == "":
+                    logger.warning(f"Provider returned empty content for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
+                    logger.warning(f"Model used: {provider_response.model_used}")
+                    logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse provider response JSON for Asset {asset.id}, Schema {schema.id}, Run {run.id}: {e}")
+                logger.error(f"Raw response content: {provider_response.content}")
+                raise Exception(f"Invalid JSON response from provider: {str(e)}")
+            
             provider_response_envelope = {
-                "data": json.loads(provider_response.content) if provider_response.content else {},
+                "data": parsed_data,
                 "_model_name": provider_response.model_used,
                 "_thinking_trace": provider_response.thinking_trace
             }
@@ -692,8 +793,22 @@ async def process_assets_sequential(
                 )
                 
                 # Convert to envelope format for compatibility
+                try:
+                    parsed_data = json.loads(provider_response.content) if provider_response.content else {}
+                    
+                    # Check if we got empty content but a successful response
+                    if not provider_response.content or provider_response.content.strip() == "":
+                        logger.warning(f"Provider returned empty content for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
+                        logger.warning(f"Model used: {provider_response.model_used}")
+                        logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse provider response JSON for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}: {e}")
+                    logger.error(f"Raw response content: {provider_response.content}")
+                    raise Exception(f"Invalid JSON response from provider: {str(e)}")
+                
                 provider_response_envelope = {
-                    "data": json.loads(provider_response.content) if provider_response.content else {},
+                    "data": parsed_data,
                     "_model_name": provider_response.model_used,
                     "_thinking_trace": provider_response.thinking_trace
                 }
@@ -898,7 +1013,12 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     errors_run_level.append(f"Schema {schema.id} ({schema.name}) invalid structure.")
                     continue
                 
-                schema_structure = detect_schema_structure(schema.output_contract)
+                # Get model name from run config to determine if we need schema simplification
+                model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+                
+                # Simplify schema for less capable models
+                optimized_contract = simplify_schema_for_model(schema.output_contract, model_name)
+                schema_structure = detect_schema_structure(optimized_contract)
                 
                 # Prepare justification-related configurations
                 justification_mode = run_config.get("justification_mode", "NONE")
@@ -910,7 +1030,7 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 try:
                     OutputModelClass = create_pydantic_model_from_json_schema(
                         model_name=f"DynamicOutput_{schema.name.replace(' ', '_')}_{schema.id}",
-                        json_schema=schema.output_contract, # Original schema
+                        json_schema=optimized_contract, # Use optimized schema instead of original
                         justification_mode=justification_mode,
                         field_specific_justification_configs=schema_justification_configs
                         # The create_pydantic_model_from_json_schema now handles augmentation internally
@@ -938,7 +1058,7 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 # We need to map the python-safe field name back to its original schema and title
                 field_metadata_map = {}
 
-                # Gather all top-level field names from the original schema structure
+                # Gather all top-level field names from the optimized schema structure
                 # These are the keys that schema.field_specific_justification_configs would refer to.
                 if schema_structure.get("document_fields"): # This is the sub-schema for document
                     doc_props = schema_structure["document_fields"].get("properties", {})

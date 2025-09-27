@@ -40,6 +40,7 @@ import {
   ChevronLeft,
   FileIcon,
   Menu,
+  ListTree,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
@@ -807,13 +808,21 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     <TextSpanHighlightProvider>
       <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-1 sm:px-2 overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-primary/80 pb-2">
-          <div className="flex items-center gap-2"> 
-            <FileIcon className="h-5 w-5" />
-            <h1 className="text-xl font-bold">Asset Manager</h1> 
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3"> 
+            <div className="p-2.5 flex items-center gap-2 rounded-xl bg-green-50/20 dark:bg-green-950/10 border border-green-200 dark:border-green-800 shadow-sm">
+              <Folder className="h-6 w-6 text-green-700 dark:text-green-400" />
+              <FileText className="h-6 w-6 text-green-700 dark:text-green-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Asset Manager</h1>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">
+                Manage your collection of documents, articles, images, and more
+              </p>
+            </div>
           </div>
         </div>
-        <div className="flex-none py-2 px-1 sm:px-2 border-b border-primary/80">
+        <div className="flex-none mb-3">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex flex-wrap gap-2">
               {/* Mobile file list button moved to left side */}

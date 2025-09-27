@@ -532,8 +532,6 @@ const sidebarMenuButtonVariants = cva(
         outline:
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-blue-200 hover:text-grey-200 hover:shadow-[0_0_0_2px_hsl(var(--sidebar-accent-hover))]",
       },
-
-
       size: {
         default: "h-8 text-sm",
         sm: "h-7 text-xs",
@@ -570,13 +568,37 @@ const SidebarMenuButton = React.forwardRef<
     const Comp = asChild ? Slot : "button"
     const { isMobile, state } = useSidebar()
 
+    // Handle color classes
+    const getColorClasses = (colorClass?: string) => {
+      if (!colorClass) return ""
+      
+      switch (colorClass) {
+        case "sidebar-teal":
+          return "[&>svg]:text-teal-600 dark:[&>svg]:text-teal-400"
+        case "sidebar-blue":
+          return "[&>svg]:text-blue-600 dark:[&>svg]:text-blue-400"
+        case "sidebar-pink":
+          return "[&>svg]:text-pink-600 dark:[&>svg]:text-pink-400"
+        case "sidebar-green":
+          return "[&>svg]:text-green-600 dark:[&>svg]:text-green-400"
+        case "sidebar-sky":
+          return "[&>svg]:text-sky-600 dark:[&>svg]:text-sky-400"
+        case "sidebar-gray":
+          return "[&>svg]:text-gray-600 dark:[&>svg]:text-gray-400"
+        default:
+          return ""
+      }
+    }
+
+    const colorClasses = getColorClasses(className?.includes('sidebar-') ? className.split(' ').find(c => c.startsWith('sidebar-')) : undefined)
+
     const button = (
       <Comp
         ref={ref}
         data-sidebar="menu-button"
         data-size={size}
         data-active={isActive}
-        className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
+        className={cn(sidebarMenuButtonVariants({ variant, size }), colorClasses, className)}
         {...props}
       />
     )

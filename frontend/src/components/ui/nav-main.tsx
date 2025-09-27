@@ -30,6 +30,7 @@ export function NavMain({
     icon?: LucideIcon
     isButton?: boolean
     isActive?: boolean
+    colorClass?: string
     items?: {
       title: string
       url: string
@@ -95,6 +96,7 @@ export function NavMain({
                 asChild
                 isActive={item.isActive}
                 tooltip={item.title}
+                className={item.colorClass ? `${item.colorClass}` : ''}
               >
                 <a href={item.url}>
                   {item.icon && <item.icon />}

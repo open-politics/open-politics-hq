@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -326,17 +326,18 @@ export default function AnnotationRunnerDock({
       )}>
         <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl" onClick={() => setIsExpanded(!isExpanded)}>
                       <div className="flex items-center gap-2 sm:gap-4">
-            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
-              <ListChecks className="h-5 w-5 text-primary" />
+            <div className="p-2 flex items-center gap-2 rounded-lg bg-blue-500/20 dark:bg-blue-500/20 border border-blue-200 dark:border-blue-800">
+              <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
+              <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
             </div>
             <div>
-              <h3 className="text-base font-semibold">Annotation Runner</h3>
-              <p className="text-sm text-muted-foreground">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Annotation Runner</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
                 {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
               </p>
             </div>
             {activeRunId && (
-              <Badge variant="secondary" className="ml-2 text-sm bg-primary/10 text-primary border-primary/20">
+              <Badge variant="secondary" className="ml-2 text-sm bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800">
                 Run #{activeRunId}
               </Badge>
             )}
@@ -647,37 +648,37 @@ export default function AnnotationRunnerDock({
                     </div>
                 </div>
                 <div className="flex flex-col justify-end space-y-3 sm:space-y-4">
-                    <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
-                      <h4 className="text-sm font-medium text-muted-foreground">Run Summary</h4>
+                    <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/20 dark:bg-gray-950/10 space-y-3">
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Run Summary</h4>
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-blue-500 shadow-sm"></div>
+                            <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
                             <span className="text-sm font-medium">Assets Selected</span>
                           </div>
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800">
                             {actualAssetCount}
                           </Badge>
                         </div>
                         {csvProcessingInfo.csvAssetCount > 0 && (
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
+                              <div className="w-3 h-3 rounded-full bg-green-600 shadow-sm"></div>
                               <span className="text-sm font-medium">
                                 {csvRowProcessing ? 'CSV Rows to Process' : 'CSV Files to Process'}
                               </span>
                             </div>
-                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800">
                               {csvRowProcessing ? `~${csvProcessingInfo.totalRowsEstimate}` : csvProcessingInfo.csvAssetCount}
                             </Badge>
                           </div>
                         )}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-purple-500 shadow-sm"></div>
-                            <span className="text-sm font-medium">Schemes Selected</span>
+                            <div className="w-3 h-3 rounded-full bg-sky-500 shadow-sm"></div>
+                            <span className="text-sm font-medium">Schemas Selected</span>
                           </div>
-                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                          <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/20 dark:text-sky-400 dark:border-sky-800">
                             {selectedSchemeIds.size}
                           </Badge>
                         </div>
@@ -691,8 +692,8 @@ export default function AnnotationRunnerDock({
                           </div>
                           <Badge variant="outline" className={cn(
                             isAiConfigured 
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-red-50 text-red-700 border-red-200"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-800"
+                              : "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-800"
                           )}>
                             {isAiConfigured 
                               ? `${selectedProvider}${selectedProvider === 'ollama' ? ' (Local)' : ''}` 
@@ -705,10 +706,10 @@ export default function AnnotationRunnerDock({
                           </Badge>
                         </div>
                         {csvProcessingInfo.csvAssetCount > 0 && (
-                          <div className="mt-3 p-2 rounded-md bg-blue-50 border border-blue-200">
+                          <div className="mt-3 p-2 rounded-md bg-green-50 border border-green-200 dark:bg-green-950/20 dark:border-green-800">
                             <div className="flex items-start gap-2">
-                              <div className="w-4 h-4 rounded-full bg-blue-500 shadow-sm mt-0.5 flex-shrink-0"></div>
-                              <div className="text-xs text-blue-700">
+                              <div className="w-4 h-4 rounded-full bg-green-500 shadow-sm mt-0.5 flex-shrink-0"></div>
+                              <div className="text-xs text-green-700 dark:text-green-400">
                                 <p className="font-medium mb-1">
                                   {csvRowProcessing ? 'CSV Row Processing Enabled' : 'CSV File Processing'}
                                 </p>
@@ -744,15 +745,25 @@ export default function AnnotationRunnerDock({
                     </Button>
                 </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6 border-t pt-3 sm:pt-6 mt-3 sm:mt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6 border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-6 mt-3 sm:mt-6">
                 <div className="flex flex-col h-[300px] sm:h-[400px]">
-                  <h3 className="text-sm font-semibold text-foreground mb-3 px-1">Select Assets to Annotate</h3>
+                  <div className="flex items-center gap-2 mb-3 px-1">
+                    <div className="p-1.5 rounded-md bg-green-500/20 dark:bg-green-500/20 text-green-700 dark:text-green-400">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Select Assets to Annotate</h3>
+                  </div>
                   <div className="flex-1 min-h-0">
                     <AssetSelector selectedItems={selectedAssetItems} onSelectionChange={setSelectedAssetItems} />
                   </div>
                 </div>
                 <div className="flex flex-col h-[300px] sm:h-[400px]">
-                  <h3 className="text-sm font-semibold text-foreground mb-3 px-1">Choose Annotation Schemes</h3>
+                  <div className="flex items-center gap-2 mb-3 px-1">
+                    <div className="p-1.5 rounded-md bg-sky-500/20 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400">
+                      <Microscope className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Choose Annotation Schemas</h3>
+                  </div>
                   <div className="flex-1 min-h-0">
                     <SchemeSelectorForRun allSchemes={allSchemes} selectedSchemeIds={Array.from(selectedSchemeIds)} onToggleScheme={handleSchemeToggle} onPreviewScheme={handlePreviewSchemeClick} onOpenSchemeEditor={() => setIsSchemeEditorOpen(true)} />
                   </div>

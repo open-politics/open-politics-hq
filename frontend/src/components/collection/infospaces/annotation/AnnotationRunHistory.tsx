@@ -33,7 +33,8 @@ import {
   Files,
   Microscope,
   Loader2,
-  Upload
+  Upload,
+  Terminal
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { AnnotationRunRead, ResourceType } from '@/client/models';
@@ -88,18 +89,19 @@ const FavoriteRunCard: React.FC<{
   return (
     <div 
       className={cn(
-        "group relative p-2 rounded-xl cursor-pointer transition-all duration-200 border-2",
-        "bg-gradient-to-br from-amber-50 via-yellow-50 to-amber-50",
-        "hover:from-amber-100 hover:via-yellow-100 hover:to-amber-100",
-        "hover:shadow-md hover:scale-[1.02]",
+        "group relative p-6 rounded-xl cursor-pointer transition-all duration-200 border",
+        "bg-gradient-to-br from-blue-50/60 via-blue-50/40 to-blue-50/30 dark:from-blue-950/40 dark:via-blue-950/30 dark:to-blue-950/20",
+        "hover:from-blue-100/50 hover:via-blue-100/30 hover:to-blue-100/40 dark:hover:from-blue-900/30 dark:hover:via-blue-900/20 dark:hover:to-blue-900/25",
+        "hover:shadow-lg hover:scale-[1.02] border-blue-200 dark:border-blue-700",
+        "backdrop-blur-sm",
         activeRunId === run.id 
-          ? "border-amber-400 shadow-lg ring-2 ring-amber-200" 
-          : "border-amber-200 hover:border-amber-300"
+          ? "border-blue-400 dark:border-blue-500 shadow-xl ring-2 ring-blue-200/60 dark:ring-blue-600/60 bg-blue-100/60 dark:bg-blue-900/40" 
+          : "hover:border-blue-300 dark:hover:border-blue-600"
       )}
       onClick={() => onSelectRun(run.id)}
     >
       {/* Action Buttons - Positioned absolutely */}
-      <div className="absolute top-3 right-3 flex gap-1">
+      <div className="absolute top-4 right-4 flex gap-1">
         <Button
           variant="ghost"
           size="icon"
@@ -107,9 +109,9 @@ const FavoriteRunCard: React.FC<{
             e.stopPropagation();
             onShare(run.id);
           }}
-          className="h-8 w-8 hover:bg-amber-200/50"
+          className="h-8 w-8 hover:bg-blue-200/50 dark:hover:bg-blue-800/50"
         >
-          <Share2 className="h-4 w-4 text-amber-600" />
+          <Share2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
         </Button>
         <Button
           variant="ghost"
@@ -118,9 +120,9 @@ const FavoriteRunCard: React.FC<{
             e.stopPropagation();
             onExport(run.id);
           }}
-          className="h-8 w-8 hover:bg-amber-200/50"
+          className="h-8 w-8 hover:bg-blue-200/50 dark:hover:bg-blue-800/50"
         >
-          <Download className="h-4 w-4 text-amber-600" />
+          <Download className="h-4 w-4 text-blue-600 dark:text-blue-400" />
         </Button>
         <Button
           variant="ghost"
@@ -129,28 +131,25 @@ const FavoriteRunCard: React.FC<{
             e.stopPropagation();
             onToggleFavorite(run);
           }}
-          className="h-8 w-8 hover:bg-amber-200/50"
+          className="h-8 w-8 hover:bg-amber-200/50 dark:hover:bg-amber-800/50"
         >
-          <Star className="h-4 w-4 fill-amber-500 text-amber-600" />
+          <Star className="h-4 w-4 fill-amber-500 text-amber-600 dark:text-amber-400" />
         </Button>
       </div>
 
       {/* Content */}
-      <div className="flex flex-col h-32 pr-12">
-        <div className="flex items-start gap-3 mb-3">
-          <div className="p-2 rounded-lg bg-amber-200/50 border border-amber-300">
-            <Play className="h-4 w-4 text-amber-700" />
-          </div>
+      <div className="flex flex-col h-40 pr-14">
+        <div className="flex items-start gap-4 mb-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-amber-900 truncate" title={run.name}>
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100 truncate" title={run.name}>
                 {run.name}
               </h3>
               {isRecurring && (
                 <TooltipProvider delayDuration={100}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Repeat className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                      <Repeat className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Recurring Run (Task ID: {recurringTaskIdNumber})</p>
@@ -160,35 +159,43 @@ const FavoriteRunCard: React.FC<{
               )}
             </div>
             {/* Fixed height container for description to maintain consistent layout */}
-            <div className="h-10 mb-2">
+            <div className="h-12 mb-3">
               {run.description && (
-                <p className="text-sm text-amber-700 line-clamp-2">{run.description}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">{run.description}</p>
               )}
             </div>
           </div>
         </div>
 
         {/* Bottom row - always positioned at the bottom */}
-        <div className="flex items-center justify-between mt-auto">
-          <div className="flex items-center gap-4">
-            <Badge 
-              variant="outline" 
-              className={cn("text-xs font-medium", getStatusColor(run.status ?? ''))}
-            >
-              {(run.status ?? '').replace(/_/g, ' ')}
-            </Badge>
-            <div className="flex items-center gap-3 text-xs text-amber-700">
+        <div className="flex items-start justify-between mt-auto">
+          <div className="flex flex-col gap-3">
+            {/* Status badge with fixed height container */}
+            <div className="h-6 flex items-center">
+              <Badge 
+                variant="outline" 
+                className={cn("text-xs font-medium whitespace-nowrap", getStatusColor(run.status ?? ''))}
+              >
+                {(run.status ?? '').replace(/_/g, ' ')}
+              </Badge>
+            </div>
+            {/* Stats row */}
+            <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
               <span className="flex items-center gap-1.5">
-                <Files className="h-3.5 w-3.5" />
+                <div className="p-0.5 rounded bg-green-500/20 dark:bg-green-500/20">
+                  <Files className="h-3 w-3 text-green-600 dark:text-green-400" />
+                </div>
                 {run.documentCount} assets
               </span>
               <span className="flex items-center gap-1.5">
-                <Microscope className="h-3.5 w-3.5" />
-                {run.schemeCount} schemes
+                <div className="p-0.5 rounded bg-sky-500/20 dark:bg-sky-500/20">
+                  <Microscope className="h-3 w-3 text-sky-600 dark:text-sky-400" />
+                </div>
+                {run.schemeCount} schemas
               </span>
             </div>
           </div>
-          <div className="text-right text-xs text-amber-600 flex-shrink-0">
+          <div className="text-right text-xs text-gray-500 dark:text-gray-500 flex-shrink-0 self-end">
             <div className="flex items-center gap-1 justify-end">
               <Calendar className="h-3 w-3" />
               {format(parseISO(run.created_at), 'MMM d, yyyy')}
@@ -266,8 +273,8 @@ const RunTableRow: React.FC<{
       </TableCell>
       <TableCell className="font-medium py-6">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 shadow-sm">
-            <Play className="h-4 w-4 text-primary" />
+          <div className="p-2.5 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+            <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
@@ -309,16 +316,16 @@ const RunTableRow: React.FC<{
       </TableCell>
       <TableCell className="text-center py-6">
         <div className="flex items-center justify-center gap-1.5">
-          <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/50 border border-blue-100 dark:border-blue-800">
-            <Files className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+          <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
+            <Files className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
           </div>
           <span className="font-semibold text-foreground">{run.documentCount}</span>
         </div>
       </TableCell>
       <TableCell className="text-center py-6">
         <div className="flex items-center justify-center gap-1.5">
-          <div className="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/50 border border-purple-100 dark:border-purple-800">
-            <Microscope className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+          <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-900/50 border border-sky-100 dark:border-sky-800">
+            <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
           </div>
           <span className="font-semibold text-foreground">{run.schemeCount}</span>
         </div>
@@ -513,12 +520,14 @@ const RunHistoryPanel: React.FC<{
           <div className="flex items-center justify-between mb-6">
             {/* Left Side - Title and Icon */}
             <div className="flex items-center gap-4 pl-2">
-              <div className="p-3 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 shadow-sm">
-                <History className="h-6 w-6 text-primary" />
+              <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+                <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+                <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+                <History className="h-6 w-6 text-blue-700 dark:text-blue-400" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-foreground">Run History</h1>
-                <p className="text-muted-foreground text-sm">
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Run History</h1>
+                <p className="text-gray-600 dark:text-gray-400 text-sm">
                   {runs.length} total runs • {favoriteRunsFromList.length} favorited
                 </p>
               </div>
@@ -608,7 +617,7 @@ const RunHistoryPanel: React.FC<{
               
               <Collapsible open={isFavoritesExpanded}>
                 <CollapsibleContent>
-                  <div className="max-h-64 overflow-y-auto scrollbar-thin border border-primary/40 rounded-lg p-4">
+                  <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg p-4">
                     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
                       {favoriteRunsFromList.map((run) => (
                         <FavoriteRunCard
@@ -632,19 +641,11 @@ const RunHistoryPanel: React.FC<{
 
       {/* All Runs Section - Fixed Header with Scrollable Content */}
       <div className="flex-1 flex flex-col min-h-0">
-        {/* All Runs Header - Fixed */}
-        <div className="flex-shrink-0 backdrop-blur-sm border-b border-border/20 p-2 pb-0 px-6">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <History className="h-5 w-5 text-muted-foreground" />
-            All Runs
-            <Badge variant="outline">{nonFavoriteRuns.length}</Badge>
-          </h2>
-        </div>
 
         {/* All Runs Table - Scrollable Content */}
         <div className="flex-1 overflow-hidden p-8 backdrop-blur-sm scrollbar-hide ">
           {nonFavoriteRuns.length > 0 ? (
-            <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-2xl border border-border/60 overflow-hidden h-full flex flex-col">
+            <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-xl border border-border/60 overflow-hidden h-full flex flex-col">
               {/* Table Header - Fixed within table */}
               <div className="flex-shrink-0">
                 <Table>
@@ -657,10 +658,10 @@ const RunHistoryPanel: React.FC<{
                       </TableHead>
                       <TableHead className="py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         <div className="flex items-center gap-3">
-                          <div className="p-2.5 rounded-xl bg-primary/10 border border-primary/20">
-                            <Play className="h-4 w-4 text-primary" />
+                          <div className="p-2.5 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800">
+                            <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
                           </div>
-                          Run Details
+                          Name
                         </div>
                       </TableHead>
                       <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -673,18 +674,18 @@ const RunHistoryPanel: React.FC<{
                       </TableHead>
                       <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         <div className="flex items-center justify-center gap-1.5">
-                          <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/50 border border-blue-100 dark:border-blue-800">
-                            <Files className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                          <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
+                            <Files className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
                           </div>
                           Assets
                         </div>
                       </TableHead>
                       <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         <div className="flex items-center justify-center gap-1.5">
-                          <div className="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/50 border border-purple-100 dark:border-purple-800">
-                            <Microscope className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                          <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-900/50 border border-sky-100 dark:border-sky-800">
+                            <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                           </div>
-                          Schemes
+                          Schemas
                         </div>
                       </TableHead>
                       <TableHead className="w-40 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">

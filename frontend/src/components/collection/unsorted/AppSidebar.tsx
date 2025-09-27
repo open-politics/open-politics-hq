@@ -36,7 +36,8 @@ import {
   DoorOpen,
   GithubIcon,
   Asterisk,
-  Activity
+  Activity,
+  Terminal
 } from "lucide-react"
 
 import { NavMain } from "@/components/ui/nav-main"
@@ -56,6 +57,7 @@ import {
   SidebarTrigger,
   SidebarGroup,
   SidebarGroupLabel,
+  SidebarSeparator,
   SidebarMenu
 } from "@/components/ui/sidebar"
 import HistoryList from "@/components/ui/SearchHistory"
@@ -83,7 +85,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       icon: Asterisk,
     },
     {
-      title: "documentation",
+      title: "Documentation",
       url: "https://docs.open-politics.org",
       icon: BookOpen,
     },
@@ -98,6 +100,47 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       icon: GithubIcon,
     }
   ]
+
+  const toolsNav = React.useMemo(() => [
+    {
+      title: "Analyser",
+      url: "/hq/infospaces/annotation-runner",
+      icon: Terminal,
+      isActive: true,
+      colorClass: "sidebar-blue",
+    },
+    {
+      title: "Chat",
+      url: "/hq/infospaces/chat",
+      icon: Bot,
+      isActive: true,
+      colorClass: "sidebar-teal",
+    },
+    {
+      title: "Monitors",
+      url: "/hq/infospaces/monitors",
+      icon: Activity,
+      isActive: true,
+      colorClass: "sidebar-pink",
+    }
+  ], [])
+
+  const storesNav = React.useMemo(() => [
+    {
+      title: "Assets",
+      url: "/hq/infospaces/asset-manager",
+      icon: FileText,
+      isActive: true,
+      colorClass: "sidebar-green",
+    },
+    {
+      title: "Schemas",
+      url: "/hq/infospaces/annotation-schemes",
+      icon: Microscope,
+      isActive: true,
+      colorClass: "sidebar-sky",
+    }
+  ], [])
   
   const navMain = React.useMemo(() => [
     {
@@ -107,41 +150,13 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       isActive: true,
     },
     // {
-    //   title: "OPOL Globe",
-    //   url: "/hq/globe",
-    //   icon: Globe,
-    //   isActive: true,
+      //   title: "OPOL Globe",
+      //   url: "/hq/globe",
+      //   icon: Globe,
+      //   isActive: true,
+      // },
+ 
     // },
-    {
-    title: "Schemas",
-    url: "/hq/infospaces/annotation-schemes",
-      icon: Microscope,
-      isActive: true,
-    },
-    {
-      title: "Assets",
-      url: "/hq/infospaces/asset-manager",
-      icon: FileText,
-      isActive: true,
-    },
-    {
-      title: "Analysis Runner",
-      url: "/hq/infospaces/annotation-runner",
-      icon: SquareTerminal,
-      isActive: true,
-    },
-    {
-      title: "Monitors",
-      url: "/hq/infospaces/monitors",
-      icon: Activity,
-      isActive: true,
-    },
-    {
-      title: "Chat",
-      url: "/hq/chat",
-      icon: Bot,
-      isActive: true,
-    }
     // {
     //   title: "Content Search",
     //   url: "/hq/infospaces/content-search",
@@ -162,6 +177,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       url: "/hq/infospaces/infospace-manager",
       icon: FolderCog,
       isActive: true,
+      colorClass: "sidebar-gray",
     }
   ], [])
   
@@ -175,6 +191,11 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       </SidebarHeader>
       <SidebarContent className="flex flex-col">
         <NavMain title="Navigation" items={navMain} />
+        <NavMain title="Tools" items={toolsNav} />
+        <SidebarSeparator />
+        <NavMain title="Stores" items={storesNav} />  
+        <SidebarSeparator />
+        <NavMain title="Settings" items={settingsNav} />
         {/* {user?.is_superuser && (
           <NavProjects projects={projects} />
         )} */}
@@ -200,7 +221,6 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
-        <NavMain title="Settings" items={settingsNav} />
          {/* <HistoryList userId={user?.id} /> */}
       </SidebarContent>
       <SidebarFooter>

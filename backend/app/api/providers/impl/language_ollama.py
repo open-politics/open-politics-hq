@@ -277,10 +277,34 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             
             response = await self.client.post(f"{self.base_url}/api/chat", json=payload)
             response.raise_for_status()
-            data = response.json()
+            
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Ollama response JSON: {e}")
+                logger.error(f"Raw response: {response.text}")
+                raise RuntimeError(f"Invalid JSON response from Ollama: {str(e)}")
             
             message_obj = data.get("message", {}) or {}
             content = message_obj.get("content", "")
+            
+            # Debug: Log the full response structure when content is empty
+            if not content or content.strip() == "":
+                logger.error(f"Ollama returned empty content. Full response structure:")
+                logger.error(f"  - Response keys: {list(data.keys())}")
+                logger.error(f"  - Message object: {message_obj}")
+                logger.error(f"  - Model: {data.get('model', 'unknown')}")
+                logger.error(f"  - Done: {data.get('done', 'unknown')}")
+                logger.error(f"  - Done reason: {data.get('done_reason', 'unknown')}")
+                
+                # Check if this was a JSON schema request
+                if payload.get("format") == "json":
+                    logger.error("This was a structured JSON request. Complex schemas may cause empty responses.")
+                    logger.error("Consider: 1) Simplifying the schema, 2) Using a more capable model, 3) Adding examples to the prompt")
+                    logger.error("RECOMMENDATION: For complex political analysis schemas, use OpenAI models (GPT-4) instead of smaller Ollama models.")
+                
+                # Don't raise an error - let the annotation system handle the empty response
+                logger.warning("Continuing with empty content - this will result in a failed annotation.")
             thinking_trace = self._extract_thinking_trace(content)
             clean_content = self._remove_thinking_tags(content)
             
@@ -334,19 +358,6 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                 response = await self.client.post(f"{self.base_url}/api/chat", json=retry_payload)
                 response.raise_for_status()
                 data = response.json()
-                message_obj = data.get("message", {}) or {}
-                content = message_obj.get("content", "")
-                thinking_trace = self._extract_thinking_trace(content)
-                clean_content = self._remove_thinking_tags(content)
-                return GenerationResponse(
-                    content=clean_content,
-                    model_used=data["model"],
-                    usage=data.get("usage"),
-                    tool_calls=None,
-                    thinking_trace=thinking_trace,
-                    finish_reason=data.get("done_reason"),
-                    raw_response=data
-                )
             raise RuntimeError(f"Ollama generation failed: {e.response.text}")
         except Exception as e:
             logger.error(f"Ollama generation error: {e}")

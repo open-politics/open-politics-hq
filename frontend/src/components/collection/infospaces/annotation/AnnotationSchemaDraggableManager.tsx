@@ -3,7 +3,7 @@ import DraggableWrapper from '../../wrapper/draggable-wrapper';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import AnnotationSchemeManager from './AnnotationSchemeManager';
+import AnnotationSchemeManager from './AnnotationSchemaManager';
 
 interface DraggableSchemeManagerProps {
   isOpen: boolean;
@@ -46,7 +46,7 @@ const AnnotationSchemaDraggableManager: React.FC<DraggableSchemeManagerProps> = 
   return (
     <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm">
       <DraggableWrapper
-        title="Annotation Schemas"
+        title="Annotation Schema Manager"
         width="w-[800px]"
         height="h-[600px]"
         defaultPosition={{ x: 50, y: 50 }}
@@ -57,7 +57,7 @@ const AnnotationSchemaDraggableManager: React.FC<DraggableSchemeManagerProps> = 
         customSize={responsiveSize}
         headerContent={
           <div className="flex items-center justify-between w-full px-6 py-2 border-b">
-            <span className="text-base font-semibold">Annotation Schemas</span>
+            <span className="text-base font-semibold">Annotation Schema Manager</span>
             <Button
               variant="ghost"
               size="icon"
