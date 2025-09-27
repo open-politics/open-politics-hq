@@ -12,7 +12,7 @@
 
 Why? 
 
- The modern information landscape is a battlefield across thousands of documents, sources, and events. Reading and sorting everything is impossible. Conducting research with creative yet reliable methods is difficult.
+ The modern information landscape is a (see up) battlefield across thousands of documents, sources, and events. Reading and sorting everything is impossible. Conducting research with creative yet reliable methods is difficult.
 
 Our approach?
 
