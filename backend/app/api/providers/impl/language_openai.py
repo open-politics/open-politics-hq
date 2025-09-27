@@ -72,8 +72,7 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                       tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         
-        if response_format:
-            logger.info(f"GENERATE_DEBUG: OpenAI generate called with response_format for model {model_name}")
+        # Generate with OpenAI Responses API
         
         # ALWAYS use Responses API - it's the only API we want to use
         # The Responses API is a superset of Chat Completions and handles everything better
@@ -157,47 +156,11 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                     "schema": clean_schema
                 }
                 
-            # Try the request, but if it fails, try with simplified payload
-            try:
-                if stream:
-                    return self._stream_generate_responses(payload)
-                else:
-                    return await self._generate_responses(payload)
-            except Exception as e:
-                logger.warning(f"Full payload failed: {str(e)}. Trying simplified payload...")
-                logger.warning(f"Exception type: {type(e).__name__}")
-
-                # Create simplified payload without tools/thinking but keep structured output
-                simple_payload = {
-                    "model": model_name,
-                    "input": responses_input_override if responses_input_override is not None else self._messages_to_responses_input(system_instructions, input_messages),
-                    "stream": stream,
-                }
-                if system_instructions:
-                    simple_payload["instructions"] = system_instructions
-                
-                # Keep structured output format in simplified payload
-                if response_format:
-                    if "text" not in simple_payload:
-                        simple_payload["text"] = {}
-                    # Clean the schema to remove unsupported fields like 'default'
-                    clean_schema = self._clean_json_schema_for_openai(response_format)
-                    simple_payload["text"]["format"] = {
-                        "type": "json_schema",
-                        "name": clean_schema.get("title", "StructuredOutput"),
-                        "schema": clean_schema
-                    }
-
-                logger.info(f"Trying simplified payload: {json.dumps(simple_payload, indent=2)}")
-                try:
-                    if stream:
-                        return self._stream_generate_responses(simple_payload)
-                    else:
-                        return await self._generate_responses(simple_payload)
-                except Exception as simple_e:
-                    logger.error(f"Even simplified payload failed: {str(simple_e)}")
-                    logger.error(f"This suggests the Responses API endpoint is not available for this account")
-                    raise simple_e
+            # Execute the request directly - no fallback needed now that schema cleaning works
+            if stream:
+                return self._stream_generate_responses(payload)
+            else:
+                return await self._generate_responses(payload)
     
     async def _tool_loop_generate(self,
                                  messages: List[Dict[str, str]],
@@ -295,19 +258,12 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
     async def _generate_responses(self, payload: Dict) -> GenerationResponse:
         """Handle non-streaming generation via the Responses API (o1/o3)."""
         try:
-            logger.info(f"OpenAI Responses API payload: {json.dumps(payload, indent=2)}")
-            logger.info(f"Making request to: {self.base_url}/responses")
             response = await self.client.post(f"{self.base_url}/responses", json=payload)
             response.raise_for_status()
             data = response.json()
-            
-            # DEBUG: Log the full response to understand the structure
-            logger.info(f"DEBUG: Full OpenAI response data: {json.dumps(data, indent=2)}")
 
-            # The Responses API returns content in output[].content[].text
-            content = ""
-            
             # Extract content from the nested structure
+            content = ""
             output_items = data.get("output", [])
             for item in output_items:
                 if item.get("type") == "message":
@@ -322,15 +278,11 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             # Fallback to other possible locations
             if not content:
                 content = (
-                    data.get("output_text")
-                    or data.get("content")
-                    or data.get("response", {}).get("output_text")
-                    or ""
+                    data.get("output_text") or
+                    data.get("content") or 
+                    data.get("response", {}).get("output_text") or
+                    ""
                 )
-            
-            # DEBUG: Log what content we extracted
-            logger.info(f"DEBUG: Extracted content: {repr(content[:200])}")
-            logger.info(f"DEBUG: Content length: {len(content) if content else 0}")
 
             # Extract function tool calls if present
             tool_calls = self._extract_function_tool_calls_from_responses(data)
@@ -366,8 +318,6 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
     async def _stream_generate_responses(self, payload: Dict) -> AsyncIterator[GenerationResponse]:
         """Handle streaming via the Responses API (o1/o3)."""
         try:
-            logger.info(f"OpenAI Responses API streaming payload: {json.dumps(payload, indent=2)}")
-            logger.info(f"Making request to: {self.base_url}/responses")
             async with self.client.stream("POST", f"{self.base_url}/responses", json=payload) as response:
                 response.raise_for_status()
 
@@ -459,105 +409,8 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                     except json.JSONDecodeError:
                         continue
         except httpx.HTTPStatusError as e:
-            # Attempt one retry without reasoning if 400 likely due to reasoning
-            error_text = None
-            try:
-                error_bytes = await e.response.aread()
-                try:
-                    error_text = (
-                        error_bytes.decode("utf-8", errors="replace")
-                        if isinstance(error_bytes, (bytes, bytearray))
-                        else str(error_bytes)
-                    )
-                except Exception:
-                    error_text = str(error_bytes)
-            except Exception:
-                error_text = str(e)
-
+            error_text = e.response.text if hasattr(e.response, 'text') else str(e)
             logger.error(f"OpenAI Responses streaming error: {e.response.status_code} - {error_text}")
-            logger.error(f"Request headers: {dict(self.client.headers)}")
-            logger.error(f"Failed payload was: {json.dumps(payload, indent=2)}")
-
-            should_retry_without_reasoning = False
-            try:
-                err_json = json.loads(error_text) if error_text else None
-                err_param = ((err_json or {}).get("error") or {}).get("param")
-                if e.response.status_code == 400 and (err_param == "reasoning" or err_param == "reasoning.summary" or (error_text and "reasoning" in error_text)):
-                    should_retry_without_reasoning = True
-            except Exception:
-                if e.response.status_code == 400 and error_text and "reasoning" in error_text:
-                    should_retry_without_reasoning = True
-
-            if should_retry_without_reasoning and "reasoning" in payload:
-                retry_payload = dict(payload)
-                retry_payload.pop("reasoning", None)
-                logger.info("Retrying Responses streaming without reasoning due to 400 error")
-                async with self.client.stream("POST", f"{self.base_url}/responses", json=retry_payload) as response:
-                    response.raise_for_status()
-                    accumulated_content = ""
-                    model_used = retry_payload["model"]
-                    thinking_trace = ""
-                    tool_events: List[Dict[str, Any]] = []
-                    function_calls: Dict[str, Dict[str, Any]] = {}
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        chunk_data = line[6:]
-                        if chunk_data.strip() == "[DONE]":
-                            break
-                        try:
-                            event = json.loads(chunk_data)
-                            event_type = event.get("type", "")
-                            if event_type == "response.output_text.delta":
-                                delta = event.get("delta", "")
-                                if delta:
-                                    accumulated_content += delta
-                            elif event_type in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
-                                delta = event.get("delta", "")
-                                if delta:
-                                    thinking_trace += delta
-                            elif event_type == "response.output_item.added":
-                                item = event.get("item", {})
-                                if item.get("type") == "function_call":
-                                    item_id = item.get("id") or event.get("item_id")
-                                    name = item.get("name")
-                                    call_id = item.get("call_id")
-                                    if item_id and name:
-                                        function_calls[item_id] = {
-                                            "id": item_id,
-                                            "call_id": call_id,
-                                            "type": "function",
-                                            "function": {"name": name, "arguments": ""},
-                                        }
-                            elif event_type == "response.function_call_arguments.delta":
-                                item_id = event.get("item_id")
-                                delta = event.get("delta", "")
-                                if item_id and item_id in function_calls and isinstance(delta, str):
-                                    function_calls[item_id]["function"]["arguments"] += delta
-                            elif event_type == "response.function_call_arguments.done":
-                                item = event.get("item", {})
-                                item_id = item.get("id") or event.get("item_id")
-                                args_full = item.get("arguments") or event.get("arguments")
-                                if item_id and item_id in function_calls and isinstance(args_full, str):
-                                    function_calls[item_id]["function"]["arguments"] = args_full
-                            elif event_type in ("response.mcp_call_arguments.delta", "response.mcp_call_arguments.done", "response.mcp_call.in_progress", "response.mcp_call.completed", "response.mcp_call.failed"):
-                                tool_events.append(event)
-                            current_tool_calls = None
-                            if function_calls:
-                                current_tool_calls = list(function_calls.values())
-                            elif tool_events:
-                                current_tool_calls = self._mcp_events_to_tool_calls(tool_events)
-                            yield GenerationResponse(
-                                content=accumulated_content,
-                                model_used=model_used,
-                                thinking_trace=thinking_trace or None,
-                                tool_calls=current_tool_calls,
-                                raw_response=event,
-                            )
-                        except json.JSONDecodeError:
-                            continue
-                return
-
             raise RuntimeError(f"OpenAI streaming failed: {error_text}")
         except Exception as e:
             logger.error(f"OpenAI Responses streaming error: {e}")
@@ -595,81 +448,55 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
 
     def _clean_json_schema_for_openai(self, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Recursively remove unsupported fields from a JSON schema for OpenAI compatibility.
-        OpenAI's structured output API has strict requirements:
+        Clean JSON schema for OpenAI's strict structured output requirements:
         1. Remove 'default' fields (not supported)
-        2. Add 'additionalProperties: false' for ALL objects (including nested ones in anyOf/oneOf/allOf)
-        3. Ensure 'required' array includes ALL property keys (OpenAI requirement)
+        2. Set 'additionalProperties: false' on ALL objects
+        3. Include ALL properties in 'required' array
         """
         if not isinstance(schema, dict):
             return schema
         
-        # Create a clean copy, removing 'default' at the current level
+        # Remove unsupported 'default' field
         clean_schema = {k: v for k, v in schema.items() if k != 'default'}
         
-        # Add additionalProperties: false for object types (required by OpenAI structured output)
-        # OpenAI requires this on ALL objects, regardless of how they're defined
-        should_add_additional_properties = (
-            # Has properties (most common case)
+        # Apply additionalProperties: false to all objects
+        is_object = (
             'properties' in clean_schema or
-            # Explicitly typed as object
             clean_schema.get('type') == 'object' or
-            # Has object-like characteristics
-            any(key in clean_schema for key in ['required', 'patternProperties', 'propertyNames']) or
-            # No type specified but looks like an object schema
-            (not clean_schema.get('type') and any(key in clean_schema for key in ['properties', 'required']))
+            any(key in clean_schema for key in ['required', 'patternProperties', 'propertyNames'])
         )
         
-        if should_add_additional_properties:
-            # ALWAYS set to False, even if it already exists with a different value
+        if is_object:
             clean_schema['additionalProperties'] = False
-            logger.info(f"SCHEMA_DEBUG: Set additionalProperties=false to schema (type={clean_schema.get('type')}, has_properties={bool(clean_schema.get('properties'))})")
         
-        # For objects with properties, ensure ALL properties are in the required array
+        # Set required array to all properties for objects
         if 'properties' in clean_schema and isinstance(clean_schema['properties'], dict):
-            # Get all property names
-            all_property_names = list(clean_schema['properties'].keys())
-            
-            # OpenAI structured output requires ALL properties to be in required array
-            clean_schema['required'] = all_property_names
-            logger.info(f"SCHEMA_DEBUG: Set required array to all properties: {all_property_names}")
-            
-            # Recursively clean nested properties
+            clean_schema['required'] = list(clean_schema['properties'].keys())
             clean_schema['properties'] = {
-                prop_name: self._clean_json_schema_for_openai(prop_def)
-                for prop_name, prop_def in clean_schema['properties'].items()
+                name: self._clean_json_schema_for_openai(prop)
+                for name, prop in clean_schema['properties'].items()
             }
             
-        # Handle array items
-        if 'items' in clean_schema and isinstance(clean_schema['items'], dict):
-            clean_schema['items'] = self._clean_json_schema_for_openai(clean_schema['items'])
+        # Recursively clean nested schemas
+        for key in ['items', 'not']:
+            if key in clean_schema and isinstance(clean_schema[key], dict):
+                clean_schema[key] = self._clean_json_schema_for_openai(clean_schema[key])
         
-        # Handle anyOf, oneOf, allOf (union types) - these can contain nested objects
         for union_key in ['anyOf', 'oneOf', 'allOf']:
             if union_key in clean_schema and isinstance(clean_schema[union_key], list):
-                logger.info(f"SCHEMA_DEBUG: Processing {union_key} with {len(clean_schema[union_key])} items")
-                cleaned_items = []
-                for i, union_item in enumerate(clean_schema[union_key]):
-                    logger.info(f"SCHEMA_DEBUG: Processing {union_key}[{i}]: type={union_item.get('type')}, has_properties={bool(union_item.get('properties'))}")
-                    cleaned_item = self._clean_json_schema_for_openai(union_item)
-                    logger.info(f"SCHEMA_DEBUG: After cleaning {union_key}[{i}]: additionalProperties={cleaned_item.get('additionalProperties')}")
-                    cleaned_items.append(cleaned_item)
-                clean_schema[union_key] = cleaned_items
+                clean_schema[union_key] = [
+                    self._clean_json_schema_for_openai(item)
+                    for item in clean_schema[union_key]
+                ]
         
-        # Handle conditional schemas (if/then/else)
         for conditional_key in ['if', 'then', 'else']:
             if conditional_key in clean_schema and isinstance(clean_schema[conditional_key], dict):
                 clean_schema[conditional_key] = self._clean_json_schema_for_openai(clean_schema[conditional_key])
-        
-        # Handle not schema
-        if 'not' in clean_schema and isinstance(clean_schema['not'], dict):
-            clean_schema['not'] = self._clean_json_schema_for_openai(clean_schema['not'])
-            
-        # Handle $defs (definitions) section
+                
         if '$defs' in clean_schema and isinstance(clean_schema['$defs'], dict):
             clean_schema['$defs'] = {
-                def_name: self._clean_json_schema_for_openai(def_value)
-                for def_name, def_value in clean_schema['$defs'].items()
+                name: self._clean_json_schema_for_openai(definition)
+                for name, definition in clean_schema['$defs'].items()
             }
             
         return clean_schema
@@ -706,7 +533,6 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                 mcp_server_tool["headers"] = mcp_headers
 
             responses_tools.append(mcp_server_tool)
-            logger.info(f"OpenAI Responses: Created MCP server tool with {len(mcp_server_tool['allowed_tools'])} allowed tools at {mcp_server_url}")
         
         # Handle traditional function tools
         for tool in tools:
@@ -741,7 +567,6 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                 logger.warning(f"Skipping invalid Responses tool encountered during normalization: {e}")
                 continue
         
-        logger.info(f"OpenAI Responses: Prepared {len(responses_tools)} tools for API")
         return responses_tools
 
     def _extract_function_tool_calls_from_responses(self, data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:

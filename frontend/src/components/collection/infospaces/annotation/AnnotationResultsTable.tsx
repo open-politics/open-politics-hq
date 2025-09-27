@@ -54,6 +54,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { AlertCircle } from 'lucide-react';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
 import GuidedRetryModal from './GuidedRetryModal';
+import { useFragmentCuration } from '@/hooks/useFragmentCuration';
+import AnnotationCurationModal from './AnnotationCurationModal';
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
@@ -310,6 +312,69 @@ export function AnnotationResultsTable({
       schema: null,
     });
   }, []);
+
+  const { curate, isCurationLoading } = useFragmentCuration();
+  const [curationState, setCurationState] = useState<{
+    isOpen: boolean;
+    payloads: { assetId: number; fragmentKey: string; fragmentValue: any }[];
+  }>({
+    isOpen: false,
+    payloads: [],
+  });
+
+  const handleCurationClick = (mode: 'visible' | 'selected' | 'single', record?: EnrichedAssetRecord) => {
+    let targetRows: Row<EnrichedAssetRecord>[] = [];
+    
+    if (mode === 'visible') {
+      targetRows = table.getFilteredRowModel().rows;
+    } else if (mode === 'selected') {
+      targetRows = table.getSelectedRowModel().rows;
+    } else if (mode === 'single' && record) {
+       const row = table.getRowModel().rowsById[record.id.toString()];
+       if (row) targetRows = [row];
+    }
+
+    if (targetRows.length === 0) {
+      // TODO: Add toast notification
+      console.warn("No rows to curate.");
+      return;
+    }
+
+    const payloads: { assetId: number; fragmentKey: string; fragmentValue: any }[] = [];
+    const assetSet = new Set<number>();
+
+    targetRows.forEach(row => {
+      const record = row.original;
+      assetSet.add(record.id);
+
+      Object.entries(record.resultsMap).forEach(([schemaIdStr, result]) => {
+        const schemaId = parseInt(schemaIdStr, 10);
+        const visibleFields = selectedFieldsPerScheme[schemaId] || [];
+        
+        visibleFields.forEach(fieldKey => {
+          const fieldValue = getAnnotationFieldValue(result.value, fieldKey);
+          if (fieldValue !== undefined && fieldValue !== null) {
+            payloads.push({
+              assetId: record.id,
+              fragmentKey: fieldKey,
+              fragmentValue: fieldValue,
+            });
+          }
+        });
+      });
+    });
+
+    setCurationState({
+      isOpen: true,
+      payloads,
+    });
+  };
+
+  const executeCuration = async () => {
+    await curate(curationState.payloads);
+    setCurationState({ isOpen: false, payloads: [] });
+  };
+
 
   // Debounced function to notify parent of config changes
   const debouncedConfigUpdate = useCallback((config: any) => {
@@ -582,6 +647,9 @@ export function AnnotationResultsTable({
         if (parent) {
           parent.children = parent.children || [];
           parent.children.push(record);
+        } else {
+          // Parent not found, add as top-level
+          topLevelRecords.push(record);
         }
       } else {
         // This is a top-level record
@@ -597,19 +665,31 @@ export function AnnotationResultsTable({
     });
 
     // Apply filters to top-level records
+    // FIXED: Only apply filter logic if there are ACTIVE filters
+    const activeFilters = filters.filter(f => f.isActive);
     const filteredRecords = topLevelRecords.filter(record => {
+      // If no active filters, include all records that have results
+      if (activeFilters.length === 0) {
+        // For CSV parents, check if any children have results
+        if (record.hasChildren && record.children) {
+          return record.children.some(child => Object.keys(child.resultsMap).length > 0);
+        }
+        // For regular assets, check if they have direct results
+        return Object.keys(record.resultsMap).length > 0;
+      }
+
       // For CSV parents, check if any children match filters
       if (record.hasChildren && record.children) {
         return record.children.some(child => {
           const childResults = Object.values(child.resultsMap);
-          return filters.every(filter => checkFilterMatch(filter, childResults, schemas));
+          return childResults.length > 0 && activeFilters.every(filter => checkFilterMatch(filter, childResults, schemas));
         });
       }
       
       // For regular assets, check direct results
       const assetResults = Object.values(record.resultsMap);
       if (assetResults.length === 0) return false;
-      return filters.every(filter => checkFilterMatch(filter, assetResults, schemas));
+      return activeFilters.every(filter => checkFilterMatch(filter, assetResults, schemas));
     });
 
     return filteredRecords;
@@ -642,6 +722,28 @@ export function AnnotationResultsTable({
 
   const columns = useMemo((): ColumnDef<EnrichedAssetRecord>[] => {
     const staticColumns: ColumnDef<EnrichedAssetRecord>[] = [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={
+              table.getIsAllPageRowsSelected() ||
+              (table.getIsSomePageRowsSelected() && "indeterminate")
+            }
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Select row"
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
       {
         id: 'expander',
         header: '',
@@ -1006,6 +1108,10 @@ export function AnnotationResultsTable({
                        <ExternalLink className="mr-2 h-4 w-4" /> Load in Runner
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => handleCurationClick('single', recordContext)}>
+                    <Sparkles className="mr-2 h-4 w-4" /> Curate...
+                  </DropdownMenuItem>
                   {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
                    {onRetrySingleResult && (
                      <>
@@ -1176,6 +1282,24 @@ export function AnnotationResultsTable({
               </ScrollArea>
            </DropdownMenuContent>
          </DropdownMenu>
+
+         <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-9">
+              <Sparkles className="h-4 w-4 mr-2" />
+              Curate
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => handleCurationClick('visible')} disabled={table.getFilteredRowModel().rows.length === 0}>
+              Curate Visible Data...
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleCurationClick('selected')} disabled={table.getSelectedRowModel().rows.length === 0}>
+              Curate Selected Rows...
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
       </div>
       
       <div className="rounded-md border min-w-0 flex-1 flex flex-col overflow-hidden">
@@ -1309,6 +1433,14 @@ export function AnnotationResultsTable({
         schema={guidedRetryModal.schema}
         onRetry={handleGuidedRetryExecute}
         isRetrying={!!retryingResultId && retryingResultId === guidedRetryModal.result?.id}
+      />
+      <AnnotationCurationModal
+        isOpen={curationState.isOpen}
+        onClose={() => setCurationState({ isOpen: false, payloads: [] })}
+        onConfirm={executeCuration}
+        isLoading={isCurationLoading}
+        fragmentCount={curationState.payloads.length}
+        assetCount={new Set(curationState.payloads.map(p => p.assetId)).size}
       />
     </div>
   );

@@ -331,6 +331,7 @@ class AssetRead(AssetBase):
     source_identifier: Optional[str] = None
     source_metadata: Optional[Dict[str, Any]] = None
     content_hash: Optional[str] = None
+    fragments: Optional[Dict[str, Any]] = None
     user_id: Optional[int] = None
     updated_at: datetime
     event_timestamp: Optional[datetime] = None

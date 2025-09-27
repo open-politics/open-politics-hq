@@ -30452,6 +30452,18 @@
             ],
             "title": "Content Hash"
           },
+          "fragments": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fragments"
+          },
           "user_id": {
             "anyOf": [
               {

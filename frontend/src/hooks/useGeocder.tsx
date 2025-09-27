@@ -19,8 +19,8 @@ const useGeocode = () => {
     setError(null);
     console.log(`Starting geocode for location: ${location}`);
     try {
-      const response = await axios.get('/api/v1/locations/get_coordinates', {
-        params: { location, language: 'en' }
+      const response = await axios.get('/api/v1/utils/geocode_location', {
+        params: { location }
       });
       console.log('Response received:', response.data);
       

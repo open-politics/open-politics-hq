@@ -36,8 +36,8 @@ class FragmentCurationAdapter(AnalysisAdapterProtocol):
         """
         Executes the fragment promotion.
 
-        This method writes a new fragment to the `metadata.fragments` field
-        of a target asset. It creates the `fragments` key if it doesn't exist.
+        This method writes a new fragment to the `fragments` field
+        of a target asset. It creates the `fragments` field if it doesn't exist.
 
         Args:
             config: A dictionary containing the execution parameters:
@@ -67,13 +67,9 @@ class FragmentCurationAdapter(AnalysisAdapterProtocol):
 
         asset = get_asset_by_id(self.session, target_asset_id)
 
-        # Ensure metadata is a dictionary
-        if asset.metadata is None:
-            asset.metadata = {}
-
-        # Initialize the 'fragments' namespace if it doesn't exist
-        if "fragments" not in asset.metadata:
-            asset.metadata["fragments"] = {}
+        # Ensure fragments is a dictionary
+        if asset.fragments is None:
+            asset.fragments = {}
 
         # Create or update the fragment record
         fragment_record = {
@@ -87,13 +83,23 @@ class FragmentCurationAdapter(AnalysisAdapterProtocol):
         }
         if curated_by_ref:
             fragment_record["curated_by_ref"] = curated_by_ref
+            
+        # Add schema context if available from source_ref
+        if source_ref.startswith("annotation_run:"):
+            run_id = int(source_ref.replace("annotation_run:", ""))
+            from app.models import AnnotationRun
+            run = self.session.get(AnnotationRun, run_id)
+            if run and run.target_schemas:
+                # Get the first schema (or could be enhanced to get specific schema)
+                schema = run.target_schemas[0]
+                fragment_record["schema_id"] = schema.id  # Just store the schema ID for dynamic lookup
 
-        asset.metadata["fragments"][fragment_key] = fragment_record
+        asset.fragments[fragment_key] = fragment_record
 
-        # Mark the metadata as modified to ensure SQLAlchemy detects the change
+        # Mark the fragments as modified to ensure SQLAlchemy detects the change
         from sqlalchemy.orm.attributes import flag_modified
 
-        flag_modified(asset, "metadata")
+        flag_modified(asset, "fragments")
 
         self.session.add(asset)
         self.session.commit()
@@ -106,5 +112,5 @@ class FragmentCurationAdapter(AnalysisAdapterProtocol):
         return {
             "asset_id": target_asset_id,
             "promoted_fragment_key": fragment_key,
-            "final_fragments": asset.metadata.get("fragments"),
+            "final_fragments": asset.fragments,
         } 

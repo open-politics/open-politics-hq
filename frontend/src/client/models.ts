@@ -283,6 +283,7 @@ export type AssetRead = {
 	source_identifier?: string | null;
 	source_metadata?: Record<string, unknown> | null;
 	content_hash?: string | null;
+	fragments?: Record<string, unknown> | null;
 	user_id?: number | null;
 	updated_at: string;
 	event_timestamp?: string | null;

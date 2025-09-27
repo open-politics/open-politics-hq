@@ -109,19 +109,12 @@ This project aims to bring together natural language LLM interfaces with classic
 
 If you're passionate about making politics more accessible and understandable for everyone, we'd love to hear from you! Please reach out or show your support by giving us a star on GitHub.
 
-## Usage/Installation
-
-### Prerequisites
-- Python 3.8+
-- Node.js 16+
-- PostgreSQL 13+
-- MinIO (for file storage)
 
 ### Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/open-politics-hq.git
+git clone https://github.com/open-politics/open-politics-hq.git
 cd open-politics-hq
 ```
 

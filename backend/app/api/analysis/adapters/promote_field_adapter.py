@@ -16,8 +16,24 @@ class PromoteFieldAdapter(AnalysisAdapterProtocol):
         for ann in annotations:
             if source_field in ann.value:
                 asset = self.session.get(Asset, ann.asset_id)
-                if asset and hasattr(asset, target_field):
-                    setattr(asset, target_field, ann.value[source_field])
+                if asset:
+                    # Handle fragments field specially
+                    if target_field == "fragments":
+                        if asset.fragments is None:
+                            asset.fragments = {}
+                        asset.fragments[source_field] = {
+                            "value": ann.value[source_field],
+                            "source_ref": f"annotation_run:{run_id}",
+                            "timestamp": ann.created_at.isoformat(),
+                        }
+                        # Mark fragments as modified
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(asset, "fragments")
+                    elif hasattr(asset, target_field):
+                        setattr(asset, target_field, ann.value[source_field])
+                    else:
+                        continue  # Skip if target field doesn't exist
+                    
                     self.session.add(asset)
                     updated_assets += 1
 

@@ -12,6 +12,7 @@ import { formatDistanceToNow, format } from 'date-fns';
 import { Separator } from "@/components/ui/separator";
 import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useSchemaInfo } from '@/hooks/useSchemaInfo';
 
 interface AssetDetailViewCsvProps {
   asset: AssetRead;
@@ -36,6 +37,9 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   const [sortField, setSortField] = useState<string>('part_index');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  
+  // Fetch schema information for fragment context
+  const { getSchemaById, isLoading: isLoadingSchemas } = useSchemaInfo();
 
   // Filter and sort child assets
   const filteredAndSortedAssets = useMemo(() => {
@@ -254,6 +258,11 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                     <div className="flex items-center gap-1 min-w-0">
                       <span className="truncate">{childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}</span>
                       {selected && <Eye className="h-3 w-3 text-yellow-800 dark:text-yellow-300 flex-shrink-0" />}
+                      {childAsset.fragments && Object.keys(childAsset.fragments).length > 0 && (
+                        <Badge variant="outline" className="h-4 px-1 text-xs bg-blue-100 text-blue-700 border-blue-300 flex-shrink-0">
+                          F{Object.keys(childAsset.fragments).length}
+                        </Badge>
+                      )}
                     </div>
                   </td>
                   <td className="px-2 py-2 font-medium">
@@ -453,13 +462,108 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
 
           <Separator />
 
-          {/* Full Text Content */}
-          {selectedChildAsset.text_content && (
+
+
+          <Separator />
+
+          {/* Fragments Data */}
+          {selectedChildAsset.fragments && Object.keys(selectedChildAsset.fragments).length > 0 && (
             <div>
-              <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Full Content</h4>
-              <ScrollArea className="h-32 p-3 bg-muted/30 rounded text-sm font-mono">
-                {selectedChildAsset.text_content}
-              </ScrollArea>
+              <h4 className="text-sm font-semibold mb-3 text-muted-foreground flex items-center gap-2">
+                <Badge className="h-4 w-4 rounded-full p-0 flex items-center justify-center text-xs">F</Badge>
+                Curated Fragments ({Object.keys(selectedChildAsset.fragments).length} fragments)
+              </h4>
+              <div className="grid gap-3 w-full">
+                {Object.entries(selectedChildAsset.fragments).map(([fragmentKey, fragmentData], index) => {
+                  const fragment = fragmentData as any;
+                  
+                  // Extract schema information from source_ref if available
+                  const sourceRef = fragment.source_ref || '';
+                  const isFromAnnotationRun = sourceRef.startsWith('annotation_run:');
+                  const runId = isFromAnnotationRun ? sourceRef.replace('annotation_run:', '') : null;
+                  
+                  // Get schema information dynamically
+                  const schemaId = fragment.schema_id || fragment.schema?.id;
+                  const schema = schemaId ? getSchemaById(schemaId) : null;
+                  
+                  return (
+                    <div key={index} className="border rounded-lg p-3 min-w-0 bg-blue-50/50 dark:bg-blue-950/20">
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="flex-1 min-w-0">
+                          <strong className="text-sm text-blue-700 dark:text-blue-300 truncate block" title={fragmentKey}>
+                            {fragmentKey.replace("document.", "")}
+                          </strong>
+                          {isFromAnnotationRun && (
+                            <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                              From Annotation Run #{runId}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              navigator.clipboard.writeText(String(fragment.value || ''));
+                              toast.success(`Copied "${fragmentKey}" fragment value`);
+                            }}
+                            className="h-6 px-2 text-xs flex-shrink-0"
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Fragment Value */}
+                      <div className="text-sm bg-white dark:bg-gray-800 p-3 rounded font-mono break-all w-full overflow-x-auto border mb-2">
+                        {String(fragment.value || '')}
+                      </div>
+                      
+                      {/* Metadata */}
+                      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                        {fragment.source_ref && (
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Source:</span>
+                            <span className="font-mono">{fragment.source_ref}</span>
+                          </div>
+                        )}
+                        {fragment.timestamp && (
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Curated:</span>
+                            <span>{formatDistanceToNow(new Date(fragment.timestamp), { addSuffix: true })}</span>
+                          </div>
+                        )}
+                        {fragment.curated_by_ref && (
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">By:</span>
+                            <span>{fragment.curated_by_ref}</span>
+                          </div>
+                        )}
+                      </div>
+                      
+
+                      
+                      {/* Loading state for schema */}
+                      {schemaId && !schema && isLoadingSchemas && (
+                        <div className="mt-2 p-2 bg-blue-100/50 dark:bg-blue-900/20 rounded text-xs text-blue-700 dark:text-blue-300 border-l-2 border-blue-300">
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <span>Loading schema information...</span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Fallback Schema Context Note */}
+                      {!schema && !schemaId && isFromAnnotationRun && (
+                        <div className="mt-2 p-2 bg-blue-100/50 dark:bg-blue-900/20 rounded text-xs text-blue-700 dark:text-blue-300 border-l-2 border-blue-300">
+                          <strong>Schema Context:</strong> This fragment was extracted from an annotation run. 
+                          The original schema definition and instructions are available in the annotation runner.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -614,7 +718,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto w-full max-w-4xl mx-auto">
+      <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto">
         {isLoadingChildren ? (
           <div className="flex items-center justify-center h-32">
             <Loader2 className="h-6 w-6 animate-spin mr-2" />

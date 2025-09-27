@@ -967,9 +967,10 @@ class AnnotationService:
             db_schemas.append(schema)
 
         # Validate target assets or bundle
-        if not run_in.target_asset_ids and not run_in.target_bundle_id:
+        # Allow empty target_asset_ids for curation runs (they will be populated as annotations are created)
+        if run_in.target_asset_ids is None and run_in.target_bundle_id is None:
             raise ValueError("Either target_asset_ids or target_bundle_id must be provided.")
-        if run_in.target_asset_ids and run_in.target_bundle_id:
+        if run_in.target_asset_ids is not None and run_in.target_bundle_id is not None:
             raise ValueError("Provide either target_asset_ids or target_bundle_id, not both.")
 
         # The actual target asset IDs will be resolved by the task from configuration
@@ -1092,11 +1093,13 @@ class AnnotationService:
         asset = self.session.get(Asset, asset_id)
         if asset:
             fragments = asset.fragments or {}
+            
             fragments[field_name] = {
                 "value": value,
                 "source_ref": f"annotation_run:{run.id}",
                 "curated_by_ref": f"user:{user_id}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "schema_id": schema.id,  # Just store the schema ID for dynamic lookup
             }
             asset.fragments = fragments
             self.session.add(asset)

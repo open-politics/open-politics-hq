@@ -1318,6 +1318,18 @@ export const $AssetRead = {
 	type: 'null',
 }],
 },
+		fragments: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
 		user_id: {
 	type: 'any-of',
 	contains: [{

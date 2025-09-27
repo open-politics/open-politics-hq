@@ -22,6 +22,7 @@ from io import BytesIO
 from PIL import Image
 from opol import OPOL
 import os
+from app.core.config import settings
 
 opol = OPOL(mode=os.getenv("OPOL_MODE"), api_key=os.getenv("OPOL_API_KEY"))
 
@@ -228,15 +229,76 @@ async def get_tavily_data():
     result = tavily.get_tavily_data()
     return JSONResponse(content=result, status_code=200)
 
+def call_pelias_api(location, lang=None):
+    """Call Pelias API for geocoding with custom mappings for certain locations."""
+    custom_mappings = {
+        "europe": {
+            'coordinates': [13.405, 52.52],
+            'location_type': 'continent',
+            'bbox': [-24.539906, 34.815009, 69.033946, 81.85871],
+            'area': 1433.861436
+        },
+    }
+
+    if location.lower() in custom_mappings:
+        return custom_mappings[location.lower()]
+
+    try:
+        pelias_url = settings.PELIAS_PLACEHOLDER_PORT
+        url = f"http://{pelias_url}/parser/search?text={location}"
+        if lang:
+            url += f"&lang={lang}"
+
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                top_result = data[0]
+                geometry = top_result.get('geom')
+                location_type = top_result.get('placetype', 'location')
+                if geometry:
+                    bbox = geometry.get('bbox')
+                    area = geometry.get('area')
+                    return {
+                        'coordinates': [geometry.get('lon'), geometry.get('lat')],
+                        'location_type': location_type if location_type else 'location',
+                        'bbox': bbox.split(',') if bbox else None,
+                        'area': area
+                    }
+                else:
+                    logger.warning(f"No geometry found for location: {location}")
+            else:
+                logger.warning(f"No data returned from API for location: {location}")
+        else:
+            logger.error(f"API call failed with status code: {response.status_code}")
+    except requests.RequestException as e:
+        logger.error(f"API call exception for location {location}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error for location {location}: {str(e)}")
+    return None
+
+
 @router.get("/get_coordinates")
 async def get_coordinates(location: str, language: str = "en"):
     """
     Fetches the coordinates, bounding box, and location type for a given location.
     """
     try:
-        result = opol.geo.code(location)
-        print(result)
-        return result
+        logger.info(f"Geocoding location: {location}")
+        coordinates = call_pelias_api(location, lang=language)
+        logger.info(f"Coordinates: {coordinates}")
+
+        if coordinates:
+            return {
+                "coordinates": coordinates['coordinates'],
+                "location_type": coordinates['location_type'],
+                "bbox": coordinates.get('bbox'),
+                "area": coordinates.get('area')
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Unable to geocode location")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error fetching coordinates for location {location}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
