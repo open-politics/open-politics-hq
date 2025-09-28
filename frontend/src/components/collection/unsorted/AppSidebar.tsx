@@ -111,7 +111,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     },
     {
       title: "Chat",
-      url: "/hq/infospaces/chat",
+      url: "/hq/chat",
       icon: Bot,
       isActive: true,
       colorClass: "sidebar-teal",

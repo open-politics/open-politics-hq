@@ -6,91 +6,102 @@ import {
   type ApiError,
   LoginService,
   UserOut,
-  UsersOut,
   UsersService,
   OpenAPI,
 } from "../client"
-import { AxiosError } from 'axios';
 
 type User = UserOut & {
   avatar?: string;
   is_superuser?: boolean;
 };
 
-const isLoggedIn = () => {
-  return typeof window !== 'undefined' && localStorage.getItem("access_token") !== null;
-}
-
 const useAuth = () => {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [hasToken, setHasToken] = useState<boolean>(false);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
 
-  // On mount or token change, update OpenAPI so requests include our token
+  // Check token on mount and listen for changes
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window === 'undefined') return;
+
+    const updateTokenState = () => {
       const token = localStorage.getItem("access_token");
-      if (token) {
-        OpenAPI.HEADERS = async () => ({
-          Authorization: `Bearer ${token}`,
-        });
-      } else {
-        // If no token, remove any custom Authorization header
-        OpenAPI.HEADERS = undefined;
-      }
-    }
+      setHasToken(!!token);
+      OpenAPI.HEADERS = token ? async () => ({ Authorization: `Bearer ${token}` }) : undefined;
+    };
+
+    updateTokenState();
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'access_token') updateTokenState();
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // This query runs only if isLoggedIn() is true
   const { data: user, isLoading } = useQuery<User | null, Error>({
     queryKey: ["CurrentUser"],
     queryFn: UsersService.readUserMe,
-    enabled: isLoggedIn(),
+    enabled: hasToken && !isLoggingOut,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
   })
 
   const loginMutation = useMutation({
     mutationFn: async (data: AccessToken) => {
-      console.log('Attempting to log in with provided credentials...');
       const response = await LoginService.loginAccessToken({ formData: data });
-      console.log('Login successful, storing access token.');
       localStorage.setItem('access_token', response.access_token);
+      OpenAPI.HEADERS = async () => ({ Authorization: `Bearer ${response.access_token}` });
       return response;
     },
     onSuccess: () => {
-      console.log('Login mutation successful, navigating to home.');
       setError(null);
+      setHasToken(true);
       queryClient.invalidateQueries({ queryKey: ['CurrentUser'] });
       
-      // Don't auto-redirect if there's a return URL (SSO flow)
       const urlParams = new URLSearchParams(window.location.search);
       const returnUrl = urlParams.get('return_url');
       
       if (!returnUrl) {
         router.push('/hq');
       }
-      // If there is a return_url, let the login page handle the redirect
     },
     onError: (err: ApiError) => {
-      let errDetail = (err.body as any)?.detail || 'Login failed';
-      if (err instanceof AxiosError) {
-        errDetail = err.message
-      }
+      const errDetail = (err.body as any)?.detail || err.message || 'Login failed';
       setError(errDetail);
-      console.error('Login error:', errDetail);
     },
   });
 
   const logout = () => {
-    console.log('Logging out, removing access token.');
+    if (isLoggingOut) return;
+    
+    setIsLoggingOut(true);
+    
+    // Cancel all ongoing queries and clear cache
+    queryClient.cancelQueries();
+    queryClient.clear();
+    
+    // Remove token and clear authentication state
     localStorage.removeItem('access_token');
-    router.push('/accounts/login');
+    setHasToken(false);
+    OpenAPI.HEADERS = undefined;
     setError(null);
+    
+    // Navigate to login page
+    router.push('/accounts/login');
+    
+    // Reset logout state
+    setTimeout(() => setIsLoggingOut(false), 500);
   };
 
   return {
     user,
     isLoading,
-    isLoggedIn: !!user,
+    isLoggedIn: !!user && !isLoading && !isLoggingOut,
+    isLoggingOut,
     loginMutation,
     logout,
     error,

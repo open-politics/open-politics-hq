@@ -7,7 +7,7 @@ import LottiePlaceholder from '@/components/ui/lottie-placeholder';
 
 const withAdminAuth = (WrappedComponent: React.ComponentType) => {
   return (props: any) => {
-    const { user, isLoading, isLoggedIn } = useAuth();
+    const { user, isLoading, isLoggedIn, isLoggingOut } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
     const [isClient, setIsClient] = useState(false);
@@ -17,7 +17,7 @@ const withAdminAuth = (WrappedComponent: React.ComponentType) => {
     }, []);
 
     useEffect(() => {
-      if (!isLoading && (!isLoggedIn || !user?.is_superuser)) {
+      if (isClient && !isLoading && !isLoggingOut && (!isLoggedIn || !user?.is_superuser)) {
         console.log('Redirecting - Conditions not met:', {
           notLoggedIn: !isLoggedIn,
           notSuperuser: user?.is_superuser,
@@ -26,19 +26,19 @@ const withAdminAuth = (WrappedComponent: React.ComponentType) => {
           router.push('/');
         }
       }
-    }, [isLoading, isLoggedIn, user, router, pathname]);
+    }, [isClient, isLoading, isLoggedIn, isLoggingOut, user, router, pathname]);
 
-    if (!isClient || isLoading) {
+    if (!isClient || isLoading || isLoggingOut) {
       return <LottiePlaceholder />;
     }
 
-    if (isLoggedIn && user?.is_superuser) {
-      console.log('Rendering admin component');
-      return <WrappedComponent {...props} />;
+    if (!isLoggedIn || !user?.is_superuser) {
+      console.log('Not authorized, returning placeholder');
+      return <LottiePlaceholder />;
     }
 
-    console.log('Not authorized, returning null');
-    return null;
+    console.log('Rendering admin component');
+    return <WrappedComponent {...props} />;
   };
 };
 

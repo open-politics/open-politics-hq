@@ -326,10 +326,10 @@ export default function AnnotationRunnerDock({
       )}>
         <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl" onClick={() => setIsExpanded(!isExpanded)}>
                       <div className="flex items-center gap-2 sm:gap-4">
-            <div className="p-2 flex items-center gap-2 rounded-lg bg-blue-500/20 dark:bg-blue-500/20 border border-blue-200 dark:border-blue-800">
-              <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
-              <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
-            </div>
+                <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+                  <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+                  <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+              </div>
             <div>
               <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Annotation Runner</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">

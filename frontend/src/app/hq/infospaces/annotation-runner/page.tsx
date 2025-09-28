@@ -207,7 +207,7 @@ export default function AnnotationRunnerPage() {
   return (
     <div className="flex flex-col h-full overflow-auto relative">
       
-      <div className="flex-1 pb-40 relative z-10">
+      <div className="flex-1 relative z-10">
         <AnnotationRunner
             allRuns={runs}
             isLoadingRuns={isLoadingRuns}

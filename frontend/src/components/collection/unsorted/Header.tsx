@@ -30,7 +30,7 @@ const Header = () => {
   const toggleTheme = React.useCallback(() => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark")
   }, [resolvedTheme, setTheme])
-  const { logout, user, isLoggedIn } = useAuth();
+  const { logout, user, isLoggedIn, isLoggingOut } = useAuth();
   const [mounted, setMounted] = useState(false);
   const { toggleSidebar } = useSidebar();
 
@@ -130,7 +130,7 @@ const Header = () => {
               </Popover>
 
               {/* Auth Navigation */}
-              {isLoggedIn  ? (
+              {isLoggedIn && !isLoggingOut ? (
                 <div className="flex items-center space-x-2">
                   <Button variant="ghost" asChild className="ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg">
                     <Link href="/hq">
@@ -252,7 +252,7 @@ const Header = () => {
 
                       <div className="my-2 border-t border-border"></div>
 
-                      {isLoggedIn ? (
+                      {isLoggedIn && !isLoggingOut ? (
                         <>
                           <SidebarMenuItem>
                             <SidebarMenuButton asChild className="ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg">
@@ -301,7 +301,7 @@ const Header = () => {
                   </SidebarContent>
 
                   <SidebarFooter className="border-t p-4">
-                    {isLoggedIn && (
+                    {isLoggedIn && !isLoggingOut && (
                       <NavUser user={{
                         name: user?.full_name || 'User',
                         email: user?.email || '',

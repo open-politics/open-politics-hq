@@ -30,7 +30,7 @@ import {
   Sparkles,
   Zap,
   Repeat,
-  Files,
+  FileText,
   Microscope,
   Loader2,
   Upload,
@@ -183,7 +183,7 @@ const FavoriteRunCard: React.FC<{
             <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
               <span className="flex items-center gap-1.5">
                 <div className="p-0.5 rounded bg-green-500/20 dark:bg-green-500/20">
-                  <Files className="h-3 w-3 text-green-600 dark:text-green-400" />
+                  <FileText className="h-3 w-3 text-green-600 dark:text-green-400" />
                 </div>
                 {run.documentCount} assets
               </span>
@@ -273,9 +273,9 @@ const RunTableRow: React.FC<{
       </TableCell>
       <TableCell className="font-medium py-6">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
-            <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
-          </div>
+        <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+                <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
+              </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-semibold text-foreground truncate group-hover:text-foreground/80 transition-colors" title={run.name}>
@@ -317,7 +317,7 @@ const RunTableRow: React.FC<{
       <TableCell className="text-center py-6">
         <div className="flex items-center justify-center gap-1.5">
           <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
-            <Files className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+            <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
           </div>
           <span className="font-semibold text-foreground">{run.documentCount}</span>
         </div>
@@ -646,8 +646,8 @@ const RunHistoryPanel: React.FC<{
         <div className="flex-1 overflow-hidden p-8 backdrop-blur-sm scrollbar-hide ">
           {nonFavoriteRuns.length > 0 ? (
             <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-xl border border-border/60 overflow-hidden h-full flex flex-col">
-              {/* Table Header - Fixed within table */}
-              <div className="flex-shrink-0">
+              {/* Sticky Header */}
+              <div className="flex-shrink-0 border-b border-border/20">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-gradient-to-r from-muted/80 via-muted/60 to-muted/80">
@@ -675,7 +675,7 @@ const RunHistoryPanel: React.FC<{
                       <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         <div className="flex items-center justify-center gap-1.5">
                           <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
-                            <Files className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+                            <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
                           </div>
                           Assets
                         </div>
@@ -702,10 +702,10 @@ const RunHistoryPanel: React.FC<{
                 </Table>
               </div>
               
-              {/* Table Body - Scrollable */}
+              {/* Scrollable Body */}
               <div className="flex-1 overflow-y-auto">
                 <Table>
-                  <TableBody className="divide-y divide-border/60 ">
+                  <TableBody className="divide-y divide-border/60">
                     {nonFavoriteRuns.map((run, index) => (
                       <RunTableRow
                         key={run.id}
