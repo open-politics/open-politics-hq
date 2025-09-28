@@ -698,22 +698,3 @@ def delete_user(
     return Message(message="User deleted successfully")
 
 
-@router.get("/debug/email-status")
-def get_email_debug_status() -> Any:
-    """
-    Debug endpoint to check email configuration status.
-    """
-    return {
-        "email_verification_required": settings.REQUIRE_EMAIL_VERIFICATION,
-        "emails_enabled": settings.emails_enabled,
-        "smtp_configured": bool(settings.SMTP_HOST),
-        "from_email_configured": bool(settings.EMAILS_FROM_EMAIL),
-        "smtp_host": settings.SMTP_HOST or "Not configured",
-        "smtp_port": settings.SMTP_PORT,
-        "emails_from_email": settings.EMAILS_FROM_EMAIL or "Not configured",
-        "help": {
-            "to_enable_emails": "Set SMTP_HOST, EMAILS_FROM_EMAIL environment variables",
-            "to_disable_verification": "Set REQUIRE_EMAIL_VERIFICATION=false in .env",
-            "manual_verification_endpoint": "/api/v1/users/verify-email?token=<token>"
-        }
-    }

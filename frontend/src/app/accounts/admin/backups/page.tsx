@@ -21,7 +21,6 @@ import {
   Search,
   X
 } from 'lucide-react';
-import withAdminAuth from '@/hooks/withAdminAuth';
 import { BackupsService } from '@/client/services';
 import { toast } from 'sonner';
 
@@ -58,7 +57,7 @@ interface OverviewResponse {
   skip: number;
 }
 
-export default withAdminAuth(function AdminBackupsPage() {
+export default function AdminBackupsPage() {
   const [infospaces, setInfospaces] = useState<InfospaceOverview[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -550,4 +549,4 @@ export default withAdminAuth(function AdminBackupsPage() {
       </Card>
     </div>
   );
-}); 
+} 

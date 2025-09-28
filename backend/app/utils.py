@@ -1,4 +1,3 @@
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,11 +35,7 @@ def send_email(
 ) -> None:
     assert settings.emails_enabled, "no provided configuration for email variables"
     
-    print(f"📧 SENDING EMAIL:")
-    print(f"  - To: {email_to}")
-    print(f"  - Subject: {subject}")
-    print(f"  - From: {settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>")
-    print(f"  - SMTP: {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+    print(f"📧 Sending email to {email_to}: {subject}")
     
     try:
         # Create message
@@ -54,18 +49,26 @@ def send_email(
         msg.attach(html_part)
         
         # Connect to server and send email
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        # Use SMTP_SSL if configured for port 465, otherwise use SMTP with STARTTLS
+        if settings.SMTP_SSL and settings.SMTP_PORT == 465:
+            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT)
+        else:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
             if settings.SMTP_TLS:
                 server.starttls()
+        
+        try:
             if settings.SMTP_USER and settings.SMTP_PASSWORD:
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             
             server.send_message(msg)
             print(f"✅ Email sent successfully to {email_to}")
             
+        finally:
+            server.quit()
+            
     except Exception as e:
         print(f"❌ Email send failed: {e}")
-        print(f"❌ Error type: {type(e).__name__}")
         raise
 
 
@@ -176,3 +179,5 @@ def generate_email_verification_email(email_to: str, username: str, token: str) 
         },
     )
     return EmailData(html_content=html_content, subject=subject)
+
+

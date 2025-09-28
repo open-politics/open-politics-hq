@@ -23,7 +23,6 @@ import {
   HardDrive,
   UserPlus
 } from 'lucide-react';
-import withAdminAuth from '@/hooks/withAdminAuth';
 import { toast } from 'sonner';
 
 interface UserOverview {
@@ -84,7 +83,7 @@ interface UserBackupsResponse {
   count: number;
 }
 
-export default withAdminAuth(function AdminUserBackupsPage() {
+export default function AdminUserBackupsPage() {
   const [users, setUsers] = useState<UserOverview[]>([]);
   const [userBackups, setUserBackups] = useState<UserBackup[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -764,4 +763,4 @@ export default withAdminAuth(function AdminUserBackupsPage() {
       </div>
     </div>
   );
-}); 
+} 

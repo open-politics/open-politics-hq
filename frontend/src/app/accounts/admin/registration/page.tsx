@@ -15,7 +15,6 @@ import {
   Info,
   AlertTriangle
 } from 'lucide-react';
-import withAdminAuth from '@/hooks/withAdminAuth';
 import { toast } from 'sonner';
 
 interface RegistrationStats {
@@ -27,7 +26,7 @@ interface RegistrationStats {
   last_registration: string | null;
 }
 
-export default withAdminAuth(function AdminRegistrationPage() {
+export default function AdminRegistrationPage() {
   const [stats, setStats] = useState<RegistrationStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -287,4 +286,4 @@ export default withAdminAuth(function AdminRegistrationPage() {
       )}
     </div>
   );
-}); 
+} 

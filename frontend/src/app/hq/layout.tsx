@@ -152,17 +152,27 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
 }
 
 export default function HQLayout({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();  
+  const { user, isLoading, isLoggedIn, isLoggingOut } = useAuth();  
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const router = useRouter();
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    if (isClient && !isLoading && !isLoggedIn) {
+      router.push('/accounts/login');
+    }
+  }, [isClient, isLoading, isLoggedIn, router]);
   
-  if (typeof window === 'undefined' || isLoading) {
+  if (!isClient || isLoading || isLoggingOut) {
     return <LottiePlaceholder />
   }
 
-  if (!user) {
-    router.push('/accounts/login');
-    return null;
+  if (!isLoggedIn) {
+    return <LottiePlaceholder />
   }
 
   return (

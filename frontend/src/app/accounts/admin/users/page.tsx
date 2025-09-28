@@ -12,7 +12,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { UsersService, UserCreate, UserOut, UsersOut, UserUpdate } from '@/client';
 import useAuth from "@/hooks/useAuth";
 import { Eye, EyeOff, Upload, Users, RefreshCw, Trash2, User, Edit } from 'lucide-react';
-import withAdminAuth from '@/hooks/withAdminAuth';
 import { parse } from 'papaparse';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from 'sonner';
 
 
-export default withAdminAuth(function UserManagementPage() {
+export default function UserManagementPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -642,4 +641,4 @@ export default withAdminAuth(function UserManagementPage() {
       </Card>
     </div>
   );
-});
+}

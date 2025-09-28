@@ -1,4 +1,4 @@
-'use client'
+  'use client'
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Brain, Microscope, FileText, Search, Activity, Terminal, Settings } from "lucide-react"
@@ -9,8 +9,9 @@ import { useState } from "react"
 import Link from "next/link"
 import ModelManager from '@/components/collection/infospaces/management/ModelManager'
 import { toast } from 'sonner'
+import withAuth from '@/hooks/withAuth'
 
-export default function DesksPage() {
+function DesksPage() {
   const { apiKeys, setApiKey, selectedProvider, selectedModel } = useApiKeysStore();
   const [tempApiKey, setTempApiKey] = useState('');
 
@@ -263,3 +264,5 @@ export default function DesksPage() {
     </div>
   )
 }
+
+export default withAuth(DesksPage);

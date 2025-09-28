@@ -15,25 +15,22 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const router = useRouter();
-  const { loginMutation, error, isLoggedIn } = useAuth();
+  const { loginMutation, error, isLoggedIn, isLoggingOut } = useAuth();
 
-  // Get return URL from query params
+  // Handle SSO redirect only for legitimate logins, not during logout
   useEffect(() => {
-    if (isLoggedIn && !isRedirecting) {
+    if (isLoggedIn && !isRedirecting && !isLoggingOut) {
       const urlParams = new URLSearchParams(window.location.search);
       const returnUrl = urlParams.get('return_url');
       
       if (returnUrl) {
         setIsRedirecting(true);
-        
-        // For SSO flow, redirect back to the original URL to complete the flow
-        console.log('SSO: Redirecting to return URL:', returnUrl);
         window.location.href = returnUrl;
       } else {
         router.push('/hq');
       }
     }
-  }, [isLoggedIn, isRedirecting, router]);
+  }, [isLoggedIn, isRedirecting, isLoggingOut, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
