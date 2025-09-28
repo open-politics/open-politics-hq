@@ -29,9 +29,14 @@ We apply these lenses methodically to our data stored in our [information spaces
 
 ### Usage
 
-### Hosted Webapp
-1. Visit [open-politics.org](https://open-politics.org/accounts/register) 
+> Public registration opening very soon.
 
+### Hosted Webapp
+1. Register [here](https://open-politics.org/accounts/register) 
+
+2. Log [here](https://open-politics.org/accounts/login)
+
+> Note: You can log in to the [forum](https://forum.open-politics.org) with the same account.
 
 ### Self-Hosted with Docker
 1. Clone the repository and prepare the environment:
