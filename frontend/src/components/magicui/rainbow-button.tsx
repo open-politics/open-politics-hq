@@ -43,19 +43,28 @@ interface RainbowButtonProps
   asChild?: boolean;
 }
 
-const RainbowButton = React.forwardRef<HTMLButtonElement, RainbowButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
-    return (
-      <Comp
-        data-slot="button"
-        className={cn(rainbowButtonVariants({ variant, size, className }))}
-        ref={ref}
-        {...props}
-      />
-    );
-  },
-);
+const RainbowButton = (
+  {
+    ref,
+    className,
+    variant,
+    size,
+    asChild = false,
+    ...props
+  }: RainbowButtonProps & {
+    ref: React.RefObject<HTMLButtonElement>;
+  }
+) => {
+  const Comp = asChild ? Slot : "button";
+  return (
+    <Comp
+      data-slot="button"
+      className={cn(rainbowButtonVariants({ variant, size, className }))}
+      ref={ref}
+      {...props}
+    />
+  );
+};
 
 RainbowButton.displayName = "RainbowButton";
 

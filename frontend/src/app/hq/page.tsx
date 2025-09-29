@@ -70,7 +70,7 @@ function DesksPage() {
           </div>
 
         <div className="group">
-            <Link href="/hq/infospaces/chat" className="block">
+            <Link href="/hq/chat" className="block">
               <Card className="group-hover:shadow-md group-hover:border-teal-200 dark:group-hover:border-teal-700 transition-all duration-200 cursor-pointer border border-teal-100 dark:border-teal-900 bg-teal-50/20 dark:bg-teal-950/10">
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-3">

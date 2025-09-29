@@ -1,6 +1,6 @@
 // components/Globe/index.tsx
 
-import React, { forwardRef, useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import mapboxgl from 'mapbox-gl';
 import * as d3 from 'd3';
 import CoreGlobe from './CoreGlobe';
@@ -11,7 +11,12 @@ interface GlobeProps {
   onLocationClick: (countryName: string) => void;
 }
 
-const Globe = forwardRef<any, GlobeProps>(({ onLocationClick }, ref) => {
+const Globe = (
+  {
+    ref,
+    onLocationClick
+  }
+) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
@@ -213,6 +218,6 @@ const Globe = forwardRef<any, GlobeProps>(({ onLocationClick }, ref) => {
       <Popups />
     </div>
   );
-});
+};
 
 export default Globe;

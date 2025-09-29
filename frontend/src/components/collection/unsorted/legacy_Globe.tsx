@@ -1,5 +1,5 @@
 // @ts-ignore
-import React, { useLayoutEffect, useRef, useState, useEffect, useImperativeHandle, forwardRef } from 'react';
+import React, { useLayoutEffect, useRef, useState, useEffect, useImperativeHandle } from 'react';
 import * as am5 from "@amcharts/amcharts5";
 import * as am5map from "@amcharts/amcharts5/map";
 import am5geodata_worldLow from "@amcharts/amcharts5-geodata/worldLow";
@@ -36,7 +36,19 @@ interface DataContext {
 
 OpenAPI.BASE = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
-const Globe = React.forwardRef<any, GlobeProps>(({ geojsonUrl, setArticleContent, onLocationClick, isBrowseMode, toggleMode, setLegislativeData, setEconomicData, onCountryZoom }, ref) => {
+const Globe = (
+  {
+    ref,
+    geojsonUrl,
+    setArticleContent,
+    onLocationClick,
+    isBrowseMode,
+    toggleMode,
+    setLegislativeData,
+    setEconomicData,
+    onCountryZoom
+  }
+) => {
   const chartRef = useRef<am5.Root | null>(null);
   const polygonSeriesRef = useRef<am5map.MapPolygonSeries | null>(null);
   const normalPointSeriesRef = useRef<am5map.MapPointSeries | null>(null);
@@ -679,6 +691,6 @@ const Globe = React.forwardRef<any, GlobeProps>(({ geojsonUrl, setArticleContent
       </div>
     </div>
   );
-});
+};
 
 export default Globe;

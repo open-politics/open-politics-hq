@@ -39,6 +39,17 @@ export function NavMain({
     }[]
   }[]
 }) {
+  // Map colorClass to colorVariant
+  const getColorVariant = (colorClass?: string): "default" | "blue" | "teal" | "pink" | "green" | "sky" | "gray" => {
+    if (!colorClass) return "default";
+    if (colorClass.includes("blue")) return "blue";
+    if (colorClass.includes("teal")) return "teal";
+    if (colorClass.includes("pink")) return "pink";
+    if (colorClass.includes("green")) return "green";
+    if (colorClass.includes("sky")) return "sky";
+    if (colorClass.includes("gray")) return "gray";
+    return "default";
+  };
   return (
     <SidebarGroup className="p-2">
       <SidebarGroupLabel>{title ? title : "Navigation"}</SidebarGroupLabel>
@@ -53,7 +64,7 @@ export function NavMain({
             >
               <SidebarMenuItem>
                 <CollapsibleTrigger asChild>
-                  <SidebarMenuButton tooltip={item.title}>
+                  <SidebarMenuButton tooltip={item.title} colorVariant={getColorVariant(item.colorClass)}>
                     {item.icon && <item.icon />}
                     <span>{item.title}</span>
                     <ChevronRight className="ml-auto transition-transform border-none duration-200 group-data-[state=open]/collapsible:rotate-90" />
@@ -96,7 +107,7 @@ export function NavMain({
                 asChild
                 isActive={item.isActive}
                 tooltip={item.title}
-                className={item.colorClass ? `${item.colorClass}` : ''}
+                colorVariant={getColorVariant(item.colorClass)}
               >
                 <a href={item.url}>
                   {item.icon && <item.icon />}
