@@ -49,3 +49,6 @@ Werkzeug>=3.0.0
 pgvector
 feedparser
 newspaper4k
+lxml[html_clean]
+uvloop
+httptools

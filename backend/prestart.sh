@@ -2,7 +2,7 @@
 set -e
 
 # alembic stamp head
-# alembic revision --autogenerate -m "Initial migration"
+# alembic revision --autogenerate -m "Sources"
 alembic upgrade head
 
 # Let the DB start

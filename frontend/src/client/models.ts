@@ -432,6 +432,7 @@ export type BulkUrlIngestion = {
 	urls: Array<string>;
 	base_title?: string | null;
 	scrape_immediately?: boolean;
+	bundle_id?: number | null;
 };
 
 
@@ -1119,6 +1120,17 @@ export type QueryType = {
 
 
 
+export type RSSDiscoveryRequest = {
+	country: string;
+	category_filter?: string | null;
+	max_feeds?: number;
+	max_items_per_feed?: number;
+	bundle_id?: number | null;
+	options?: Record<string, unknown> | null;
+};
+
+
+
 export type RegistrationStats = {
 	total_users: number;
 	users_created_today: number;
@@ -1158,6 +1170,17 @@ export type ResultStatus = 'success' | 'failed';
 
 
 
+export type RssSourceCreateRequest = {
+	feed_url: string;
+	source_name?: string | null;
+	auto_monitor?: boolean;
+	monitoring_schedule?: string | null;
+	target_bundle_id?: number | null;
+	target_bundle_name?: string | null;
+};
+
+
+
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'completed_with_errors';
 
 
@@ -1184,6 +1207,23 @@ export type SearchHistoryRead = {
 	id: number;
 	user_id: number;
 	timestamp: string;
+};
+
+
+
+export type SearchResultOut = {
+	title: string;
+	url: string;
+	content: string;
+	score?: number | null;
+	raw?: Record<string, unknown> | null;
+};
+
+
+
+export type SearchResultsOut = {
+	provider: string;
+	results: Array<SearchResultOut>;
 };
 
 
@@ -1252,10 +1292,14 @@ export type SharedResourcePreview = {
 
 
 
-export type SourceCreate = {
+export type SourceCreateRequest = {
 	name: string;
 	kind: string;
 	details?: Record<string, unknown>;
+	enable_monitoring?: boolean;
+	schedule?: string | null;
+	target_bundle_id?: number | null;
+	target_bundle_name?: string | null;
 };
 
 
@@ -1273,6 +1317,11 @@ export type SourceRead = {
 	updated_at: string;
 	error_message: string | null;
 	source_metadata?: Record<string, unknown> | null;
+	monitoring_tasks?: Array<TaskRead>;
+	/**
+	 * True if the source has any enabled monitoring tasks.
+	 */
+	readonly is_monitored: boolean;
 };
 
 
@@ -1313,6 +1362,7 @@ export type TaskCreate = {
 	type: TaskType;
 	schedule: string;
 	configuration?: Record<string, unknown>;
+	source_id?: number | null;
 };
 
 
@@ -1325,6 +1375,7 @@ export type TaskRead = {
 	id: number;
 	infospace_id: number;
 	status: TaskStatus;
+	is_enabled: boolean;
 	last_run_at: string | null;
 	consecutive_failure_count: number;
 };
@@ -1335,7 +1386,7 @@ export type TaskStatus = 'active' | 'paused' | 'error';
 
 
 
-export type TaskType = 'ingest' | 'annotate' | 'monitor' | 'pipeline';
+export type TaskType = 'ingest' | 'annotate' | 'pipeline' | 'monitor';
 
 
 

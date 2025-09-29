@@ -84,8 +84,8 @@ class ResultStatus(str, enum.Enum):
 class TaskType(str, enum.Enum):
     INGEST = "ingest"
     ANNOTATE = "annotate"
-    MONITOR = "monitor"
     PIPELINE = "pipeline"
+    MONITOR = "monitor"
 
 
 class TaskStatus(str, enum.Enum):
@@ -291,6 +291,7 @@ class Source(SQLModel, table=True):
     user: Optional[User] = Relationship(back_populates="sources")
 
     assets: List["Asset"] = Relationship(back_populates="source")
+    monitoring_tasks: List["Task"] = Relationship(back_populates="source")
 
 # ─────────────────────────────────────────────────────────────── Assets ──── #
 
@@ -642,6 +643,7 @@ class Task(SQLModel, table=True):
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
+    source_id: Optional[int] = Field(default=None, foreign_key="source.id")
 
     last_run_at: Optional[datetime] = None
     last_successful_run_at: Optional[datetime] = None
@@ -655,6 +657,7 @@ class Task(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="tasks")
     user: Optional[User] = Relationship(back_populates="tasks")
     monitor: Optional["Monitor"] = Relationship(back_populates="linked_task")
+    source: Optional["Source"] = Relationship(back_populates="monitoring_tasks")
 
 # ───────────────────────────────────────────────────────────── History (opt.) ──── #
 
@@ -721,6 +724,7 @@ class UserBackup(SQLModel, table=True):
     name: str
     description: Optional[str] = None
     backup_type: str = "user"
+    expires_at: Optional[datetime] = None
 
     target_user_id: int = Field(foreign_key="user.id")
     created_by_user_id: int = Field(foreign_key="user.id")
@@ -744,6 +748,24 @@ class UserBackup(SQLModel, table=True):
 
     is_shareable: bool = Field(default=False)
     share_token: Optional[str] = Field(default=None, index=True)
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if backup has expired."""
+        if not self.expires_at:
+            return False
+        
+        # Handle timezone-naive datetime from database by treating it as UTC
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        return datetime.now(timezone.utc) > expires_at
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if backup is ready for use."""
+        return self.status == BackupStatus.COMPLETED and not self.is_expired
 
     # Relationships
     target_user: Optional[User] = Relationship(sa_relationship_kwargs={"foreign_keys": "[UserBackup.target_user_id]"})

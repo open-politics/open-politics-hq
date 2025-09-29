@@ -1729,6 +1729,14 @@ export const $BulkUrlIngestion = {
 	type: 'boolean',
 	default: true,
 },
+		bundle_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -3987,6 +3995,51 @@ export const $QueryType = {
 	},
 } as const;
 
+export const $RSSDiscoveryRequest = {
+	properties: {
+		country: {
+	type: 'string',
+	isRequired: true,
+},
+		category_filter: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		max_feeds: {
+	type: 'number',
+	default: 10,
+},
+		max_items_per_feed: {
+	type: 'number',
+	default: 20,
+},
+		bundle_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		options: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $RegistrationStats = {
 	properties: {
 		total_users: {
@@ -4090,6 +4143,51 @@ export const $ResultStatus = {
 	enum: ['success','failed',],
 } as const;
 
+export const $RssSourceCreateRequest = {
+	properties: {
+		feed_url: {
+	type: 'string',
+	isRequired: true,
+},
+		source_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		auto_monitor: {
+	type: 'boolean',
+	default: false,
+},
+		monitoring_schedule: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		target_bundle_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		target_bundle_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
 export const $RunStatus = {
 	type: 'Enum',
 	enum: ['pending','running','completed','failed','completed_with_errors',],
@@ -4178,6 +4276,59 @@ export const $SearchHistoryRead = {
 	type: 'string',
 	isRequired: true,
 	format: 'date-time',
+},
+	},
+} as const;
+
+export const $SearchResultOut = {
+	properties: {
+		title: {
+	type: 'string',
+	isRequired: true,
+},
+		url: {
+	type: 'string',
+	isRequired: true,
+},
+		content: {
+	type: 'string',
+	isRequired: true,
+},
+		score: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		raw: {
+	type: 'any-of',
+	contains: [{
+	type: 'dictionary',
+	contains: {
+	properties: {
+	},
+},
+}, {
+	type: 'null',
+}],
+},
+	},
+} as const;
+
+export const $SearchResultsOut = {
+	properties: {
+		provider: {
+	type: 'string',
+	isRequired: true,
+},
+		results: {
+	type: 'array',
+	contains: {
+		type: 'SearchResultOut',
+	},
+	isRequired: true,
 },
 	},
 } as const;
@@ -4433,7 +4584,7 @@ export const $SharedResourcePreview = {
 	},
 } as const;
 
-export const $SourceCreate = {
+export const $SourceCreateRequest = {
 	properties: {
 		name: {
 	type: 'string',
@@ -4450,6 +4601,34 @@ export const $SourceCreate = {
 	},
 },
 	default: {},
+},
+		enable_monitoring: {
+	type: 'boolean',
+	default: false,
+},
+		schedule: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
+},
+		target_bundle_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
+		target_bundle_name: {
+	type: 'any-of',
+	contains: [{
+	type: 'string',
+}, {
+	type: 'null',
+}],
 },
 	},
 } as const;
@@ -4522,6 +4701,19 @@ export const $SourceRead = {
 }, {
 	type: 'null',
 }],
+},
+		monitoring_tasks: {
+	type: 'array',
+	contains: {
+		type: 'TaskRead',
+	},
+	default: [],
+},
+		is_monitored: {
+	type: 'boolean',
+	description: `True if the source has any enabled monitoring tasks.`,
+	isReadOnly: true,
+	isRequired: true,
 },
 	},
 } as const;
@@ -4634,6 +4826,14 @@ export const $TaskCreate = {
 },
 	default: {},
 },
+		source_id: {
+	type: 'any-of',
+	contains: [{
+	type: 'number',
+}, {
+	type: 'null',
+}],
+},
 	},
 } as const;
 
@@ -4671,6 +4871,10 @@ export const $TaskRead = {
 	type: 'TaskStatus',
 	isRequired: true,
 },
+		is_enabled: {
+	type: 'boolean',
+	isRequired: true,
+},
 		last_run_at: {
 	type: 'any-of',
 	contains: [{
@@ -4695,7 +4899,7 @@ export const $TaskStatus = {
 
 export const $TaskType = {
 	type: 'Enum',
-	enum: ['ingest','annotate','monitor','pipeline',],
+	enum: ['ingest','annotate','pipeline','monitor',],
 } as const;
 
 export const $TaskUpdate = {

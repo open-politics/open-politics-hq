@@ -24,82 +24,132 @@ from app.schemas import AnnotationRunCreate, TaskCreate, TaskUpdate
 
 logger = logging.getLogger(__name__)
 
-def _validate_task_input_config(task_model: Union[TaskCreate, TaskUpdate], session: Session, infospace_id: int, annotation_service: AnnotationService):
-    """Validates schedule and configuration, including existence of target entities."""
-    schedule = getattr(task_model, 'schedule', None)
-    if schedule and not croniter.is_valid(schedule):
-        raise ValueError(f"Invalid cron schedule format: '{schedule}'")
+def _validate_task_input_config(
+    task_in: "TaskCreate",
+    session: Session,
+    infospace_id: int,
+    annotation_service: "AnnotationService",
+):
+    """Validate task configuration based on task type."""
+    if task_in.type == TaskType.INGEST:
+        # Check for source_id on the task itself now
+        if not task_in.source_id:
+            raise ValueError("INGEST task requires a `source_id`.")
 
-    task_type_str = getattr(task_model, 'type', None)
-    config = getattr(task_model, 'configuration', None)
+        if not isinstance(task_in.source_id, int):
+            raise ValueError("INGEST task requires an integer `source_id`.")
 
-    if task_type_str and config is not None:
+        # Check if source exists and belongs to the infospace
+        source = session.get(Source, task_in.source_id)
+        if not source or source.infospace_id != infospace_id:
+            raise ValueError(
+                f"Source with ID {task_in.source_id} not found in this infospace."
+            )
+
+        if "target_bundle_id" not in task_in.configuration:
+            raise ValueError(
+                "INGEST task configuration requires an integer 'target_bundle_id'."
+            )
+
+        bundle_id = task_in.configuration.get("target_bundle_id")
+        if not isinstance(bundle_id, int):
+            raise ValueError(
+                "INGEST task configuration requires an integer 'target_bundle_id'."
+            )
+
+        bundle = session.get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != infospace_id:
+            raise ValueError(
+                f"Bundle with ID {bundle_id} not found in this infospace."
+            )
+
+    elif task_in.type == TaskType.ANNOTATE:
+        config = task_in.configuration
         if not isinstance(config, dict):
-             raise ValueError("Configuration must be a dictionary.")
+            raise ValueError("Configuration must be a dictionary.")
 
-        try:
-            # Ensure task_type_str is a valid TaskType enum member
-            normalized_type = TaskType(task_type_str) if isinstance(task_type_str, str) else task_type_str
-            if not isinstance(normalized_type, TaskType): # Further check if previous step didn't ensure enum
-                raise ValueError(f"Normalized type {normalized_type} is not a valid TaskType.")
-        except ValueError:
-            raise ValueError(f"Invalid task type: {task_type_str}")
+        schema_ids = config.get("schema_ids")
+        if not schema_ids or not (
+            isinstance(schema_ids, list) and all(isinstance(i, int) for i in schema_ids)
+        ):
+            raise ValueError(
+                "ANNOTATE task configuration requires a list of integer 'schema_ids'."
+            )
 
+        for schema_id in schema_ids:
+            schema = annotation_service.get_schema(
+                schema_id=schema_id, infospace_id=infospace_id, user_id=-1
+            )  # user_id=-1 to bypass ownership check for system validation
+            if not schema:
+                raise ValueError(
+                    f"Target AnnotationSchema ID {schema_id} not found in infospace {infospace_id}."
+                )
 
-        if normalized_type == TaskType.INGEST:
-            target_source_id = config.get('target_source_id')
-            if not target_source_id or not isinstance(target_source_id, int):
-                raise ValueError("INGEST task configuration requires an integer 'target_source_id'.")
-            
-            source_obj = session.get(Source, target_source_id)
-            if not source_obj or source_obj.infospace_id != infospace_id:
-                raise ValueError(f"Target Source ID {target_source_id} not found or not in infospace {infospace_id}.")
-            
-            source_urls = config.get('source_urls', [])
-            if not source_urls or not isinstance(source_urls, list) or not all(isinstance(url, str) for url in source_urls) :
-                 raise ValueError("INGEST task configuration requires a non-empty list of 'source_urls'.")
+        target_asset_ids = config.get("target_asset_ids")
+        target_bundle_id = config.get("target_bundle_id")
 
+        if not (target_asset_ids or target_bundle_id):
+            raise ValueError(
+                "ANNOTATE task must specify target_asset_ids or target_bundle_id."
+            )
+        if target_asset_ids and target_bundle_id:
+            raise ValueError(
+                "Specify either target_asset_ids or target_bundle_id for ANNOTATE task, not both."
+            )
 
-        elif normalized_type == TaskType.ANNOTATE:
-            target_asset_ids = config.get('target_asset_ids')
-            target_bundle_id = config.get('target_bundle_id')
-            
-            if not (target_asset_ids or target_bundle_id):
-                raise ValueError("ANNOTATE task must specify target_asset_ids or target_bundle_id.")
-            if target_asset_ids and target_bundle_id:
-                raise ValueError("Specify either target_asset_ids or target_bundle_id for ANNOTATE task, not both.")
+        if target_asset_ids:
+            for asset_id in target_asset_ids:
+                asset = session.get(Asset, asset_id)
+                if not asset or asset.infospace_id != infospace_id:
+                    raise ValueError(
+                        f"Target Asset ID {asset_id} not found in infospace {infospace_id}."
+                    )
+        if target_bundle_id:
+            bundle = session.get(Bundle, target_bundle_id)
+            if not bundle or bundle.infospace_id != infospace_id:
+                raise ValueError(
+                    f"Target Bundle ID {target_bundle_id} not found in infospace {infospace_id}."
+                )
 
-            if target_asset_ids and not (isinstance(target_asset_ids, list) and all(isinstance(i, int) for i in target_asset_ids)):
-                 raise ValueError("ANNOTATE task configuration 'target_asset_ids' must be a list of integers.")
-            if target_bundle_id and not isinstance(target_bundle_id, int):
-                raise ValueError("ANNOTATE task configuration 'target_bundle_id' must be an integer.")
-            
-            schema_ids = config.get('schema_ids')
-            if not schema_ids or not (isinstance(schema_ids, list) and all(isinstance(i, int) for i in schema_ids)):
-                 raise ValueError("ANNOTATE task configuration requires a list of integer 'schema_ids'.")
+    elif task_in.type == TaskType.MONITOR:
+        # Check for source_id on the task itself
+        if not task_in.source_id:
+            raise ValueError("MONITOR task requires a `source_id`.")
 
-            for schema_id in schema_ids:
-                schema = annotation_service.get_schema(schema_id=schema_id, infospace_id=infospace_id, user_id=-1)
-                if not schema :
-                    raise ValueError(f"Target AnnotationSchema ID {schema_id} not found or not in infospace {infospace_id}.")
-            
-            if target_asset_ids:
-                for asset_id in target_asset_ids:
-                    asset = session.get(Asset, asset_id)
-                    if not asset or asset.infospace_id != infospace_id:
-                        raise ValueError(f"Target Asset ID {asset_id} not found or not in infospace {infospace_id}.")
-            if target_bundle_id:
-                bundle = session.get(Bundle, target_bundle_id)
-                if not bundle or bundle.infospace_id != infospace_id:
-                    raise ValueError(f"Target Bundle ID {target_bundle_id} not found or not in infospace {infospace_id}.")
+        if not isinstance(task_in.source_id, int):
+            raise ValueError("MONITOR task requires an integer `source_id`.")
 
-        elif normalized_type == TaskType.PIPELINE:
-            pipeline_id = config.get('pipeline_id')
-            if not pipeline_id or not isinstance(pipeline_id, int):
-                raise ValueError("PIPELINE task configuration requires an integer 'pipeline_id'.")
-            pipeline = session.get(IntelligencePipeline, pipeline_id)
-            if not pipeline or pipeline.infospace_id != infospace_id:
-                raise ValueError(f"Target Pipeline ID {pipeline_id} not found or not in infospace {infospace_id}.")
+        # Check if source exists and belongs to the infospace
+        source = session.get(Source, task_in.source_id)
+        if not source or source.infospace_id != infospace_id:
+            raise ValueError(
+                f"Source with ID {task_in.source_id} not found in this infospace."
+            )
+
+        # Validate source-specific configuration
+        if source.kind == "search":
+            search_config = source.details.get("search_config")
+            if not search_config or not isinstance(search_config, dict):
+                raise ValueError("Search source requires a 'search_config' dictionary in details.")
+            if not search_config.get("query"):
+                raise ValueError("Search source requires a 'query' in search_config.")
+
+    elif task_in.type == TaskType.PIPELINE:
+        config = task_in.configuration
+        if not isinstance(config, dict):
+            raise ValueError("Configuration must be a dictionary.")
+
+        pipeline_id = config.get("pipeline_id")
+        if not pipeline_id or not isinstance(pipeline_id, int):
+            raise ValueError(
+                "PIPELINE task configuration requires an integer 'pipeline_id'."
+            )
+        pipeline = session.get(IntelligencePipeline, pipeline_id)
+        if not pipeline or pipeline.infospace_id != infospace_id:
+            raise ValueError(
+                f"Target Pipeline ID {pipeline_id} not found in infospace {infospace_id}."
+            )
+
 
 class TaskService:
     def __init__(self, session: Session, annotation_service: AnnotationService):
@@ -113,39 +163,31 @@ class TaskService:
         infospace_id: int,
         task_in: TaskCreate
     ) -> Task:
+        """Create a new task."""
         logger.info(f"TaskService: Creating Task '{task_in.name}' in infospace {infospace_id}")
         try:
-            validate_infospace_access(self.session, infospace_id, user_id)
+            # Validate task-specific configuration before proceeding
             _validate_task_input_config(task_in, self.session, infospace_id, self.annotation_service)
 
-            db_task = Task.model_validate(task_in)
-            db_task.infospace_id = infospace_id
-            db_task.user_id = user_id
-            if db_task.status is None:
-                db_task.status = TaskStatus.PAUSED
-            db_task.is_enabled = (db_task.status == TaskStatus.ACTIVE)
-
+            # Combine the input schema with user and infospace IDs before validation
+            task_data = task_in.model_dump()
+            task_data['user_id'] = user_id
+            task_data['infospace_id'] = infospace_id
+            
+            db_task = Task.model_validate(task_data)
 
             self.session.add(db_task)
             self.session.commit()
             self.session.refresh(db_task)
-            
-            task_id_for_beat = db_task.id
-            if task_id_for_beat is not None:
-                add_or_update_schedule(
-                    recurring_task_id=task_id_for_beat,
-                    schedule_str=db_task.schedule,
-                    is_enabled=db_task.is_enabled,
-                    task_type=str(db_task.type.value)
-                )
-                logger.info(f"TaskService: Celery Beat schedule added/updated for task {task_id_for_beat}.")
-            else:
-                logger.error(f"TaskService: Failed to get ID for new task '{db_task.name}', cannot update Celery Beat.")
-                raise RuntimeError(f"Failed to obtain ID for new Task '{db_task.name}'.")
-            
-            logger.info(f"TaskService: Task {task_id_for_beat} created successfully with status {db_task.status}.")
-            return db_task
 
+            # Add the task to the scheduler
+            add_or_update_schedule(
+                recurring_task_id=db_task.id,
+                schedule_str=db_task.schedule,
+                is_enabled=db_task.is_enabled,
+            )
+
+            return db_task
         except ValueError as ve:
             self.session.rollback()
             logger.error(f"TaskService: Validation error creating task: {ve}", exc_info=True)
@@ -304,15 +346,15 @@ class TaskService:
         try:
             if task.type == TaskType.INGEST:
                 # The 'target_source_id' is required and validated in the config
-                target_source_id = task.configuration.get("target_source_id")
+                target_source_id = task.source_id
                 if target_source_id:
                     process_source.delay(target_source_id)
                     logger.info(f"TaskService: Dispatched process_source for Task {task.id} targeting Source {target_source_id}")
                 else:
-                    logger.error(f"TaskService: Cannot execute INGEST task {task.id}. Missing 'target_source_id' in configuration.")
+                    logger.error(f"TaskService: Cannot execute INGEST task {task.id}. Missing 'source_id' on the task.")
                     # Update task status to reflect this configuration error
                     task.last_run_status = "error"
-                    task.last_run_message = "Manual execution failed: Missing 'target_source_id' in configuration."
+                    task.last_run_message = "Manual execution failed: Missing 'source_id' on the task."
                     self.session.add(task)
                     self.session.commit()
                     return False
@@ -347,20 +389,55 @@ class TaskService:
                 logger.info(f"TaskService: Created AnnotationRun {new_run.id} from Task {task.id} for manual execution. Celery task for run processing should be queued by AnnotationService.")
 
             elif task.type == TaskType.MONITOR:
-                # Handle MONITOR task type by dispatching to execute_monitor_task
-                monitor_id = task.configuration.get("monitor_id")
-                if monitor_id:
-                    from app.api.tasks.monitor_tasks import execute_monitor_task
-                    execute_monitor_task.delay(monitor_id)
-                    logger.info(f"TaskService: Dispatched MONITOR task {task.id} for monitor {monitor_id}")
+                # Handle MONITOR task type by dispatching to appropriate monitoring task
+                if task.source_id:
+                    # Get the source to determine which monitoring task to use
+                    source = self.session.get(Source, task.source_id)
+                    if not source:
+                        logger.error(f"TaskService: Source {task.source_id} not found for MONITOR task {task.id}")
+                        task.last_run_status = "error"
+                        task.last_run_message = f"Manual execution failed: Source {task.source_id} not found."
+                        task.last_run_at = datetime.now(timezone.utc)
+                        self.session.add(task)
+                        self.session.commit()
+                        return False
+                    
+                    # Dispatch to appropriate monitoring task based on source kind
+                    if source.kind == "rss_feed":
+                        from app.api.tasks.source_monitoring import monitor_rss_source
+                        monitor_rss_source.delay(task.source_id)
+                        logger.info(f"TaskService: Dispatched RSS monitoring task {task.id} for source {task.source_id}")
+                    elif source.kind == "search":
+                        from app.api.tasks.source_monitoring import monitor_search_source
+                        monitor_search_source.delay(task.source_id)
+                        logger.info(f"TaskService: Dispatched search monitoring task {task.id} for source {task.source_id}")
+                    elif source.kind in ["news_source_monitor", "site_discovery"]:
+                        from app.api.tasks.source_monitoring import monitor_news_source
+                        monitor_news_source.delay(task.source_id)
+                        logger.info(f"TaskService: Dispatched news source monitoring task {task.id} for source {task.source_id}")
+                    else:
+                        logger.error(f"TaskService: Unsupported source kind '{source.kind}' for MONITOR task {task.id}")
+                        task.last_run_status = "error"
+                        task.last_run_message = f"Manual execution failed: Unsupported source kind '{source.kind}'."
+                        task.last_run_at = datetime.now(timezone.utc)
+                        self.session.add(task)
+                        self.session.commit()
+                        return False
                 else:
-                    logger.error(f"TaskService: Cannot execute MONITOR task {task.id}. Missing 'monitor_id' in configuration.")
-                    task.last_run_status = "error"
-                    task.last_run_message = "Manual execution failed: Missing 'monitor_id' in configuration."
-                    task.last_run_at = datetime.now(timezone.utc)
-                    self.session.add(task)
-                    self.session.commit()
-                    return False
+                    # Legacy monitor task handling
+                    monitor_id = task.configuration.get("monitor_id")
+                    if monitor_id:
+                        from app.api.tasks.monitor_tasks import execute_monitor_task
+                        execute_monitor_task.delay(monitor_id)
+                        logger.info(f"TaskService: Dispatched MONITOR task {task.id} for monitor {monitor_id}")
+                    else:
+                        logger.error(f"TaskService: Cannot execute MONITOR task {task.id}. Missing 'source_id' or 'monitor_id'.")
+                        task.last_run_status = "error"
+                        task.last_run_message = "Manual execution failed: Missing 'source_id' or 'monitor_id'."
+                        task.last_run_at = datetime.now(timezone.utc)
+                        self.session.add(task)
+                        self.session.commit()
+                        return False
 
             elif task.type == TaskType.PIPELINE:
                 pipeline_id = task.configuration.get("pipeline_id") if task.configuration else None

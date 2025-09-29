@@ -1,4 +1,4 @@
-import { IntelligenceChat } from '@/components/intelligence/IntelligenceChat'
+import { IntelligenceChat } from '@/components/collection/infospaces/chat/IntelligenceChat'
 
 export const maxDuration = 60
 

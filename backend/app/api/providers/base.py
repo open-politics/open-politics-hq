@@ -77,10 +77,42 @@ class ScrapingProvider(Protocol):
     """
     Abstract interface for content scraping providers.
     """
-    async def scrape_url(self, url: str) -> Dict[str, Any]:
-        """Scrapes content from a URL.
+    async def scrape_url(self, url: str, timeout: int = 30, retry_attempts: int = 1) -> Dict[str, Any]:
+        """Scrapes content from a single URL.
+        Args:
+            url: The URL to scrape
+            timeout: Request timeout in seconds
+            retry_attempts: Number of retry attempts on failure
         Returns:
             A dictionary containing scraped data (e.g., text_content, title, publication_date).
+        """
+        pass
+    
+    async def scrape_urls_bulk(self, urls: List[str], max_threads: int = 4) -> List[Dict[str, Any]]:
+        """Scrape multiple URLs efficiently using threading.
+        Args:
+            urls: List of URLs to scrape
+            max_threads: Maximum number of threads to use
+        Returns:
+            List of scraped article dictionaries
+        """
+        pass
+    
+    async def analyze_source(self, base_url: str) -> Dict[str, Any]:
+        """Analyze a news source to discover RSS feeds, categories, and articles.
+        Args:
+            base_url: Base URL of the news source to analyze
+        Returns:
+            Dictionary containing source analysis results
+        """
+        pass
+    
+    async def discover_rss_feeds(self, base_url: str) -> List[str]:
+        """Discover RSS feeds from a news source.
+        Args:
+            base_url: Base URL of the news source
+        Returns:
+            List of discovered RSS feed URLs
         """
         pass
 

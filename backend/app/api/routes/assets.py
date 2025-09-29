@@ -17,6 +17,8 @@ from app.api.deps import (
     CurrentUser,
     StorageProviderDep,
     ContentIngestionServiceDep,
+    BundleServiceDep,
+    MonitorServiceDep,
 )
 from app.api.services.service_utils import validate_infospace_access
 from app.api.providers.factory import create_scraping_provider, create_storage_provider
@@ -28,6 +30,9 @@ from app.api.services.content_ingestion_service import ContentIngestionService
 from app.api.services.bundle_service import BundleService
 from app.core.db import engine
 from sqlmodel import Session
+from app.api.services.monitor_service import MonitorService
+from app.schemas import BundleCreate, MonitorCreate
+from app.schemas import SourceRead
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,6 +46,7 @@ class BulkUrlIngestion(BaseModel):
     urls: List[str]
     base_title: Optional[str] = None
     scrape_immediately: bool = True
+    bundle_id: Optional[int] = None
 
 class ReprocessOptions(BaseModel):
     delimiter: Optional[str] = None
@@ -57,6 +63,22 @@ class ArticleComposition(BaseModel):
     referenced_bundles: Optional[List[int]] = None
     metadata: Optional[Dict[str, Any]] = None
     event_timestamp: Optional[datetime] = None
+
+class RSSDiscoveryRequest(BaseModel):
+    country: str
+    category_filter: Optional[str] = None
+    max_feeds: int = 10
+    max_items_per_feed: int = 20
+    bundle_id: Optional[int] = None
+    options: Optional[Dict[str, Any]] = None
+
+class RssSourceCreateRequest(BaseModel):
+    feed_url: str
+    source_name: Optional[str] = None
+    auto_monitor: bool = False
+    monitoring_schedule: Optional[str] = None
+    target_bundle_id: Optional[int] = None
+    target_bundle_name: Optional[str] = None
 
 @router.post("", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
@@ -414,6 +436,227 @@ def list_assets(
         data=[AssetRead.model_validate(asset) for asset in assets],
         count=total_count
     )
+
+@router.get("/discover-rss-feeds")
+async def discover_rss_feeds(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep,
+    infospace_id: int,
+    country: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 50
+) -> Any:
+    """
+    Discover RSS feeds from the awesome-rss-feeds repository.
+    
+    Args:
+        country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+        category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+        limit: Maximum number of feeds to return
+    """
+    try:
+        validate_infospace_access(session, infospace_id, current_user.id)
+        
+        feeds = await content_service.discover_rss_feeds_from_awesome_repo(
+            country=country,
+            category=category,
+            limit=limit
+        )
+        
+        return {
+            "feeds": feeds,
+            "count": len(feeds),
+            "country": country,
+            "category": category,
+            "limit": limit
+        }
+        
+    except Exception as e:
+        logger.error(f"RSS feed discovery failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RSS feed discovery failed: {str(e)}"
+        )
+
+@router.get("/preview-rss-feed")
+async def preview_rss_feed(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep,
+    infospace_id: int,
+    feed_url: str,
+    max_items: int = 20
+) -> Any:
+    """
+    Preview the content of an RSS feed.
+    """
+    # Use the content ingestion service to fetch and parse the feed
+    try:
+        preview_data = await content_service.preview_rss_feed(feed_url, max_items)
+        return preview_data
+    except Exception as e:
+        logger.error(f"Error previewing RSS feed {feed_url}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to preview RSS feed: {str(e)}",
+        ) from e
+
+@router.post("/create-rss-source", response_model=SourceRead)
+async def create_rss_source(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    infospace_id: int,
+    request: RssSourceCreateRequest,
+    content_service: ContentIngestionServiceDep,
+    bundle_service: BundleServiceDep,
+    monitor_service: MonitorServiceDep,
+) -> Any:
+    """
+    Create a new Source of kind 'rss' and optionally set up a monitor for it.
+    """
+    source_name = request.source_name
+    if not source_name:
+        try:
+            feed_info = await content_service.preview_rss_feed(
+                request.feed_url, max_items=0
+            )
+            source_name = f"RSS: {feed_info['feed_info']['title']}"
+        except Exception:
+            source_name = f"RSS Feed: {request.feed_url}"
+
+    # 1. Create the Source
+    source_create = SourceCreate(
+        name=source_name, kind="rss", details={"feed_url": request.feed_url}
+    )
+
+    stmt = select(Source).where(
+        Source.infospace_id == infospace_id,
+        Source.details["feed_url"].as_string() == request.feed_url,
+    )
+    existing_source = session.exec(stmt).first()
+
+    if existing_source:
+        source = existing_source
+    else:
+        source = Source.model_validate(
+            source_create,
+            update={"infospace_id": infospace_id, "user_id": current_user.id},
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+    # 2. If auto_monitor is true, create a Monitor
+    if request.auto_monitor and request.monitoring_schedule:
+        monitor_service = MonitorService(
+            session, annotation_service=None, task_service=None
+        )
+
+        bundle_id_to_use = request.target_bundle_id
+        if not bundle_id_to_use:
+            # Create a new bundle
+            bundle_name = request.target_bundle_name or f"Ingestion for {source.name}"
+            bundle_create = BundleCreate(
+                name=bundle_name,
+                description=f"Assets ingested from source: {source.name}",
+            )
+            new_bundle = bundle_service.create_bundle(
+                bundle_create, user_id=current_user.id, infospace_id=infospace_id
+            )
+            bundle_id_to_use = new_bundle.id
+
+        monitor_create = MonitorCreate(
+            name=f"Monitor for {source.name}",
+            schedule=request.monitoring_schedule,
+            target_bundle_ids=[bundle_id_to_use],
+            target_schema_ids=[],
+            run_config_override={"source_id": source.id},
+        )
+
+        try:
+            monitor = monitor_service.create_monitor(
+                monitor_in=monitor_create,
+                user_id=current_user.id,
+                infospace_id=infospace_id,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create monitor: {e}")
+
+    return source
+
+
+@router.post("/ingest-selected-articles")
+async def ingest_selected_articles(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep,
+    infospace_id: int,
+    feed_url: str,
+    selected_articles: List[Dict[str, Any]],
+    bundle_id: Optional[int] = None
+) -> Any:
+    """
+    Ingest selected articles from an RSS feed preview.
+    
+    Args:
+        feed_url: URL of the RSS feed
+        selected_articles: List of article objects with at least 'link' and 'title'
+        bundle_id: Optional bundle to add articles to
+    """
+    try:
+        validate_infospace_access(session, infospace_id, current_user.id)
+        
+        if not selected_articles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No articles selected for ingestion"
+            )
+        
+        # Extract URLs from selected articles
+        article_urls = [article.get('link') for article in selected_articles if article.get('link')]
+        
+        if not article_urls:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid article URLs found in selection"
+            )
+        
+        # Ingest articles using bulk URL processing
+        assets = await content_service.ingest_content(
+            locator=article_urls,
+            infospace_id=infospace_id,
+            user_id=current_user.id,
+            bundle_id=bundle_id,
+            options={
+                "scrape_immediately": True,
+                "use_bulk_scraping": True,
+                "max_threads": 4,
+                "source_type": "rss_selective_ingestion",
+                "feed_url": feed_url
+            }
+        )
+        
+        return {
+            "message": f"Successfully ingested {len(assets)} articles",
+            "assets": [AssetRead.model_validate(asset) for asset in assets],
+            "feed_url": feed_url,
+            "selected_count": len(selected_articles),
+            "ingested_count": len(assets)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Selective article ingestion failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Selective article ingestion failed: {str(e)}"
+        )
 
 @router.get("/{asset_id}", response_model=AssetRead)
 def get_asset(
@@ -777,4 +1020,47 @@ async def get_task_status(
             "state": "ERROR",
             "error": str(e),
             "status": "Error retrieving task status"
-        } 
+        }
+
+
+
+@router.post("/ingest-rss-feeds-from-awesome", response_model=List[AssetRead])
+async def ingest_rss_feeds_from_awesome(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    content_service: ContentIngestionServiceDep,
+    infospace_id: int,
+    request: RSSDiscoveryRequest
+) -> Any:
+    """
+    Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+    
+    This endpoint will:
+    1. Fetch RSS feeds from the specified country
+    2. Optionally filter by category
+    3. Ingest the feeds and their content
+    4. Optionally add to a bundle
+    """
+    try:
+        validate_infospace_access(session, infospace_id, current_user.id)
+        
+        assets = await content_service.ingest_rss_feeds_from_awesome_repo(
+            country=request.country,
+            infospace_id=infospace_id,
+            user_id=current_user.id,
+            category_filter=request.category_filter,
+            max_feeds=request.max_feeds,
+            max_items_per_feed=request.max_items_per_feed,
+            bundle_id=request.bundle_id,
+            options=request.options
+        )
+        
+        return [AssetRead.model_validate(asset) for asset in assets]
+        
+    except Exception as e:
+        logger.error(f"RSS feed ingestion from awesome repo failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RSS feed ingestion failed: {str(e)}"
+        ) 

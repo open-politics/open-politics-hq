@@ -77,6 +77,16 @@ class IntelligenceConversationService:
                 # Get both tools and resources
                 tools = await mcp_client.get_available_tools()
                 
+                # Add Tavily MCP tool if API key is present
+                if settings.TAVILY_API_KEY:
+                    tavily_mcp_tool = {
+                        "type": "mcp",
+                        "server_label": "tavily",
+                        "server_url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={settings.TAVILY_API_KEY}",
+                        "require_approval": "never",
+                    }
+                    tools.append(tavily_mcp_tool)
+                
                 # No longer need to manually handle resources; they are now tools
                 all_capabilities = tools
                 logger.info(f"Retrieved {len(tools)} total capabilities from MCP server")

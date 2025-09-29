@@ -247,6 +247,35 @@ class InfospacesOut(SQLModel):
     data: List[InfospaceRead]
     count: int
 
+
+# ─────────────────────────────────────────────── Task ──── #
+
+class TaskBase(SQLModel):
+    name: str
+    type: TaskType
+    schedule: str
+    configuration: Dict[str, Any] = {}
+
+class TaskCreate(TaskBase):
+    source_id: Optional[int] = None
+
+class TaskUpdate(SQLModel):
+    name: Optional[str] = None
+    type: Optional[TaskType] = None
+    schedule: Optional[str] = None
+    configuration: Optional[Dict[str, Any]] = None
+    status: Optional[TaskStatus] = None
+    is_enabled: Optional[bool] = None
+
+class TaskRead(TaskBase):
+    id: int
+    infospace_id: int
+    status: TaskStatus
+    is_enabled: bool
+    last_run_at: Optional[datetime]
+    consecutive_failure_count: int
+
+
 # ─────────────────────────────────────────────── Source ──── #
 
 class SourceBase(SQLModel):
@@ -272,6 +301,16 @@ class SourceRead(SourceBase):
     updated_at: datetime
     error_message: Optional[str]
     source_metadata: Optional[Dict[str, Any]] = {}
+    monitoring_tasks: List[TaskRead] = []
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_monitored(self) -> bool:
+        """True if the source has any enabled monitoring tasks."""
+        if not self.monitoring_tasks:
+            return False
+        return any(task.is_enabled for task in self.monitoring_tasks)
+
 
 class SourcesOut(SQLModel):
     data: List[SourceRead]
@@ -523,32 +562,6 @@ class JustificationRead(JustificationBase):
     annotation_id: int
     created_at: datetime
 
-# ─────────────────────────────────────────────── Task ──── #
-
-class TaskBase(SQLModel):
-    name: str
-    type: TaskType
-    schedule: str
-    configuration: Dict[str, Any] = {}
-
-class TaskCreate(TaskBase):
-    pass
-
-class TaskUpdate(SQLModel):
-    name: Optional[str] = None
-    type: Optional[TaskType] = None
-    schedule: Optional[str] = None
-    configuration: Optional[Dict[str, Any]] = None
-    status: Optional[TaskStatus] = None
-    is_enabled: Optional[bool] = None
-
-class TaskRead(TaskBase):
-    id: int
-    infospace_id: int
-    status: TaskStatus
-    last_run_at: Optional[datetime]
-    consecutive_failure_count: int
-
 # ─────────────────────────────────────── Search Tasks ──── #
 
 # ───────────────────────────────────────────── Package ──── #
@@ -706,6 +719,12 @@ class IntelligencePipelineRead(IntelligencePipelineBase):
     user_id: int
     linked_task_id: Optional[int]
     steps: List[PipelineStepRead]
+
+class SourceCreateRequest(SourceBase):
+    enable_monitoring: bool = False
+    schedule: Optional[str] = None  # cron schedule
+    target_bundle_id: Optional[int] = None
+    target_bundle_name: Optional[str] = None
 
 class PipelineExecutionRead(SQLModel):
     id: int
@@ -1064,7 +1083,13 @@ class InfospaceBackupRead(InfospaceBackupBase):
         """Check if backup has expired."""
         if not self.expires_at:
             return False
-        return datetime.now(timezone.utc) > self.expires_at
+        
+        # Handle timezone-naive datetime from database by treating it as UTC
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        return datetime.now(timezone.utc) > expires_at
 
     @computed_field  # type: ignore[misc]
     @property

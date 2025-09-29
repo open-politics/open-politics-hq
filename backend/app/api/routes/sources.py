@@ -5,24 +5,31 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.models import (
+    Asset,
     Source,
     SourceStatus,
-    Asset,
+    Bundle,
 )
-from app.schemas import (
-    SourceRead,
-    SourceCreate,
-    SourceUpdate,
-    SourcesOut,
-    SourceTransferRequest,
-    SourceTransferResponse,
-)
-
 from app.api.deps import (
     SessionDep,
     CurrentUser,
+    ContentIngestionServiceDep,
+    BundleServiceDep,
+    TaskServiceDep,
 )
+from app.api.services.source_service import SourceService
 from app.api.services.service_utils import validate_infospace_access
+from app.schemas import (
+    SourceCreate,
+    SourceRead,
+    SourcesOut,
+    SourceUpdate,
+    SourceTransferRequest,
+    SourceTransferResponse,
+    SourceCreateRequest,
+    BundleCreate,
+    TaskCreate,
+)
 from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -41,47 +48,64 @@ def create_source(
     *,
     current_user: CurrentUser,
     infospace_id: int,
-    source_in: SourceCreate,
+    source_in: SourceCreateRequest,
     session: SessionDep,
+    bundle_service: BundleServiceDep,
+    task_service: TaskServiceDep,
 ) -> SourceRead:
     """
-    Create a new Source record (e.g., for a URL list, text block, or to pre-define a source before files are added).
-    File uploads that immediately create Assets should use a different endpoint that calls IngestionService.create_source_and_assets.
+    Create a new source. If monitoring is enabled, a corresponding ingestion task
+    and a destination bundle will also be created.
     """
-    logger.info(f"Route: Creating source configuration in infospace {infospace_id} for user {current_user.id}")
-    try:
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
-        # This route creates the Source DB record. 
-        # Actual processing (like scraping URLs from details, or linking files) 
-        # would be triggered by a Celery task or another service call based on Source.kind and status.
-        db_source = Source(
-            **source_in.model_dump(),
-            infospace_id=infospace_id,
-            user_id=current_user.id,
-            status=SourceStatus.PENDING # Default to PENDING for further processing if needed
-            # uuid, created_at, updated_at handled by model defaults
+    source_service = SourceService(session)
+    bundle_id_to_use = source_in.target_bundle_id
+
+    # Create a bundle if necessary
+    if source_in.enable_monitoring and not bundle_id_to_use:
+        bundle_name = (
+            source_in.target_bundle_name or f"Ingestion for {source_in.name}"
         )
         
-        session.add(db_source)
-        session.commit()
-        session.refresh(db_source)
-        
-        # Optional: Trigger Celery task if this source kind needs immediate async processing
-        # from app.api.tasks.ingest import process_source
-        # if db_source.kind in ["url_list_scrape", "rss_feed"]:
-        #     process_source.delay(db_source.id)
+        # Check if bundle with this name already exists
+        existing_bundle = session.exec(
+            select(Bundle).where(Bundle.name == bundle_name, Bundle.infospace_id == infospace_id)
+        ).first()
 
-        return SourceRead.model_validate(db_source)
-        
-    except ValueError as e:
-        session.rollback()
-        logger.error(f"Route: Validation error creating source: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        session.rollback()
-        logger.exception(f"Route: Unexpected error creating source: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        if existing_bundle:
+            bundle_id_to_use = existing_bundle.id
+        else:
+            bundle_create = BundleCreate(
+                name=bundle_name,
+                description=f"Assets ingested from source: {source_in.name}",
+            )
+            new_bundle = bundle_service.create_bundle(
+                bundle_in=bundle_create, user_id=current_user.id, infospace_id=infospace_id
+            )
+            bundle_id_to_use = new_bundle.id
+
+    # Create the source
+    source_create = SourceCreate.model_validate(source_in)
+    source = source_service.create_source(
+        user_id=current_user.id, infospace_id=infospace_id, source_in=source_create
+    )
+
+    # Create a monitoring task if enabled
+    if source_in.enable_monitoring and source_in.schedule:
+        task_create = TaskCreate(
+            name=f"Ingest from {source.name}",
+            type="ingest",
+            schedule=source_in.schedule,
+            configuration={
+                "target_bundle_id": bundle_id_to_use,
+            },
+            source_id=source.id,
+        )
+        task_service.create_task(
+            task_in=task_create, user_id=current_user.id, infospace_id=infospace_id
+        )
+
+    session.refresh(source)
+    return source
 
 @router.get("", response_model=SourcesOut)
 @router.get("/", response_model=SourcesOut)

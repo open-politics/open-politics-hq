@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
+from datetime import datetime, timezone
 
 from fastapi import HTTPException # For raising HTTP-like errors if needed from service layer
 
@@ -129,6 +130,67 @@ class OpolScrapingProvider(ScrapingProvider):
         
         # Should not be reached if loop logic is correct, but as a fallback:
         raise ValueError(f"Scraping failed for {url} due to an unexpected loop exit. Last error: {last_exception or 'Unknown'}")
+    
+    async def scrape_urls_bulk(self, urls: List[str], max_threads: int = 4) -> List[Dict[str, Any]]:
+        """
+        Bulk URL scraping - fallback implementation using sequential scraping.
+        Note: OPOL doesn't have native bulk scraping, so we implement it sequentially.
+        """
+        logger.info(f"OPOL bulk scraping {len(urls)} URLs (sequential fallback)")
+        results = []
+        
+        for i, url in enumerate(urls):
+            try:
+                result = await self.scrape_url(url)
+                results.append(result)
+                
+                # Simple rate limiting
+                if i < len(urls) - 1:  # Don't sleep after the last URL
+                    await asyncio.sleep(0.5)
+                    
+            except Exception as e:
+                logger.error(f"Failed to scrape URL {url} in bulk operation: {e}")
+                results.append({
+                    "url": url,
+                    "title": "",
+                    "text_content": "",
+                    "publication_date": None,
+                    "top_image": None,
+                    "images": [],
+                    "summary": "",
+                    "scraping_error": str(e),
+                    "raw_scraped_data": None
+                })
+        
+        return results
+    
+    async def analyze_source(self, base_url: str) -> Dict[str, Any]:
+        """
+        Source analysis - limited implementation for OPOL.
+        Note: OPOL doesn't have native source analysis capabilities.
+        """
+        logger.warning(f"OPOL provider has limited source analysis capabilities for {base_url}")
+        
+        return {
+            "base_url": base_url,
+            "brand": "",
+            "description": "",
+            "rss_feeds": [],
+            "feed_urls": [],
+            "categories": [],
+            "category_urls": [],
+            "recent_articles": [],
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "analysis_method": "opol_limited",
+            "note": "OPOL provider has limited source analysis capabilities. Consider using newspaper4k provider for full source analysis."
+        }
+    
+    async def discover_rss_feeds(self, base_url: str) -> List[str]:
+        """
+        RSS feed discovery - not supported by OPOL.
+        """
+        logger.warning(f"RSS feed discovery not supported by OPOL provider for {base_url}")
+        return []
 
 # Remove the old factory function from here, it's in factory.py now
 # def get_scraping_provider() -> ScrapingProvider:

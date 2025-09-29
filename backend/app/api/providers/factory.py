@@ -115,14 +115,40 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     return registry
 
 def create_scraping_provider(settings: AppSettings) -> ScrapingProvider:
-    provider_type = settings.SCRAPING_PROVIDER_TYPE.lower()
+    # Default to newspaper4k, fallback to opol if specified
+    provider_type = 'newspaper4k'
     logger.info(f"Factory: Creating scraping provider of type: {provider_type}")
 
-    if provider_type == "opol":
-        # OpolScrapingProvider constructor might take opol_mode, opol_api_key from settings
-        # if it doesn't rely on a global opol instance initialized with these.
+    if provider_type == "newspaper4k":
+        try:
+            from app.api.providers.impl.scraping_newspaper4k import Newspaper4kScrapingProvider
+            
+            # Build configuration from settings
+            config = {
+                'timeout': getattr(settings, 'SCRAPING_TIMEOUT', 30),
+                'threads': getattr(settings, 'SCRAPING_THREADS', 4),
+                'fetch_images': getattr(settings, 'SCRAPING_FETCH_IMAGES', True),
+                'enable_nlp': getattr(settings, 'SCRAPING_ENABLE_NLP', False),
+                'language': getattr(settings, 'SCRAPING_DEFAULT_LANGUAGE', 'en'),
+                'user_agent': getattr(settings, 'SCRAPING_USER_AGENT', None),
+            }
+            
+            # Add proxy settings if configured
+            if hasattr(settings, 'SCRAPING_PROXY_HTTP') or hasattr(settings, 'SCRAPING_PROXY_HTTPS'):
+                config['proxies'] = {}
+                if hasattr(settings, 'SCRAPING_PROXY_HTTP'):
+                    config['proxies']['http'] = settings.SCRAPING_PROXY_HTTP
+                if hasattr(settings, 'SCRAPING_PROXY_HTTPS'):
+                    config['proxies']['https'] = settings.SCRAPING_PROXY_HTTPS
+            
+            return Newspaper4kScrapingProvider(config=config)
+        except ImportError as e:
+            logger.warning(f"newspaper4k not available, falling back to OPOL: {e}")
+            # Fall back to OPOL if newspaper4k is not available
+            return OpolScrapingProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
+    elif provider_type == "opol":
+        # Fallback to OPOL if explicitly configured
         return OpolScrapingProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
-    # Add elif for "custom_playwright" here if implemented
     else:
         raise ValueError(f"Unsupported scraping provider type configured: {settings.SCRAPING_PROVIDER_TYPE}")
 

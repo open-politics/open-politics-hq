@@ -2,7 +2,7 @@ import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
 
-import type { RegistrationStats,AnalysisAdapterRead,AnnotationRead,PromoteFragmentRequest,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,Message,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRetryRequest,AnnotationsOut,AnnotationUpdate,ArticleComposition,AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,ReprocessOptions,BackupRestoreRequest,BackupShareRequest,InfospaceBackupCreate,InfospaceBackupRead,InfospaceBackupsOut,InfospaceBackupUpdate,InfospaceRead,BundleCreate,BundleRead,BundleUpdate,ChatRequest,ChatResponse,ModelListResponse,ToolCallRequest,AssetChunkRead,ChunkAssetRequest,ChunkAssetsRequest,ChunkingResultResponse,ChunkingStatsResponse,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,EmbeddingGenerateRequest,EmbeddingModelCreate,EmbeddingModelRead,EmbeddingProvider,EmbeddingSearchRequest,EmbeddingSearchResponse,EmbeddingStatsResponse,Body_filestorage_file_upload,FileUploadResponse,Body_filters_test_filter,InfospaceCreate,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,MonitorCreate,MonitorRead,MonitorUpdate,IntelligencePipelineCreate,IntelligencePipelineRead,IntelligencePipelineUpdate,PipelineExecutionRead,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_sharing_export_resource,Body_sharing_import_resource,DatasetPackageSummary,ExportBatchRequest,ExportMixedBatchRequest,ImportFromTokenRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SharedResourcePreview,SourceCreate,SourceRead,SourcesOut,SourceTransferRequest,SourceTransferResponse,SourceUpdate,Body_sso_complete_discourse_sso,TaskCreate,TaskRead,TasksOut,TaskStatus,TaskType,TaskUpdate,UserBackupCreate,UserBackupRead,UserBackupRestoreRequest,UserBackupShareRequest,UserBackupsOut,UserBackupUpdate,Body_users_upload_profile_picture,UpdatePassword,UserCreate,UserCreateOpen,UserProfileStats,UserProfileUpdate,UserPublicProfile,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,app__api__v1__entities__routes__SearchType,Request,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest } from './models';
+import type { RegistrationStats,AnalysisAdapterRead,AnnotationRead,PromoteFragmentRequest,AnnotationRunCreate,AnnotationRunRead,AnnotationRunsOut,AnnotationRunUpdate,CreatePackageFromRunRequest,Message,PackageRead,AnnotationSchemaCreate,AnnotationSchemaRead,AnnotationSchemasOut,AnnotationSchemaUpdate,AnnotationCreate,AnnotationRetryRequest,AnnotationsOut,AnnotationUpdate,ArticleComposition,AssetCreate,AssetRead,AssetsOut,AssetUpdate,Body_assets_add_files_to_bundle_background,Body_assets_create_assets_background_bulk,Body_assets_upload_file,BulkUrlIngestion,ReprocessOptions,RSSDiscoveryRequest,RssSourceCreateRequest,SourceRead,BackupRestoreRequest,BackupShareRequest,InfospaceBackupCreate,InfospaceBackupRead,InfospaceBackupsOut,InfospaceBackupUpdate,InfospaceRead,BundleCreate,BundleRead,BundleUpdate,ChatRequest,ChatResponse,ModelListResponse,ToolCallRequest,AssetChunkRead,ChunkAssetRequest,ChunkAssetsRequest,ChunkingResultResponse,ChunkingStatsResponse,Body_datasets_import_dataset,DatasetCreate,DatasetRead,DatasetsOut,DatasetUpdate,EmbeddingGenerateRequest,EmbeddingModelCreate,EmbeddingModelRead,EmbeddingProvider,EmbeddingSearchRequest,EmbeddingSearchResponse,EmbeddingStatsResponse,Body_filestorage_file_upload,FileUploadResponse,Body_filters_test_filter,InfospaceCreate,InfospacesOut,InfospaceUpdate,Body_login_login_access_token,NewPassword,Token,UserOut,MonitorCreate,MonitorRead,MonitorUpdate,IntelligencePipelineCreate,IntelligencePipelineRead,IntelligencePipelineUpdate,PipelineExecutionRead,app__api__v1__search__routes__SearchType,MostRelevantEntitiesRequest,SearchResultsOut,SearchHistoriesOut,SearchHistoryCreate,SearchHistoryRead,Body_sharing_export_resource,Body_sharing_import_resource,DatasetPackageSummary,ExportBatchRequest,ExportMixedBatchRequest,ImportFromTokenRequest,Paginated,ResourceType,ShareableLinkCreate,ShareableLinkRead,ShareableLinkStats,ShareableLinkUpdate,SharedResourcePreview,SourceCreateRequest,SourcesOut,SourceTransferRequest,SourceTransferResponse,SourceUpdate,Body_sso_complete_discourse_sso,TaskCreate,TaskRead,TasksOut,TaskStatus,TaskType,TaskUpdate,UserBackupCreate,UserBackupRead,UserBackupRestoreRequest,UserBackupShareRequest,UserBackupsOut,UserBackupUpdate,Body_users_upload_profile_picture,UpdatePassword,UserCreate,UserCreateOpen,UserProfileStats,UserProfileUpdate,UserPublicProfile,UsersOut,UserUpdate,UserUpdateMe,Body_utils_extract_pdf_metadata,Body_utils_extract_pdf_text,ProviderListResponse,app__api__v1__entities__routes__SearchType,Request } from './models';
 
 export type AdminData = {
         
@@ -841,6 +841,56 @@ infospaceId: number
 requestBody: ReprocessOptions
                     
                 };
+DiscoverRssFeeds: {
+                    category?: string | null
+country?: string | null
+infospaceId: number
+limit?: number
+                    
+                };
+DiscoverRssFeeds1: {
+                    category?: string | null
+country?: string | null
+infospaceId: number
+limit?: number
+                    
+                };
+PreviewRssFeed: {
+                    feedUrl: string
+infospaceId: number
+maxItems?: number
+                    
+                };
+PreviewRssFeed1: {
+                    feedUrl: string
+infospaceId: number
+maxItems?: number
+                    
+                };
+CreateRssSource: {
+                    infospaceId: number
+requestBody: RssSourceCreateRequest
+                    
+                };
+CreateRssSource1: {
+                    infospaceId: number
+requestBody: RssSourceCreateRequest
+                    
+                };
+IngestSelectedArticles: {
+                    bundleId?: number | null
+feedUrl: string
+infospaceId: number
+requestBody: Array<Record<string, unknown>>
+                    
+                };
+IngestSelectedArticles1: {
+                    bundleId?: number | null
+feedUrl: string
+infospaceId: number
+requestBody: Array<Record<string, unknown>>
+                    
+                };
 GetAsset: {
                     assetId: number
 infospaceId: number
@@ -925,6 +975,16 @@ GetTaskStatus: {
                 };
 GetTaskStatus1: {
                     taskId: string
+                    
+                };
+IngestRssFeedsFromAwesome: {
+                    infospaceId: number
+requestBody: RSSDiscoveryRequest
+                    
+                };
+IngestRssFeedsFromAwesome1: {
+                    infospaceId: number
+requestBody: RSSDiscoveryRequest
                     
                 };
 CreateAsset4: {
@@ -1045,6 +1105,56 @@ infospaceId: number
 requestBody: ReprocessOptions
                     
                 };
+DiscoverRssFeeds2: {
+                    category?: string | null
+country?: string | null
+infospaceId: number
+limit?: number
+                    
+                };
+DiscoverRssFeeds3: {
+                    category?: string | null
+country?: string | null
+infospaceId: number
+limit?: number
+                    
+                };
+PreviewRssFeed2: {
+                    feedUrl: string
+infospaceId: number
+maxItems?: number
+                    
+                };
+PreviewRssFeed3: {
+                    feedUrl: string
+infospaceId: number
+maxItems?: number
+                    
+                };
+CreateRssSource2: {
+                    infospaceId: number
+requestBody: RssSourceCreateRequest
+                    
+                };
+CreateRssSource3: {
+                    infospaceId: number
+requestBody: RssSourceCreateRequest
+                    
+                };
+IngestSelectedArticles2: {
+                    bundleId?: number | null
+feedUrl: string
+infospaceId: number
+requestBody: Array<Record<string, unknown>>
+                    
+                };
+IngestSelectedArticles3: {
+                    bundleId?: number | null
+feedUrl: string
+infospaceId: number
+requestBody: Array<Record<string, unknown>>
+                    
+                };
 GetAsset2: {
                     assetId: number
 infospaceId: number
@@ -1129,6 +1239,16 @@ GetTaskStatus2: {
                 };
 GetTaskStatus3: {
                     taskId: string
+                    
+                };
+IngestRssFeedsFromAwesome2: {
+                    infospaceId: number
+requestBody: RSSDiscoveryRequest
+                    
+                };
+IngestRssFeedsFromAwesome3: {
+                    infospaceId: number
+requestBody: RSSDiscoveryRequest
                     
                 };
     }
@@ -2122,6 +2242,109 @@ requestBody: Array<number>
                 };
     }
 
+export type SearchData = {
+        SearchContent: {
+                    args: unknown
+kwargs: unknown
+/**
+ * Maximum number of results to return.
+ */
+limit?: number
+/**
+ * The search query.
+ */
+query: string
+                    
+                };
+SearchContent1: {
+                    args: unknown
+kwargs: unknown
+/**
+ * Maximum number of results to return.
+ */
+limit?: number
+/**
+ * The search query.
+ */
+query: string
+                    
+                };
+GetContents: {
+                    classificationScores?: string | null
+entities?: Array<string> | null
+excludeKeywords?: Array<string> | null
+keyword?: string | null
+keywordWeights?: string | null
+limit?: number
+locations?: Array<string> | null
+newsCategory?: string | null
+searchQuery?: string | null
+searchType?: app__api__v1__search__routes__SearchType
+secondaryCategories?: Array<string> | null
+skip?: number
+topics?: Array<string> | null
+                    
+                };
+GetMostRelevantEntities: {
+                    requestBody: MostRelevantEntitiesRequest
+                    
+                };
+SearchSynthesizer: {
+                    searchQuery: string
+                    
+                };
+SearchContent2: {
+                    args: unknown
+kwargs: unknown
+/**
+ * Maximum number of results to return.
+ */
+limit?: number
+/**
+ * The search query.
+ */
+query: string
+                    
+                };
+SearchContent3: {
+                    args: unknown
+kwargs: unknown
+/**
+ * Maximum number of results to return.
+ */
+limit?: number
+/**
+ * The search query.
+ */
+query: string
+                    
+                };
+GetContents1: {
+                    classificationScores?: string | null
+entities?: Array<string> | null
+excludeKeywords?: Array<string> | null
+keyword?: string | null
+keywordWeights?: string | null
+limit?: number
+locations?: Array<string> | null
+newsCategory?: string | null
+searchQuery?: string | null
+searchType?: app__api__v1__search__routes__SearchType
+secondaryCategories?: Array<string> | null
+skip?: number
+topics?: Array<string> | null
+                    
+                };
+GetMostRelevantEntities1: {
+                    requestBody: MostRelevantEntitiesRequest
+                    
+                };
+SearchSynthesizer1: {
+                    searchQuery: string
+                    
+                };
+    }
+
 export type SearchHistoryData = {
         CreateSearchHistory: {
                     requestBody: SearchHistoryCreate
@@ -2307,7 +2530,7 @@ token: string
 export type SourcesData = {
         CreateSource: {
                     infospaceId: number
-requestBody: SourceCreate
+requestBody: SourceCreateRequest
                     
                 };
 ListSources: {
@@ -2322,7 +2545,7 @@ skip?: number
                 };
 CreateSource1: {
                     infospaceId: number
-requestBody: SourceCreate
+requestBody: SourceCreateRequest
                     
                 };
 ListSources1: {
@@ -2361,7 +2584,7 @@ TransferSources: {
                 };
 CreateSource2: {
                     infospaceId: number
-requestBody: SourceCreate
+requestBody: SourceCreateRequest
                     
                 };
 ListSources2: {
@@ -2376,7 +2599,7 @@ skip?: number
                 };
 CreateSource3: {
                     infospaceId: number
-requestBody: SourceCreate
+requestBody: SourceCreateRequest
                     
                 };
 ListSources3: {
@@ -3112,6 +3335,12 @@ export type UtilsData = {
                     emailTo: string
                     
                 };
+DiscoverRssFeeds: {
+                    category?: string | null
+country?: string | null
+limit?: number
+                    
+                };
 ExtractPdfText: {
                     formData: Body_utils_extract_pdf_text
                     
@@ -3122,6 +3351,19 @@ ExtractPdfMetadata: {
                 };
 ScrapeArticle: {
                     url: string
+                    
+                };
+AnalyzeSource: {
+                    baseUrl: string
+                    
+                };
+DiscoverRssFeeds1: {
+                    baseUrl: string
+                    
+                };
+BrowseRssFeed: {
+                    feedUrl: string
+limit?: number
                     
                 };
 PullOllamaModel: {
@@ -3149,6 +3391,12 @@ TestEmail1: {
                     emailTo: string
                     
                 };
+DiscoverRssFeeds2: {
+                    category?: string | null
+country?: string | null
+limit?: number
+                    
+                };
 ExtractPdfText1: {
                     formData: Body_utils_extract_pdf_text
                     
@@ -3159,6 +3407,19 @@ ExtractPdfMetadata1: {
                 };
 ScrapeArticle1: {
                     url: string
+                    
+                };
+AnalyzeSource1: {
+                    baseUrl: string
+                    
+                };
+DiscoverRssFeeds3: {
+                    baseUrl: string
+                    
+                };
+BrowseRssFeed1: {
+                    feedUrl: string
+limit?: number
                     
                 };
 PullOllamaModel1: {
@@ -3189,6 +3450,12 @@ export type UtilitiesData = {
                     emailTo: string
                     
                 };
+DiscoverRssFeeds: {
+                    category?: string | null
+country?: string | null
+limit?: number
+                    
+                };
 ExtractPdfText: {
                     formData: Body_utils_extract_pdf_text
                     
@@ -3199,6 +3466,19 @@ ExtractPdfMetadata: {
                 };
 ScrapeArticle: {
                     url: string
+                    
+                };
+AnalyzeSource: {
+                    baseUrl: string
+                    
+                };
+DiscoverRssFeeds1: {
+                    baseUrl: string
+                    
+                };
+BrowseRssFeed: {
+                    feedUrl: string
+limit?: number
                     
                 };
 PullOllamaModel: {
@@ -3226,6 +3506,12 @@ TestEmail1: {
                     emailTo: string
                     
                 };
+DiscoverRssFeeds2: {
+                    category?: string | null
+country?: string | null
+limit?: number
+                    
+                };
 ExtractPdfText1: {
                     formData: Body_utils_extract_pdf_text
                     
@@ -3236,6 +3522,19 @@ ExtractPdfMetadata1: {
                 };
 ScrapeArticle1: {
                     url: string
+                    
+                };
+AnalyzeSource1: {
+                    baseUrl: string
+                    
+                };
+DiscoverRssFeeds3: {
+                    baseUrl: string
+                    
+                };
+BrowseRssFeed1: {
+                    feedUrl: string
+limit?: number
                     
                 };
 PullOllamaModel1: {
@@ -3487,57 +3786,6 @@ ChannelRoute1: {
                     path: string
 requestBody: Request
 serviceName: string
-                    
-                };
-    }
-
-export type SearchData = {
-        GetContents: {
-                    classificationScores?: string | null
-entities?: Array<string> | null
-excludeKeywords?: Array<string> | null
-keyword?: string | null
-keywordWeights?: string | null
-limit?: number
-locations?: Array<string> | null
-newsCategory?: string | null
-searchQuery?: string | null
-searchType?: app__api__v1__search__routes__SearchType
-secondaryCategories?: Array<string> | null
-skip?: number
-topics?: Array<string> | null
-                    
-                };
-GetMostRelevantEntities: {
-                    requestBody: MostRelevantEntitiesRequest
-                    
-                };
-SearchSynthesizer: {
-                    searchQuery: string
-                    
-                };
-GetContents1: {
-                    classificationScores?: string | null
-entities?: Array<string> | null
-excludeKeywords?: Array<string> | null
-keyword?: string | null
-keywordWeights?: string | null
-limit?: number
-locations?: Array<string> | null
-newsCategory?: string | null
-searchQuery?: string | null
-searchType?: app__api__v1__search__routes__SearchType
-secondaryCategories?: Array<string> | null
-skip?: number
-topics?: Array<string> | null
-                    
-                };
-GetMostRelevantEntities1: {
-                    requestBody: MostRelevantEntitiesRequest
-                    
-                };
-SearchSynthesizer1: {
-                    searchQuery: string
                     
                 };
     }
@@ -6733,6 +6981,246 @@ requestBody,
 	}
 
 	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds(data: AssetsData['DiscoverRssFeeds']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/assets/discover-rss-feeds',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds1(data: AssetsData['DiscoverRssFeeds1']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/assets/discover-rss-feeds',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Preview Rss Feed
+	 * Preview the content of an RSS feed.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static previewRssFeed(data: AssetsData['PreviewRssFeed']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+maxItems = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/assets/preview-rss-feed',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, max_items: maxItems
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Preview Rss Feed
+	 * Preview the content of an RSS feed.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static previewRssFeed1(data: AssetsData['PreviewRssFeed1']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+maxItems = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/infospaces/{infospace_id}/assets/preview-rss-feed',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, max_items: maxItems
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Rss Source
+	 * Create a new Source of kind 'rss' and optionally set up a monitor for it.
+	 * @returns SourceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRssSource(data: AssetsData['CreateRssSource']): CancelablePromise<SourceRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/create-rss-source',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Rss Source
+	 * Create a new Source of kind 'rss' and optionally set up a monitor for it.
+	 * @returns SourceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRssSource1(data: AssetsData['CreateRssSource1']): CancelablePromise<SourceRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/create-rss-source',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Selected Articles
+	 * Ingest selected articles from an RSS feed preview.
+ * 
+ * Args:
+ * feed_url: URL of the RSS feed
+ * selected_articles: List of article objects with at least 'link' and 'title'
+ * bundle_id: Optional bundle to add articles to
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestSelectedArticles(data: AssetsData['IngestSelectedArticles']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+requestBody,
+bundleId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/ingest-selected-articles',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, bundle_id: bundleId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Selected Articles
+	 * Ingest selected articles from an RSS feed preview.
+ * 
+ * Args:
+ * feed_url: URL of the RSS feed
+ * selected_articles: List of article objects with at least 'link' and 'title'
+ * bundle_id: Optional bundle to add articles to
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestSelectedArticles1(data: AssetsData['IngestSelectedArticles1']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+requestBody,
+bundleId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/ingest-selected-articles',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, bundle_id: bundleId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Get Asset
 	 * Get a specific asset.
 	 * @returns AssetRead Successful Response
@@ -7152,6 +7640,68 @@ taskId,
 			path: {
 				task_id: taskId
 			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Rss Feeds From Awesome
+	 * Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * This endpoint will:
+ * 1. Fetch RSS feeds from the specified country
+ * 2. Optionally filter by category
+ * 3. Ingest the feeds and their content
+ * 4. Optionally add to a bundle
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestRssFeedsFromAwesome(data: AssetsData['IngestRssFeedsFromAwesome']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/ingest-rss-feeds-from-awesome',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Rss Feeds From Awesome
+	 * Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * This endpoint will:
+ * 1. Fetch RSS feeds from the specified country
+ * 2. Optionally filter by category
+ * 3. Ingest the feeds and their content
+ * 4. Optionally add to a bundle
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestRssFeedsFromAwesome1(data: AssetsData['IngestRssFeedsFromAwesome1']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/infospaces/{infospace_id}/assets/ingest-rss-feeds-from-awesome',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
 			errors: {
 				422: `Validation Error`,
 			},
@@ -7709,6 +8259,246 @@ requestBody,
 	}
 
 	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds2(data: AssetsData['DiscoverRssFeeds2']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/infospaces/{infospace_id}/assets/discover-rss-feeds',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds3(data: AssetsData['DiscoverRssFeeds3']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/infospaces/{infospace_id}/assets/discover-rss-feeds',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Preview Rss Feed
+	 * Preview the content of an RSS feed.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static previewRssFeed2(data: AssetsData['PreviewRssFeed2']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+maxItems = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/infospaces/{infospace_id}/assets/preview-rss-feed',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, max_items: maxItems
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Preview Rss Feed
+	 * Preview the content of an RSS feed.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static previewRssFeed3(data: AssetsData['PreviewRssFeed3']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+maxItems = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/infospaces/{infospace_id}/assets/preview-rss-feed',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, max_items: maxItems
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Rss Source
+	 * Create a new Source of kind 'rss' and optionally set up a monitor for it.
+	 * @returns SourceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRssSource2(data: AssetsData['CreateRssSource2']): CancelablePromise<SourceRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/create-rss-source',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Create Rss Source
+	 * Create a new Source of kind 'rss' and optionally set up a monitor for it.
+	 * @returns SourceRead Successful Response
+	 * @throws ApiError
+	 */
+	public static createRssSource3(data: AssetsData['CreateRssSource3']): CancelablePromise<SourceRead> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/create-rss-source',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Selected Articles
+	 * Ingest selected articles from an RSS feed preview.
+ * 
+ * Args:
+ * feed_url: URL of the RSS feed
+ * selected_articles: List of article objects with at least 'link' and 'title'
+ * bundle_id: Optional bundle to add articles to
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestSelectedArticles2(data: AssetsData['IngestSelectedArticles2']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+requestBody,
+bundleId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/ingest-selected-articles',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, bundle_id: bundleId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Selected Articles
+	 * Ingest selected articles from an RSS feed preview.
+ * 
+ * Args:
+ * feed_url: URL of the RSS feed
+ * selected_articles: List of article objects with at least 'link' and 'title'
+ * bundle_id: Optional bundle to add articles to
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestSelectedArticles3(data: AssetsData['IngestSelectedArticles3']): CancelablePromise<unknown> {
+		const {
+infospaceId,
+feedUrl,
+requestBody,
+bundleId,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/ingest-selected-articles',
+			path: {
+				infospace_id: infospaceId
+			},
+			query: {
+				feed_url: feedUrl, bundle_id: bundleId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Get Asset
 	 * Get a specific asset.
 	 * @returns AssetRead Successful Response
@@ -8128,6 +8918,68 @@ taskId,
 			path: {
 				task_id: taskId
 			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Rss Feeds From Awesome
+	 * Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * This endpoint will:
+ * 1. Fetch RSS feeds from the specified country
+ * 2. Optionally filter by category
+ * 3. Ingest the feeds and their content
+ * 4. Optionally add to a bundle
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestRssFeedsFromAwesome2(data: AssetsData['IngestRssFeedsFromAwesome2']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/ingest-rss-feeds-from-awesome',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Ingest Rss Feeds From Awesome
+	 * Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * This endpoint will:
+ * 1. Fetch RSS feeds from the specified country
+ * 2. Optionally filter by category
+ * 3. Ingest the feeds and their content
+ * 4. Optionally add to a bundle
+	 * @returns AssetRead Successful Response
+	 * @throws ApiError
+	 */
+	public static ingestRssFeedsFromAwesome3(data: AssetsData['IngestRssFeedsFromAwesome3']): CancelablePromise<Array<AssetRead>> {
+		const {
+infospaceId,
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/infospaces/{infospace_id}/assets/ingest-rss-feeds-from-awesome',
+			path: {
+				infospace_id: infospaceId
+			},
+			body: requestBody,
+			mediaType: 'application/json',
 			errors: {
 				422: `Validation Error`,
 			},
@@ -12840,6 +13692,262 @@ requestBody,
 
 }
 
+export class SearchService {
+
+	/**
+	 * Search Content
+	 * Performs a search using the configured search provider (e.g., Tavily)
+ * and returns a standardized list of search results.
+	 * @returns SearchResultsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static searchContent(data: SearchData['SearchContent']): CancelablePromise<SearchResultsOut> {
+		const {
+query,
+args,
+kwargs,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/search-ext/',
+			query: {
+				query, limit, args, kwargs
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Search Content
+	 * Performs a search using the configured search provider (e.g., Tavily)
+ * and returns a standardized list of search results.
+	 * @returns SearchResultsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static searchContent1(data: SearchData['SearchContent1']): CancelablePromise<SearchResultsOut> {
+		const {
+query,
+args,
+kwargs,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/search-ext',
+			query: {
+				query, limit, args, kwargs
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Contents
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getContents(data: SearchData['GetContents'] = {}): CancelablePromise<unknown> {
+		const {
+searchQuery,
+searchType = 'semantic',
+skip = 0,
+limit = 20,
+newsCategory,
+secondaryCategories,
+keyword,
+entities,
+locations,
+topics,
+classificationScores,
+keywordWeights,
+excludeKeywords,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/search/contents',
+			query: {
+				search_query: searchQuery, search_type: searchType, skip, limit, news_category: newsCategory, secondary_categories: secondaryCategories, keyword, entities, locations, topics, classification_scores: classificationScores, keyword_weights: keywordWeights, exclude_keywords: excludeKeywords
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Most Relevant Entities
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getMostRelevantEntities(data: SearchData['GetMostRelevantEntities']): CancelablePromise<unknown> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v1/search/most_relevant_entities',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Search Synthesizer
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static searchSynthesizer(data: SearchData['SearchSynthesizer']): CancelablePromise<unknown> {
+		const {
+searchQuery,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/search/search_synthesizer',
+			query: {
+				search_query: searchQuery
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Search Content
+	 * Performs a search using the configured search provider (e.g., Tavily)
+ * and returns a standardized list of search results.
+	 * @returns SearchResultsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static searchContent2(data: SearchData['SearchContent2']): CancelablePromise<SearchResultsOut> {
+		const {
+query,
+args,
+kwargs,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/search-ext/',
+			query: {
+				query, limit, args, kwargs
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Search Content
+	 * Performs a search using the configured search provider (e.g., Tavily)
+ * and returns a standardized list of search results.
+	 * @returns SearchResultsOut Successful Response
+	 * @throws ApiError
+	 */
+	public static searchContent3(data: SearchData['SearchContent3']): CancelablePromise<SearchResultsOut> {
+		const {
+query,
+args,
+kwargs,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/search-ext',
+			query: {
+				query, limit, args, kwargs
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Contents
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getContents1(data: SearchData['GetContents1'] = {}): CancelablePromise<unknown> {
+		const {
+searchQuery,
+searchType = 'semantic',
+skip = 0,
+limit = 20,
+newsCategory,
+secondaryCategories,
+keyword,
+entities,
+locations,
+topics,
+classificationScores,
+keywordWeights,
+excludeKeywords,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/search/contents',
+			query: {
+				search_query: searchQuery, search_type: searchType, skip, limit, news_category: newsCategory, secondary_categories: secondaryCategories, keyword, entities, locations, topics, classification_scores: classificationScores, keyword_weights: keywordWeights, exclude_keywords: excludeKeywords
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Get Most Relevant Entities
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getMostRelevantEntities1(data: SearchData['GetMostRelevantEntities1']): CancelablePromise<unknown> {
+		const {
+requestBody,
+} = data;
+		return __request(OpenAPI, {
+			method: 'POST',
+			url: '/api/v2/search/most_relevant_entities',
+			body: requestBody,
+			mediaType: 'application/json',
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Search Synthesizer
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static searchSynthesizer1(data: SearchData['SearchSynthesizer1']): CancelablePromise<unknown> {
+		const {
+searchQuery,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/search/search_synthesizer',
+			query: {
+				search_query: searchQuery
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+}
+
 export class SearchHistoryService {
 
 	/**
@@ -13762,8 +14870,8 @@ export class SourcesService {
 
 	/**
 	 * Create Source
-	 * Create a new Source record (e.g., for a URL list, text block, or to pre-define a source before files are added).
- * File uploads that immediately create Assets should use a different endpoint that calls IngestionService.create_source_and_assets.
+	 * Create a new source. If monitoring is enabled, a corresponding ingestion task
+ * and a destination bundle will also be created.
 	 * @returns SourceRead Successful Response
 	 * @throws ApiError
 	 */
@@ -13774,7 +14882,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources/',
+			url: '/api/v1/infospaces/{infospace_id}/sources/',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -13801,7 +14909,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources/',
+			url: '/api/v1/infospaces/{infospace_id}/sources/',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -13816,8 +14924,8 @@ includeCounts = true,
 
 	/**
 	 * Create Source
-	 * Create a new Source record (e.g., for a URL list, text block, or to pre-define a source before files are added).
- * File uploads that immediately create Assets should use a different endpoint that calls IngestionService.create_source_and_assets.
+	 * Create a new source. If monitoring is enabled, a corresponding ingestion task
+ * and a destination bundle will also be created.
 	 * @returns SourceRead Successful Response
 	 * @throws ApiError
 	 */
@@ -13828,7 +14936,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources',
+			url: '/api/v1/infospaces/{infospace_id}/sources',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -13855,7 +14963,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources',
+			url: '/api/v1/infospaces/{infospace_id}/sources',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -13882,7 +14990,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources/{source_id}',
+			url: '/api/v1/infospaces/{infospace_id}/sources/{source_id}',
 			path: {
 				infospace_id: infospaceId, source_id: sourceId
 			},
@@ -13909,7 +15017,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'PATCH',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources/{source_id}',
+			url: '/api/v1/infospaces/{infospace_id}/sources/{source_id}',
 			path: {
 				infospace_id: infospaceId, source_id: sourceId
 			},
@@ -13934,7 +15042,7 @@ sourceId,
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources/{source_id}',
+			url: '/api/v1/infospaces/{infospace_id}/sources/{source_id}',
 			path: {
 				infospace_id: infospaceId, source_id: sourceId
 			},
@@ -13956,7 +15064,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v1/sources/infospaces/{infospace_id}/sources/transfer',
+			url: '/api/v1/infospaces/{infospace_id}/sources/transfer',
 			body: requestBody,
 			mediaType: 'application/json',
 			errors: {
@@ -13967,8 +15075,8 @@ requestBody,
 
 	/**
 	 * Create Source
-	 * Create a new Source record (e.g., for a URL list, text block, or to pre-define a source before files are added).
- * File uploads that immediately create Assets should use a different endpoint that calls IngestionService.create_source_and_assets.
+	 * Create a new source. If monitoring is enabled, a corresponding ingestion task
+ * and a destination bundle will also be created.
 	 * @returns SourceRead Successful Response
 	 * @throws ApiError
 	 */
@@ -13979,7 +15087,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources/',
+			url: '/api/v2/infospaces/{infospace_id}/sources/',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -14006,7 +15114,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources/',
+			url: '/api/v2/infospaces/{infospace_id}/sources/',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -14021,8 +15129,8 @@ includeCounts = true,
 
 	/**
 	 * Create Source
-	 * Create a new Source record (e.g., for a URL list, text block, or to pre-define a source before files are added).
- * File uploads that immediately create Assets should use a different endpoint that calls IngestionService.create_source_and_assets.
+	 * Create a new source. If monitoring is enabled, a corresponding ingestion task
+ * and a destination bundle will also be created.
 	 * @returns SourceRead Successful Response
 	 * @throws ApiError
 	 */
@@ -14033,7 +15141,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources',
+			url: '/api/v2/infospaces/{infospace_id}/sources',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -14060,7 +15168,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources',
+			url: '/api/v2/infospaces/{infospace_id}/sources',
 			path: {
 				infospace_id: infospaceId
 			},
@@ -14087,7 +15195,7 @@ includeCounts = true,
 } = data;
 		return __request(OpenAPI, {
 			method: 'GET',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources/{source_id}',
+			url: '/api/v2/infospaces/{infospace_id}/sources/{source_id}',
 			path: {
 				infospace_id: infospaceId, source_id: sourceId
 			},
@@ -14114,7 +15222,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'PATCH',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources/{source_id}',
+			url: '/api/v2/infospaces/{infospace_id}/sources/{source_id}',
 			path: {
 				infospace_id: infospaceId, source_id: sourceId
 			},
@@ -14139,7 +15247,7 @@ sourceId,
 } = data;
 		return __request(OpenAPI, {
 			method: 'DELETE',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources/{source_id}',
+			url: '/api/v2/infospaces/{infospace_id}/sources/{source_id}',
 			path: {
 				infospace_id: infospaceId, source_id: sourceId
 			},
@@ -14161,7 +15269,7 @@ requestBody,
 } = data;
 		return __request(OpenAPI, {
 			method: 'POST',
-			url: '/api/v2/sources/infospaces/{infospace_id}/sources/transfer',
+			url: '/api/v2/infospaces/{infospace_id}/sources/transfer',
 			body: requestBody,
 			mediaType: 'application/json',
 			errors: {
@@ -16548,19 +17656,6 @@ email,
 	}
 
 	/**
-	 * Get Email Debug Status
-	 * Debug endpoint to check email configuration status.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getEmailDebugStatus(): CancelablePromise<unknown> {
-				return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/users/debug/email-status',
-		});
-	}
-
-	/**
 	 * Read Users
 	 * Retrieve users.
 	 * @returns UsersOut Successful Response
@@ -16973,19 +18068,6 @@ email,
 		});
 	}
 
-	/**
-	 * Get Email Debug Status
-	 * Debug endpoint to check email configuration status.
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getEmailDebugStatus1(): CancelablePromise<unknown> {
-				return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/users/debug/email-status',
-		});
-	}
-
 }
 
 export class UtilsService {
@@ -17049,6 +18131,48 @@ emailTo,
 	}
 
 	/**
+	 * Get Available Rss Countries
+	 * Get list of available countries for RSS feed discovery from awesome-rss-feeds repository.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getAvailableRssCountries(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/rss-countries',
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds(data: UtilsData['DiscoverRssFeeds'] = {}): CancelablePromise<unknown> {
+		const {
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/discover-rss-feeds',
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Extract Pdf Text
 	 * Extract text from PDF without authentication
 	 * @returns unknown Successful Response
@@ -17092,7 +18216,7 @@ formData,
 
 	/**
 	 * Scrape Article
-	 * Scrape article content from a URL using the centralized OPOL instance.
+	 * Scrape article content from a URL using the configured scraping provider.
  * 
  * Args:
  * url: The URL of the article to scrape
@@ -17111,6 +18235,92 @@ url,
 			url: '/api/v1/utils/scrape_article',
 			query: {
 				url
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Analyze Source
+	 * Analyze a news source to discover RSS feeds, categories, and recent articles.
+ * 
+ * Args:
+ * base_url: The base URL of the news source to analyze
+ * 
+ * Returns:
+ * Source analysis results including RSS feeds, categories, and articles
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static analyzeSource(data: UtilsData['AnalyzeSource']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/analyze_source',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from a news source.
+ * 
+ * Args:
+ * base_url: The base URL of the news source
+ * 
+ * Returns:
+ * List of discovered RSS feed URLs
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds1(data: UtilsData['DiscoverRssFeeds1']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/discover_rss_feeds',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Browse Rss Feed
+	 * Browse RSS feed items without ingesting them.
+ * 
+ * Args:
+ * feed_url: The RSS feed URL to browse
+ * limit: Maximum number of items to return (default 20)
+ * 
+ * Returns:
+ * RSS feed metadata and recent items
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static browseRssFeed(data: UtilsData['BrowseRssFeed']): CancelablePromise<unknown> {
+		const {
+feedUrl,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/browse_rss_feed',
+			query: {
+				feed_url: feedUrl, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -17303,6 +18513,48 @@ emailTo,
 	}
 
 	/**
+	 * Get Available Rss Countries
+	 * Get list of available countries for RSS feed discovery from awesome-rss-feeds repository.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getAvailableRssCountries1(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/rss-countries',
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds2(data: UtilsData['DiscoverRssFeeds2'] = {}): CancelablePromise<unknown> {
+		const {
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/discover-rss-feeds',
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Extract Pdf Text
 	 * Extract text from PDF without authentication
 	 * @returns unknown Successful Response
@@ -17346,7 +18598,7 @@ formData,
 
 	/**
 	 * Scrape Article
-	 * Scrape article content from a URL using the centralized OPOL instance.
+	 * Scrape article content from a URL using the configured scraping provider.
  * 
  * Args:
  * url: The URL of the article to scrape
@@ -17365,6 +18617,92 @@ url,
 			url: '/api/v2/utils/scrape_article',
 			query: {
 				url
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Analyze Source
+	 * Analyze a news source to discover RSS feeds, categories, and recent articles.
+ * 
+ * Args:
+ * base_url: The base URL of the news source to analyze
+ * 
+ * Returns:
+ * Source analysis results including RSS feeds, categories, and articles
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static analyzeSource1(data: UtilsData['AnalyzeSource1']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/analyze_source',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from a news source.
+ * 
+ * Args:
+ * base_url: The base URL of the news source
+ * 
+ * Returns:
+ * List of discovered RSS feed URLs
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds3(data: UtilsData['DiscoverRssFeeds3']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/discover_rss_feeds',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Browse Rss Feed
+	 * Browse RSS feed items without ingesting them.
+ * 
+ * Args:
+ * feed_url: The RSS feed URL to browse
+ * limit: Maximum number of items to return (default 20)
+ * 
+ * Returns:
+ * RSS feed metadata and recent items
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static browseRssFeed1(data: UtilsData['BrowseRssFeed1']): CancelablePromise<unknown> {
+		const {
+feedUrl,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/browse_rss_feed',
+			query: {
+				feed_url: feedUrl, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -17561,6 +18899,48 @@ emailTo,
 	}
 
 	/**
+	 * Get Available Rss Countries
+	 * Get list of available countries for RSS feed discovery from awesome-rss-feeds repository.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getAvailableRssCountries(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/rss-countries',
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds(data: UtilitiesData['DiscoverRssFeeds'] = {}): CancelablePromise<unknown> {
+		const {
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/discover-rss-feeds',
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Extract Pdf Text
 	 * Extract text from PDF without authentication
 	 * @returns unknown Successful Response
@@ -17604,7 +18984,7 @@ formData,
 
 	/**
 	 * Scrape Article
-	 * Scrape article content from a URL using the centralized OPOL instance.
+	 * Scrape article content from a URL using the configured scraping provider.
  * 
  * Args:
  * url: The URL of the article to scrape
@@ -17623,6 +19003,92 @@ url,
 			url: '/api/v1/utils/scrape_article',
 			query: {
 				url
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Analyze Source
+	 * Analyze a news source to discover RSS feeds, categories, and recent articles.
+ * 
+ * Args:
+ * base_url: The base URL of the news source to analyze
+ * 
+ * Returns:
+ * Source analysis results including RSS feeds, categories, and articles
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static analyzeSource(data: UtilitiesData['AnalyzeSource']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/analyze_source',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from a news source.
+ * 
+ * Args:
+ * base_url: The base URL of the news source
+ * 
+ * Returns:
+ * List of discovered RSS feed URLs
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds1(data: UtilitiesData['DiscoverRssFeeds1']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/discover_rss_feeds',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Browse Rss Feed
+	 * Browse RSS feed items without ingesting them.
+ * 
+ * Args:
+ * feed_url: The RSS feed URL to browse
+ * limit: Maximum number of items to return (default 20)
+ * 
+ * Returns:
+ * RSS feed metadata and recent items
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static browseRssFeed(data: UtilitiesData['BrowseRssFeed']): CancelablePromise<unknown> {
+		const {
+feedUrl,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v1/utils/browse_rss_feed',
+			query: {
+				feed_url: feedUrl, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -17815,6 +19281,48 @@ emailTo,
 	}
 
 	/**
+	 * Get Available Rss Countries
+	 * Get list of available countries for RSS feed discovery from awesome-rss-feeds repository.
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static getAvailableRssCountries1(): CancelablePromise<unknown> {
+				return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/rss-countries',
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from the awesome-rss-feeds repository.
+ * 
+ * Args:
+ * country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+ * category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+ * limit: Maximum number of feeds to return
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds2(data: UtilitiesData['DiscoverRssFeeds2'] = {}): CancelablePromise<unknown> {
+		const {
+country,
+category,
+limit = 50,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/discover-rss-feeds',
+			query: {
+				country, category, limit
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
 	 * Extract Pdf Text
 	 * Extract text from PDF without authentication
 	 * @returns unknown Successful Response
@@ -17858,7 +19366,7 @@ formData,
 
 	/**
 	 * Scrape Article
-	 * Scrape article content from a URL using the centralized OPOL instance.
+	 * Scrape article content from a URL using the configured scraping provider.
  * 
  * Args:
  * url: The URL of the article to scrape
@@ -17877,6 +19385,92 @@ url,
 			url: '/api/v2/utils/scrape_article',
 			query: {
 				url
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Analyze Source
+	 * Analyze a news source to discover RSS feeds, categories, and recent articles.
+ * 
+ * Args:
+ * base_url: The base URL of the news source to analyze
+ * 
+ * Returns:
+ * Source analysis results including RSS feeds, categories, and articles
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static analyzeSource1(data: UtilitiesData['AnalyzeSource1']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/analyze_source',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Discover Rss Feeds
+	 * Discover RSS feeds from a news source.
+ * 
+ * Args:
+ * base_url: The base URL of the news source
+ * 
+ * Returns:
+ * List of discovered RSS feed URLs
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static discoverRssFeeds3(data: UtilitiesData['DiscoverRssFeeds3']): CancelablePromise<unknown> {
+		const {
+baseUrl,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/discover_rss_feeds',
+			query: {
+				base_url: baseUrl
+			},
+			errors: {
+				422: `Validation Error`,
+			},
+		});
+	}
+
+	/**
+	 * Browse Rss Feed
+	 * Browse RSS feed items without ingesting them.
+ * 
+ * Args:
+ * feed_url: The RSS feed URL to browse
+ * limit: Maximum number of items to return (default 20)
+ * 
+ * Returns:
+ * RSS feed metadata and recent items
+	 * @returns unknown Successful Response
+	 * @throws ApiError
+	 */
+	public static browseRssFeed1(data: UtilitiesData['BrowseRssFeed1']): CancelablePromise<unknown> {
+		const {
+feedUrl,
+limit = 20,
+} = data;
+		return __request(OpenAPI, {
+			method: 'GET',
+			url: '/api/v2/utils/browse_rss_feed',
+			query: {
+				feed_url: feedUrl, limit
 			},
 			errors: {
 				422: `Validation Error`,
@@ -19098,158 +20692,6 @@ requestBody,
 			},
 			body: requestBody,
 			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-}
-
-export class SearchService {
-
-	/**
-	 * Get Contents
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getContents(data: SearchData['GetContents'] = {}): CancelablePromise<unknown> {
-		const {
-searchQuery,
-searchType = 'semantic',
-skip = 0,
-limit = 20,
-newsCategory,
-secondaryCategories,
-keyword,
-entities,
-locations,
-topics,
-classificationScores,
-keywordWeights,
-excludeKeywords,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/search/contents',
-			query: {
-				search_query: searchQuery, search_type: searchType, skip, limit, news_category: newsCategory, secondary_categories: secondaryCategories, keyword, entities, locations, topics, classification_scores: classificationScores, keyword_weights: keywordWeights, exclude_keywords: excludeKeywords
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Most Relevant Entities
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getMostRelevantEntities(data: SearchData['GetMostRelevantEntities']): CancelablePromise<unknown> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v1/search/most_relevant_entities',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Search Synthesizer
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static searchSynthesizer(data: SearchData['SearchSynthesizer']): CancelablePromise<unknown> {
-		const {
-searchQuery,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v1/search/search_synthesizer',
-			query: {
-				search_query: searchQuery
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Contents
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getContents1(data: SearchData['GetContents1'] = {}): CancelablePromise<unknown> {
-		const {
-searchQuery,
-searchType = 'semantic',
-skip = 0,
-limit = 20,
-newsCategory,
-secondaryCategories,
-keyword,
-entities,
-locations,
-topics,
-classificationScores,
-keywordWeights,
-excludeKeywords,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/search/contents',
-			query: {
-				search_query: searchQuery, search_type: searchType, skip, limit, news_category: newsCategory, secondary_categories: secondaryCategories, keyword, entities, locations, topics, classification_scores: classificationScores, keyword_weights: keywordWeights, exclude_keywords: excludeKeywords
-			},
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Get Most Relevant Entities
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static getMostRelevantEntities1(data: SearchData['GetMostRelevantEntities1']): CancelablePromise<unknown> {
-		const {
-requestBody,
-} = data;
-		return __request(OpenAPI, {
-			method: 'POST',
-			url: '/api/v2/search/most_relevant_entities',
-			body: requestBody,
-			mediaType: 'application/json',
-			errors: {
-				422: `Validation Error`,
-			},
-		});
-	}
-
-	/**
-	 * Search Synthesizer
-	 * @returns unknown Successful Response
-	 * @throws ApiError
-	 */
-	public static searchSynthesizer1(data: SearchData['SearchSynthesizer1']): CancelablePromise<unknown> {
-		const {
-searchQuery,
-} = data;
-		return __request(OpenAPI, {
-			method: 'GET',
-			url: '/api/v2/search/search_synthesizer',
-			query: {
-				search_query: searchQuery
-			},
 			errors: {
 				422: `Validation Error`,
 			},

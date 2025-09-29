@@ -39,8 +39,8 @@ import {
   Settings,
   ChevronLeft,
   FileIcon,
+  RadioTower,
   Menu,
-  ListTree,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
@@ -108,6 +108,9 @@ import ShareItemDialog from './Helper/ShareItemDialog';
 import { ResourceType } from '@/client';
 import { TextSpanHighlightProvider } from '@/contexts/TextSpanHighlightContext';
 import { useIsMobile } from '@/hooks/use-mobile';
+import DataSourceManager from '../sources/DataSourceManager';
+
+    
 
 
 type SortKey = 'name' | 'updated_at' | 'kind';
@@ -199,6 +202,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   
   // Upload to existing bundle state
   const [uploadToBundle, setUploadToBundle] = useState<BundleRead | null>(null);
+
+  const [showDataSourceManager, setShowDataSourceManager] = useState(false);
 
   const fetchingRef = useRef(false);
 
@@ -804,6 +809,10 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     return <div className="flex items-center justify-center h-full"><p>Please select an Infospace.</p></div>;
   }
 
+  if (showDataSourceManager) {
+    return <DataSourceManager />;
+  }
+
   return (
     <TextSpanHighlightProvider>
       <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-1 sm:px-2 overflow-hidden">
@@ -928,6 +937,14 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
               >
                 <FileText className="h-4 w-4 mr-1" /> 
                 {isMobile ? "Article" : "Create Article"}
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => setShowDataSourceManager(true)} 
+                className={cn("h-9", isMobile && "text-xs px-2")}
+              >
+                <RadioTower className="h-4 w-4 mr-1" /> 
+                {isMobile ? "Sources" : "Data Sources"}
               </Button>
               {!isMobile && (
                 <Button variant="outline" onClick={() => document.getElementById('import-file-input')?.click()} className="h-9">

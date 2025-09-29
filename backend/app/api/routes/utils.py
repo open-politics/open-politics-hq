@@ -4,8 +4,9 @@ import fitz
 from io import BytesIO
 from typing import Dict, Any, Optional, List
 import requests
+from datetime import datetime, timezone
 
-from app.api.deps import get_current_active_superuser, get_current_user
+from app.api.deps import get_current_active_superuser, get_current_user, ContentIngestionServiceDep, SessionDep
 from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
 from app.utils import generate_test_email, send_email
 from app.core.opol_config import opol
@@ -49,6 +50,67 @@ def readyz():
 @router.get('/healthz/liveness')
 def liveness():
     return {"status": "ok"}, 200
+
+@router.get('/rss-countries')
+def get_available_rss_countries():
+    """
+    Get list of available countries for RSS feed discovery from awesome-rss-feeds repository.
+    """
+    countries = [
+        "Australia", "Bangladesh", "Brazil", "Canada", "Germany", "Spain", "France",
+        "United Kingdom", "Hong Kong SAR China", "Indonesia", "Ireland", "India",
+        "Iran", "Italy", "Japan", "Myanmar (Burma)", "Mexico", "Nigeria",
+        "Philippines", "Pakistan", "Poland", "Russia", "Ukraine", "United States",
+        "South Africa"
+    ]
+    
+    return {
+        "countries": countries,
+        "count": len(countries),
+        "source": "awesome-rss-feeds",
+        "description": "Available countries for RSS feed discovery from the awesome-rss-feeds repository"
+    }
+
+@router.get("/discover-rss-feeds")
+async def discover_rss_feeds(
+    *,
+    session: SessionDep,
+    content_service: ContentIngestionServiceDep,
+    country: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 50
+) -> Any:
+    """
+    Discover RSS feeds from the awesome-rss-feeds repository.
+    
+    Args:
+        country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+        category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+        limit: Maximum number of feeds to return
+    """
+    try:
+
+        
+        feeds = await content_service.discover_rss_feeds_from_awesome_repo(
+            country=country,
+            category=category,
+            limit=limit
+        )
+        
+        return {
+            "feeds": feeds,
+            "count": len(feeds),
+            "country": country,
+            "category": category,
+            "limit": limit
+        }
+        
+    except Exception as e:
+        logger.error(f"RSS feed discovery failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RSS feed discovery failed: {str(e)}"
+        )
 
 @router.post("/extract-pdf-text")
 async def extract_pdf_text(
@@ -128,7 +190,7 @@ async def extract_pdf_metadata(
 @router.get("/scrape_article")
 async def scrape_article(url: str):
     """
-    Scrape article content from a URL using the centralized OPOL instance.
+    Scrape article content from a URL using the configured scraping provider.
     
     Args:
         url: The URL of the article to scrape
@@ -136,16 +198,11 @@ async def scrape_article(url: str):
     Returns:
         The scraped article content
     """
-    if not opol:
-        raise HTTPException(
-            status_code=501, 
-            detail="OPOL is not available. Make sure the package is installed and properly configured."
-        )
-    
     try:
-        article_data = opol.scraping.url(url)
-
-        print(article_data)
+        from app.api.providers.factory import create_scraping_provider
+        scraping_provider = create_scraping_provider(settings)
+        
+        article_data = await scraping_provider.scrape_url(url)
         
         return article_data
 
@@ -153,6 +210,118 @@ async def scrape_article(url: str):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to scrape article: {str(e)}"
+        )
+
+@router.get("/analyze_source")
+async def analyze_source(base_url: str):
+    """
+    Analyze a news source to discover RSS feeds, categories, and recent articles.
+    
+    Args:
+        base_url: The base URL of the news source to analyze
+        
+    Returns:
+        Source analysis results including RSS feeds, categories, and articles
+    """
+    try:
+        from app.api.providers.factory import create_scraping_provider
+        scraping_provider = create_scraping_provider(settings)
+        
+        analysis_result = await scraping_provider.analyze_source(base_url)
+        
+        return analysis_result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze source: {str(e)}"
+        )
+
+@router.get("/discover_rss_feeds")
+async def discover_rss_feeds(base_url: str):
+    """
+    Discover RSS feeds from a news source.
+    
+    Args:
+        base_url: The base URL of the news source
+        
+    Returns:
+        List of discovered RSS feed URLs
+    """
+    try:
+        from app.api.providers.factory import create_scraping_provider
+        scraping_provider = create_scraping_provider(settings)
+        
+        rss_feeds = await scraping_provider.discover_rss_feeds(base_url)
+        
+        return {"base_url": base_url, "rss_feeds": rss_feeds}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to discover RSS feeds: {str(e)}"
+        )
+
+@router.get("/browse_rss_feed")
+async def browse_rss_feed(feed_url: str, limit: int = 20):
+    """
+    Browse RSS feed items without ingesting them.
+    
+    Args:
+        feed_url: The RSS feed URL to browse
+        limit: Maximum number of items to return (default 20)
+        
+    Returns:
+        RSS feed metadata and recent items
+    """
+    try:
+        import feedparser
+        
+        feed = feedparser.parse(feed_url)
+        
+        if not feed.feed:
+            raise HTTPException(status_code=404, detail="RSS feed not found or invalid")
+        
+        # Extract feed metadata
+        feed_info = {
+            "feed_url": feed_url,
+            "title": feed.feed.get('title', 'RSS Feed'),
+            "description": feed.feed.get('description', ''),
+            "language": feed.feed.get('language', ''),
+            "updated": feed.feed.get('updated', ''),
+            "generator": feed.feed.get('generator', ''),
+            "total_entries": len(feed.entries)
+        }
+        
+        # Extract recent items
+        items = []
+        for entry in feed.entries[:limit]:
+            item = {
+                "title": entry.get('title', 'RSS Item'),
+                "link": entry.get('link', ''),
+                "summary": entry.get('summary', ''),
+                "published": entry.get('published', ''),
+                "author": entry.get('author', ''),
+                "id": entry.get('id', ''),
+                "tags": [tag.get('term', '') for tag in entry.get('tags', [])]
+            }
+            items.append(item)
+        
+        return {
+            "feed": feed_info,
+            "items": items,
+            "browsed_at": datetime.now(timezone.utc).isoformat()
+        }
+
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="feedparser library not installed. Install with: pip install feedparser"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to browse RSS feed: {str(e)}"
         )
 
 @router.get("/providers", response_model=ProviderListResponse, status_code=status.HTTP_200_OK)

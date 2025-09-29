@@ -8,7 +8,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { AssetKind } from '@/client/models';
-import { Loader2, UploadCloud, Link as LinkIcon, FileText, X, FileSpreadsheet, List, Type, Undo2, RefreshCw, Image as ImageIcon, Video, Music, Mail, FileUp, Plus, Trash2, Globe, CheckCircle, Clock, Upload, ExternalLink } from 'lucide-react';
+import {
+    Loader2, UploadCloud, Link as LinkIcon, FileText, X, FileSpreadsheet,
+    List, Type, Undo2, RefreshCw, Image as ImageIcon, Video, Music, Mail,
+    FileUp, Plus, Trash2, Globe, CheckCircle, Clock, Upload, ExternalLink, Rss, Search
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertTriangle } from "lucide-react"
@@ -19,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { AssetRead } from '@/client/models';
+import RssFeedBrowser from '../RssFeedBrowser';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -154,6 +159,9 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
   const [newUrl, setNewUrl] = useState('');
   const [newTextContent, setNewTextContent] = useState('');
   const [newTextTitle, setNewTextTitle] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [useBackgroundProcessing, setUseBackgroundProcessing] = useState(false);
   const [backgroundTasks, setBackgroundTasks] = useState<any[]>([]);
   
@@ -195,6 +203,9 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     setNewTextTitle('');
     setFormError(null);
     setUploadProgress(null);
+    setSearchQuery('');
+    setSearchResults([]);
+    setIsSearching(false);
     setUseBackgroundProcessing(false);
     setBackgroundTasks([]);
     // Reset destination based on initial mode
@@ -263,6 +274,34 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     setNewTextTitle('');
     setFormError(null);
   };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setIsSearching(true);
+    setSearchResults([]);
+    try {
+        const { SearchService } = await import('@/client/services');
+        const response = await SearchService.searchContent({ query: searchQuery, limit: 20 });
+        setSearchResults(response.results);
+    } catch (error) {
+        console.error("Search failed:", error);
+        toast.error("Search failed. Please check the logs.");
+    } finally {
+        setIsSearching(false);
+    }
+  };
+
+  const handleAddFromSearch = (result: any) => {
+    const newItem: BundleItem = {
+      id: generateItemId(),
+      type: 'url',
+      kind: 'web',
+      title: result.title || `Web: ${new URL(result.url).hostname}`,
+      url: result.url,
+      status: 'pending'
+    };
+    setItems(prev => [...prev, newItem]);
+  }
 
   const removeItem = (itemId: string) => {
     setItems(prev => prev.filter(item => item.id !== itemId));
@@ -427,37 +466,57 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     const createdAssets: AssetRead[] = [];
     let completedCount = 0;
 
-    // Use bulk URL ingestion if multiple URLs (more efficient)
-    if (urlItems.length > 1) {
-      try {
-        setUploadProgress(prev => prev ? {
-          ...prev,
-          message: `Bulk processing ${urlItems.length} URLs...`,
-          progress: 15
-        } : null);
+        // Use enhanced bulk URL ingestion if multiple URLs (more efficient with newspaper4k)
+        if (urlItems.length > 1) {
+          try {
+            setUploadProgress(prev => prev ? {
+              ...prev,
+              message: `Bulk processing ${urlItems.length} URLs...`,
+              progress: 15
+            } : null);
 
-        const urls = urlItems.map(item => item.url!);
-        const bulkUrlAssets = await AssetsService.bulkIngestUrls({
-          infospaceId: activeInfospace.id,
-          requestBody: { urls }
-        });
+            const urls = urlItems.map(item => item.url!);
+            
+            // Use bulk ingestion with newspaper4k capabilities
+            const bulkUrlAssets = await AssetsService.bulkIngestUrls({
+              infospaceId: activeInfospace.id,
+              requestBody: { 
+                urls,
+                base_title: "Bulk URL Collection",
+                scrape_immediately: true
+              }
+            });
 
-        // Update status for all URL items
-        urlItems.forEach((item, index) => {
-          if (bulkUrlAssets[index]) {
-            updateItemStatus(item.id, 'complete', undefined, 100);
-          } else {
-            updateItemStatus(item.id, 'error', 'Failed to process URL');
-          }
-        });
+            // Update status for all URL items with enhanced feedback
+            urlItems.forEach((item, index) => {
+              if (bulkUrlAssets[index]) {
+                const asset = bulkUrlAssets[index];
+                const contentLength = asset.source_metadata?.content_length || 0;
+                const imageCount = Array.isArray(asset.source_metadata?.images) ? asset.source_metadata.images.length : 0;
+                
+                updateItemStatus(
+                  item.id, 
+                  'complete', 
+                  undefined, 
+                  100
+                );
+                
+                // Update item title with scraped title if available
+                if (asset.title && asset.title !== item.title) {
+                  updateItemTitle(item.id, asset.title);
+                }
+              } else {
+                updateItemStatus(item.id, 'error', 'Failed to process URL');
+              }
+            });
 
-        createdAssets.push(...bulkUrlAssets);
-        completedCount += urlItems.length;
+            createdAssets.push(...bulkUrlAssets);
+            completedCount += urlItems.length;
 
-        setUploadProgress(prev => prev ? {
-          ...prev,
-          progress: 30,
-          message: `Processed ${urlItems.length} URLs, now processing files...`,
+            setUploadProgress(prev => prev ? {
+              ...prev,
+              progress: 30,
+              message: `Bulk processing completed for ${urlItems.length} URLs, now processing files...`,
           completedItems: completedCount
         } : null);
 
@@ -1000,6 +1059,97 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     </Card>
   );
 
+  const renderRssBrowser = () => (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Rss className="h-4 w-4" />
+          Browse RSS Feeds
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Browse RSS feeds and select articles to ingest
+        </p>
+        <RssFeedBrowser
+          onSelectArticle={(url, title) => {
+            setNewUrl(url);
+            handleAddUrl();
+          }}
+          onIngestArticle={(url, title) => {
+            setNewUrl(url);
+            handleAddUrl();
+          }}
+          destination={destination}
+          selectedBundleId={selectedBundleId}
+          bundleTitle={bundleTitle}
+          trigger={
+            <Button 
+              type="button" 
+              variant="outline"
+              disabled={storeIsLoading || !!uploadProgress}
+              size="sm"
+              className="w-full"
+            >
+              <Rss className="h-4 w-4 mr-2" />
+              Browse RSS
+            </Button>
+          }
+        />
+      </CardContent>
+    </Card>
+  );
+
+  const renderSearchInput = () => (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Search className="h-4 w-4" />
+          Search & Add
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex gap-2">
+          <Input
+            placeholder="Search for articles, events..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            disabled={storeIsLoading || !!uploadProgress || isSearching}
+            className="flex-1"
+            onKeyPress={(e) => e.key === 'Enter' && !isSearching && handleSearch()}
+          />
+          <Button 
+            type="button" 
+            onClick={handleSearch} 
+            disabled={!searchQuery.trim() || storeIsLoading || !!uploadProgress || isSearching}
+            size="sm"
+          >
+            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          </Button>
+        </div>
+        {searchResults.length > 0 && (
+            <ScrollArea className="h-48 border rounded-md p-2">
+                <div className="space-y-2">
+                    {searchResults.map((result, index) => (
+                        <div key={index} className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate" title={result.title}>{result.title}</p>
+                                <a href={result.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary truncate flex items-center gap-1">
+                                    {result.url} <ExternalLink className="h-3 w-3" />
+                                </a>
+                            </div>
+                            <Button type="button" size="sm" variant="outline" onClick={() => handleAddFromSearch(result)}>
+                                <Plus className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    ))}
+                </div>
+            </ScrollArea>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   const renderItemsList = () => {
     if (items.length === 0) {
       return (
@@ -1184,11 +1334,13 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
           {!uploadProgress && (
             <div className={cn(
               "grid gap-4",
-              isMobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3"
+              isMobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2 xl:grid-cols-4"
             )}>
               {renderFileDropZone()}
               {renderUrlInput()}
               {renderTextInput()}
+              {renderRssBrowser()}
+              {renderSearchInput()}
             </div>
           )}
 

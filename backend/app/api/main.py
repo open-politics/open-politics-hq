@@ -19,6 +19,7 @@ from app.api.routes import (
     login,
     monitors,
     pipelines,
+    search as external_search,
     search_history,
     shareables,
     sources,
@@ -59,9 +60,12 @@ api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infosp
 api_router.include_router(login.router, tags=["login"])
 api_router.include_router(monitors.router, tags=["Monitors"])
 api_router.include_router(pipelines.router, prefix="/pipelines", tags=["Pipelines"])
-api_router.include_router(search_history.router, prefix="/search_histories", tags=["search-history"])
+api_router.include_router(external_search.router, prefix="/search-ext", tags=["Search"])
+api_router.include_router(
+    search_history.router, prefix="/search_histories", tags=["search-history"]
+)
 api_router.include_router(shareables.router, prefix="/sharing", tags=["sharing"])
-api_router.include_router(sources.router, prefix="/sources", tags=["Sources"])
+api_router.include_router(sources.router, tags=["Sources"])
 api_router.include_router(sso.router, tags=["sso"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(user_backups.router, tags=["User Backups"])

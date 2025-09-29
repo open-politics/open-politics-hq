@@ -26,6 +26,8 @@ import io
 import fitz
 import dateutil.parser
 import feedparser
+import xml.etree.ElementTree as ET
+import aiohttp
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union, AsyncGenerator
 from dataclasses import dataclass
@@ -43,6 +45,9 @@ from app.api.providers.factory import create_search_provider, create_scraping_pr
 from app.api.services.asset_service import AssetService
 from app.api.services.service_utils import validate_infospace_access
 from app.core.config import settings
+import feedparser
+from fastapi import HTTPException
+from starlette import status
 
 logger = logging.getLogger(__name__)
 
@@ -283,64 +288,200 @@ class ContentIngestionService:
     
     async def _handle_rss_feed(self, feed_url: str, infospace_id: int, user_id: int, 
                               options: Dict[str, Any]) -> List[Asset]:
-        """Handle RSS feed processing"""
+        """Handle RSS feed processing with enhanced capabilities"""
         max_items = options.get('max_items', 50)
         scrape_full_content = options.get('scrape_full_content', True)
+        use_bulk_scraping = options.get('use_bulk_scraping', True)
         
         try:
             feed = feedparser.parse(feed_url)
             
             # Create parent RSS asset
             feed_title = feed.feed.get('title', 'RSS Feed')
+            feed_description = feed.feed.get('description', '')
+            
             parent_asset = self.asset_service.create_asset(AssetCreate(
                 title=f"RSS Feed: {feed_title}",
                 kind=AssetKind.WEB,  # Changed from RSS_FEED which doesn't exist
                 user_id=user_id,
                 infospace_id=infospace_id,
                 source_identifier=feed_url,
-                text_content=feed.feed.get('description', ''),
+                text_content=feed_description,
                 source_metadata={
                     'feed_title': feed_title,
                     'feed_url': feed_url,
+                    'feed_description': feed_description,
+                    'feed_language': feed.feed.get('language', ''),
+                    'feed_updated': feed.feed.get('updated', ''),
+                    'feed_generator': feed.feed.get('generator', ''),
                     'total_entries': len(feed.entries),
-                    'ingestion_method': 'rss_processing'
+                    'ingestion_method': 'rss_processing_enhanced'
                 }
             ))
             
+            # Extract URLs from RSS entries
+            rss_urls = []
+            rss_metadata = []
+            
+            for i, entry in enumerate(feed.entries[:max_items]):
+                item_url = entry.get('link', '')
+                if item_url:
+                    rss_urls.append(item_url)
+                    rss_metadata.append({
+                        'title': entry.get('title', 'RSS Item'),
+                        'summary': entry.get('summary', ''),
+                        'published': entry.get('published', ''),
+                        'author': entry.get('author', ''),
+                        'id': entry.get('id', ''),
+                        'tags': [tag.get('term', '') for tag in entry.get('tags', [])],
+                        'part_index': i
+                    })
+            
             # Process RSS items as child assets
             child_assets = []
-            for i, entry in enumerate(feed.entries[:max_items]):
+            
+            if scrape_full_content and rss_urls and use_bulk_scraping and len(rss_urls) > 3:
+                # Use bulk scraping for efficiency
+                logger.info(f"Using bulk scraping for {len(rss_urls)} RSS items")
+                
                 try:
-                    item_url = entry.get('link', '')
-                    item_title = entry.get('title', 'RSS Item')
+                    max_threads = options.get('max_threads', 4)
+                    scraped_results = await self.scraping_provider.scrape_urls_bulk(rss_urls, max_threads)
                     
-                    # Create child asset
-                    child_asset = await self._handle_web_page(
-                        item_url, infospace_id, user_id, item_title,
-                        {"scrape_immediately": scrape_full_content}
-                    )
-                    
-                    # Set parent relationship
-                    child_asset.parent_asset_id = parent_asset.id
-                    child_asset.part_index = i
-                    
-                    # Add RSS metadata
-                    if child_asset.source_metadata:
-                        child_asset.source_metadata.update({
-                            'rss_feed_url': feed_url,
-                            'rss_item_id': entry.get('id', ''),
-                            'rss_published_date': entry.get('published', ''),
-                            'content_source': 'rss_item'
-                        })
-                    
-                    self.session.add(child_asset)
-                    child_assets.append(child_asset)
-                    
+                    # Create assets from scraped results
+                    for i, (scraped_data, metadata) in enumerate(zip(scraped_results, rss_metadata)):
+                        try:
+                            # Use RSS title if scraping didn't get a good title
+                            title = scraped_data.get('title') or metadata['title']
+                            if not title.strip():
+                                title = f"RSS Item #{i+1}"
+                            
+                            # Combine RSS summary with scraped content
+                            text_content = scraped_data.get('text_content', '')
+                            if not text_content and metadata.get('summary'):
+                                text_content = metadata['summary']
+                            
+                            child_asset_create = AssetCreate(
+                                title=title,
+                                kind=AssetKind.WEB,
+                                user_id=user_id,
+                                infospace_id=infospace_id,
+                                parent_asset_id=parent_asset.id,
+                                part_index=metadata['part_index'],
+                                source_identifier=rss_urls[i],
+                                text_content=text_content,
+                                source_metadata={
+                                    # RSS metadata
+                                    'rss_feed_url': feed_url,
+                                    'rss_item_id': metadata['id'],
+                                    'rss_published_date': metadata['published'],
+                                    'rss_author': metadata['author'],
+                                    'rss_summary': metadata['summary'],
+                                    'rss_tags': metadata['tags'],
+                                    'content_source': 'rss_item_bulk_scraped',
+                                    
+                                    # Scraped metadata
+                                    'scraped_at': scraped_data.get('scraped_at'),
+                                    'scraping_method': scraped_data.get('scraping_method', 'bulk'),
+                                    'publication_date': scraped_data.get('publication_date'),
+                                    'authors': scraped_data.get('authors', []),
+                                    'top_image': scraped_data.get('top_image'),
+                                    'images': scraped_data.get('images', []),
+                                    'summary': scraped_data.get('summary', ''),
+                                    'keywords': scraped_data.get('keywords', []),
+                                    'content_length': len(text_content),
+                                    'ingestion_method': 'rss_bulk_scraping'
+                                }
+                            )
+                            
+                            # Set event timestamp from RSS or scraped publication date
+                            pub_date = scraped_data.get('publication_date') or metadata['published']
+                            if pub_date:
+                                try:
+                                    child_asset_create.event_timestamp = dateutil.parser.parse(pub_date)
+                                except Exception as e:
+                                    logger.warning(f"Could not parse publication date for RSS item: {e}")
+                            
+                            child_asset = self.asset_service.create_asset(child_asset_create)
+                            child_assets.append(child_asset)
+                            
+                            # Create image assets if found
+                            if scraped_data.get('images') and options.get('create_image_assets', True):
+                                await self._create_image_assets(child_asset, scraped_data['images'], scraped_data.get('top_image'))
+                            
+                        except Exception as e:
+                            logger.error(f"Failed to create asset from RSS item {i}: {e}")
+                            continue
+                
                 except Exception as e:
-                    logger.error(f"Failed to process RSS item: {e}")
-                    continue
+                    logger.error(f"RSS bulk scraping failed, falling back to sequential: {e}")
+                    # Fall back to sequential processing
+                    use_bulk_scraping = False
+            
+            if not use_bulk_scraping or not scrape_full_content:
+                # Sequential processing (original logic)
+                for i, (url, metadata) in enumerate(zip(rss_urls, rss_metadata)):
+                    try:
+                        if scrape_full_content:
+                            child_asset = await self._handle_web_page(
+                                url, infospace_id, user_id, metadata['title'],
+                                {"scrape_immediately": True}
+                            )
+                        else:
+                            # Create asset from RSS metadata only
+                            child_asset_create = AssetCreate(
+                                title=metadata['title'] or f"RSS Item #{i+1}",
+                                kind=AssetKind.WEB,
+                                user_id=user_id,
+                                infospace_id=infospace_id,
+                                parent_asset_id=parent_asset.id,
+                                part_index=metadata['part_index'],
+                                source_identifier=url,
+                                text_content=metadata.get('summary', ''),
+                                source_metadata={
+                                    'rss_feed_url': feed_url,
+                                    'rss_item_id': metadata['id'],
+                                    'rss_published_date': metadata['published'],
+                                    'rss_author': metadata['author'],
+                                    'rss_summary': metadata['summary'],
+                                    'rss_tags': metadata['tags'],
+                                    'content_source': 'rss_metadata_only',
+                                    'ingestion_method': 'rss_metadata_extraction'
+                                }
+                            )
+                            
+                            if metadata['published']:
+                                try:
+                                    child_asset_create.event_timestamp = dateutil.parser.parse(metadata['published'])
+                                except Exception as e:
+                                    logger.warning(f"Could not parse RSS publication date: {e}")
+                            
+                            child_asset = self.asset_service.create_asset(child_asset_create)
+                        
+                        # Set parent relationship
+                        child_asset.parent_asset_id = parent_asset.id
+                        child_asset.part_index = metadata['part_index']
+                        
+                        # Add/update RSS metadata
+                        if child_asset.source_metadata:
+                            child_asset.source_metadata.update({
+                                'rss_feed_url': feed_url,
+                                'rss_item_id': metadata['id'],
+                                'rss_published_date': metadata['published'],
+                                'rss_author': metadata['author'],
+                                'rss_tags': metadata['tags'],
+                                'content_source': 'rss_item'
+                            })
+                        
+                        self.session.add(child_asset)
+                        child_assets.append(child_asset)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to process RSS item: {e}")
+                        continue
             
             self.session.commit()
+            logger.info(f"RSS feed processing completed: {len(child_assets)} items processed from {feed_title}")
             return [parent_asset] + child_assets
             
         except ImportError:
@@ -531,6 +672,7 @@ class ContentIngestionService:
         try:
             from app.models import AssetBundleLink
             
+            new_links_count = 0
             for asset_id in asset_ids:
                 # Check if link already exists
                 existing = self.session.exec(
@@ -543,8 +685,18 @@ class ContentIngestionService:
                 if not existing:
                     link = AssetBundleLink(asset_id=asset_id, bundle_id=bundle_id)
                     self.session.add(link)
+                    new_links_count += 1
+            
+            # Update bundle asset count
+            if new_links_count > 0:
+                bundle = self.session.get(Bundle, bundle_id)
+                if bundle:
+                    bundle.asset_count = (bundle.asset_count or 0) + new_links_count
+                    bundle.updated_at = datetime.now(timezone.utc)
+                    self.session.add(bundle)
             
             self.session.commit()
+            logger.info(f"Added {new_links_count} new assets to bundle {bundle_id}")
             
         except Exception as e:
             logger.error(f"Failed to add assets to bundle {bundle_id}: {e}")
@@ -908,6 +1060,68 @@ class ContentIngestionService:
             seen_urls.add(img_url)
         
         return content_images
+    
+    async def _create_image_assets(self, parent_asset: Asset, images: List[str], top_image: Optional[str] = None) -> List[Asset]:
+        """Create child image assets from scraped images."""
+        image_assets = []
+        
+        # Create featured image asset if top_image is specified
+        if top_image and top_image not in images:
+            try:
+                featured_asset_create = AssetCreate(
+                    title=f"Featured: {parent_asset.title}",
+                    kind=AssetKind.IMAGE,
+                    user_id=parent_asset.user_id,
+                    infospace_id=parent_asset.infospace_id,
+                    parent_asset_id=parent_asset.id,
+                    source_identifier=top_image,
+                    part_index=0,
+                    source_metadata={
+                        'image_role': 'featured',
+                        'image_url': top_image,
+                        'parent_article': {
+                            'title': parent_asset.title,
+                            'url': parent_asset.source_identifier,
+                            'asset_id': parent_asset.id
+                        },
+                        'is_hero_image': True
+                    }
+                )
+                featured_asset = self.asset_service.create_asset(featured_asset_create)
+                image_assets.append(featured_asset)
+            except Exception as e:
+                logger.warning(f"Failed to create featured image asset: {e}")
+        
+        # Create content image assets
+        start_index = 1 if top_image else 0
+        for idx, img_url in enumerate(images[:8]):  # Limit to 8 images
+            try:
+                content_asset_create = AssetCreate(
+                    title=f"Image {start_index + idx + 1}: {parent_asset.title}",
+                    kind=AssetKind.IMAGE,
+                    user_id=parent_asset.user_id,
+                    infospace_id=parent_asset.infospace_id,
+                    parent_asset_id=parent_asset.id,
+                    source_identifier=img_url,
+                    part_index=start_index + idx,
+                    source_metadata={
+                        'image_role': 'content',
+                        'image_url': img_url,
+                        'parent_article': {
+                            'title': parent_asset.title,
+                            'url': parent_asset.source_identifier,
+                            'asset_id': parent_asset.id
+                        },
+                        'content_index': idx
+                    }
+                )
+                content_asset = self.asset_service.create_asset(content_asset_create)
+                image_assets.append(content_asset)
+            except Exception as e:
+                logger.warning(f"Failed to create content image asset {idx}: {e}")
+                continue
+        
+        return image_assets
 
     async def _handle_text_content(self, text: str, infospace_id: int, user_id: int,
                                   title: Optional[str], options: Dict[str, Any]) -> Asset:
@@ -974,45 +1188,194 @@ class ContentIngestionService:
     
     async def _handle_url_list(self, urls: List[str], infospace_id: int, user_id: int,
                               options: Dict[str, Any]) -> List[Asset]:
-        """Handle bulk URL processing"""
+        """Handle bulk URL processing with enhanced bulk scraping"""
         assets = []
         base_title = options.get('base_title', "Bulk URL Collection")
         scrape_immediately = options.get('scrape_immediately', True)
+        use_bulk_scraping = options.get('use_bulk_scraping', True) and len(urls) > 3
         
-        for i, url in enumerate(urls):
+        if use_bulk_scraping and scrape_immediately:
+            # Use bulk scraping for efficiency
+            logger.info(f"Using bulk scraping for {len(urls)} URLs")
+            
             try:
-                url_title = f"{base_title} #{i+1}" if base_title else None
-                url_options = options.copy()
-                url_options.update({
-                    "batch_index": i,
-                    "batch_total": len(urls)
-                })
+                # Bulk scrape all URLs at once
+                max_threads = options.get('max_threads', 4)
+                scraped_results = await self.scraping_provider.scrape_urls_bulk(urls, max_threads)
                 
-                asset = await self._handle_web_page(
-                    url=url,
-                    infospace_id=infospace_id,
-                    user_id=user_id,
-                    title=url_title,
-                    options=url_options
-                )
-                assets.append(asset)
-                
-                if scrape_immediately:
-                    await asyncio.sleep(0.5)
+                # Create assets from scraped results
+                for i, (url, scraped_data) in enumerate(zip(urls, scraped_results)):
+                    try:
+                        url_title = scraped_data.get('title') or f"{base_title} #{i+1}"
+                        
+                        asset_create = AssetCreate(
+                            title=url_title,
+                            kind=AssetKind.WEB,
+                            user_id=user_id,
+                            infospace_id=infospace_id,
+                            source_identifier=url,
+                            text_content=scraped_data.get('text_content', ''),
+                            source_metadata={
+                                "original_url": url,
+                                "scraped_at": scraped_data.get('scraped_at'),
+                                "scraping_method": scraped_data.get('scraping_method', 'bulk'),
+                                "batch_index": i,
+                                "batch_total": len(urls),
+                                "publication_date": scraped_data.get('publication_date'),
+                                "authors": scraped_data.get('authors', []),
+                                "top_image": scraped_data.get('top_image'),
+                                "images": scraped_data.get('images', []),
+                                "summary": scraped_data.get('summary', ''),
+                                "keywords": scraped_data.get('keywords', []),
+                                "content_length": len(scraped_data.get('text_content', '')),
+                                "ingestion_method": "bulk_url_scraping"
+                            }
+                        )
+                        
+                        # Set event timestamp from publication date if available
+                        if scraped_data.get('publication_date'):
+                            try:
+                                asset_create.event_timestamp = dateutil.parser.parse(scraped_data['publication_date'])
+                            except Exception as e:
+                                logger.warning(f"Could not parse publication date for {url}: {e}")
+                        
+                        asset = self.asset_service.create_asset(asset_create)
+                        assets.append(asset)
+                        
+                        # Create child image assets if images were found
+                        if scraped_data.get('images') and options.get('create_image_assets', True):
+                            await self._create_image_assets(asset, scraped_data['images'], scraped_data.get('top_image'))
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to create asset from bulk scraped URL {url}: {e}")
+                        continue
                 
             except Exception as e:
-                logger.error(f"Failed to ingest URL {url} in bulk operation: {e}")
-                continue
+                logger.error(f"Bulk scraping failed, falling back to sequential processing: {e}")
+                # Fall back to sequential processing
+                use_bulk_scraping = False
+        
+        if not use_bulk_scraping:
+            # Sequential processing (original logic)
+            for i, url in enumerate(urls):
+                try:
+                    url_title = f"{base_title} #{i+1}" if base_title else None
+                    url_options = options.copy()
+                    url_options.update({
+                        "batch_index": i,
+                        "batch_total": len(urls)
+                    })
+                    
+                    asset = await self._handle_web_page(
+                        url=url,
+                        infospace_id=infospace_id,
+                        user_id=user_id,
+                        title=url_title,
+                        options=url_options
+                    )
+                    assets.append(asset)
+                    
+                    if scrape_immediately:
+                        await asyncio.sleep(0.5)
+                    
+                except Exception as e:
+                    logger.error(f"Failed to ingest URL {url} in bulk operation: {e}")
+                    continue
         
         logger.info(f"Bulk URL ingestion completed: {len(assets)}/{len(urls)} successful")
         return assets
     
     async def _handle_site_discovery(self, base_url: str, infospace_id: int, user_id: int,
                                     options: Dict[str, Any]) -> List[Asset]:
-        """Handle site discovery and crawling"""
+        """Handle site discovery and crawling with enhanced source analysis"""
         max_depth = options.get('max_depth', 2)
         max_urls = options.get('max_urls', 50)
+        use_source_analysis = options.get('use_source_analysis', True)
         
+        created_assets = []
+        
+        if use_source_analysis:
+            # Use enhanced source analysis if available
+            try:
+                logger.info(f"Analyzing news source: {base_url}")
+                source_analysis = await self.scraping_provider.analyze_source(base_url)
+                
+                if source_analysis and not source_analysis.get('error'):
+                    # Create source analysis asset
+                    analysis_asset = self.asset_service.create_asset(AssetCreate(
+                        title=f"Source Analysis: {source_analysis.get('brand', base_url)}",
+                        kind=AssetKind.WEB,
+                        user_id=user_id,
+                        infospace_id=infospace_id,
+                        source_identifier=base_url,
+                        text_content=f"Analysis of {base_url}\n\nDescription: {source_analysis.get('description', '')}\n\nFound {len(source_analysis.get('rss_feeds', []))} RSS feeds and {len(source_analysis.get('categories', []))} categories.",
+                        source_metadata={
+                            **source_analysis,
+                            "ingestion_method": "source_analysis",
+                            "discovery_method": "enhanced_source_analysis"
+                        }
+                    ))
+                    created_assets.append(analysis_asset)
+                    
+                    # Process recent articles from source analysis
+                    recent_articles = source_analysis.get('recent_articles', [])[:max_urls]
+                    if recent_articles:
+                        article_urls = [article['url'] for article in recent_articles if article.get('url')]
+                        
+                        if article_urls:
+                            logger.info(f"Processing {len(article_urls)} recent articles from source analysis")
+                            article_assets = await self._handle_url_list(
+                                urls=article_urls,
+                                infospace_id=infospace_id,
+                                user_id=user_id,
+                                options={**options, 'base_title': f"Articles from {source_analysis.get('brand', base_url)}"}
+                            )
+                            created_assets.extend(article_assets)
+                    
+                    # Process RSS feeds if found
+                    rss_feeds = source_analysis.get('feed_urls', [])
+                    if rss_feeds and options.get('process_rss_feeds', True):
+                        logger.info(f"Processing {len(rss_feeds)} RSS feeds from source analysis")
+                        for feed_url in rss_feeds[:3]:  # Limit to 3 feeds
+                            try:
+                                rss_assets = await self._handle_rss_feed(
+                                    feed_url=feed_url,
+                                    infospace_id=infospace_id,
+                                    user_id=user_id,
+                                    options={**options, 'max_items': 10}  # Limit RSS items
+                                )
+                                created_assets.extend(rss_assets)
+                            except Exception as e:
+                                logger.error(f"Failed to process RSS feed {feed_url}: {e}")
+                                continue
+                    
+                    # Add source analysis metadata to all assets
+                    discovery_metadata = {
+                        "discovery_base_url": base_url,
+                        "discovery_method": "enhanced_source_analysis",
+                        "discovered_at": datetime.now(timezone.utc).isoformat(),
+                        "source_brand": source_analysis.get('brand', ''),
+                        "source_description": source_analysis.get('description', ''),
+                        "rss_feeds_found": len(source_analysis.get('feed_urls', [])),
+                        "categories_found": len(source_analysis.get('categories', []))
+                    }
+                    
+                    for asset in created_assets[1:]:  # Skip the analysis asset itself
+                        if asset.source_metadata:
+                            asset.source_metadata.update(discovery_metadata)
+                        else:
+                            asset.source_metadata = discovery_metadata
+                        self.session.add(asset)
+                    
+                    self.session.commit()
+                    logger.info(f"Enhanced site discovery completed: {len(created_assets)} assets created from {base_url}")
+                    return created_assets
+                
+            except Exception as e:
+                logger.warning(f"Enhanced source analysis failed for {base_url}, falling back to traditional crawling: {e}")
+        
+        # Fall back to traditional site discovery
+        logger.info(f"Using traditional site discovery for {base_url}")
         discovered_urls = await self._discover_site_urls(
             base_url=base_url,
             max_depth=max_depth,
@@ -1031,7 +1394,7 @@ class ContentIngestionService:
             "discovery_base_url": base_url,
             "discovery_depth": max_depth,
             "discovered_at": datetime.now(timezone.utc).isoformat(),
-            "discovery_method": "site_crawl"
+            "discovery_method": "traditional_site_crawl"
         }
         
         for asset in created_assets:
@@ -1042,7 +1405,7 @@ class ContentIngestionService:
             self.session.add(asset)
         
         self.session.commit()
-        logger.info(f"Created {len(created_assets)} assets from site discovery of {base_url}")
+        logger.info(f"Traditional site discovery completed: {len(created_assets)} assets created from {base_url}")
         return created_assets
 
     async def _discover_site_urls(self, base_url: str, max_depth: int, max_urls: int, url_filter_config: Dict[str, Any]) -> List[str]:
@@ -1170,6 +1533,60 @@ class ContentIngestionService:
         
         # Reprocess with new options
         await self._process_content(asset, options or {})
+
+    async def preview_rss_feed(self, feed_url: str, max_items: int = 20) -> Dict[str, Any]:
+        """
+        Parse an RSS feed and return its metadata and items without creating any assets.
+        """
+        try:
+            feed = feedparser.parse(feed_url)
+
+            if feed.bozo:
+                # Bozo bit is set if the feed is not well-formed
+                raise ValueError(f"Feed parsing error: {feed.bozo_exception}")
+
+            feed_info = {
+                "title": feed.feed.get("title", "Unknown Feed"),
+                "description": feed.feed.get("description", ""),
+                "link": feed.feed.get("link", ""),
+                "language": feed.feed.get("language", ""),
+                "updated": feed.feed.get("updated", ""),
+                "total_items": len(feed.entries),
+            }
+
+            items = []
+            for i, entry in enumerate(feed.entries[:max_items]):
+                item = {
+                    "index": i,
+                    "title": entry.get("title", ""),
+                    "link": entry.get("link", ""),
+                    "summary": entry.get("summary", ""),
+                    "published": entry.get("published", ""),
+                    "author": entry.get("author", ""),
+                    "tags": [tag.get("term", "") for tag in entry.get("tags", [])],
+                    "id": entry.get("id", ""),
+                    "content": (
+                        entry.get("content", [{}])[0].get("value", "")
+                        if entry.get("content")
+                        else ""
+                    ),
+                }
+                items.append(item)
+
+            return {
+                "feed_info": feed_info,
+                "items": items,
+                "feed_url": feed_url,
+                "previewed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            logger.error(
+                f"Failed to preview RSS feed at {feed_url}: {e}", exc_info=True
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Could not preview RSS feed. Reason: {e}",
+            )
 
     def compose_article(
         self,
@@ -1303,3 +1720,241 @@ class ContentIngestionService:
         report_asset = self.asset_service.create_asset(report_asset_create)
         logger.info(f"Report '{title}' (Asset ID: {report_asset.id}) created successfully.")
         return report_asset
+
+    async def discover_rss_feeds_from_awesome_repo(
+        self, 
+        country: Optional[str] = None, 
+        category: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Discover RSS feeds from the awesome-rss-feeds repository.
+        
+        This method fetches OPML files from the awesome-rss-feeds GitHub repository
+        and parses them to extract RSS feed information. The repository contains
+        curated RSS feeds organized by country and category.
+        
+        Example usage:
+            # Get all feeds from Australia
+            feeds = await service.discover_rss_feeds_from_awesome_repo(country="Australia")
+            
+            # Get news feeds from all countries
+            feeds = await service.discover_rss_feeds_from_awesome_repo(category="News")
+            
+            # Get first 10 feeds from United States
+            feeds = await service.discover_rss_feeds_from_awesome_repo(country="United States", limit=10)
+        
+        Args:
+            country: Country name (e.g., "Australia", "United States") - if None, returns all countries
+            category: Category filter (e.g., "News", "Technology") - if None, returns all categories
+            limit: Maximum number of feeds to return
+            
+        Returns:
+            List of RSS feed dictionaries with metadata including:
+            - title: Feed title
+            - description: Feed description
+            - url: RSS feed URL
+            - text: Feed text
+            - country: Source country
+            - source: "awesome-rss-feeds"
+            - discovered_at: ISO timestamp
+        """
+        try:
+            # Base URL for the awesome-rss-feeds repository
+            base_url = "https://raw.githubusercontent.com/plenaryapp/awesome-rss-feeds/master"
+            
+            # If country is specified, fetch that specific OPML file
+            if country:
+                opml_url = f"{base_url}/countries/with_category/{country}.opml"
+                feeds = await self._fetch_and_parse_opml(opml_url, country)
+            else:
+                # Fetch all countries - we'll need to get the list first
+                feeds = await self._fetch_all_country_feeds(base_url, category, limit)
+            
+            # Apply category filter if specified
+            if category:
+                feeds = [feed for feed in feeds if category.lower() in feed.get('title', '').lower() or 
+                        category.lower() in feed.get('description', '').lower()]
+            
+            # Apply limit
+            return feeds[:limit]
+            
+        except Exception as e:
+            logger.error(f"Failed to discover RSS feeds from awesome repo: {e}")
+            return []
+
+    async def _fetch_and_parse_opml(self, opml_url: str, country: str) -> List[Dict[str, Any]]:
+        """Fetch and parse a single OPML file."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(opml_url) as response:
+                    if response.status == 200:
+                        opml_content = await response.text()
+                        return self._parse_opml_content(opml_content, country)
+                    else:
+                        logger.warning(f"Failed to fetch OPML for {country}: HTTP {response.status}")
+                        return []
+        except Exception as e:
+            logger.error(f"Error fetching OPML for {country}: {e}")
+            return []
+
+    async def _fetch_all_country_feeds(self, base_url: str, category: Optional[str], limit: int) -> List[Dict[str, Any]]:
+        """Fetch feeds from all available countries."""
+        # List of countries from the repository
+        countries = [
+            "Australia", "Bangladesh", "Brazil", "Canada", "Germany", "Spain", "France",
+            "United Kingdom", "Hong Kong SAR China", "Indonesia", "Ireland", "India",
+            "Iran", "Italy", "Japan", "Myanmar (Burma)", "Mexico", "Nigeria",
+            "Philippines", "Pakistan", "Poland", "Russia", "Ukraine", "United States",
+            "South Africa"
+        ]
+        
+        all_feeds = []
+        
+        # Fetch feeds from each country (with some concurrency)
+        semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
+        
+        async def fetch_country_feeds(country_name):
+            async with semaphore:
+                opml_url = f"{base_url}/countries/with_category/{country_name}.opml"
+                return await self._fetch_and_parse_opml(opml_url, country_name)
+        
+        # Fetch all countries concurrently
+        tasks = [fetch_country_feeds(country) for country in countries]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Combine results
+        for result in results:
+            if isinstance(result, list):
+                all_feeds.extend(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Error fetching country feeds: {result}")
+        
+        return all_feeds
+
+    def _parse_opml_content(self, opml_content: str, country: str) -> List[Dict[str, Any]]:
+        """Parse OPML content and extract RSS feed information."""
+        try:
+            root = ET.fromstring(opml_content)
+            feeds = []
+            
+            # Find all outline elements with xmlUrl (RSS feeds)
+            for outline in root.iter():
+                if outline.get('xmlUrl'):
+                    feed_info = {
+                        'title': outline.get('title', ''),
+                        'description': outline.get('description', ''),
+                        'url': outline.get('xmlUrl', ''),
+                        'text': outline.get('text', ''),
+                        'country': country,
+                        'source': 'awesome-rss-feeds',
+                        'discovered_at': datetime.now(timezone.utc).isoformat()
+                    }
+                    feeds.append(feed_info)
+            
+            logger.info(f"Parsed {len(feeds)} RSS feeds from {country}")
+            return feeds
+            
+        except ET.ParseError as e:
+            logger.error(f"Failed to parse OPML content for {country}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error parsing OPML for {country}: {e}")
+            return []
+
+    async def ingest_rss_feeds_from_awesome_repo(
+        self,
+        country: str,
+        infospace_id: int,
+        user_id: int,
+        category_filter: Optional[str] = None,
+        max_feeds: int = 10,
+        max_items_per_feed: int = 20,
+        bundle_id: Optional[int] = None,
+        options: Optional[Dict[str, Any]] = None
+    ) -> List[Asset]:
+        """
+        Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+        
+        Args:
+            country: Country name (e.g., "Australia", "United States")
+            infospace_id: Target infospace ID
+            user_id: User ID creating the assets
+            category_filter: Optional category filter (e.g., "News", "Technology")
+            max_feeds: Maximum number of feeds to ingest
+            max_items_per_feed: Maximum items per feed
+            bundle_id: Optional bundle ID to add assets to
+            options: Additional processing options
+            
+        Returns:
+            List of created assets
+        """
+        try:
+            # Discover RSS feeds
+            discovered_feeds = await self.discover_rss_feeds_from_awesome_repo(
+                country=country,
+                category=category_filter,
+                limit=max_feeds
+            )
+            
+            if not discovered_feeds:
+                logger.warning(f"No RSS feeds found for country: {country}")
+                return []
+            
+            logger.info(f"Discovered {len(discovered_feeds)} RSS feeds for {country}")
+            
+            # Ingest each discovered feed
+            all_assets = []
+            for i, feed_info in enumerate(discovered_feeds):
+                try:
+                    feed_url = feed_info['url']
+                    feed_title = feed_info['title']
+                    
+                    logger.info(f"Processing RSS feed {i+1}/{len(discovered_feeds)}: {feed_title}")
+                    
+                    # Use existing RSS feed handling
+                    feed_options = {
+                        'max_items': max_items_per_feed,
+                        'scrape_full_content': True,
+                        'use_bulk_scraping': True,
+                        'create_image_assets': True,
+                        **(options or {})
+                    }
+                    
+                    feed_assets = await self._handle_rss_feed(
+                        feed_url=feed_url,
+                        infospace_id=infospace_id,
+                        user_id=user_id,
+                        options=feed_options
+                    )
+                    
+                    # Add discovery metadata to all assets
+                    for asset in feed_assets:
+                        if asset.source_metadata:
+                            asset.source_metadata.update({
+                                'discovery_source': 'awesome-rss-feeds',
+                                'discovery_country': country,
+                                'discovery_category': category_filter,
+                                'feed_description': feed_info.get('description', ''),
+                                'feed_text': feed_info.get('text', '')
+                            })
+                    
+                    all_assets.extend(feed_assets)
+                    
+                    # Add to bundle if specified
+                    if bundle_id and feed_assets:
+                        asset_ids = [asset.id for asset in feed_assets]
+                        await self._add_assets_to_bundle(asset_ids, bundle_id)
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process RSS feed {feed_info.get('title', 'Unknown')}: {e}")
+                    continue
+            
+            self.session.commit()
+            logger.info(f"RSS feed ingestion completed: {len(all_assets)} assets created from {len(discovered_feeds)} feeds")
+            
+            return all_assets
+            
+        except Exception as e:
+            logger.error(f"RSS feed ingestion from awesome repo failed: {e}")
+            return []
