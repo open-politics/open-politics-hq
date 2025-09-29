@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/avatar"
 import { format } from "date-fns"
 import { Button } from '@/components/ui/button';
-import { AssetRead, AssetUpdate } from '@/client/models';
+import { AssetRead, AssetUpdate } from '@/client';
 import Image from 'next/image';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';

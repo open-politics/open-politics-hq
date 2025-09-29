@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { AssetRead, AssetKind, BundleRead } from '@/client/models';
+import { AssetRead, AssetKind, BundleRead } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';

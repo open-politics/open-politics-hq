@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDatasetStore } from '@/zustand_stores/storeDatasets';
-import { DatasetCreate } from '@/client/models';
+import { DatasetCreate } from '@/client';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 

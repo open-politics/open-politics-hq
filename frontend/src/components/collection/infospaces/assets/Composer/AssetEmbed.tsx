@@ -19,7 +19,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AssetRead, AssetKind } from '@/client/models';
+import { AssetRead, AssetKind } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { AssetPreview } from '../Views/AssetPreviewComponents';
 import { formatDistanceToNow } from 'date-fns';

@@ -19,8 +19,7 @@ from app.api.routes import (
     login,
     monitors,
     pipelines,
-    search as external_search,
-    search_history,
+    search,
     shareables,
     sources,
     sso,
@@ -32,8 +31,7 @@ from app.api.routes import (
 from app.api.v1 import (
     entities,
     locations,
-    satellite,
-    search,
+    satellite
 )
 
 
@@ -60,10 +58,8 @@ api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infosp
 api_router.include_router(login.router, tags=["login"])
 api_router.include_router(monitors.router, tags=["Monitors"])
 api_router.include_router(pipelines.router, prefix="/pipelines", tags=["Pipelines"])
-api_router.include_router(external_search.router, prefix="/search-ext", tags=["Search"])
-api_router.include_router(
-    search_history.router, prefix="/search_histories", tags=["search-history"]
-)
+api_router.include_router(search.router, prefix="/search", tags=["Search"])
+
 api_router.include_router(shareables.router, prefix="/sharing", tags=["sharing"])
 api_router.include_router(sources.router, tags=["Sources"])
 api_router.include_router(sso.router, tags=["sso"])
@@ -76,8 +72,7 @@ api_router.include_router(utils.router, tags=["utils"])
 api_router.include_router(entities.router, prefix="/entities", tags=["entities"])
 api_router.include_router(locations.router, prefix="/locations", tags=["locations"])
 api_router.include_router(satellite.router, prefix="/satellite", tags=["satellite"])
-api_router.include_router(search.router, prefix="/search", tags=["search"])
 
 # Backwards-compatible aliases expected by app.main
-api_router_v1 = api_router
-api_router_v2 = api_router
+# api_router_v1 = api_router
+# api_router_v2 = api_router

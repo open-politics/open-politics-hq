@@ -562,7 +562,28 @@ class JustificationRead(JustificationBase):
     annotation_id: int
     created_at: datetime
 
-# ─────────────────────────────────────── Search Tasks ──── #
+# ─────────────────────────────────────── Search ──── #
+# Search Request
+class SearchRequest(SQLModel):
+    query: str
+    limit: int = 20
+    provider: str = "tavily"
+    args: list[str] = []
+    kwargs: dict[str, Any] = {}
+
+# Search Result
+class SearchResultOut(SQLModel):
+    title: str
+    url: str
+    content: str
+    score: Optional[float] = None
+    raw: Optional[Dict[str, Any]] = None
+
+
+class SearchResultsOut(SQLModel):
+    provider: str
+    results: List[SearchResultOut]
+
 
 # ───────────────────────────────────────────── Package ──── #
 

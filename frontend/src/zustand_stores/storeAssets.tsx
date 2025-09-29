@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AssetsService, FilestorageService, BundlesService } from '@/client/services';
+import { AssetsService, FilestorageService, BundlesService } from '@/client';
 import { 
   AssetRead,
   AssetKind,
@@ -8,7 +8,7 @@ import {
   AssetUpdate,
   ResourceType,
   BundleRead,
-} from '@/client/models';
+} from '@/client';
 import { toast } from 'sonner';
 import { useInfospaceStore } from './storeInfospace';
 import { useShareableStore } from './storeShareables';

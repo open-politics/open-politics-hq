@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Rss, ExternalLink, Calendar, User, Tag, Plus, Globe, Download, Eye, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { RssFeedBrowseResponse } from "@/lib/scraping/scraping_response";
-import { AssetsService, UtilsService } from "@/client/services";
+import { AssetsService, UtilsService } from "@/client";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 
 interface RssFeedBrowserProps {

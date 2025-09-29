@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback } from 'react';
 import AssetDetailOverlay from './AssetDetailOverlay';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 
 interface AssetDetailWrapperProps {
   children: React.ReactNode;

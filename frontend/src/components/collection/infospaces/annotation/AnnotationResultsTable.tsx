@@ -23,7 +23,7 @@ import {
 } from '@tanstack/react-table';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AnnotationSchemaRead, AnnotationRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AnnotationRead, AssetRead } from '@/client';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import AssetLink from '../assets/Helper/AssetLink';
 import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';

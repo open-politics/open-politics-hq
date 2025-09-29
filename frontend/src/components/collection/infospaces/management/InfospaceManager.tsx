@@ -8,8 +8,8 @@ import EditInfospaceOverlay from '@/components/collection/infospaces/management/
 import InfospacesPage from '@/components/collection/infospaces/tables/workspaces/page';
 import { InfospaceRowData } from '@/components/collection/infospaces/tables/workspaces/columns';
 import { PlusCircle, Upload, Trash2, Loader2, Archive, History, Download } from 'lucide-react';
-import { InfospaceRead, InfospaceBackupRead, InfospaceBackupCreate } from '@/client/models';
-import { BackupsService } from '@/client/services';
+import { InfospaceRead, InfospaceBackupRead, InfospaceBackupCreate } from '@/client';
+import { BackupsService } from '@/client';
 import { toast } from 'sonner';
 import useAuth from '@/hooks/useAuth';
 import { RowSelectionState } from '@tanstack/react-table';

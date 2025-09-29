@@ -8,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Loader2, Download, Trash2, RefreshCw, Filter } from "lucide-react";
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
-import { UtilsService } from '@/client/services';
-import { ProviderInfo, ProviderModel } from '@/client/models';
+import { UtilsService } from '@/client';
+import { ProviderInfo, ProviderModel } from '@/client';
 import { toast } from 'sonner';
 import {
   Dialog,

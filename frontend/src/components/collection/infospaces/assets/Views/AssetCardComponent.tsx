@@ -21,7 +21,7 @@ import {
   FolderOpen
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AssetTreeItem } from '../AssetManager';
 import { AssetPreview } from './AssetPreviewComponents';

@@ -21,7 +21,7 @@ import {
   Search,
   X
 } from 'lucide-react';
-import { BackupsService } from '@/client/services';
+import { BackupsService } from '@/client';
 import { toast } from 'sonner';
 
 interface InfospaceOverview {

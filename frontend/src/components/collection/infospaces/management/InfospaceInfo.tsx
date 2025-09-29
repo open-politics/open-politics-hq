@@ -2,7 +2,7 @@
 
 import { IconRenderer } from "@/components/collection/infospaces/utilities/icons/icon-picker"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { InfospaceRead } from '@/client/models';
+import { InfospaceRead } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 
 interface InfospaceInfoProps {

@@ -18,7 +18,7 @@ import {
   AnnotationRunRead,
   AnnotationRead,
   AnnotationRunUpdate,
-} from '@/client/models';
+} from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';

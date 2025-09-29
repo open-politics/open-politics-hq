@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ArrowUpDown, MoreHorizontal, Pencil, Trash, Download, Share2 } from 'lucide-react';
-import { InfospaceRead } from '@/client/models'; // Using InfospaceRead from client for consistency
+import { InfospaceRead } from '@/client'; // Using InfospaceRead from client for consistency
 
 // Re-defining Infospace type here based on InfospaceRead to ensure properties match client model
 // This is because the table might display a subset or formatted version.

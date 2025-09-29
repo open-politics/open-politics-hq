@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, Eye, Download, X, Files, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 import { toast } from 'sonner';
 
 // Define placeholder types since DataRecordRead doesn't exist

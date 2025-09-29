@@ -1,45 +1,55 @@
 import logging
-from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import SearchProviderDep
 from app.api.providers.base import SearchProvider
+from app.schemas import SearchResultsOut
+from app.schemas import SearchRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-class SearchResultOut(BaseModel):
-    title: str
-    url: str
-    content: str
-    score: Optional[float] = None
-    raw: Optional[Dict[str, Any]] = None
 
-
-class SearchResultsOut(BaseModel):
-    provider: str
-    results: List[SearchResultOut]
 
 
 @router.get("", response_model=SearchResultsOut)
 @router.get("/", response_model=SearchResultsOut)
 async def search_content(
-    *,
-    query: str = Query(..., min_length=3, description="The search query."),
-    limit: int = Query(20, ge=1, le=100, description="Maximum number of results to return."),
+    search_request: SearchRequest,
     search_provider: SearchProvider = Depends(SearchProviderDep),
 ) -> SearchResultsOut:
     """
     Performs a search using the configured search provider (e.g., Tavily)
     and returns a standardized list of search results.
     """
-    logger.info(f"Route: Performing search for query: '{query}' with limit: {limit}")
+    query = search_request.query
+    limit_str = search_request.limit
+
+    if not query:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Missing required query parameter: 'query'",
+        )
+    
     try:
-        provider_results = await search_provider.search(query=query, limit=limit)
+        limit = int(limit_str)
+        if not (1 <= limit <= 100):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'limit' parameter must be an integer between 1 and 100.",
+        )
+
+    # Pass all other query params to the search provider
+    provider_kwargs = {k: v for k, v in search_request.dict().items() if k not in ["query", "limit"]}
+
+    logger.info(f"Route: Performing search for query: '{query}' with limit: {limit} and extra params: {provider_kwargs}")
+    try:
+        provider_results = await search_provider.search(query=query, limit=limit, **provider_kwargs)
 
         provider_name = getattr(search_provider.__class__, "__name__", "unknown")
 

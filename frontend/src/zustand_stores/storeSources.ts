@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { SourcesService } from '@/client/services';
-import { SourceRead, SourceCreateRequest } from '@/client/models';
+import { SourcesService } from '@/client';
+import { SourceRead, SourceCreateRequest } from '@/client';
 import { useInfospaceStore } from './storeInfospace';
 
 interface SourceState {

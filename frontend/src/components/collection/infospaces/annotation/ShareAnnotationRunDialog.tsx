@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { AnnotationRunRead } from '@/client/models';
+import { AnnotationRunRead } from '@/client';
 import { toast } from 'sonner';
 import { ShareableLinkCreate, ShareableLinkRead } from '@/client';
 import { Copy, Check, Share2, ExternalLink } from 'lucide-react';

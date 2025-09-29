@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
   TooltipProps
 } from 'recharts';
-import { AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";

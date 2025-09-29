@@ -39,7 +39,7 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
-import { AnnotationRunRead, AnnotationSchemaRead } from '@/client/models';
+import { AnnotationRunRead, AnnotationSchemaRead } from '@/client';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { VariableSplittingControls, VariableSplittingConfig } from './VariableSplittingControls';
 import { FormattedAnnotation } from '@/lib/annotations/types';

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { X, ExternalLink, FileText } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { FormattedAnnotation } from '@/lib/annotations/types';
-import { AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import { TextSpanHighlightProvider } from '@/contexts/TextSpanHighlightContext';

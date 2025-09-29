@@ -15,7 +15,7 @@ import {
   Cell,
 } from 'recharts';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns';
-import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client';
 import { TimeAxisConfig, FormattedAnnotation, TimeFrameFilter } from '@/lib/annotations/types';
 import { getTargetKeysForScheme, checkFilterMatch, formatDisplayValue, getAnnotationFieldValue } from '@/lib/annotations/utils';
 import { VariableSplittingConfig, applySplittingToResults, applyAmbiguityResolution } from './VariableSplittingControls';

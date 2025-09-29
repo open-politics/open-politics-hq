@@ -3,7 +3,7 @@ import React from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Type } from 'lucide-react';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 
 // Define placeholder type for asset records
 interface AssetRecord {

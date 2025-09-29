@@ -49,7 +49,7 @@ import {
   AssetRead,
   AssetKind,
   BundleRead,
-} from '@/client/models';
+} from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';

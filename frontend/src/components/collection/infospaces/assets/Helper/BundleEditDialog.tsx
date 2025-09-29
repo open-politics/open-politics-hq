@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { BundleRead } from '@/client/models';
+import { BundleRead } from '@/client';
 import { toast } from 'sonner';
 import { Layers, Save, X } from 'lucide-react';
 

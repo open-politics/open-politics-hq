@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { sourceConfigurationRegistry, SourceKind, FieldSchema } from '@/services/sourceConfigurationRegistry';
+import { sourceConfigurationRegistry, SourceKind, FieldSchema } from '@/lib/sourceConfigurationRegistry';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

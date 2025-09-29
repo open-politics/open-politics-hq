@@ -1,5 +1,5 @@
-import { AnnotationRunRead, AnnotationRunCreate, AnnotationRunUpdate, AssetRead, AnnotationSchemaRead } from '@/client/models';
-import { RunsService as AnnotationRunsServiceApi } from '@/client/services';
+import { AnnotationRunRead, AnnotationRunCreate, AnnotationRunUpdate, AssetRead, AnnotationSchemaRead } from '@/client';
+import { RunsService as AnnotationRunsServiceApi } from '@/client';
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';

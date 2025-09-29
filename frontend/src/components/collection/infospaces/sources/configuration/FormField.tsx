@@ -1,5 +1,5 @@
 import React from 'react';
-import { FieldSchema } from '@/services/sourceConfigurationRegistry';
+import { FieldSchema } from '@/lib/sourceConfigurationRegistry';
 
 interface FormFieldProps {
   field: FieldSchema;

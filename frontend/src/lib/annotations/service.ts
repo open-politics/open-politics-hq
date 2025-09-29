@@ -1,12 +1,12 @@
 import { 
   AnnotationsService, 
   AnnotationSchemasService, 
-} from '@/client/services';
+} from '@/client';
 import { 
   AnnotationRead, 
   AnnotationSchemaRead,
   AnnotationSchemaCreate,
-} from '@/client/models';
+} from '@/client';
 import { 
   AnnotationResult,
   AnnotationSchema,

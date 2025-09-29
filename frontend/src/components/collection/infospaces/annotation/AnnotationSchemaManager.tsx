@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 're
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PlusCircle, Edit, Blocks, Trash2, Eye, Search, XCircle, Loader2, Microscope, ListTree, AlertTriangle, Upload, Download, LayoutGrid, List } from 'lucide-react';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useToast } from "@/components/ui/use-toast"

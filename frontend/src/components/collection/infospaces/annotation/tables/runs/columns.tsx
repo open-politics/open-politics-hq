@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ArrowUpDown, MoreHorizontal, Eye, Download, Share2, Trash2, PlayCircle, CheckCircle, XCircle, Loader2, PauseCircle, AlertTriangle, Star, HelpCircle } from 'lucide-react';
-import { AnnotationRunRead, RunStatus, ResourceType } from '@/client/models';
+import { AnnotationRunRead, RunStatus, ResourceType } from '@/client';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from '@/components/ui/badge';
 import { format, formatDistanceToNow } from 'date-fns';

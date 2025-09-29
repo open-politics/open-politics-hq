@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SlidersHorizontal, ChevronDown, ChevronUp, Clock, Database, FileJson, Calendar, Filter, X, Plus, Info, HelpCircle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { TimeAxisConfig } from '@/lib/annotations/types';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import { Separator } from '@/components/ui/separator';
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";

@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import AssetManager from '../AssetManager';
 import { Button } from '@/components/ui/button';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 import { PlusCircle } from 'lucide-react';
 
 interface AssetOverlayProps {

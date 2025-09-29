@@ -28,8 +28,8 @@ import {
   Copy,
   ExternalLink
 } from 'lucide-react';
-import { AnalysisAdaptersService, EmbeddingsService } from '@/client/services';
-import { EmbeddingModelRead } from '@/client/models';
+import { AnalysisAdaptersService, EmbeddingsService } from '@/client';
+import { EmbeddingModelRead } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import Link from 'next/link';

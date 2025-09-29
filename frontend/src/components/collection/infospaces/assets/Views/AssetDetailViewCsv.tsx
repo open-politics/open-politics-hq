@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, Search, ArrowUp, ArrowDown, FileSpreadsheet, Table as TableIcon, List, X, Copy, Eye, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from "@/lib/utils";
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 import { formatDistanceToNow, format } from 'date-fns';
 import { Separator } from "@/components/ui/separator";
 import { toast } from 'sonner';

@@ -35,7 +35,7 @@ import {
   AssetRead,
   AssetKind,
   BundleRead,
-} from '@/client/models';
+} from '@/client';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import AssetDetailView from './AssetDetailView';

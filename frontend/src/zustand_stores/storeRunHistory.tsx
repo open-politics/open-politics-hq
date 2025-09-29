@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 // import { ClassificationService } from '@/lib/classification/service'; // Deprecated
-import { AnnotationJobsService, AnnotationsService } from '@/client/services';
-import { AnnotationRunRead, AnnotationRunsOut } from '@/client/models';
+import { AnnotationJobsService, AnnotationsService } from '@/client';
+import { AnnotationRunRead, AnnotationRunsOut } from '@/client';
 import { format } from 'date-fns';
 
 export interface RunHistoryItem {

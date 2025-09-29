@@ -4,8 +4,8 @@ import {
   InfospaceCreate,
   InfospaceRead,
   InfospaceUpdate,
-} from '@/client/models';
-import { InfospacesService } from '@/client/services';
+} from '@/client';
+import { InfospacesService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 
 const fetchInfospaces = async (): Promise<InfospaceRead[]> => {

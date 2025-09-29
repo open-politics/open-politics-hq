@@ -37,7 +37,7 @@ import {
   Terminal
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
-import { AnnotationRunRead, ResourceType } from '@/client/models';
+import { AnnotationRunRead, ResourceType } from '@/client';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';

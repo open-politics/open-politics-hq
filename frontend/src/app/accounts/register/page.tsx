@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff, CheckCircle, XCircle, Loader2 } from 'lucide-react';
-import { UsersService } from '@/client/services';
+import { UsersService } from '@/client';
 import Link from 'next/link';
 
 interface PasswordValidation {

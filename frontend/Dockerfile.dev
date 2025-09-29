@@ -12,10 +12,7 @@ COPY package.json package-lock.json* ./
 COPY . .
 
 # Install dependencies based on the copied package.json and lock file
-RUN bun --bun i
-
-# Install bash (needed for some potential scripts or debugging)
-RUN apk add --no-cache bash
+RUN bun i
 
 # Expose the port the app runs on
 EXPOSE 3000

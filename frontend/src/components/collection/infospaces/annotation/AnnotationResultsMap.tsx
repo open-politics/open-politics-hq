@@ -5,7 +5,7 @@ import React, { useRef, useEffect, useState, useCallback, useMemo, startTransiti
 import mapboxgl, { Map as MapboxMap, LngLatLike, Popup, Marker, LngLatBounds } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useTheme } from 'next-themes';
-import { AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { formatDisplayValue, getAnnotationFieldValue, getTargetKeysForScheme } from '@/lib/annotations/utils';
 import { debounce } from 'lodash';

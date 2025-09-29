@@ -389,6 +389,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
                                     {section.name === 'document' ? (
                                         <FileText className="h-5 w-5 text-blue-600" />
                                     ) : section.name === 'per_image' ? (
+                                        // eslint-disable-next-line jsx-a11y/alt-text
                                         <Image className="h-5 w-5 text-green-600" />
                                     ) : section.name === 'per_audio' ? (
                                         <Mic className="h-5 w-5 text-purple-600" />
@@ -680,6 +681,7 @@ const PropertyInspector: React.FC<{
                     };
                 case 'per_image':
                     return {
+                        // eslint-disable-next-line jsx-a11y/alt-text
                         icon: <Image className="h-6 w-6 text-green-600" />,
                         title: 'Image Analysis',
                         description: 'Fields extracted from each individual image in the document',

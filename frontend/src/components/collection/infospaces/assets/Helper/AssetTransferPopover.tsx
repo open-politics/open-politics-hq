@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/select';
 import { Input } from "@/components/ui/input";
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { BundlesService } from '@/client/services';
+import { BundlesService } from '@/client';
 import useAuth from '@/hooks/useAuth';
 import { toast } from 'sonner';
 

@@ -5,9 +5,7 @@ import { ReactNode } from 'react';
 import ClientWrapper from './ClientWrapper';
 import BackgroundImage from '@/components/collection/unsorted/BackgroundImage';
 import { ToastProvider, ToastViewport } from '@/components/ui/toast';
-import Footer from '@/components/collection/unsorted/Footer';
 import { AppStateProvider } from '@/lib/utils/app-state'
-import { AI } from './xactions';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 
 
@@ -23,7 +21,6 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         >
 
           <AppStateProvider>
-            <AI>
           <SidebarProvider>
               <SidebarInset>
                 <ClientWrapper>
@@ -36,7 +33,6 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
                 </ClientWrapper>
               </SidebarInset>
           </SidebarProvider>
-            </AI>
           </AppStateProvider>
       </body>
     </html>

@@ -37,7 +37,7 @@ import {
   BrainCircuit
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { ContentCardProps } from './ContentCard';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';

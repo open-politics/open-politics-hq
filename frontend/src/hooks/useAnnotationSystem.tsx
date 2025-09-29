@@ -18,13 +18,13 @@ import {
     AnnotationRead,
     AnnotationRunCreate,
     Message
-} from '@/client/models';
+} from '@/client';
 import {
     AnnotationSchemasService,
     AnnotationJobsService,
     AnnotationsService,
     AssetsService,
-} from '@/client/services';
+} from '@/client';
 
 export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
   const { activeInfospace } = useInfospaceStore();

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import { FilterSet } from './AnnotationFilterControls';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';

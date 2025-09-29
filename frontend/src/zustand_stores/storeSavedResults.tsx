@@ -3,13 +3,13 @@ import { create } from 'zustand';
 // import {
 //   ClassificationSchemesService,
 //   ClassificationResultsService,
-// } from '@/client/services';
+// } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 // Commented out unused models
 // import {
 //   ClassificationSchemeRead,
 //   ClassificationResultRead
-// } from '@/client/models';
+// } from '@/client';
 
 // Define placeholder types if SavedResultSet is removed from client
 type SavedResultSetRead = any; 

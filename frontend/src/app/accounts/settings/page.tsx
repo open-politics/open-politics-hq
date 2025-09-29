@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import useAuth from "@/hooks/useAuth";
 import { Shield, User, Key, Trash2, Camera, Upload, CheckCircle2, XCircle } from 'lucide-react';
 import Link from 'next/link';
-import { UsersService } from '@/client/services';
+import { UsersService } from '@/client';
  
 
 export default function AccountSettingsPage() {

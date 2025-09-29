@@ -1,5 +1,5 @@
 import React from "react";
-import { AnnotationSchemaRead, FieldJustificationConfig } from "@/client/models";
+import { AnnotationSchemaRead, FieldJustificationConfig } from "@/client";
 import { AdvancedSchemeField, AnnotationSchemaFormData as SchemeFormData } from "@/lib/annotations/types";
 import { Badge } from "@/components/ui/badge";
 import { 

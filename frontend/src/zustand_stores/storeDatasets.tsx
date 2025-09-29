@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { DatasetsService } from '@/client/services';
+import { DatasetsService } from '@/client';
 import {
     DatasetRead,
     DatasetCreate,
@@ -9,7 +9,7 @@ import {
     DatasetsOut,
     ResourceType,
     // Message, // Message is not used directly here, can be removed if not needed for other parts
-} from '@/client/models';
+} from '@/client';
 import { useShareableStore, SingleImportSuccess } from './storeShareables';
 
 // Utility for file download (can be moved to a shared utils file later)

@@ -9,7 +9,7 @@ import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipProvider } from '@/components/ui/tooltip';

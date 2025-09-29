@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import {
   InfospacesService,
-} from '@/client/services';
-import { InfospaceRead, InfospaceCreate, InfospaceUpdate, ResourceType } from '@/client/models';
+} from '@/client';
+import { InfospaceRead, InfospaceCreate, InfospaceUpdate, ResourceType } from '@/client';
 import { useShareableStore } from './storeShareables'; // Import the shareable store
 
 interface InfospaceState {

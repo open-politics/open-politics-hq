@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ChevronDown, ChevronRight, Bug, Eye } from 'lucide-react';
 import { FormattedAnnotation } from '@/lib/annotations/types';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import { getAnnotationFieldValue } from '@/lib/annotations/utils';
 import TextSpanQualityInspector from './TextSpanQualityInspector';
 import { useAssetStore } from '@/zustand_stores/storeAssets';

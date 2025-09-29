@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { SearchService, LocationsService } from '@/client/services';
+import { SearchService, LocationsService } from '@/client';
 import { useLocationData } from './useLocationData';
 import { useCoordinatesStore } from '@/zustand_stores/storeCoordinates';
 import { useArticleTabNameStore } from './useArticleTabNameStore';

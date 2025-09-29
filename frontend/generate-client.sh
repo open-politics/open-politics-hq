@@ -13,6 +13,7 @@ jq '.paths |= map_values(map_values(if (.tags and (.tags | length > 0) and .oper
 
 npm run generate-client
 
+
 # This fixes a few literals in the schemas.ts file that were not being properly parsed by the client generator.
 sed -i "s/default: pending,/default: 'pending',/g" ./src/client/schemas.ts
 sed -i "s/default: paused,/default: 'paused',/g" ./src/client/schemas.ts
@@ -34,5 +35,5 @@ sed -i "/method: options.method,/i \\\    responseType: options.responseType as 
 
 npx biome format --write ./src/client 
 
-echo "prestart.sh has been run successfully. OpenAI client generated and corrected."
+echo "prestart.sh has been run successfully. OpenAPI client generated and corrected."
 

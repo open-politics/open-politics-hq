@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
-import { AssetKind } from '@/client/models';
+import { AssetKind } from '@/client/';
 import {
     Loader2, UploadCloud, Link as LinkIcon, FileText, X, FileSpreadsheet,
     List, Type, Undo2, RefreshCw, Image as ImageIcon, Video, Music, Mail,
@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client/';
 import RssFeedBrowser from '../RssFeedBrowser';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { Progress } from '@/components/ui/progress';
@@ -280,9 +280,10 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
     setIsSearching(true);
     setSearchResults([]);
     try {
-        const { SearchService } = await import('@/client/services');
-        const response = await SearchService.searchContent({ query: searchQuery, limit: 20 });
-        setSearchResults(response.results);
+        console.log("DEBUG: Sending search query:", searchQuery, "with limit:", 20);
+        const { SearchService } = await import('@/client');
+        const response = await SearchService.searchContent({ requestBody: { query: searchQuery, limit: 20 as any}, args: {}, kwargs: {}}); 
+        setSearchResults(response.results || []);
     } catch (error) {
         console.error("Search failed:", error);
         toast.error("Search failed. Please check the logs.");
@@ -455,7 +456,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
       progress: 10
     } : null);
 
-    const { AssetsService, FilestorageService } = await import('@/client/services');
+    const { AssetsService, FilestorageService } = await import('@/client/');
     const CONCURRENCY_LIMIT = 5; // Limit concurrent uploads to avoid overwhelming server
     
     // Separate items by type for optimal processing
@@ -553,7 +554,6 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
             const uploadResponse = await FilestorageService.fileUpload({ 
               formData: { file: item.file }
             });
-            
             updateItemStatus(item.id, 'processing', undefined, 70);
             const assetCreate = {
               title: item.title,
@@ -562,10 +562,12 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               source_metadata: { filename: uploadResponse.filename },
             };
             
-            newAsset = await AssetsService.createAsset({ 
+
+            const assetResponse = await AssetsService.createAsset({ 
               infospaceId: activeInfospace.id, 
               requestBody: assetCreate 
             });
+            newAsset = assetResponse || null;
             
           } else if (item.type === 'url' && item.url) {
             updateItemStatus(item.id, 'processing', undefined, 50);
@@ -575,10 +577,11 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               source_identifier: item.url,
             };
             
-            newAsset = await AssetsService.createAsset({ 
+            const assetResponse = await AssetsService.createAsset({ 
               infospaceId: activeInfospace.id, 
               requestBody: assetCreate 
             });
+            newAsset = assetResponse;
             
           } else if (item.type === 'text' && item.textContent) {
             updateItemStatus(item.id, 'processing', undefined, 50);
@@ -675,8 +678,8 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
       targetBundleName = selectedBundle?.name || 'Existing Bundle';
     } else {
       // Create the bundle first
-      const { BundlesService } = await import('@/client/services');
-      
+      const { BundlesService } = await import('@/client');
+            
       const kindCounts = items.reduce((acc, item) => {
         acc[item.kind] = (acc[item.kind] || 0) + 1;
         return acc;
@@ -833,7 +836,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
         message: 'Cleaning up temporary bundles...',
       } : null);
 
-      const { BundlesService } = await import('@/client/services');
+      const { BundlesService } = await import('@/client/sdk.gen');
       const cleanupPromises = [...new Set(tempBundlesToCleanup)].map(bundleId => 
         BundlesService.deleteBundle({ bundleId }).catch(error => {
           console.warn('Could not clean up auto-created bundle:', error);

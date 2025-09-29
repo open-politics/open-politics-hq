@@ -3,7 +3,7 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 // import { useDocumentStore } from '@/zustand_stores/storeDocuments'; // Replaced with DataSource store
 import { useAssetStore } from '@/zustand_stores/storeAssets'; // Import Asset store
 import { CoreContentModel } from '@/lib/content';
-import { AssetKind } from '@/client/models';
+import { AssetKind } from '@/client';
 import { toast } from '@/components/ui/use-toast';
 
 

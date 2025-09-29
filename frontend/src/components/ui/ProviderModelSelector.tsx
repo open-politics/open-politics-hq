@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { IntelligenceChatService } from '@/client/services'
-import { ModelInfo } from '@/client/models'
+import { IntelligenceChatService } from '@/client'
+import { ModelInfo } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { Loader2 } from 'lucide-react'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '../ui/select'

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 
 interface AnnotationSettingsState {
   // Map of infospace ID to default schema ID

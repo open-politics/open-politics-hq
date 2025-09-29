@@ -9,7 +9,7 @@ import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 //   useClassificationJobsError
 // } from '@/zustand_stores/storeClassificationJobs';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-// import { ClassificationJobRead, ResourceType, ClassificationJobStatus as ClassificationJobStatusType } from '@/client/models';
+// import { ClassificationJobRead, ResourceType, ClassificationJobStatus as ClassificationJobStatusType } from '@/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,

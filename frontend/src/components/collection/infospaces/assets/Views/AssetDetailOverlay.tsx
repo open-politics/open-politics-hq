@@ -9,7 +9,7 @@ import { Maximize, Loader2, AlertCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 
 interface AssetDetailOverlayProps {
   open: boolean;

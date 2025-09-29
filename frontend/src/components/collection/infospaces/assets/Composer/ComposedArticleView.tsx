@@ -17,7 +17,7 @@ import {
   Eye
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AssetRead, BundleRead } from '@/client/models';
+import { AssetRead, BundleRead } from '@/client';
 import { format, formatDistanceToNow } from 'date-fns';
 import AssetEmbed from './AssetEmbed';
 import { useBundleStore } from '@/zustand_stores/storeBundles';

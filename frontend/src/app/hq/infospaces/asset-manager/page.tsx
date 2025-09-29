@@ -2,7 +2,7 @@
 
 import React, { useCallback } from 'react';
 import AssetManager from '@/components/collection/infospaces/assets/AssetManager';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 import { toast } from 'sonner';
 
 export default function AssetManagerPage() {

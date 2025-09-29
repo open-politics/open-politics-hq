@@ -409,15 +409,9 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         except httpx.HTTPStatusError as e:
             error_text = None
             try:
-                error_bytes = await e.response.aread()
-                try:
-                    error_text = (
-                        error_bytes.decode("utf-8", errors="replace")
-                        if isinstance(error_bytes, (bytes, bytearray))
-                        else str(error_bytes)
-                    )
-                except Exception:
-                    error_text = str(error_bytes)
+                # Ensure the response content is read before accessing .text
+                await e.response.aread()
+                error_text = e.response.text if hasattr(e.response, 'text') else str(e)
             except Exception:
                 error_text = str(e)
             try:

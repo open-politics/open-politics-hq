@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AnnotationResultStatus } from "@/lib/annotations/types";

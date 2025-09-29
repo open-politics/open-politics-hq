@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@mdx-js/loader": "^3.1.1",
+    "@mdx-js/react": "^3.1.1",
+    "@next/mdx": "^15.5.4",
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/mdx": "^2.0.13"
+  }
+}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { SourceKind, sourceConfigurationRegistry, ValidationResult } from '@/services/sourceConfigurationRegistry';
+import { SourceKind, sourceConfigurationRegistry, ValidationResult } from '@/lib/sourceConfigurationRegistry';
 import { FormField } from './FormField';
 
 interface SourceConfigurationFormProps {
@@ -13,15 +13,18 @@ export function SourceConfigurationForm({ kind, initialConfig = {}, onChange }: 
   const [validation, setValidation] = useState<ValidationResult>({ valid: true, errors: [] });
 
   const schema = sourceConfigurationRegistry.getSchema(kind);
+
+  useEffect(() => {
+    if (schema) {
+      const validationResult = sourceConfigurationRegistry.validateConfiguration(kind, config);
+      setValidation(validationResult);
+      onChange(config, validationResult.valid);
+    }
+  }, [config, kind, onChange, schema]);
+
   if (!schema) {
     return <div className="text-red-500">Unsupported source kind: {kind}</div>;
   }
-
-  useEffect(() => {
-    const validationResult = sourceConfigurationRegistry.validateConfiguration(kind, config);
-    setValidation(validationResult);
-    onChange(config, validationResult.valid);
-  }, [config, kind, onChange]);
 
   const handleFieldChange = (fieldName: string, value: any) => {
     const newConfig = sourceConfigurationRegistry.setFieldValue(config, fieldName, value);

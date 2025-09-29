@@ -1,7 +1,6 @@
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import createMDX from '@next/mdx';
-import remarkGfm from 'remark-gfm';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -85,10 +84,10 @@ const nextConfig = {
       }
     ];
   },
-  // webpack: (config, { isServer }) =>  {
-  //   config.resolve.alias['@'] = resolve(__dirname, 'src');
-  //   return config;
-  // },
+  webpack: (config, { isServer }) =>  {
+    config.resolve.alias['@'] = resolve(__dirname, 'src');
+    return config;
+  },
   turbopack: {
     resolveAlias: {
       '@': './src',
@@ -112,7 +111,7 @@ const nextConfig = {
 
 const withMDX = createMDX({
   options: {
-    remarkPlugins: [remarkGfm],
+    remarkPlugins: ['remark-gfm'],
     rehypePlugins: [],
   },
   experimental: {

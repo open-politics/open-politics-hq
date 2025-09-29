@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
-import { UtilsService } from '@/client/services';
-import { ProviderInfo, ProviderModel } from '@/client/models';
+import { UtilsService } from '@/client';
+import { ProviderInfo, ProviderModel } from '@/client';
 import { toast } from 'sonner';
 
 interface Provider {

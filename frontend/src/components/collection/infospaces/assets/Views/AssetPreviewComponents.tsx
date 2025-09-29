@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { AssetRead } from '@/client/models';
+import { AssetRead } from '@/client';
 import { cn } from '@/lib/utils';
 import { Loader2, ImageIcon, FileSpreadsheet, FileText, AlertCircle, Globe } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';

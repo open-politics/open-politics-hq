@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronUp, HelpCircle, FileText, MessageCircle, Zap, Eye } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { FormattedAnnotation } from '@/lib/annotations/types';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';

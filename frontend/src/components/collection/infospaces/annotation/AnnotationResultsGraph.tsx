@@ -8,9 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff } from 'lucide-react';
-import { AnnotationSchemaRead, AssetRead } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
-import { AnalysisAdaptersService } from '@/client/services';
+import { AnalysisAdaptersService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import ReactFlow, {

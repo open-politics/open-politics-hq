@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useEffect, useRef } from 'react'; // Import useRef
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { RecurringTasksService } from '@/client/services';
+import { RecurringTasksService } from '@/client';
 import {
   RecurringTaskRead as ClientRecurringTaskRead,
   RecurringTasksOut,
@@ -9,7 +9,7 @@ import {
   RecurringTaskUpdate as ClientRecurringTaskUpdate,
   RecurringTaskStatus as ClientRecurringTaskStatus,
   RecurringTaskType as ClientRecurringTaskType
-} from '@/client/models';
+} from '@/client';
 import { toast } from 'sonner';
 
 // Define the shape of RecurringTask in the frontend store, extending the client model

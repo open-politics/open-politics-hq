@@ -1,7 +1,7 @@
-import type { MetadataRoute } from 'next'
+import { NextResponse } from 'next/server';
 
-export default function manifest(): MetadataRoute.Manifest {
-  return {
+export async function GET() {
+  const manifest = {
     name: 'Open Politics HQ',
     short_name: 'OpenPolitics',
     description: 'A Progressive Web App for Open Politics HQ',
@@ -36,5 +36,11 @@ export default function manifest(): MetadataRoute.Manifest {
     ],
     prefer_related_applications: false,
     scope: '/'
-  }
+  };
+
+  return NextResponse.json(manifest, {
+    headers: {
+      'Content-Type': 'application/manifest+json',
+    },
+  });
 } 

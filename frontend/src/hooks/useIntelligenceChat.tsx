@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
-import { IntelligenceChatService } from '@/client/services'
-import { ChatRequest, ChatResponse, ToolCallRequest } from '@/client/models'
+import { IntelligenceChatService } from '@/client'
+import { ChatRequest, ChatResponse, ToolCallRequest } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { toast } from 'sonner'
 import { OpenAPI } from '@/client/core/OpenAPI'

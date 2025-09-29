@@ -1,6 +1,6 @@
-import { AnnotationSchemaRead } from "@/client/models";
+import { AnnotationSchemaRead } from "@/client";
 import { JsonSchemaType, FormattedAnnotation, Asset } from "./types";
-import { AnnotationRead as ClientAnnotationRead } from "@/client/models";
+import { AnnotationRead as ClientAnnotationRead } from "@/client";
 
 // --- START: Types and functions moved from AnnotationResultFilters.tsx ---
 

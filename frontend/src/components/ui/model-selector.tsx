@@ -10,8 +10,8 @@ import {
   SelectTrigger,
   SelectValue
 } from '../ui/select'
-import { IntelligenceChatService } from '@/client/services'
-import { ModelInfo } from '@/client/models'
+import { IntelligenceChatService } from '@/client'
+import { ModelInfo } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { Loader2 } from 'lucide-react'
 

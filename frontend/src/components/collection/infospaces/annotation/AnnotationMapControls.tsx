@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { AnnotationSchemaRead } from '@/client/models';
+import { AnnotationSchemaRead } from '@/client';
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import { getTargetKeysForScheme } from '@/lib/annotations/utils';
 import { Label } from "@/components/ui/label";

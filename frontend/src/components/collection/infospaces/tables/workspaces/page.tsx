@@ -6,7 +6,7 @@ import { DataTable } from '@/components/collection/infospaces/tables/data-table'
 import { columns, InfospaceRowData } from '@/components/collection/infospaces/tables/workspaces/columns';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { toast } from 'sonner';
-import { ResourceType } from '@/client/models';
+import { ResourceType } from '@/client';
 import { RowSelectionState } from '@tanstack/react-table';
 
 interface InfospacesPageProps {

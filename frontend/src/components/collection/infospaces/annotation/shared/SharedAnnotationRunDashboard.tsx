@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { PanelRenderer } from '@/components/collection/infospaces/annotation/PanelRenderer';
 import { FormattedAnnotation, AnnotationResultStatus } from '@/lib/annotations/types';
-import { AnnotationSchemaRead, AssetRead, AssetKind } from '@/client/models';
+import { AnnotationSchemaRead, AssetRead, AssetKind } from '@/client';
 import { PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
 import { 
   Calendar, 

@@ -19,7 +19,7 @@ import {
   AnnotationSchemaCreate,
   FieldJustificationConfig,
   AssetRead as ClientAssetRead,
-} from '@/client/models';
+} from '@/client';
 import { nanoid } from 'nanoid';
 
 type ClientSourceRead = any;
