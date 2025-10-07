@@ -282,6 +282,7 @@ class SourceService:
         # The order can imply priority if multiple keys could exist.
         KIND_TO_LOCATOR_KEY_MAP = {
             "rss_feed": "feed_url",
+            "rss": "feed_url",  # Alternative RSS source kind
             "url_monitor": "urls",
             "site_discovery": "base_url",
             "url_list": "urls",
@@ -304,7 +305,7 @@ class SourceService:
             if isinstance(locator, dict) and "query" in locator:
                 # For search kinds, the locator is the query string itself.
                 return locator["query"]
-        else:
+            else:
                 raise ValueError(f"Source kind '{kind}' requires a 'search_config' dict with a 'query' key in details.")
 
         if locator is None:
@@ -437,6 +438,7 @@ class SourceService:
         return [
             "url_list",
             "rss_feed", 
+            "rss",  # Alternative RSS source kind
             "search",
             "url_monitor",
             "site_discovery",
@@ -450,7 +452,7 @@ class SourceService:
         try:
             if kind == "url_list":
                 return "urls" in details and isinstance(details["urls"], list)
-            elif kind == "rss_feed":
+            elif kind in ["rss_feed", "rss"]:
                 return "feed_url" in details and isinstance(details["feed_url"], str)
             elif kind == "search":
                 return "search_config" in details and "query" in details["search_config"]

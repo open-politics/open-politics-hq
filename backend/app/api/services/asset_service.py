@@ -16,35 +16,12 @@ class AssetService:
         self.storage_provider = storage_provider
         logger.info("AssetService initialized.")
 
-    def _needs_background_processing(self, asset_kind: AssetKind) -> bool:
-        """
-        Determines if an asset of a given kind requires asynchronous background processing
-        to extract child assets or scrape content.
-        """
-        return asset_kind in [
-            AssetKind.CSV, 
-            AssetKind.PDF, 
-            AssetKind.WEB,
-            AssetKind.MBOX,
-            # Add other kinds that have heavy processing tasks
-        ]
-    
-    def _trigger_content_processing(self, asset_id: int, options: Optional[Dict[str, Any]] = None) -> None:
-        """Dispatches a background task to process the asset's content."""
-        try:
-            # Note: We now use the task from content_tasks.py
-            from app.api.tasks.content_tasks import process_content
-            process_content.delay(asset_id, options=options)
-            logger.info(f"Triggered content processing task for asset {asset_id}")
-        except Exception as e:
-            logger.error(f"Failed to trigger content processing for asset {asset_id}: {e}", exc_info=True)
-            # In a real-world scenario, you might want to update the asset status to FAILED here
-            # but that would require another DB transaction. For now, we log the error.
-
     def create_asset(self, asset_create: AssetCreate, process_immediately: bool = False) -> Asset:
         """
-        Creates a new asset and triggers background processing if necessary.
-        This is the single, canonical method for creating any asset.
+        Creates a new asset with deduplication logic.
+        
+        NOTE: This service is now a pure data layer - it does NOT trigger processing.
+        Processing is managed by ContentIngestionService which calls this method.
         """
         if asset_create.user_id is None or asset_create.infospace_id is None:
             raise ValueError("user_id and infospace_id are required for asset creation")
@@ -99,23 +76,14 @@ class AssetService:
                 sm["duplicate_of_asset_id"] = existing_by_hash.id
                 asset_data["source_metadata"] = sm
         
-        # Contract: The initial status depends on whether it needs background processing.
-        if self._needs_background_processing(asset_create.kind):
-            asset_data["processing_status"] = ProcessingStatus.PENDING
-        else:
+        # Set default status if not already set
+        if "processing_status" not in asset_data:
             asset_data["processing_status"] = ProcessingStatus.READY
         
         asset = Asset(**asset_data)
         self.session.add(asset)
         self.session.commit()
         self.session.refresh(asset)
-        
-        # Contract: If it needs processing, dispatch a background task.
-        # The `process_immediately` flag is now gone from the service layer call,
-        # but kept here in case some internal logic needs it. In general, processing
-        # should be async. The ContentService will handle immediate processing if needed.
-        if self._needs_background_processing(asset.kind):
-            self._trigger_content_processing(asset.id)
         
         return asset
 
@@ -186,37 +154,32 @@ class AssetService:
         return asset
 
     def delete_asset(self, asset_id: int) -> bool:
-        """Delete an asset and its children."""
+        """Delete an asset and its children (cascade handled automatically)."""
         asset = self.session.get(Asset, asset_id)
         if not asset:
             return False
         
-        # Delete children first
-        children = self.session.exec(
-            select(Asset).where(Asset.parent_asset_id == asset_id)
-        ).all()
-        
-        for child in children:
-            self.session.delete(child)
-        
-        # Delete the asset itself
+        # Delete the asset - cascade will automatically delete children
         self.session.delete(asset)
         self.session.commit()
         
         return True
 
     def reprocess_asset(self, asset_id: int, options: Optional[Dict[str, Any]] = None) -> bool:
-        """Trigger reprocessing of an asset with new options."""
+        """
+        DEPRECATED: Use ContentIngestionService.reprocess_content() instead.
+        This method is kept for backward compatibility only.
+        """
+        logger.warning(
+            f"AssetService.reprocess_asset() is deprecated. "
+            f"Use ContentIngestionService.reprocess_content() instead."
+        )
+        
         asset = self.session.get(Asset, asset_id)
         if not asset:
             return False
         
-        if not self._needs_background_processing(asset.kind):
-            logger.warning(f"Asset {asset_id} of kind {asset.kind} does not support reprocessing")
-            return False
-        
         try:
-            # Note: We now use the task from content_tasks.py
             from app.api.tasks.content_tasks import reprocess_content
             reprocess_content.delay(asset.id, options=options)
             logger.info(f"Triggered reprocessing for asset {asset.id} with options: {options}")
@@ -302,4 +265,92 @@ class AssetService:
             return self.create_asset(asset_create)
         except Exception as e:
             logger.error(f"Error in create_asset_from_dict: {e}")
-            raise 
+            raise
+    
+    def transfer_assets(
+        self,
+        asset_ids: List[int],
+        source_infospace_id: int,
+        target_infospace_id: int,
+        user_id: int,
+        copy: bool = True
+    ) -> List[Asset]:
+        """
+        Transfer assets between infospaces.
+        
+        Args:
+            asset_ids: List of asset IDs to transfer
+            source_infospace_id: Source infospace ID
+            target_infospace_id: Target infospace ID
+            user_id: User performing the transfer
+            copy: If True, copy assets. If False, move them (changes infospace_id).
+        
+        Returns:
+            List of new assets in target infospace (if copy=True) or the moved assets (if copy=False)
+        """
+        logger.info(f"Transferring {len(asset_ids)} assets from infospace {source_infospace_id} to {target_infospace_id}. Copy: {copy}")
+        
+        # Get and validate source assets
+        source_assets = self.session.exec(
+            select(Asset)
+            .where(Asset.id.in_(asset_ids))
+            .where(Asset.infospace_id == source_infospace_id)
+        ).all()
+        
+        if len(source_assets) != len(asset_ids):
+            found_ids = [a.id for a in source_assets]
+            missing_ids = [aid for aid in asset_ids if aid not in found_ids]
+            logger.warning(f"Some assets not found in source infospace: {missing_ids}")
+        
+        if not source_assets:
+            logger.warning(f"No valid assets found to transfer")
+            return []
+        
+        transferred_assets = []
+        
+        if copy:
+            # Copy each asset to target infospace
+            for asset in source_assets:
+                try:
+                    asset_create = AssetCreate(
+                        title=asset.title,
+                        kind=asset.kind,
+                        text_content=asset.text_content,
+                        blob_path=asset.blob_path,  # Shared storage
+                        source_identifier=asset.source_identifier,
+                        source_metadata=asset.source_metadata,
+                        event_timestamp=asset.event_timestamp,
+                        stub=asset.stub,
+                        user_id=user_id,
+                        infospace_id=target_infospace_id,
+                        processing_status=asset.processing_status
+                    )
+                    
+                    new_asset = self.create_asset(asset_create)
+                    transferred_assets.append(new_asset)
+                    logger.info(f"Copied asset {asset.id} → {new_asset.id} in infospace {target_infospace_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to copy asset {asset.id}: {e}")
+                    continue
+        else:
+            # Move assets by changing their infospace_id
+            for asset in source_assets:
+                try:
+                    asset.infospace_id = target_infospace_id
+                    asset.user_id = user_id  # Optionally update owner
+                    self.session.add(asset)
+                    transferred_assets.append(asset)
+                    logger.info(f"Moved asset {asset.id} to infospace {target_infospace_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to move asset {asset.id}: {e}")
+                    continue
+        
+        self.session.commit()
+        
+        for asset in transferred_assets:
+            self.session.refresh(asset)
+        
+        logger.info(f"Successfully transferred {len(transferred_assets)} assets")
+        return transferred_assets 

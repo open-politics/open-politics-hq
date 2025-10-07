@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Body, Path
 from sqlmodel import Session, select # Added select
 from pydantic import BaseModel
+from typing import Optional
 
 from app.models import AnalysisAdapter, Annotation # Ensure this is correctly imported
 from app.api.deps import SessionDep, CurrentUser, AnalysisServiceDep # Ensure these are correctly imported
@@ -16,6 +17,7 @@ router = APIRouter()
 class PromoteFragmentRequest(BaseModel):
     fragment_key: str
     fragment_value: Any
+    source_run_id: Optional[int] = None  # Original annotation run ID for proper source tracking
 
 @router.post("/infospaces/{infospace_id}/assets/{asset_id}/fragments", response_model=AnnotationRead, tags=["Analysis Service"])
 async def promote_fragment(
@@ -34,7 +36,8 @@ async def promote_fragment(
         infospace_id=infospace_id,
         asset_id=asset_id,
         fragment_key=request.fragment_key,
-        fragment_value=request.fragment_value
+        fragment_value=request.fragment_value,
+        source_run_id=request.source_run_id
     )
     return annotation
 

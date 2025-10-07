@@ -1,15 +1,83 @@
 import logging
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session
 
-from app.api.deps import SearchProviderDep
+from app.api.deps import SearchProviderDep, get_current_user, get_db
 from app.api.providers.base import SearchProvider
-from app.schemas import SearchResultsOut
-from app.schemas import SearchRequest
+from app.api.providers.impl.search_tavily import TavilySearchProvider
+from app.api.providers.impl.search_opol import OpolSearchProvider
+from app.api.providers.search_registry import SearchProviderRegistryService
+from app.api.services.content_ingestion_service import ContentIngestionService
+from app.models import User
+from app.schemas import SearchResultsOut, SearchRequest
+from app.core.config import settings
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def create_search_provider_by_name(provider_name: str) -> SearchProvider:
+    """Create a search provider instance based on the provider name."""
+    provider_name = provider_name.lower()
+    
+    if provider_name == "tavily":
+        if not settings.TAVILY_API_KEY:
+            raise ValueError("TAVILY_API_KEY is required for the Tavily search provider.")
+        return TavilySearchProvider(api_key=settings.TAVILY_API_KEY)
+    elif provider_name in ["opol_searxng", "opol", "searxng"]:
+        return OpolSearchProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
+    else:
+        raise ValueError(f"Unsupported search provider: {provider_name}")
+
+# Request models for the new search and ingest endpoint
+class ExternalSearchRequest(BaseModel):
+    query: str
+    provider: str = "tavily"
+    limit: int = 10
+    infospace_id: int
+    scrape_content: bool = True
+    create_assets: bool = True  # Whether to create assets or just return search results
+    bundle_id: Optional[int] = None
+    include_domains: Optional[List[str]] = None
+    exclude_domains: Optional[List[str]] = None
+    api_key: Optional[str] = None  # Runtime API key for the search provider
+    # Tavily-specific parameters
+    search_depth: Optional[str] = "basic"
+    include_images: Optional[bool] = True
+    include_answer: Optional[bool] = True
+    topic: Optional[str] = "general"
+    chunks_per_source: Optional[int] = 3
+    days: Optional[int] = 7
+    time_range: Optional[str] = None
+    country: Optional[str] = None
+
+class SelectiveAssetCreationRequest(BaseModel):
+    """Request for creating assets from specific search result URLs"""
+    urls: List[str]
+    infospace_id: int
+    bundle_id: Optional[int] = None
+    scrape_content: bool = True
+    search_metadata: Optional[Dict[str, Any]] = None  # Original search query, provider, etc.
+
+class DirectAssetCreationRequest(BaseModel):
+    """Request for creating assets directly from search result data"""
+    search_results: List[Dict[str, Any]]  # Full search result objects with all data
+    infospace_id: int
+    bundle_id: Optional[int] = None
+    search_metadata: Optional[Dict[str, Any]] = None  # Original search query, provider, etc.
+
+class SearchAndIngestResponse(BaseModel):
+    query: str
+    provider: str
+    results_found: int
+    results: Optional[List[dict]] = None  # Raw search results when not creating assets
+    assets_created: int = 0
+    asset_ids: List[int] = []
+    status: str
+    message: str
 
 
 
@@ -62,4 +130,291 @@ async def search_content(
         logger.exception(f"Route: Unexpected error during search for query '{query}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred during search."
+        )
+
+
+@router.post("/external", response_model=SearchAndIngestResponse)
+async def search_and_ingest(
+    request: ExternalSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SearchAndIngestResponse:
+    """
+    Search using external providers (Tavily, etc.) and create assets from results.
+    
+    This endpoint combines web search with content ingestion to create searchable assets
+    from web content. It supports multiple search providers and can automatically
+    scrape full content from discovered URLs.
+    """
+    logger.info(f"External search and ingest request: query='{request.query}', provider={request.provider}")
+    
+    try:
+        # Create the requested search provider using the registry
+        try:
+            search_registry = SearchProviderRegistryService()
+            search_provider = search_registry.create_provider(request.provider, request.api_key)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        
+        # Initialize the content ingestion service with the custom search provider
+        content_ingestion_service = ContentIngestionService(session=db, search_provider=search_provider)
+        
+        # Configure search options
+        search_options = {
+            'limit': request.limit,
+            'scrape_content': request.scrape_content,
+            'provider_params': {}
+        }
+        
+        # Add domain filtering
+        if request.include_domains:
+            search_options['provider_params']['include_domains'] = request.include_domains
+        if request.exclude_domains:
+            search_options['provider_params']['exclude_domains'] = request.exclude_domains
+            
+        # Add Tavily-specific parameters
+        if request.provider == 'tavily':
+            if request.search_depth:
+                search_options['provider_params']['search_depth'] = request.search_depth
+            if request.include_images is not None:
+                search_options['provider_params']['include_images'] = request.include_images
+            if request.include_answer is not None:
+                search_options['provider_params']['include_answer'] = request.include_answer
+            if request.topic:
+                search_options['provider_params']['topic'] = request.topic
+            if request.chunks_per_source:
+                search_options['provider_params']['chunks_per_source'] = request.chunks_per_source
+            if request.days:
+                search_options['provider_params']['days'] = request.days
+            if request.time_range:
+                search_options['provider_params']['time_range'] = request.time_range
+            if request.country:
+                search_options['provider_params']['country'] = request.country
+        
+        if request.create_assets:
+            # Use the unified search and ingest method
+            assets = await content_ingestion_service.search_and_ingest(
+                query=request.query,
+                infospace_id=request.infospace_id,
+                user_id=current_user.id,
+                search_method="text",  # Using text search for external providers
+                limit=request.limit,
+                bundle_id=request.bundle_id,
+                options=search_options
+            )
+            
+            logger.info(f"Created {len(assets)} assets from search query '{request.query}'")
+            
+            return SearchAndIngestResponse(
+                query=request.query,
+                provider=request.provider,
+                results_found=len(assets),
+                assets_created=len(assets),
+                asset_ids=[asset.id for asset in assets],
+                status="success",
+                message=f"Successfully created {len(assets)} assets from search query '{request.query}'"
+            )
+        else:
+            # Just search without creating assets
+            search_results = await content_ingestion_service._search_with_provider(
+                query=request.query,
+                limit=request.limit,
+                options=search_options
+            )
+            
+            # Convert SearchResult objects to dictionaries, preserving all rich data
+            results_data = []
+            for result in search_results:
+                result_dict = {
+                    "title": result.title,
+                    "url": result.url,
+                    "content": result.content,
+                    "score": result.score,
+                    "raw": result.raw_data
+                }
+                
+                # Extract additional fields from raw_data if available
+                if result.raw_data:
+                    # Add raw_content if available (full article text)
+                    if "raw_content" in result.raw_data:
+                        result_dict["raw_content"] = result.raw_data["raw_content"]
+                    
+                    # Add favicon if available
+                    if "favicon" in result.raw_data:
+                        result_dict["favicon"] = result.raw_data["favicon"]
+                    
+                    # Add published_date if available
+                    if "published_date" in result.raw_data:
+                        result_dict["published_date"] = result.raw_data["published_date"]
+                
+                results_data.append(result_dict)
+            
+            logger.info(f"Found {len(search_results)} search results for query '{request.query}'")
+            
+            return SearchAndIngestResponse(
+                query=request.query,
+                provider=request.provider,
+                results_found=len(search_results),
+                results=results_data,
+                assets_created=0,
+                asset_ids=[],
+                status="success",
+                message=f"Found {len(search_results)} search results for query '{request.query}'"
+            )
+        
+    except Exception as e:
+        logger.error(f"Search and ingest failed for query '{request.query}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search and ingest failed: {str(e)}"
+        )
+
+
+@router.post("/create-assets-from-urls", response_model=SearchAndIngestResponse)
+async def create_assets_from_urls(
+    request: SelectiveAssetCreationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SearchAndIngestResponse:
+    """
+    Create assets from specific URLs (typically from search results).
+    
+    This endpoint allows for selective asset creation from a list of URLs,
+    providing more control over which search results become assets.
+    """
+    logger.info(f"Creating assets from {len(request.urls)} URLs for user {current_user.id}")
+    
+    try:
+        # Initialize content ingestion service
+        content_ingestion_service = ContentIngestionService(session=db)
+        
+        created_assets = []
+        failed_urls = []
+        
+        # Process each URL individually
+        for url in request.urls:
+            try:
+                # Create asset from URL
+                assets = await content_ingestion_service.ingest_content(
+                    locator=url,
+                    infospace_id=request.infospace_id,
+                    user_id=current_user.id,
+                    bundle_id=request.bundle_id,
+                    options={
+                        'scrape_immediately': request.scrape_content,
+                        'search_metadata': request.search_metadata
+                    }
+                )
+                created_assets.extend(assets)
+                
+            except Exception as e:
+                logger.error(f"Failed to create asset from URL {url}: {e}")
+                failed_urls.append(url)
+                continue
+        
+        success_count = len(created_assets)
+        failed_count = len(failed_urls)
+        
+        message = f"Successfully created {success_count} assets"
+        if failed_count > 0:
+            message += f", {failed_count} URLs failed"
+        
+        logger.info(f"Asset creation completed: {success_count} success, {failed_count} failed")
+        
+        return SearchAndIngestResponse(
+            query=request.search_metadata.get('query', 'URL List') if request.search_metadata else 'URL List',
+            provider=request.search_metadata.get('provider', 'direct') if request.search_metadata else 'direct',
+            results_found=len(request.urls),
+            assets_created=success_count,
+            asset_ids=[asset.id for asset in created_assets],
+            status="success" if failed_count == 0 else "partial_success",
+            message=message
+        )
+        
+    except Exception as e:
+        logger.error(f"Bulk asset creation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Asset creation failed: {str(e)}"
+        )
+
+
+@router.post("/create-assets-from-results", response_model=SearchAndIngestResponse)
+async def create_assets_from_results(
+    request: DirectAssetCreationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SearchAndIngestResponse:
+    """
+    Create assets directly from search result data without re-scraping.
+    
+    This endpoint creates assets using the rich data already available from search results,
+    avoiding the need to re-scrape URLs and providing faster asset creation.
+    """
+    logger.info(f"Creating assets from {len(request.search_results)} search results for user {current_user.id}")
+    
+    try:
+        # Initialize content ingestion service
+        content_ingestion_service = ContentIngestionService(session=db)
+        
+        created_assets = []
+        failed_results = []
+        
+        query = request.search_metadata.get('query', 'Search Results') if request.search_metadata else 'Search Results'
+        
+        # Process each search result
+        for i, result_data in enumerate(request.search_results):
+            try:
+                # Convert dict back to SearchResult object
+                from app.schemas import SearchResult
+                search_result = SearchResult(
+                    title=result_data.get("title", ""),
+                    url=result_data.get("url", ""),
+                    content=result_data.get("content", ""),
+                    score=result_data.get("score"),
+                    provider=request.search_metadata.get('provider', 'unknown') if request.search_metadata else 'unknown',
+                    raw_data=result_data.get("raw", {})
+                )
+                
+                # Create asset directly from search result data
+                asset = await content_ingestion_service._create_asset_from_search_result(
+                    search_result, query, request.infospace_id, current_user.id, i
+                )
+                created_assets.append(asset)
+                
+            except Exception as e:
+                logger.error(f"Failed to create asset from search result {result_data.get('url', 'unknown')}: {e}")
+                failed_results.append(result_data.get('url', 'unknown'))
+                continue
+        
+        # Commit all assets
+        db.commit()
+        
+        success_count = len(created_assets)
+        failed_count = len(failed_results)
+        
+        message = f"Successfully created {success_count} assets from search results"
+        if failed_count > 0:
+            message += f", {failed_count} results failed"
+        
+        logger.info(f"Asset creation completed: {success_count} success, {failed_count} failed")
+        
+        return SearchAndIngestResponse(
+            query=query,
+            provider=request.search_metadata.get('provider', 'direct') if request.search_metadata else 'direct',
+            results_found=len(request.search_results),
+            assets_created=success_count,
+            asset_ids=[asset.id for asset in created_assets],
+            status="success" if failed_count == 0 else "partial_success",
+            message=message
+        )
+        
+    except Exception as e:
+        logger.error(f"Direct asset creation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Asset creation failed: {str(e)}"
         )

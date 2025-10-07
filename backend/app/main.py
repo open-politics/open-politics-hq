@@ -15,8 +15,9 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 
 
 # Create an ASGI-compatible application from the FastMCP server.
+# Use stateless_http=True for production HTTP deployment to avoid session issues.
 # FastAPI's `mount` will handle the path, so we don't specify it here.
-mcp_asgi_app = intelligence_mcp_server.http_app()
+mcp_asgi_app = intelligence_mcp_server.http_app(stateless_http=True)
 
 
 # As per FastMCP documentation for combining lifespans

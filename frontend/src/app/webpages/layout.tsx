@@ -1,7 +1,7 @@
 'use client'
 
-import Footer from "@/components/collection/unsorted/Footer"
-import Header from "@/components/collection/unsorted/Header"
+import Footer from "@/components/collection/_unsorted_legacy/Footer"
+import Header from "@/components/collection/_unsorted_legacy/Header"
 
 export default function MdxLayout({ children }: { children: React.ReactNode }) {
   return (

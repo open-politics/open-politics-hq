@@ -40,6 +40,19 @@ def create_mcp_context_token(user_id: int, infospace_id: int) -> str:
     return encoded_jwt
 
 
+def create_mcp_context_token_with_api_keys(user_id: int, infospace_id: int, api_keys: Dict[str, str]) -> str:
+    """Creates a short-lived JWT with API keys encoded in claims for MCP server."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {
+        "exp": expire,
+        "sub": str(user_id),
+        "infospace_id": infospace_id,
+        "api_keys": api_keys  # Encode API keys in JWT claims
+    }
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
+    return encoded_jwt
+
+
 class IntelligenceMCPClient:
     """
     Simplified client for executing intelligence analysis MCP tools.
@@ -47,16 +60,27 @@ class IntelligenceMCPClient:
     Uses FastMCP's built-in capabilities for clean tool execution.
     """
     
-    def __init__(self, user_id: int, infospace_id: int):
+    def __init__(self, user_id: int, infospace_id: int, context_token: Optional[str] = None):
         self.user_id = user_id
         self.infospace_id = infospace_id
-        # Create context token for authentication
-        self.context_token = create_mcp_context_token(user_id, infospace_id)
+        # Use provided token or create a new one
+        self.context_token = context_token or create_mcp_context_token(user_id, infospace_id)
         
-        # The FastAPI and MCP server are running on the same port.
-        server_port = os.getenv("BACKEND_PORT", 8022)
+        # Determine MCP server URL based on deployment architecture
+        # Priority: 1. Explicit MCP_SERVER_URL (for separate MCP container/service)
+        #           2. Localhost (default - client and server in same process)
+        if settings.MCP_SERVER_URL:
+            # Explicit override for deployments where MCP server is separate
+            # Example: microservices with dedicated MCP container
+            mcp_url = f"{settings.MCP_SERVER_URL}/tools/mcp"
+        else:
+            # Default: Use localhost for same-process communication
+            # In production, the client and server run in the same container,
+            # so they communicate via localhost, not through the ingress
+            server_port = os.getenv("BACKEND_PORT", 8022)
+            mcp_url = f"http://localhost:{server_port}/tools/mcp"
         
-        mcp_url = f"http://localhost:{server_port}/tools/mcp"
+        logger.info(f"Initializing MCP client with URL: {mcp_url} (environment: {settings.ENVIRONMENT})")
 
         self.mcp_client = Client(
             mcp_url,
@@ -130,11 +154,24 @@ class IntelligenceMCPClient:
             # The .data property contains the fully hydrated objects
             if hasattr(result, 'data') and result.data is not None:
                 logger.info(f"MCP tool {tool_name} executed successfully with structured output")
-                return result.data
+                # Convert Pydantic models to dictionaries for JSON serialization
+                if hasattr(result.data, 'model_dump'):
+                    return result.data.model_dump()
+                else:
+                    return result.data
             elif hasattr(result, 'content') and result.content:
                 # Fallback to content blocks if no structured data
                 logger.info(f"MCP tool {tool_name} executed successfully with content blocks")
-                return result.content
+                # Serialize TextContent objects to dictionaries
+                serialized_content = []
+                for content_item in result.content:
+                    if hasattr(content_item, 'model_dump'):
+                        serialized_content.append(content_item.model_dump())
+                    elif hasattr(content_item, '__dict__'):
+                        serialized_content.append(content_item.__dict__)
+                    else:
+                        serialized_content.append(str(content_item))
+                return {"content": serialized_content}
             else:
                 logger.warning(f"MCP tool {tool_name} returned empty result")
                 return None
@@ -145,32 +182,44 @@ class IntelligenceMCPClient:
     
     async def get_available_tools(self) -> List[Dict[str, Any]]:
         """
-        Get available tools from the MCP server dynamically.
+        Get available tools from the MCP server.
         
-        FastMCP automatically generates tool schemas from function signatures.
+        Returns tools in a provider-agnostic format that can be adapted
+        by individual language model providers.
         """
         if not self._is_connected:
             raise RuntimeError("MCP client is not connected.")
         
         try:
-            # Get tools from the server using FastMCP client
             tools = await self._connected_client.list_tools()
-            
-            # Convert to the format expected by language model providers
             tool_definitions = []
+            
             for tool in tools:
+                # Skip tools without required fields
+                if not hasattr(tool, 'name') or not tool.name:
+                    logger.warning(f"Skipping tool without name: {tool}")
+                    continue
+                
                 tool_def = {
                     "type": "mcp",
                     "name": tool.name,
                     "description": tool.description or f"Execute {tool.name}",
                 }
                 
-                # Add input schema if available (FastMCP uses inputSchema)
+                # Add input schema (parameters)
                 if hasattr(tool, 'inputSchema') and tool.inputSchema:
                     tool_def["parameters"] = tool.inputSchema
+                else:
+                    # Default empty schema if none provided
+                    tool_def["parameters"] = {"type": "object", "properties": {}}
+                
+                # Add output schema if available (for structured responses)
+                if hasattr(tool, 'outputSchema') and tool.outputSchema:
+                    tool_def["output_schema"] = tool.outputSchema
                 
                 tool_definitions.append(tool_def)
             
+            logger.info(f"Retrieved {len(tool_definitions)} tools from MCP server")
             return tool_definitions
             
         except Exception as e:
@@ -231,10 +280,18 @@ async def get_mcp_client(
     annotation_service: AnnotationService,
     content_ingestion_service: ContentIngestionService,
     user_id: int,
-    infospace_id: int
+    infospace_id: int,
+    api_keys: Optional[Dict[str, str]] = None
 ):
     """
-    Context manager for getting an initialized MCP client.
+    Context manager for getting an initialized MCP client with optional API keys.
     """
-    async with IntelligenceMCPClient(user_id=user_id, infospace_id=infospace_id) as client:
-        yield client
+    # Create token with API keys if provided
+    if api_keys:
+        token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys)
+        client = IntelligenceMCPClient(user_id=user_id, infospace_id=infospace_id, context_token=token)
+    else:
+        client = IntelligenceMCPClient(user_id=user_id, infospace_id=infospace_id)
+    
+    async with client as connected_client:
+        yield connected_client

@@ -1,9 +1,23 @@
 import { create } from 'zustand';
 import {
   InfospacesService,
+  OpenAPI,
 } from '@/client';
 import { InfospaceRead, InfospaceCreate, InfospaceUpdate, ResourceType } from '@/client';
 import { useShareableStore } from './storeShareables'; // Import the shareable store
+import { toast } from 'sonner';
+
+// Helper function to trigger browser download
+const triggerDownload = (blob: Blob, filename: string) => {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
 
 interface InfospaceState {
   infospaces: InfospaceRead[];
@@ -133,53 +147,76 @@ export const useInfospaceStore = create<InfospaceState>()(
       // New methods
       exportInfospace: async (infospaceId: number) => {
         set({ isLoading: true, error: null });
+        const token = localStorage.getItem("access_token");
+        
+        if (!token) {
+          const error = "Authentication token not found.";
+          set({ error, isLoading: false });
+          toast.error(error);
+          return;
+        }
+        
         try {
-          // Use the generic exportResource from useShareableStore
-          await useShareableStore.getState().exportResource('infospace' as ResourceType, infospaceId, infospaceId);
+          // Use manual fetch like storeShareables.tsx does for file downloads
+          // The generated client doesn't handle binary FileResponse properly
+          const response = await fetch(
+            `${OpenAPI.BASE}/api/v1/infospaces/${infospaceId}/export?include_chunks=false&include_embeddings=false&include_datasets=true&include_runs=true&include_schemas=true&include_sources=true`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+              },
+            }
+          );
+
+          if (!response.ok) {
+            let errorDetail = `Export failed with status: ${response.status}`;
+            try {
+              const errorBody = await response.json();
+              errorDetail = errorBody.detail || errorDetail;
+            } catch (e) {
+              errorDetail = `${errorDetail} - ${response.statusText}`;
+            }
+            throw new Error(errorDetail);
+          }
+          
+          const blob = await response.blob();
+          const filename = `hq_infospace_${infospaceId}_export_${new Date().toISOString().split('T')[0]}.zip`;
+          
+          triggerDownload(blob, filename);
           set({ isLoading: false });
+          toast.success("Infospace exported successfully.");
         } catch (err) {
           console.error("Export infospace error:", err);
           const message = err instanceof Error ? err.message : 'Failed to export infospace';
           set({ error: message, isLoading: false });
+          toast.error(message);
         }
       },
 
       importInfospace: async (file: File, placeholderInfospaceId: number): Promise<InfospaceRead | null> => {
         set({ isLoading: true, error: null });
+        
         try {
-          // Use the generic importResource from useShareableStore
-          // The placeholderInfospaceId is required by the API client for the path, 
-          // but is ignored by the backend when the package type is INFOSPACE.
-          const result = await useShareableStore.getState().importResource(file, placeholderInfospaceId);
-          // After import, refresh infospaces and try to set the new one as active.
-          await get().fetchInfospaces(); 
-
-          if (result && typeof result === 'object' && 'imported_resource_id' in result && (result as any).resource_type === 'infospace') {
-            const newInfospaceId = (result as any).imported_resource_id;
-            if (newInfospaceId) {
-                const newWs = get().infospaces.find(ws => ws.id === newInfospaceId);
-                if (newWs) {
-                    set({ activeInfospace: newWs, isLoading: false });
-                    localStorage.setItem('activeInfospaceId', String(newWs.id));
-                    return newWs;
-                } else {
-                    // If not found in the refreshed list (should be rare), try a direct fetch.
-                    const fetchedNewWs = await InfospacesService.getInfospace({ infospaceId: newInfospaceId }); // Use InfospacesService
-                    set({ activeInfospace: fetchedNewWs, isLoading: false });
-                    localStorage.setItem('activeInfospaceId', String(fetchedNewWs.id));
-                    await get().fetchInfospaces(); // Ensure list is updated again if direct fetch was needed
-                    return fetchedNewWs;
-                }
-            }
-          }
-          set({ isLoading: false });
-          // If result processing above didn't return, it means conditions weren't met for new active infospace.
-          // Return null as the specific new InfospaceRead object isn't directly available or confirmed.
-          return null;
+          // Call the import endpoint using the generated client
+          const importedInfospace = await InfospacesService.importInfospace({
+            formData: {
+              file: file,
+            },
+          });
+          
+          // Refresh infospaces and set the new one as active
+          await get().fetchInfospaces();
+          set({ activeInfospace: importedInfospace, isLoading: false });
+          localStorage.setItem('activeInfospaceId', String(importedInfospace.id));
+          
+          toast.success(`Infospace "${importedInfospace.name}" imported successfully.`);
+          return importedInfospace;
         } catch (err) {
           console.error("Import infospace error:", err);
           const message = err instanceof Error ? err.message : 'Failed to import infospace';
           set({ error: message, isLoading: false });
+          toast.error(message);
           return null;
         }
       },

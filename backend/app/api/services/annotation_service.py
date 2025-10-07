@@ -1070,16 +1070,31 @@ class AnnotationService:
         return run
 
     def curate_fragment(
-        self, user_id: int, infospace_id: int, asset_id: int, field_name: str, value: Any
+        self, user_id: int, infospace_id: int, asset_id: int, field_name: str, value: Any,
+        source_run_id: Optional[int] = None
     ) -> Annotation:
-        """Creates an auditable record for a manual curation action."""
-        # 1. Get or create the special "Curation" schema
-        schema = self._get_or_create_curation_schema(infospace_id, user_id)
+        """
+        Creates an auditable record for a manual curation action.
+        
+        If source_run_id is provided, uses that run for source tracking (recommended).
+        Otherwise, creates/uses a "Manual Curation Run" (legacy behavior).
+        """
+        if source_run_id:
+            # NEW: Use the provided source run (fragments point to original annotation run)
+            run = self.session.get(AnnotationRun, source_run_id)
+            if not run:
+                raise ValueError(f"Source run {source_run_id} not found")
+            if run.infospace_id != infospace_id:
+                raise ValueError(f"Source run {source_run_id} does not belong to infospace {infospace_id}")
+            
+            # Use the schema from the source run
+            schema = run.target_schemas[0] if run.target_schemas else self._get_or_create_curation_schema(infospace_id, user_id)
+        else:
+            # LEGACY: Create/use Manual Curation Run
+            schema = self._get_or_create_curation_schema(infospace_id, user_id)
+            run = self._get_or_create_curation_run(infospace_id, user_id, schema.id)
 
-        # 2. Get or create a dedicated AnnotationRun for all curations
-        run = self._get_or_create_curation_run(infospace_id, user_id, schema.id)
-
-        # 3. Create the annotation that represents the curated fact
+        # Create the annotation that represents the curated fact
         annotation = self.create_annotation(
             asset_id=asset_id,
             schema_id=schema.id,
@@ -1089,19 +1104,24 @@ class AnnotationService:
             value={field_name: value},
         )
 
-        # 4. Promote the fragment to the asset metadata
+        # Promote the fragment to the asset metadata
         asset = self.session.get(Asset, asset_id)
         if asset:
             fragments = asset.fragments or {}
             
             fragments[field_name] = {
                 "value": value,
-                "source_ref": f"annotation_run:{run.id}",
+                "source_ref": f"annotation_run:{run.id}",  # Now points to ORIGINAL run!
                 "curated_by_ref": f"user:{user_id}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "schema_id": schema.id,  # Just store the schema ID for dynamic lookup
+                "schema_id": schema.id,
             }
             asset.fragments = fragments
+            
+            # Mark as modified for SQLAlchemy
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(asset, "fragments")
+            
             self.session.add(asset)
             self.session.commit()
 

@@ -23,8 +23,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
-import { IconRenderer } from "@/components/collection/infospaces/utilities/icons/icon-picker"
-import EditInfospaceOverlay from "@/components/collection/infospaces/management/EditInfospaceOverlay"
+import { IconRenderer } from "@/components/collection/utilities/icons/icon-picker"
+import EditInfospaceOverlay from "@/components/collection/management/EditInfospaceOverlay"
 
 export function InfospaceSwitcher() {
   const { isMobile } = useSidebar()

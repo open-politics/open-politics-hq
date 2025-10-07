@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from 'react'
 import { IntelligenceChatService } from '@/client'
 import { ChatRequest, ChatResponse, ToolCallRequest } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
+import { useApiKeysStore } from '@/zustand_stores/storeApiKeys'
 import { toast } from 'sonner'
 import { OpenAPI } from '@/client/core/OpenAPI'
 
@@ -13,8 +14,12 @@ export interface ToolExecution {
   arguments: Record<string, unknown>
   status: 'pending' | 'running' | 'completed' | 'failed'
   result?: unknown
+  structured_content?: unknown  // Rich structured data for frontend rendering
   error?: string
   timestamp: Date
+  iteration?: number  // Tool loop iteration (for segmented thinking)
+  thinking_before?: string  // Thinking that occurred before this tool execution
+  thinking_after?: string  // Thinking that occurred after this tool execution
 }
 
 export interface ChatMessage {
@@ -33,6 +38,8 @@ export interface UseIntelligenceChatOptions {
   max_tokens?: number
   thinking_enabled?: boolean
   stream?: boolean
+  conversation_id?: number  // Optional: Save messages to this conversation
+  auto_save?: boolean  // Optional: Automatically save messages to conversation history
 }
 
 export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
@@ -41,6 +48,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
   const [error, setError] = useState<string | null>(null)
   const [activeToolExecutions, setActiveToolExecutions] = useState<ToolExecution[]>([])
   const { activeInfospace } = useInfospaceStore()
+  const { apiKeys } = useApiKeysStore()
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const sendMessage = useCallback(async (
@@ -74,7 +82,10 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         stream: customOptions?.stream ?? options.stream ?? false,
         temperature: customOptions?.temperature ?? options.temperature,
         max_tokens: customOptions?.max_tokens || options.max_tokens,
-        thinking_enabled: customOptions?.thinking_enabled || options.thinking_enabled || false
+        thinking_enabled: customOptions?.thinking_enabled || options.thinking_enabled || false,
+        api_keys: apiKeys && Object.keys(apiKeys).length > 0 ? apiKeys : undefined,
+        conversation_id: customOptions?.conversation_id ?? options.conversation_id,
+        auto_save: customOptions?.auto_save ?? options.auto_save ?? false
       }
       if (chatRequest.stream) {
         // Manual streaming using fetch to handle SSE-like responses
@@ -129,62 +140,127 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
               if (payload === '[DONE]') continue
               try {
                 const obj = JSON.parse(payload)
+                let updated = false
+                
                 const contentDelta = obj.content as string | undefined
                 if (contentDelta !== undefined) {
+                  // The backend sends accumulated content, not deltas
                   current = { ...current, content: contentDelta }
+                  updated = true
+                }
+                if (obj.tool_executions && Array.isArray(obj.tool_executions) && obj.tool_executions.length > 0) {
+                  // Server-side executed tools with results
+                  // Extract structured_content from each execution
+                  const enrichedExecutions = (obj.tool_executions as ToolExecution[]).map(exec => ({
+                    ...exec,
+                    structured_content: exec.structured_content || exec.result,
+                    timestamp: exec.timestamp ? new Date(exec.timestamp) : new Date()
+                  }))
+                  current = { ...current, tool_executions: enrichedExecutions }
+                  updated = true
                 }
                 if (obj.tool_calls) {
+                  // Tool calls that need execution (shouldn't happen with our setup)
                   current = { ...current, tool_calls: obj.tool_calls }
-                  // Process tool calls for execution tracking
                   processToolCallsForExecution(obj.tool_calls, current.id)
+                  updated = true
                 }
                 if (obj.thinking_trace) {
                   current = { ...current, thinking_trace: obj.thinking_trace }
+                  updated = true
                 }
-                setMessages(prev => prev.map(m => m.id === current.id ? current : m))
-              } catch (_) {
-                // ignore malformed chunks
+                
+                // Only update state if something changed
+                if (updated) {
+                  setMessages(prev => prev.map(m => m.id === current.id ? current : m))
+                }
+              } catch (e) {
+                console.error('[useIntelligenceChat] Failed to parse streaming chunk:', e)
               }
             }
           }
+          
+          // Ensure final message is saved even if connection drops
+          console.log('[useIntelligenceChat] Stream complete, final message:', current)
+          // Important: Set loading to false and clear abort controller BEFORE returning for streaming
+          setIsLoading(false)
+          abortControllerRef.current = null
           return current
         } catch (e: any) {
+          // Re-throw to let outer catch/finally handle it
           throw e
         }
       } else {
+        console.log('[useIntelligenceChat] Sending non-streaming request...')
         const response = await IntelligenceChatService.intelligenceChat({
           requestBody: chatRequest
         })
+        console.log('[useIntelligenceChat] Received non-streaming response:', response)
+
+        // Validate response has content
+        if (!response || (response.content === undefined && !response.tool_executions)) {
+          console.error('[useIntelligenceChat] Invalid response received:', response)
+          throw new Error('Invalid response from server')
+        }
+
+        // Extract structured_content from tool executions
+        const enrichedExecutions = response.tool_executions 
+          ? (response.tool_executions as any[]).map(exec => ({
+              ...exec,
+              structured_content: exec.structured_content || exec.result,
+              timestamp: exec.timestamp ? new Date(exec.timestamp) : new Date()
+            } as ToolExecution))
+          : undefined
 
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
-          content: response.content,
+          content: response.content || '',
           timestamp: new Date(),
           tool_calls: response.tool_calls || undefined,
+          tool_executions: enrichedExecutions,  // Server-side executed tools with structured_content
           thinking_trace: response.thinking_trace || undefined
         }
         
-        // Process tool executions after message is created
-        if (response.tool_calls) {
+        // If tools were called but not yet executed (shouldn't happen with our setup)
+        if (response.tool_calls && !response.tool_executions) {
           assistantMessage.tool_executions = processToolCallsForExecution(response.tool_calls, assistantMessage.id)
         }
 
-        setMessages(prev => [...prev, assistantMessage])
+        console.log('[useIntelligenceChat] Adding assistant message to state:', assistantMessage)
+        
+        // Use functional update to ensure state is updated correctly
+        setMessages(prev => {
+          const updated = [...prev, assistantMessage]
+          console.log('[useIntelligenceChat] State updated with new message, total messages:', updated.length)
+          return updated
+        })
+        
+        // Explicitly set loading to false before returning to ensure UI updates
+        // This is defensive - the finally block should handle this, but we want to be certain
+        setIsLoading(false)
+        console.log('[useIntelligenceChat] Set isLoading to false after adding message')
+        
         return assistantMessage
       }
 
     } catch (err: any) {
+      console.error('[useIntelligenceChat] Request failed:', err)
+      
       // Swallow abort errors triggered by Stop button
       const isAbort = err?.name === 'AbortError' || typeof err?.message === 'string' && err.message.toLowerCase().includes('aborted')
       if (isAbort) {
+        console.log('[useIntelligenceChat] Request aborted by user')
         return null
       }
+      
       const errorMessage = err?.body?.detail || err?.message || 'Failed to send message'
+      console.error('[useIntelligenceChat] Error message:', errorMessage)
       setError(errorMessage)
       toast.error(errorMessage)
       return null
     } finally {
+      console.log('[useIntelligenceChat] Request complete, cleaning up...')
       setIsLoading(false)
       // Clear any prior controller after request completes
       if (abortControllerRef.current) {
@@ -302,6 +378,28 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
     setActiveToolExecutions([])
   }, [])
 
+  const loadMessages = useCallback((conversationMessages: Array<{
+    id: number
+    role: string
+    content: string
+    created_at: string
+    tool_calls?: Array<Record<string, unknown>>
+    tool_executions?: Array<Record<string, unknown>>
+    thinking_trace?: string
+  }>) => {
+    const chatMessages: ChatMessage[] = conversationMessages.map(msg => ({
+      id: `msg-${msg.id}`,
+      role: msg.role as 'user' | 'assistant' | 'tool',
+      content: msg.content,
+      timestamp: new Date(msg.created_at),
+      tool_calls: msg.tool_calls,
+      tool_executions: msg.tool_executions as any,
+      thinking_trace: msg.thinking_trace
+    }))
+    setMessages(chatMessages)
+    setError(null)
+  }, [])
+
   return {
     messages,
     isLoading,
@@ -310,6 +408,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
     sendMessage,
     executeToolCall,
     clearMessages,
+    loadMessages,
     getAvailableModels,
     stop
   }

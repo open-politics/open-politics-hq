@@ -1,335 +1,417 @@
+"""
+API Routes for Embedding Management
+"""
 import logging
-import time
-from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import List, Optional, Dict
+from datetime import datetime
+from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session
 
-from app.api.deps import (
-    SessionDep,
-    CurrentUser,
-    EmbeddingProviderDep,
-    EmbeddingServiceDep
-)
+from app.api.deps import CurrentUser, SessionDep
+from app.models import User, Infospace, Asset, AssetKind
+from app.schemas import Message
 from app.api.services.embedding_service import EmbeddingService
-from app.models import EmbeddingModel, EmbeddingProvider, AssetChunk
-from app.schemas import (
-    EmbeddingModelRead,
-    EmbeddingModelCreate,
-    EmbeddingSearchRequest,
-    EmbeddingSearchResponse,
-    EmbeddingGenerateRequest,
-    EmbeddingStatsResponse
-)
+from app.api.services.vector_search_service import VectorSearchService
+from app.api.tasks.embed import embed_asset_task, embed_infospace_task
+from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
+from pydantic import BaseModel, Field
 
-router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Embedding service dependency is now handled in deps.py
+router = APIRouter()
 
-@router.get("/models", response_model=List[EmbeddingModelRead])
-async def list_embedding_models(
-    current_user: CurrentUser,
-    embedding_service: EmbeddingServiceDep,
-    active_only: bool = Query(True, description="Only return active models")
-):
-    """List all available embedding models."""
-    try:
-        models = embedding_service.list_embedding_models(active_only=active_only)
-        return models
-    except Exception as e:
-        logger.error(f"Error listing embedding models: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list embedding models"
-        )
 
-@router.get("/models/available")
-async def get_available_models(
-    current_user: CurrentUser,
-    embedding_provider: EmbeddingProviderDep
-):
-    """Get available models from the current embedding provider."""
-    try:
-        models = embedding_provider.get_available_models()
-        return {"models": models}
-    except Exception as e:
-        logger.error(f"Error getting available models: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get available models from provider"
-        )
+# ======================== REQUEST/RESPONSE SCHEMAS ========================
 
-@router.get("/health")
-async def check_embedding_provider_health(
-    current_user: CurrentUser,
-    embedding_provider: EmbeddingProviderDep
-):
-    """Check the health of the embedding provider."""
-    try:
-        # Check if provider has health check method
-        if hasattr(embedding_provider, 'health_check'):
-            is_healthy = await embedding_provider.health_check()
-            
-            health_info = {
-                "healthy": is_healthy,
-                "provider_type": type(embedding_provider).__name__
-            }
-            
-            # Get additional server info if available
-            if hasattr(embedding_provider, 'get_server_info'):
-                server_info = await embedding_provider.get_server_info()
-                health_info.update(server_info)
-            
-            return health_info
-        else:
-            # Basic check - try to get available models
-            models = embedding_provider.get_available_models()
-            return {
-                "healthy": True,
-                "provider_type": type(embedding_provider).__name__,
-                "models_configured": len(models)
-            }
-    except Exception as e:
-        logger.error(f"Error checking embedding provider health: {e}")
-        return {
-            "healthy": False,
-            "provider_type": type(embedding_provider).__name__,
-            "error": str(e)
-        }
+class GenerateEmbeddingsRequest(BaseModel):
+    """Request to generate embeddings for an infospace."""
+    overwrite: bool = Field(default=False, description="Regenerate existing embeddings")
+    asset_kinds: Optional[List[str]] = Field(default=None, description="Filter by asset types")
+    async_processing: bool = Field(default=True, description="Process in background")
+    api_keys: Optional[Dict[str, str]] = Field(default=None, description="Runtime API keys for cloud providers")
 
-@router.post("/models", response_model=EmbeddingModelRead)
-async def create_embedding_model(
-    model_data: EmbeddingModelCreate,
-    current_user: CurrentUser,
-    embedding_service: EmbeddingServiceDep
-):
-    """Create a new embedding model."""
-    try:
-        model = embedding_service.get_or_create_embedding_model(
-            name=model_data.name,
-            provider=model_data.provider,
-            dimension=model_data.dimension,
-            description=model_data.description,
-            config=model_data.config
-        )
-        return model
-    except Exception as e:
-        logger.error(f"Error creating embedding model: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create embedding model: {str(e)}"
-        )
 
-@router.get("/models/{model_id}/stats", response_model=EmbeddingStatsResponse)
-async def get_embedding_model_stats(
-    model_id: int,
-    current_user: CurrentUser,
-    embedding_service: EmbeddingServiceDep
-):
-    """Get statistics for an embedding model."""
-    try:
-        stats = embedding_service.get_embedding_stats(model_id)
-        if not stats or "error" in stats:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Embedding model not found or error getting stats"
-            )
-        return stats
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting embedding model stats: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get embedding model statistics"
-        )
+class GenerateAssetEmbeddingsRequest(BaseModel):
+    """Request to generate embeddings for a single asset."""
+    overwrite: bool = Field(default=False, description="Regenerate existing embeddings")
+    async_processing: bool = Field(default=True, description="Process in background")
 
-@router.post("/generate")
-async def generate_embeddings(
-    request: EmbeddingGenerateRequest,
-    current_user: CurrentUser,
+
+class EmbeddingStatsResponse(BaseModel):
+    """Response with embedding statistics."""
+    total_assets: int
+    total_chunks: int
+    embedded_chunks: int
+    coverage_percentage: float
+    models_used: dict
+
+
+class SemanticSearchRequest(BaseModel):
+    """Request for semantic search."""
+    query: str = Field(description="Search query text")
+    limit: int = Field(default=10, ge=1, le=100, description="Maximum results")
+    asset_kinds: Optional[List[str]] = Field(default=None, description="Filter by asset types")
+    date_from: Optional[datetime] = Field(default=None, description="Filter from date")
+    date_to: Optional[datetime] = Field(default=None, description="Filter to date")
+    bundle_id: Optional[int] = Field(default=None, description="Filter by bundle")
+    distance_threshold: Optional[float] = Field(default=None, description="Maximum distance")
+    distance_function: str = Field(default="cosine", description="Distance function: cosine, l2, inner_product")
+    api_keys: Optional[Dict[str, str]] = Field(default=None, description="Runtime API keys for cloud providers")
+
+
+class SemanticSearchResponse(BaseModel):
+    """Response from semantic search."""
+    query: str
+    results: List[dict]
+    total_found: int
+    infospace_id: int
+
+
+class EmbeddingModelInfo(BaseModel):
+    """Information about an embedding model."""
+    name: str
+    provider: str
+    dimension: int
+    description: Optional[str] = None
+    max_sequence_length: Optional[int] = None
+
+
+class AvailableModelsResponse(BaseModel):
+    """Response listing available embedding models."""
+    models: List[EmbeddingModelInfo]
+
+
+# ======================== ENDPOINTS ========================
+
+@router.post("/infospaces/{infospace_id}/embeddings/generate", response_model=Message)
+async def generate_infospace_embeddings(
+    infospace_id: int,
+    request: GenerateEmbeddingsRequest,
     session: SessionDep,
-    embedding_service: EmbeddingServiceDep
+    current_user: CurrentUser
 ):
-    """Generate embeddings for a list of asset chunks."""
-    try:
-        # Get the chunks
-        chunks = []
-        for chunk_id in request.chunk_ids:
-            chunk = session.get(AssetChunk, chunk_id)
-            if chunk:
-                chunks.append(chunk)
-            else:
-                logger.warning(f"Chunk {chunk_id} not found")
+    """
+    Generate embeddings for all assets in an infospace.
+    Uses the infospace's configured embedding model.
+    
+    For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
+    in the request. Background processing is supported for all providers by passing
+    API keys to the Celery worker.
+    """
+    # Verify infospace exists and user has access
+    infospace = session.get(Infospace, infospace_id)
+    if not infospace:
+        raise HTTPException(status_code=404, detail="Infospace not found")
+    
+    if infospace.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized to access this infospace")
+    
+    if not infospace.embedding_model:
+        raise HTTPException(
+            status_code=400,
+            detail="Infospace has no embedding model configured. Set embedding_model in infospace settings."
+        )
+    
+    if request.async_processing:
+        # Start background task with API keys
+        embed_infospace_task.delay(
+            infospace_id=infospace_id,
+            overwrite=request.overwrite,
+            asset_kinds=request.asset_kinds,
+            runtime_api_keys=request.api_keys
+        )
+        return Message(message=f"Embedding generation started in background for infospace {infospace_id}")
+    else:
+        # Synchronous processing
+        service = EmbeddingService(session, runtime_api_keys=request.api_keys)
         
-        if not chunks:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No valid chunks found"
+        # Convert asset_kinds strings to enum
+        kinds = None
+        if request.asset_kinds:
+            kinds = [AssetKind(kind) for kind in request.asset_kinds]
+        
+        result = await service.generate_embeddings_for_infospace(
+            infospace_id=infospace_id,
+            overwrite=request.overwrite,
+            asset_kinds=kinds
+        )
+        
+        return Message(
+            message=(
+                f"Generated embeddings for {result['assets_processed']} assets: "
+                f"{result['chunks_created']} chunks created, "
+                f"{result['embeddings_generated']} embeddings generated"
             )
-        
-        # Generate and store embeddings
-        stored_count, error_count = await embedding_service.generate_and_store_embeddings(
-            chunks=chunks,
-            model_name=request.model_name,
-            provider=request.provider
-        )
-        
-        return {
-            "message": f"Generated embeddings for {stored_count} chunks",
-            "stored_count": stored_count,
-            "error_count": error_count,
-            "total_chunks": len(request.chunk_ids)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating embeddings: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate embeddings: {str(e)}"
         )
 
-@router.post("/search", response_model=EmbeddingSearchResponse)
-async def similarity_search(
-    request: EmbeddingSearchRequest,
-    current_user: CurrentUser,
-    embedding_service: EmbeddingServiceDep
+
+@router.post("/assets/{asset_id}/embeddings/generate", response_model=Message)
+async def generate_asset_embeddings(
+    asset_id: int,
+    request: GenerateAssetEmbeddingsRequest,
+    session: SessionDep,
+    current_user: CurrentUser
 ):
-    """Perform similarity search using embeddings."""
-    try:
-        results = await embedding_service.similarity_search(
-            query_text=request.query_text,
-            model_name=request.model_name,
-            provider=request.provider,
-            limit=request.limit,
-            distance_threshold=request.distance_threshold,
-            distance_function=request.distance_function
-        )
-        
-        return EmbeddingSearchResponse(
-            query_text=request.query_text,
-            results=results,
-            model_name=request.model_name,
-            distance_function=request.distance_function
-        )
-        
-    except Exception as e:
-        logger.error(f"Error performing similarity search: {e}")
+    """
+    Generate embeddings for a single asset.
+    """
+    # Verify asset exists and user has access
+    asset = session.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    infospace = session.get(Infospace, asset.infospace_id)
+    if not infospace:
+        raise HTTPException(status_code=404, detail="Infospace not found")
+    
+    if infospace.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    if not infospace.embedding_model:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to perform similarity search: {str(e)}"
+            status_code=400,
+            detail="Infospace has no embedding model configured"
+        )
+    
+    if request.async_processing:
+        # Start background task
+        embed_asset_task.delay(
+            asset_id=asset_id,
+            infospace_id=infospace.id,
+            overwrite=request.overwrite,
+            runtime_api_keys=request.api_keys
+        )
+        return Message(message=f"Embedding generation started for asset {asset_id}")
+    else:
+        # Synchronous processing
+        service = EmbeddingService(session, runtime_api_keys=request.api_keys)
+        result = await service.generate_embeddings_for_asset(
+            asset_id=asset_id,
+            infospace_id=infospace.id,
+            overwrite=request.overwrite
+        )
+        
+        return Message(
+            message=(
+                f"Generated embeddings for asset {asset_id}: "
+                f"{result['chunks_created']} chunks created, "
+                f"{result['embeddings_generated']} embeddings generated"
+            )
         )
 
-@router.post("/embed-text")
-async def embed_text(
-    text: str,
-    model_name: str,
-    provider: EmbeddingProvider,
-    current_user: CurrentUser,
-    embedding_provider: EmbeddingProviderDep
-):
-    """Generate embedding for a single text (utility endpoint)."""
-    try:
-        embedding = await embedding_provider.embed_single(text, model_name)
-        
-        return {
-            "text": text,
-            "model_name": model_name,
-            "provider": provider,
-            "embedding": embedding,
-            "dimension": len(embedding) if embedding else 0
-        }
-        
-    except Exception as e:
-        logger.error(f"Error embedding text: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to embed text: {str(e)}"
-        )
 
-@router.post("/test")
-async def test_embedding_provider(
-    current_user: CurrentUser,
-    embedding_provider: EmbeddingProviderDep,
-    test_text: str = "This is a test sentence for embedding generation.",
-    model_name: Optional[str] = None
+@router.get("/infospaces/{infospace_id}/embeddings/stats", response_model=EmbeddingStatsResponse)
+async def get_embedding_stats(
+    infospace_id: int,
+    session: SessionDep,
+    current_user: CurrentUser
 ):
-    """Test the embedding provider with a sample text."""
+    """
+    Get statistics about embedding coverage in an infospace.
+    """
+    # Verify infospace exists and user has access
+    infospace = session.get(Infospace, infospace_id)
+    if not infospace:
+        raise HTTPException(status_code=404, detail="Infospace not found")
+    
+    if infospace.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    service = EmbeddingService(session)
+    stats = service.get_embedding_stats(infospace_id)
+    
+    return EmbeddingStatsResponse(**stats)
+
+
+@router.post("/infospaces/{infospace_id}/embeddings/search", response_model=SemanticSearchResponse)
+async def semantic_search(
+    infospace_id: int,
+    request: SemanticSearchRequest,
+    session: SessionDep,
+    current_user: CurrentUser
+):
+    """
+    Perform semantic search within an infospace using vector embeddings.
+    
+    For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
+    in the request to generate the query embedding.
+    """
+    # Verify infospace exists and user has access
+    infospace = session.get(Infospace, infospace_id)
+    if not infospace:
+        raise HTTPException(status_code=404, detail="Infospace not found")
+    
+    if infospace.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    if not infospace.embedding_model:
+        raise HTTPException(
+            status_code=400,
+            detail="Infospace has no embedding model configured. Cannot perform semantic search."
+        )
+    
+    # Convert asset_kinds strings to enum
+    kinds = None
+    if request.asset_kinds:
+        try:
+            kinds = [AssetKind(kind) for kind in request.asset_kinds]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid asset kind: {e}")
+    
+    # Perform search
+    service = VectorSearchService(session, runtime_api_keys=request.api_keys)
+    results = await service.semantic_search(
+        query_text=request.query,
+        infospace_id=infospace_id,
+        limit=request.limit,
+        asset_kinds=kinds,
+        date_from=request.date_from,
+        date_to=request.date_to,
+        bundle_id=request.bundle_id,
+        distance_threshold=request.distance_threshold,
+        distance_function=request.distance_function
+    )
+    
+    return SemanticSearchResponse(
+        query=request.query,
+        results=[r.to_dict() for r in results],
+        total_found=len(results),
+        infospace_id=infospace_id
+    )
+
+
+@router.delete("/infospaces/{infospace_id}/embeddings", response_model=Message)
+async def clear_infospace_embeddings(
+    infospace_id: int,
+    session: SessionDep,
+    current_user: CurrentUser
+):
+    """
+    Clear all embeddings for an infospace.
+    Useful when changing embedding models or resetting the vector store.
+    """
+    from app.models import AssetChunk
+    from sqlalchemy import delete
+    
+    # Verify infospace exists and user has access
+    infospace = session.get(Infospace, infospace_id)
+    if not infospace:
+        raise HTTPException(status_code=404, detail="Infospace not found")
+    
+    if infospace.owner_id != current_user.id and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
     try:
-        # Use default model if none specified
-        if not model_name:
-            if hasattr(embedding_provider, 'default_model'):
-                model_name = embedding_provider.default_model
-            else:
-                # Try to get first available model
-                available_models = embedding_provider.get_available_models()
-                if available_models:
-                    model_name = available_models[0].get('name', 'nomic-embed-text')
-                else:
-                    model_name = 'nomic-embed-text'
+        # Clear embeddings from all chunks in this infospace
+        from sqlalchemy import select
+        chunks_query = (
+            select(AssetChunk.id)
+            .join(Asset)
+            .where(Asset.infospace_id == infospace_id)
+        )
+        chunk_ids = session.exec(chunks_query).all()
         
-        # Generate embedding
-        start_time = time.time()
-        embedding = await embedding_provider.embed_single(test_text, model_name)
-        end_time = time.time()
-        
-        if embedding:
-            return {
-                "success": True,
-                "test_text": test_text,
-                "model_name": model_name,
-                "dimension": len(embedding),
-                "generation_time_ms": round((end_time - start_time) * 1000, 2),
-                "sample_values": embedding[:5] if len(embedding) >= 5 else embedding,
-                "provider_type": type(embedding_provider).__name__
-            }
+        if chunk_ids:
+            # Clear embedding data
+            for chunk_id in chunk_ids:
+                chunk = session.get(AssetChunk, chunk_id)
+                if chunk:
+                    chunk.embedding_json = None
+                    chunk.embedding_model_id = None
+                    session.add(chunk)
+            
+            session.commit()
+            logger.info(f"Cleared embeddings for {len(chunk_ids)} chunks in infospace {infospace_id}")
+            
+            return Message(message=f"Cleared embeddings for {len(chunk_ids)} chunks")
         else:
-            return {
-                "success": False,
-                "error": "No embedding generated",
-                "test_text": test_text,
-                "model_name": model_name,
-                "provider_type": type(embedding_provider).__name__
-            }
+            return Message(message="No embeddings found to clear")
             
     except Exception as e:
-        logger.error(f"Error testing embedding provider: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "test_text": test_text,
-            "model_name": model_name,
-            "provider_type": type(embedding_provider).__name__
-        }
+        logger.error(f"Failed to clear embeddings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear embeddings: {str(e)}")
 
-@router.delete("/models/{model_id}")
-async def deactivate_embedding_model(
-    model_id: int,
-    current_user: CurrentUser,
-    session: SessionDep
+
+class DiscoverModelsRequest(BaseModel):
+    """Request for discovering embedding models with runtime API keys."""
+    api_keys: Optional[Dict[str, str]] = Field(default=None, description="Runtime API keys for providers")
+
+
+@router.post("/embeddings/models/discover", response_model=AvailableModelsResponse)
+async def discover_embedding_models(
+    request: DiscoverModelsRequest,
+    current_user: CurrentUser
 ):
-    """Deactivate an embedding model (soft delete)."""
+    """
+    Discover available embedding models from all providers with runtime API keys.
+    
+    This endpoint supports runtime API key injection from frontend for:
+    - OpenAI: requires api_keys.openai
+    - Voyage AI (Anthropic): requires api_keys.voyage
+    - Jina AI: requires api_keys.jina
+    - Ollama: no API key needed
+    """
     try:
-        model = session.get(EmbeddingModel, model_id)
-        if not model:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Embedding model not found"
+        from app.api.providers.factory import get_embedding_registry
+        
+        registry = get_embedding_registry()
+        
+        # Discover models from all providers
+        provider_models = await registry.discover_all_models(
+            runtime_api_keys=request.api_keys,
+            force_refresh=False
+        )
+        
+        # Flatten to single list
+        all_models = []
+        for provider_name, models in provider_models.items():
+            all_models.extend(models)
+        
+        model_infos = [
+            EmbeddingModelInfo(
+                name=m["name"],
+                provider=m["provider"],
+                dimension=m["dimension"],
+                description=m.get("description"),
+                max_sequence_length=m.get("max_sequence_length")
             )
+            for m in all_models
+        ]
         
-        model.is_active = False
-        session.add(model)
-        session.commit()
+        return AvailableModelsResponse(models=model_infos)
         
-        return {"message": f"Embedding model {model_id} deactivated successfully"}
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error deactivating embedding model: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to deactivate embedding model"
-        ) 
+        logger.error(f"Failed to discover embedding models: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to discover models: {str(e)}")
+
+
+@router.get("/embeddings/models", response_model=AvailableModelsResponse)
+async def list_available_embedding_models(
+    current_user: CurrentUser
+):
+    """
+    List available embedding models from Ollama (legacy endpoint).
+    
+    Note: This endpoint only returns Ollama models. Use POST /embeddings/models/discover
+    with runtime API keys to get models from all providers.
+    """
+    try:
+        provider = OllamaEmbeddingProvider()
+        models = await provider.discover_models()
+        
+        model_infos = [
+            EmbeddingModelInfo(
+                name=m["name"],
+                provider=m["provider"],
+                dimension=m["dimension"],
+                description=m.get("description"),
+                max_sequence_length=m.get("max_sequence_length")
+            )
+            for m in models
+        ]
+        
+        return AvailableModelsResponse(models=model_infos)
+        
+    except Exception as e:
+        logger.error(f"Failed to discover embedding models: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to discover models: {str(e)}")

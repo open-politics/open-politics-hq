@@ -558,7 +558,10 @@ async def process_single_asset_schema(
             model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
             thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
             
-            logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
+            # Extract runtime API keys from run configuration (passed from frontend)
+            runtime_api_keys = run_config.get("api_keys")
+            
+            logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
             
             provider_response = await model_registry.classify(
                 text_content=text_content_for_provider,
@@ -566,8 +569,9 @@ async def process_single_asset_schema(
                 model_name=model_name,
                 instructions=final_schema_instructions,
                 thinking_enabled=thinking_enabled,
+                runtime_api_keys=runtime_api_keys,
                 **{k: v for k, v in full_provider_config_for_classify.items() 
-                   if k not in ['thinking_config', 'model_name']}
+                   if k not in ['thinking_config', 'model_name', 'api_keys']}
             )
             
             # Convert to envelope format for compatibility
@@ -780,7 +784,10 @@ async def process_assets_sequential(
                 model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
                 thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
                 
-                logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
+                # Extract runtime API keys from run configuration (passed from frontend)
+                runtime_api_keys = run_config.get("api_keys")
+                
+                logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
                 
                 provider_response = await model_registry.classify(
                     text_content=text_content_for_provider,
@@ -788,8 +795,9 @@ async def process_assets_sequential(
                     model_name=model_name,
                     instructions=final_schema_instructions,
                     thinking_enabled=thinking_enabled,
+                    runtime_api_keys=runtime_api_keys,
                     **{k: v for k, v in full_provider_config_for_classify.items() 
-                       if k not in ['thinking_config', 'model_name']}
+                       if k not in ['thinking_config', 'model_name', 'api_keys']}
                 )
                 
                 # Convert to envelope format for compatibility

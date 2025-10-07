@@ -20,7 +20,8 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
     
     def __init__(self, base_url: str = "http://ollama:11434"):
         self.base_url = base_url.rstrip('/')
-        self.client = httpx.AsyncClient(timeout=300.0)
+        # Increased timeout for thinking models and complex tool chains
+        self.client = httpx.AsyncClient(timeout=900.0)  # 15 minutes
         self._model_cache = {}
         logger.info(f"Ollama provider initialized with base_url: {self.base_url}")
     
@@ -124,16 +125,32 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                       tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         
-        # Non-streaming with tools: implement tool loop
-        if not stream and tools and tool_executor:
-            return await self._tool_loop_generate(
-                messages=messages,
-                model_name=model_name,
-                tools=tools,
-                thinking_enabled=thinking_enabled,
-                tool_executor=tool_executor,
-                **kwargs
-            )
+        # Tools with executor: implement tool loop (both streaming and non-streaming)
+        if tools and tool_executor:
+            if stream:
+                # Streaming with tools: wrap tool loop to yield final result
+                logger.info("Ollama streaming with tools: wrapping tool loop execution")
+                return self._stream_tool_loop_wrapper(
+                    messages=messages,
+                    model_name=model_name,
+                    tools=tools,
+                    thinking_enabled=thinking_enabled,
+                    tool_executor=tool_executor,
+                    **kwargs
+                )
+            else:
+                # Non-streaming with tools: collect all streaming results and return final
+                final_response = None
+                async for response in self._tool_loop_generate_streaming(
+                    messages=messages,
+                    model_name=model_name,
+                    tools=tools,
+                    thinking_enabled=thinking_enabled,
+                    tool_executor=tool_executor,
+                    **kwargs
+                ):
+                    final_response = response  # Keep updating until we get the final one
+                return final_response
 
         # Work on a defensive copy of messages; never mutate caller's list
         try:
@@ -142,22 +159,14 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             # Fallback to original reference if copying fails
             messages_for_request = messages
         
-        # Ollama thinking mode - encourage <think> tags (modify copy only)
-        if thinking_enabled:
-            system_msg = {
-                "role": "system",
-                "content": """When solving problems, please show your thinking process using <think></think> 
-                              tags before providing your final answer. If tool calls are requested, get to 
-                              the call quickly"""            
-            }
-            system_exists = False
-            for msg in messages_for_request:
-                if msg.get("role") == "system":
-                    msg["content"] = (msg.get("content") or "") + "\n\n" + system_msg["content"]
-                    system_exists = True
-                    break
-            if not system_exists:
-                messages_for_request.insert(0, system_msg)
+        # Ollama thinking mode - CRITICAL: DON'T add system message prompts about <think> tags
+        # 
+        # Models with thinking capability (like Qwen3-Thinking) have <think> baked into their
+        # chat template. They output only </think> to mark the end of thinking.
+        # 
+        # Adding prompt instructions like "use <think></think> tags" confuses these models.
+        # Instead, let the model's native chat template handle thinking automatically.
+        # Our extraction logic handles both complete tags and Qwen-style (missing opening).
 
         # Build payload using the local copy
         payload: Dict[str, Any] = {
@@ -173,6 +182,13 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         # Ollama tools format - normalize tools to ensure compatibility
         if tools:
             payload["tools"] = self._normalize_tools_for_ollama(tools)
+        
+        # Enable thinking mode if supported (some models support it, some don't)
+        if thinking_enabled:
+            model_info = self._model_cache.get(model_name)
+            if model_info and model_info.supports_thinking:
+                payload["thinking"] = True
+                logger.info(f"Ollama: Enabled native thinking mode for {model_name}")
         
         # Map a few known-safe options into Ollama's options object
         options: Dict[str, Any] = {}
@@ -196,36 +212,138 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         else:
             return await self._generate(payload)
     
-    async def _tool_loop_generate(self,
-                                 messages: List[Dict[str, str]],
-                                 model_name: str,
-                                 tools: List[Dict],
-                                 thinking_enabled: bool,
-                                 tool_executor: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
-                                 **kwargs) -> GenerationResponse:
-        """Handle non-streaming generation with a tool execution loop for Ollama."""
-        
-        iterative_messages = list(messages)
-        
-        for _ in range(5): # Limit tool loop iterations
-            resp = await self.generate(
-                messages=iterative_messages,
+    async def _stream_tool_loop_wrapper(self,
+                                       messages: List[Dict[str, str]],
+                                       model_name: str,
+                                       tools: List[Dict],
+                                       thinking_enabled: bool,
+                                       tool_executor: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
+                                       **kwargs) -> AsyncIterator[GenerationResponse]:
+        """
+        Streaming wrapper that yields intermediate results during tool loop execution.
+        This provides real-time updates like Anthropic's implementation.
+        """
+        try:
+            logger.info("Executing Ollama tool loop with streaming updates")
+            
+            # Execute tool loop and yield intermediate results
+            async for response in self._tool_loop_generate_streaming(
+                messages=messages,
                 model_name=model_name,
                 tools=tools,
-                stream=False,
                 thinking_enabled=thinking_enabled,
+                tool_executor=tool_executor,
                 **kwargs
-            )
+            ):
+                yield response
             
-            tool_calls = getattr(resp, "tool_calls", None) or []
+        except Exception as e:
+            logger.error(f"Ollama tool loop streaming wrapper error: {e}", exc_info=True)
+            raise
+    
+    async def _tool_loop_generate_streaming(self,
+                                           messages: List[Dict[str, str]],
+                                           model_name: str,
+                                           tools: List[Dict],
+                                           thinking_enabled: bool,
+                                           tool_executor: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
+                                           **kwargs) -> AsyncIterator[GenerationResponse]:
+        """
+        Handle tool loop with streaming updates and segmented thinking (like Anthropic).
+        Yields intermediate results during generation AND tool execution.
+        """
+        
+        iterative_messages = list(messages)
+        all_tool_executions = []  # Track all tool executions for frontend display
+        max_iterations = 10
+        accumulated_content = ""
+        
+        for iteration in range(1, max_iterations + 1):
+            logger.info(f"Ollama tool loop iteration {iteration}/{max_iterations} - streaming generation")
+            
+            # Stream the generation and collect the final response
+            iteration_content = ""
+            current_thinking = None
+            final_resp = None
+            tool_calls = []
+            
+            # Build payload for direct streaming (bypass generate() to avoid coroutine issues)
+            try:
+                messages_for_request: List[Dict[str, Any]] = [dict(m) for m in (iterative_messages or [])]
+            except Exception:
+                messages_for_request = list(iterative_messages or [])
+            
+            # DON'T add thinking prompts - let model use native thinking capability
+            
+            payload = {
+                "model": model_name,
+                "messages": messages_for_request,
+                "stream": True,
+                "tools": self._normalize_tools_for_ollama(tools),
+                "options": kwargs.get("options", {})
+            }
+            
+            # Enable native thinking mode if supported and requested
+            if thinking_enabled:
+                model_info = self._model_cache.get(model_name)
+                if model_info and model_info.supports_thinking:
+                    payload["thinking"] = True
+            
+            # Call _stream_generate directly to get the async iterator
+            async for chunk in self._stream_generate(payload):
+                final_resp = chunk
+                iteration_content = chunk.content or ""
+                current_thinking = chunk.thinking_trace
+                tool_calls = getattr(chunk, "tool_calls", None) or []
+                
+                # Yield streaming content updates
+                yield GenerationResponse(
+                    content=accumulated_content + iteration_content,
+                    model_used=chunk.model_used,
+                    thinking_trace=current_thinking,
+                    tool_calls=None,
+                    tool_executions=all_tool_executions.copy() if all_tool_executions else None,
+                    raw_response=chunk.raw_response
+                )
+            
+            # After streaming completes, check for tool calls
+            logger.info(f"Ollama iteration {iteration} complete. Content: {len(iteration_content)} chars, Tools: {len(tool_calls)}")
+            
+            # If no tool calls, we're done
             if not tool_calls:
-                return resp
+                logger.info(f"Ollama tool loop completed at iteration {iteration} with no more tool calls")
+                # Accumulate final content
+                accumulated_content += iteration_content
+                
+                # Yield final response with all tool executions
+                final_response = GenerationResponse(
+                    content=accumulated_content,
+                    model_used=final_resp.model_used if final_resp else model_name,
+                    thinking_trace=current_thinking,
+                    tool_calls=None,
+                    tool_executions=all_tool_executions if all_tool_executions else None,
+                    raw_response=final_resp.raw_response if final_resp else None
+                )
+                yield final_response
+                return
+            
+            # We have tool calls - accumulate content and prepare to execute tools
+            logger.info(f"Ollama tool loop iteration {iteration}: Executing {len(tool_calls)} tool calls")
+            accumulated_content += iteration_content
             
             # Append model's response to the conversation history before tool results
-            # This is important for some models to see their own tool call requests.
-            if resp.raw_response and resp.raw_response.get("message"):
-                iterative_messages.append(resp.raw_response["message"])
+            # Build the message structure that Ollama expects
+            if final_resp and final_resp.raw_response and final_resp.raw_response.get("message"):
+                iterative_messages.append(final_resp.raw_response["message"])
+            else:
+                # Fallback: construct message manually
+                iterative_messages.append({
+                    "role": "assistant",
+                    "content": iteration_content,
+                    "tool_calls": tool_calls
+                })
 
+            # Process each tool call and yield intermediate updates
             for tc in tool_calls:
                 try:
                     name = ((tc or {}).get("function") or {}).get("name") or tc.get("name")
@@ -234,12 +352,53 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                     try:
                         args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
                     except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse tool arguments for {name}: {args_str}")
                         args = {}
                     
                     if not name:
+                        logger.warning("Tool call missing name, skipping")
                         continue
 
+                    logger.info(f"Executing Ollama tool: {name} with args: {args}")
                     tool_result = await tool_executor(name, args)
+                    
+                    # Ensure tool_result is JSON serializable
+                    if hasattr(tool_result, 'model_dump'):
+                        tool_result = tool_result.model_dump()
+                    elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
+                        # Convert other objects to string representation
+                        tool_result = str(tool_result)
+                    
+                    # Check if tool execution failed
+                    has_error = isinstance(tool_result, dict) and tool_result.get("error")
+                    
+                    # Record execution for frontend display with segmented thinking
+                    tool_execution = {
+                        "id": tc.get("id") or f"call_{name}_{iteration}",
+                        "tool_name": name,
+                        "arguments": args,
+                        "result": tool_result if not has_error else None,
+                        "error": tool_result.get("error") if has_error else None,
+                        "status": "failed" if has_error else "completed",
+                        "iteration": iteration,
+                        "thinking_before": current_thinking if current_thinking else None  # Attach thinking to tool
+                    }
+                    all_tool_executions.append(tool_execution)
+                    
+                    # Yield intermediate update with this tool execution
+                    yield GenerationResponse(
+                        content=accumulated_content,
+                        model_used=final_resp.model_used if final_resp else model_name,
+                        thinking_trace=None,  # Thinking is attached to tool now
+                        tool_calls=None,
+                        tool_executions=all_tool_executions.copy(),
+                        raw_response=final_resp.raw_response if final_resp else None
+                    )
+                    
+                    if has_error:
+                        logger.warning(f"Tool {name} returned error: {tool_result.get('error')}")
+                    else:
+                        logger.info(f"Tool {name} executed successfully")
                     
                     # Append tool result back to the conversation for the model to use
                     # Ollama expects a specific format for tool results
@@ -248,30 +407,100 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                         "content": json.dumps(tool_result)
                     })
                 except Exception as e:
+                    logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
                     # If a single tool call fails, provide error message to model
                     error_result = {"error": f"Tool execution failed: {str(e)}"}
+                    
+                    # Record failed execution with thinking
+                    failed_execution = {
+                        "id": tc.get("id") or f"call_{name}_{iteration}",
+                        "tool_name": name,
+                        "arguments": args,
+                        "error": str(e),
+                        "status": "failed",
+                        "iteration": iteration,
+                        "thinking_before": current_thinking if current_thinking else None
+                    }
+                    all_tool_executions.append(failed_execution)
+                    
+                    # Yield intermediate update for failed execution
+                    yield GenerationResponse(
+                        content=accumulated_content,
+                        model_used=final_resp.model_used if final_resp else model_name,
+                        thinking_trace=None,
+                        tool_calls=None,
+                        tool_executions=all_tool_executions.copy(),
+                        raw_response=final_resp.raw_response if final_resp else None
+                    )
+                    
                     iterative_messages.append({
                         "role": "tool",
                         "content": json.dumps(error_result)
                     })
                     continue
         
-        # If loop finishes, return the last response from the model
-        return await self.generate(
-            messages=iterative_messages,
-            model_name=model_name,
-            tools=tools,
-            stream=False,
-            thinking_enabled=thinking_enabled,
-            **kwargs
+        # Max iterations reached - stream one more time and yield final result
+        logger.warning(f"Ollama tool loop reached maximum iterations ({max_iterations})")
+        
+        last_content = ""
+        last_thinking = None
+        last_resp = None
+        
+        # Build payload for direct streaming
+        try:
+            messages_for_request: List[Dict[str, Any]] = [dict(m) for m in (iterative_messages or [])]
+        except Exception:
+            messages_for_request = list(iterative_messages or [])
+        
+        # DON'T add thinking prompts - let model use native thinking capability
+        
+        payload = {
+            "model": model_name,
+            "messages": messages_for_request,
+            "stream": True,
+            "tools": self._normalize_tools_for_ollama(tools),
+            "options": kwargs.get("options", {})
+        }
+        
+        # Enable native thinking mode if supported and requested
+        if thinking_enabled:
+            model_info = self._model_cache.get(model_name)
+            if model_info and model_info.supports_thinking:
+                payload["thinking"] = True
+        
+        # Call _stream_generate directly
+        async for chunk in self._stream_generate(payload):
+            last_resp = chunk
+            last_content = chunk.content or ""
+            last_thinking = chunk.thinking_trace
+            
+            # Yield streaming updates
+            yield GenerationResponse(
+                content=accumulated_content + last_content,
+                model_used=chunk.model_used,
+                thinking_trace=last_thinking,
+                tool_calls=None,
+                tool_executions=all_tool_executions if all_tool_executions else None,
+                raw_response=chunk.raw_response
+            )
+        
+        # Final yield with accumulated content
+        accumulated_content += last_content
+        yield GenerationResponse(
+            content=accumulated_content,
+            model_used=last_resp.model_used if last_resp else model_name,
+            thinking_trace=last_thinking,
+            tool_calls=None,
+            tool_executions=all_tool_executions if all_tool_executions else None,
+            raw_response=last_resp.raw_response if last_resp else None
         )
 
     async def _generate(self, payload: Dict) -> GenerationResponse:
         """Handle non-streaming generation"""
         try:
             # Log the payload for debugging tool issues
-            if payload.get("tools"):
-                logger.info(f"Ollama request with tools: {json.dumps(payload.get('tools'), indent=2)}")
+            # if payload.get("tools"):
+                # logger.info(f"Ollama request with tools: {json.dumps(payload.get('tools'), indent=2)}")
                 # Also log the full payload to see if there are other issues
                 # logger.info(f"Full Ollama payload: {json.dumps(payload, indent=2)}")
             
@@ -364,41 +593,86 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             raise RuntimeError(f"Ollama generation failed: {str(e)}")
     
     async def _stream_generate(self, payload: Dict) -> AsyncIterator[GenerationResponse]:
-        """Handle streaming generation"""
+        """Handle streaming generation - stream as-is, extract thinking at the end"""
         try:
             async with self.client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
                 response.raise_for_status()
                 
                 accumulated_content = ""
-                thinking_trace = ""
-                in_thinking = False
                 model_used = payload["model"]
+                chunk_count = 0
                 
                 async for line in response.aiter_lines():
                     try:
+                        # Debug: Log raw first few lines
+                        if chunk_count < 3:
+                            logger.info(f"Ollama RAW line #{chunk_count + 1}: {line[:200] if line else 'EMPTY'}")
+                        
                         chunk = json.loads(line)
+                        chunk_count += 1
+                        
+                        # Debug: Log first few chunks to diagnose missing <think> tag
+                        if chunk_count <= 5:
+                            msg_preview = chunk.get("message", {})
+                            content_preview = msg_preview.get("content", "") if isinstance(msg_preview, dict) else ""
+                            logger.info(f"Ollama chunk #{chunk_count}: "
+                                       f"content_length={len(content_preview)}, "
+                                       f"has_<think>={'<think>' in content_preview}, "
+                                       f"content_preview={repr(content_preview[:150]) if content_preview else 'EMPTY'}, "
+                                       f"chunk_keys={list(chunk.keys())}, "
+                                       f"message_keys={list(msg_preview.keys()) if isinstance(msg_preview, dict) else 'N/A'}")
+                        
                         if chunk.get("done"):
+                            # NOW extract thinking and clean content
+                            final_thinking = self._extract_thinking_trace(accumulated_content)
+                            final_content = self._remove_thinking_tags(accumulated_content)
+                            
+                            # Debug logging
+                            has_opening = "<think>" in accumulated_content
+                            has_closing = "</think>" in accumulated_content
+                            logger.info(f"Ollama stream complete. Total: {len(accumulated_content)} chars, "
+                                       f"<think>: {has_opening}, </think>: {has_closing}, "
+                                       f"Extracted thinking: {len(final_thinking) if final_thinking else 0} chars, "
+                                       f"Final content: {len(final_content)} chars")
+                            
+                            if has_opening and not has_closing:
+                                logger.warning("Ollama: Opening <think> tag found but no closing tag!")
+                            
+                            tool_calls = chunk.get("message", {}).get("tool_calls") if chunk.get("message") else None
+                            
+                            yield GenerationResponse(
+                                content=final_content,
+                                model_used=model_used,
+                                thinking_trace=final_thinking,
+                                tool_calls=tool_calls,
+                                raw_response=chunk
+                            )
                             break
                         
                         msg = chunk.get("message", {}) or {}
                         content_delta = msg.get("content", "")
+                        
+                        if not content_delta:
+                            # Log if we're skipping chunks that might contain metadata
+                            if chunk_count <= 5 and msg:
+                                logger.debug(f"Ollama chunk #{chunk_count}: Skipping empty content (msg keys: {list(msg.keys())})")
+                            continue
+                        
                         accumulated_content += content_delta
                         
-                        # Handle Ollama thinking tags in streaming
+                        # Debug: Log when we see thinking tags
                         if "<think>" in content_delta:
-                            in_thinking = True
+                            logger.info(f"Ollama: Detected <think> tag in stream. Accumulated so far: {len(accumulated_content)} chars")
                         if "</think>" in content_delta:
-                            in_thinking = False
+                            logger.info(f"Ollama: Detected </think> tag in stream. Total content: {len(accumulated_content)} chars")
                         
-                        if in_thinking or "<think>" in content_delta or "</think>" in content_delta:
-                            thinking_trace += content_delta
-                        
-                        tool_calls = msg.get("tool_calls") or self._extract_tool_calls(accumulated_content)
+                        # Stream content delta as-is (with tags included temporarily)
+                        tool_calls = msg.get("tool_calls") or None
                         
                         yield GenerationResponse(
-                            content=self._remove_thinking_tags(accumulated_content),
+                            content=accumulated_content,  # Stream raw accumulated content
                             model_used=model_used,
-                            thinking_trace=self._clean_thinking_trace(thinking_trace) if thinking_trace else None,
+                            thinking_trace=None,  # Don't extract until complete
                             tool_calls=tool_calls,
                             raw_response=chunk
                         )
@@ -430,27 +704,36 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                 async with self.client.stream("POST", f"{self.base_url}/api/chat", json=retry_payload) as response:
                     response.raise_for_status()
                     accumulated_content = ""
-                    thinking_trace = ""
-                    in_thinking = False
                     model_used = retry_payload["model"]
+                    
                     async for line in response.aiter_lines():
                         try:
                             chunk = json.loads(line)
                             if chunk.get("done"):
+                                # Final extraction
+                                final_thinking = self._extract_thinking_trace(accumulated_content)
+                                final_content = self._remove_thinking_tags(accumulated_content)
+                                yield GenerationResponse(
+                                    content=final_content,
+                                    model_used=model_used,
+                                    thinking_trace=final_thinking,
+                                    tool_calls=None,
+                                    raw_response=chunk
+                                )
                                 break
+                            
                             msg = chunk.get("message", {}) or {}
                             content_delta = msg.get("content", "")
+                            if not content_delta:
+                                continue
+                            
                             accumulated_content += content_delta
-                            if "<think>" in content_delta:
-                                in_thinking = True
-                            if "</think>" in content_delta:
-                                in_thinking = False
-                            if in_thinking or "<think>" in content_delta or "</think>" in content_delta:
-                                thinking_trace += content_delta
+                            
+                            # Stream as-is
                             yield GenerationResponse(
-                                content=self._remove_thinking_tags(accumulated_content),
+                                content=accumulated_content,
                                 model_used=model_used,
-                                thinking_trace=self._clean_thinking_trace(thinking_trace) if thinking_trace else None,
+                                thinking_trace=None,
                                 tool_calls=None,
                                 raw_response=chunk
                             )
@@ -463,17 +746,47 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             raise RuntimeError(f"Ollama streaming failed: {str(e)}")
     
     def _extract_thinking_trace(self, content: str) -> Optional[str]:
-        """Ollama: Extract content between <think></think> tags"""
+        """Ollama: Extract content between <think></think> tags
+        
+        Handles both:
+        - Complete tags: <think>...</think>
+        - Qwen-style (missing opening): Everything before </think>
+          Note: Some models like Qwen3-Thinking bake <think> into their chat template,
+          so they only output </think>. This is intentional behavior.
+        """
+        # First try complete tags
         think_pattern = r'<think>(.*?)</think>'
         matches = re.findall(think_pattern, content, re.DOTALL)
         
         if matches:
             return '\n'.join(matches).strip()
+        
+        # Qwen-style: Only has closing tag (opening is in chat template)
+        # Extract everything before </think>
+        if '</think>' in content and '<think>' not in content:
+            parts = content.split('</think>', 1)
+            if parts[0].strip():
+                logger.debug(f"Ollama: Qwen-style thinking detected (missing opening tag), extracted {len(parts[0])} chars")
+                return parts[0].strip()
+        
         return None
     
     def _remove_thinking_tags(self, content: str) -> str:
-        """Remove <think></think> tags and their content from the main response"""
-        return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+        """Remove <think></think> tags and their content from the main response
+        
+        Handles both:
+        - Complete tags: <think>...</think>
+        - Qwen-style (missing opening): Everything before </think>
+        """
+        # Remove complete thinking blocks
+        cleaned = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        
+        # Qwen-style: Only has closing tag, remove everything before it
+        if '</think>' in cleaned and '<think>' not in cleaned:
+            parts = cleaned.split('</think>', 1)
+            cleaned = parts[1] if len(parts) > 1 else cleaned
+        
+        return cleaned.strip()
     
     def _clean_thinking_trace(self, thinking_trace: str) -> str:
         """Clean up thinking trace by removing tags"""
@@ -497,29 +810,43 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         return tool_calls if tool_calls else None
     
     def _normalize_tools_for_ollama(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Normalize tools for Ollama compatibility.
-        
-        This converts MCP tools to the 'function' format that many models expect,
-        improving compatibility.
-        """
+        """Convert tools to Ollama's function calling format."""
         normalized_tools = []
+        
         for tool in tools:
-            if isinstance(tool, dict) and tool.get("type") == "mcp":
-                # Convert MCP tool to function tool format
-                normalized_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool.get("name"),
-                        "description": tool.get("description"),
-                        "parameters": tool.get("parameters", {"type": "object", "properties": {}})
-                    }
-                })
-            elif isinstance(tool, dict) and tool.get("type") == "function":
-                # Pass native function tools through
-                normalized_tools.append(tool)
+            # Extract tool info based on format
+            if tool.get("type") == "mcp":
+                name = tool.get("name")
+                description = tool.get("description")
+                parameters = tool.get("parameters")
+            elif tool.get("type") == "function":
+                if isinstance(tool.get("function"), dict):
+                    # Already in function format, pass through
+                    normalized_tools.append(tool)
+                    continue
+                else:
+                    # Bare function format
+                    name = tool.get("name")
+                    description = tool.get("description")
+                    parameters = tool.get("parameters")
             else:
-                logger.warning(f"Skipping unsupported tool type for Ollama: {tool.get('type')}")
+                logger.warning(f"Skipping tool with unknown type: {tool.get('type')}")
+                continue
+            
+            # Skip tools with missing required fields
+            if not name or not parameters:
+                logger.warning(f"Skipping tool with missing name or parameters: {tool}")
+                continue
+            
+            # Build Ollama tool definition (nested function format)
+            normalized_tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description or f"Execute {name}",
+                    "parameters": parameters
+                }
+            })
         
         return normalized_tools
 

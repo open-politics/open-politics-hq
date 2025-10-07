@@ -1,6 +1,6 @@
 'use client';
 
-import InfospaceManager from '@/components/collection/infospaces/management/InfospaceManager';
+import InfospaceManager from '@/components/collection/management/InfospaceManager';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 
 export default function InfospaceDashboardPage() {

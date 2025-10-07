@@ -67,6 +67,7 @@ celery.conf.update(
         'app.api.tasks.user_backup',
         'app.api.tasks.monitor_tasks',
         'app.api.tasks.pipeline_tasks',
+        'app.api.tasks.embed',
     )
 )
 

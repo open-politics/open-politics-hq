@@ -1,10 +1,8 @@
 """
-OpenAI Language Model Provider Implementation
+OpenAI Language Model Provider Implementation using Official SDK
 """
 import logging
 import json
-import httpx
-import re
 from typing import Dict, List, Optional, AsyncIterator, Union, Any, Callable, Awaitable
 
 from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationResponse
@@ -12,55 +10,62 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Default OpenAI model configurations
+DEFAULT_OPENAI_MODELS = {
+    "gpt-5-nano": {
+        "description": "GPT-5 Nano - Efficient reasoning model optimized for intelligence analysis",
+        "supports_thinking": True,
+    },
+}
+
 
 class OpenAILanguageModelProvider(LanguageModelProvider):
     """
-    OpenAI implementation of the LanguageModelProvider interface.
-    Handles chat, structured output, tool calls, and streaming with OpenAI-specific edge cases.
+    OpenAI implementation using the official OpenAI SDK.
+    Handles chat, structured output, tool calls, and streaming with the Responses API.
     """
     
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("OpenAI SDK not installed. Run: pip install openai")
+        
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
-        self.client = httpx.AsyncClient(
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            timeout=300.0
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url
         )
         self._model_cache = {}
-        logger.info(f"OpenAI provider initialized with base_url: {self.base_url}")
+        logger.info(f"OpenAI SDK provider initialized with base_url: {self.base_url}")
     
     async def discover_models(self) -> List[ModelInfo]:
-        """OpenAI: GET /v1/models (kept minimal; single model assumed during testing)."""
-        try:
-            response = await self.client.get(f"{self.base_url}/models")
-            response.raise_for_status()
-            data = response.json()
-            models: List[ModelInfo] = []
-            for model_data in data.get("data", []):
-                model_name = model_data["id"]
-                info = ModelInfo(
-                    name=model_name,
-                    provider="openai",
-                    supports_structured_output=True,
-                    supports_tools=True,
-                    supports_streaming=True,
-                    supports_thinking=True,
-                    supports_multimodal=True,
-                    max_tokens=None,
-                    context_length=None,
-                    description=f"OpenAI {model_name}"
-                )
-                models.append(info)
-                self._model_cache[model_name] = info
-            logger.info(f"Discovered {len(models)} OpenAI models (capabilities assumed during testing)")
-            return models
-         
-        except Exception as e:
-            logger.error(f"Failed to discover OpenAI models: {e}")
-            return []
+        """Discover available OpenAI models using default list.
+        
+        Returns hardcoded list of supported models since API-based discovery
+        requires a valid API key (which is only provided at runtime from frontend).
+        """
+        models = []
+        
+        for model_name, model_config in DEFAULT_OPENAI_MODELS.items():
+            model_info = ModelInfo(
+                name=model_name,
+                provider="openai",
+                supports_structured_output=True,
+                supports_tools=True,
+                supports_streaming=True,
+                supports_thinking=model_config.get("supports_thinking", False),
+                supports_multimodal=True,
+                max_tokens=None,
+                context_length=None,
+                description=model_config.get("description", f"OpenAI {model_name}")
+            )
+            models.append(model_info)
+            self._model_cache[model_name] = model_info
+        
+        logger.info(f"Loaded {len(models)} OpenAI models from defaults")
+        return models
     
     async def generate(self, 
                       messages: List[Dict[str, str]],
@@ -71,388 +76,624 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                       thinking_enabled: bool = False,
                       tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
-        
-        # Generate with OpenAI Responses API
-        
-        # ALWAYS use Responses API - it's the only API we want to use
-        # The Responses API is a superset of Chat Completions and handles everything better
-            # Reasoning models do not support tools/function calling
-            # They may support MCP tools via Responses API; include if provided
-            # Remove params not supported by reasoning models
-            # Only pass through a very small set of known-safe parameters to Responses API
-            clean_kwargs: Dict[str, Any] = {}
-            # Map max_tokens -> max_output_tokens if provided
-            if "max_tokens" in kwargs and isinstance(kwargs.get("max_tokens"), int):
-                clean_kwargs["max_output_tokens"] = kwargs.get("max_tokens")
-            if "temperature" in kwargs and isinstance(kwargs.get("temperature"), (int, float)):
-                clean_kwargs["temperature"] = kwargs.get("temperature")
-            
-            # DO NOT pass through any other kwargs to avoid unsupported parameters
-            # Explicitly filter out response_format since we handle it separately via text.format
-
-            # For Responses API, separate system instructions from input messages
-            system_instructions = None
-            input_messages = messages
-            if messages and messages[0].get("role") == "system":
-                system_instructions = messages[0].get("content")
-                input_messages = messages[1:]
-
-            # Allow direct override with already-formatted Responses input (e.g., tool loop)
-            responses_input_override: Optional[Union[str, List[Dict[str, Any]]]] = kwargs.pop("responses_input", None)
-
-            # Non-streaming with tools: implement tool loop
-            if not stream and tools and tool_executor:
-                return await self._tool_loop_generate(
-                    messages=messages,
-                    model_name=model_name,
-                    tools=tools,
-                    thinking_enabled=thinking_enabled,
-                    tool_executor=tool_executor,
-                    response_format=response_format,
-                    **kwargs
-                )
-            
-            # Always allow tools during testing
-            if tools:
-                # No capability heuristics, always pass tools
-                pass
-
-            payload: Dict[str, Any] = {
-                "model": model_name,
-                "input": responses_input_override if responses_input_override is not None else self._messages_to_responses_input(system_instructions, input_messages),
-                "stream": stream,
-                # Keep the payload minimal; add only known-safe parameters
-                **clean_kwargs,
-            }
-            
-            # Get context token from kwargs to build dynamic MCP server URL
-            mcp_context_token = kwargs.get("mcp_context_token")
-            mcp_headers = kwargs.get("mcp_headers")
-
-            # Add reasoning if thinking is enabled - use correct format from docs
-            if thinking_enabled and payload.get("tools"):
-                # Per research, the flagship gpt-5 model requires the reasoning parameter
-                # to be present when tools are used.
-                payload["reasoning"] = {
-                    "effort": "medium"
-                }
-
-            # Responses API: handle both MCP tools and function tools
-            if tools:
-                responses_tools = self._prepare_tools_for_responses(tools, mcp_context_token, mcp_headers)
-                if responses_tools:
-                    payload["tools"] = responses_tools
-            
-            # Add structured output format if provided (Responses API uses text.format)
-            if response_format:
-                # Ensure we don't override existing text config, merge instead
-                if "text" not in payload:
-                    payload["text"] = {}
-                # Clean the schema to remove unsupported fields like 'default'
-                clean_schema = self._clean_json_schema_for_openai(response_format)
-                payload["text"]["format"] = {
-                    "type": "json_schema",
-                    "name": clean_schema.get("title", "StructuredOutput"),
-                    "schema": clean_schema
-                }
-                
-            # Execute the request directly - no fallback needed now that schema cleaning works
-            if stream:
-                return self._stream_generate_responses(payload)
-            else:
-                return await self._generate_responses(payload)
-    
-    async def _tool_loop_generate(self,
-                                 messages: List[Dict[str, str]],
-                                 model_name: str,
-                                 tools: List[Dict],
-                                 thinking_enabled: bool,
-                                 tool_executor: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
-                                 response_format: Optional[Dict] = None,
-                                 **kwargs) -> GenerationResponse:
-        """Handle non-streaming generation with a tool execution loop."""
-        
+        """
+        Generate response using OpenAI's Responses API via the official SDK.
+        """
+        # Separate system instructions from messages
         system_instructions = None
-        input_messages = list(messages)  # Work with a copy
+        input_messages = list(messages)
         if input_messages and input_messages[0].get("role") == "system":
             system_instructions = input_messages.pop(0).get("content")
-
-        # Initialize the conversation history correctly, once.
-        conversation_history = self._messages_to_responses_input(system_instructions, input_messages)
         
-        # Limit tool loop iterations to prevent infinite loops
-        for _ in range(5): 
-            # First, generate a response from the model
-            generation_payload = {
-                "model": model_name,
-                "input": conversation_history,
-                "stream": False,
-                "tools": self._normalize_tools_for_responses(tools),
-                "reasoning": {"effort": "medium"} if thinking_enabled else None
-            }
-            
-            # Add structured output format if provided
-            if response_format:
-                if "text" not in generation_payload:
-                    generation_payload["text"] = {}
-                # Clean the schema to remove unsupported fields like 'default'
-                clean_schema = self._clean_json_schema_for_openai(response_format)
-                generation_payload["text"]["format"] = {
-                    "type": "json_schema",
-                    "name": clean_schema.get("title", "StructuredOutput"),
-                    "schema": clean_schema
-                }
-            
-            # Clean up None values
-            generation_payload = {k: v for k, v in generation_payload.items() if v is not None}
-
-            resp_obj = await self._generate_responses(generation_payload)
-            
-            # Append model's output to the conversation history
-            if resp_obj.raw_response and resp_obj.raw_response.get("output"):
-                conversation_history.extend(resp_obj.raw_response.get("output", []))
-
-            # Check for tool calls
-            tool_calls = resp_obj.tool_calls
-            if not tool_calls:
-                return resp_obj
-
-            # Execute tool calls
-            for tool_call in tool_calls:
-                function_info = tool_call.get("function", {})
-                tool_name = function_info.get("name")
-                
-                try:
-                    args_str = function_info.get("arguments", "{}")
-                    arguments = json.loads(args_str)
-                except json.JSONDecodeError:
-                    arguments = {}
-
-                if tool_name:
-                    try:
-                        tool_result = await tool_executor(tool_name, arguments)
-                        conversation_history.append({
-                            "type": "function_call_output",
-                            "call_id": tool_call.get("id"),
-                            "output": json.dumps(tool_result)
-                        })
-                    except Exception as e:
-                        error_result = {"error": f"Tool execution failed: {str(e)}"}
-                        conversation_history.append({
-                            "type": "function_call_output",
-                            "call_id": tool_call.get("id"),
-                            "output": json.dumps(error_result)
-                        })
-
-        # If loop finishes, we need to make one final call to get the model's response
-        final_payload = {
+        # Convert messages to Responses API input format
+        input_items = self._messages_to_responses_input(input_messages)
+        
+        # Build the base request parameters
+        base_params = {
             "model": model_name,
-            "input": conversation_history,
-            "stream": False,
-            "reasoning": {"effort": "medium"} if thinking_enabled else None
+            "input": input_items,
+            "stream": stream,
+            "store": False,  # Use stateless mode - build conversation in input
         }
-        return await self._generate_responses({k: v for k, v in final_payload.items() if v is not None})
-
-    # Removed legacy /chat/completions code paths; always use /responses
-
-    async def _generate_responses(self, payload: Dict) -> GenerationResponse:
-        """Handle non-streaming generation via the Responses API (o1/o3)."""
-        try:
-            response = await self.client.post(f"{self.base_url}/responses", json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-            # Extract content from the nested structure
-            content = ""
-            output_items = data.get("output", [])
-            for item in output_items:
-                if item.get("type") == "message":
-                    content_blocks = item.get("content", [])
-                    for block in content_blocks:
-                        if block.get("type") == "output_text":
-                            content = block.get("text", "")
-                            break
-                    if content:
-                        break
+        
+        # Add system instructions if present
+        if system_instructions:
+            base_params["instructions"] = system_instructions
+        
+        # Add tools if provided
+        if tools:
+            base_params["tools"] = self._prepare_tools_for_responses(tools, kwargs.get("mcp_headers"))
+        
+        # Add structured output format if provided
+        if response_format:
+            base_params["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": response_format.get("title", "StructuredOutput"),
+                    "schema": self._clean_json_schema_for_openai(response_format)
+                }
+            }
+        
+        # Add other parameters
+        if "temperature" in kwargs:
+            base_params["temperature"] = kwargs["temperature"]
+        if "max_tokens" in kwargs:
+            base_params["max_output_tokens"] = kwargs["max_tokens"]
+        if "top_p" in kwargs:
+            base_params["top_p"] = kwargs["top_p"]
+        
+        # Try with thinking first if enabled
+        if thinking_enabled and tools:
+            request_params = base_params.copy()
+            request_params["reasoning"] = {"effort": "medium"}
             
-            # Fallback to other possible locations
-            if not content:
-                content = (
-                    data.get("output_text") or
-                    data.get("content") or 
-                    data.get("response", {}).get("output_text") or
-                    ""
-                )
-
-            # Extract function tool calls if present
-            tool_calls = self._extract_function_tool_calls_from_responses(data)
-
+            try:
+                if stream:
+                    # When we have tools with executor, wrap the tool loop for streaming
+                    if tool_executor:
+                        logger.info("Streaming with thinking + tools: wrapping tool loop execution")
+                        return self._stream_tool_loop_wrapper(request_params, tool_executor)
+                    else:
+                        return self._stream_generate_responses(request_params)
+                else:
+                    return await self._generate_responses(request_params, tool_executor)
+            except Exception as e:
+                error_str = str(e)
+                # Check if the error is about unsupported reasoning parameter
+                if "reasoning" in error_str and ("unsupported" in error_str or "not supported" in error_str):
+                    logger.warning(f"Model {model_name} doesn't support reasoning, retrying without thinking")
+                    # Fall back to request without reasoning
+                    if stream:
+                        if tool_executor and base_params.get("tools"):
+                            logger.info("Fallback: Streaming with tools (no thinking)")
+                            return self._stream_tool_loop_wrapper(base_params, tool_executor)
+                        else:
+                            return self._stream_generate_responses(base_params)
+                    else:
+                        return await self._generate_responses(base_params, tool_executor)
+                else:
+                    # Re-raise if it's a different error
+                    raise
+        
+        # No thinking enabled, use base params directly
+        try:
+            if stream:
+                logger.info(f"Using streaming mode")
+                # When we have tools with executor, we need to wrap the non-streaming tool loop
+                # in an async generator that yields the final result
+                if tool_executor and base_params.get("tools"):
+                    logger.info("Streaming with tools: wrapping tool loop execution")
+                    return self._stream_tool_loop_wrapper(base_params, tool_executor)
+                else:
+                    return self._stream_generate_responses(base_params)
+            else:
+                logger.info(f"Using non-streaming mode with tools={len(base_params.get('tools', []))} tool_executor={tool_executor is not None}")
+                return await self._generate_responses(base_params, tool_executor)
+        except Exception as e:
+            logger.error(f"OpenAI SDK generation error: {e}", exc_info=True)
+            raise RuntimeError(f"OpenAI generation failed: {str(e)}")
+    
+    async def _stream_tool_loop_wrapper(self, request_params: Dict, tool_executor: Callable) -> AsyncIterator[GenerationResponse]:
+        """
+        Wrapper that executes the tool loop and yields the final result for streaming.
+        
+        The Responses API tool loop is not truly streaming - it executes all tool calls
+        synchronously and returns the final result. This wrapper makes it compatible with
+        streaming endpoints by yielding the final response.
+        """
+        try:
+            # Execute the entire tool loop
+            final_response = await self._tool_loop_generate_responses(request_params, tool_executor)
+            
+            # Yield the final response
+            yield final_response
+            
+        except Exception as e:
+            logger.error(f"Tool loop streaming wrapper error: {e}", exc_info=True)
+            raise
+    
+    async def _generate_responses(self, request_params: Dict, tool_executor: Optional[Callable] = None) -> GenerationResponse:
+        """Handle non-streaming generation using the Responses API with tool execution loop."""
+        try:
+            # If we have a tool executor, implement the tool loop
+            if tool_executor and request_params.get("tools"):
+                logger.info(f"Starting tool loop with {len(request_params.get('tools', []))} tools")
+                return await self._tool_loop_generate_responses(request_params, tool_executor)
+            
+            # Otherwise, do a simple single-shot generation
+            logger.info("No tool executor or tools - doing single-shot generation")
+            response = self.client.responses.create(**request_params)
+            
+            # Check response status and handle errors
+            logger.info(f"Response status: {response.status}")
+            if response.error:
+                logger.error(f"OpenAI API error: {response.error}")
+                raise RuntimeError(f"OpenAI API returned error: {response.error}")
+            
+            if response.status != "completed":
+                logger.warning(f"Response status is '{response.status}', not 'completed'")
+                if response.status in ["failed", "cancelled"]:
+                    raise RuntimeError(f"Response generation {response.status}")
+            
+            # Extract content from the response
+            content = ""
+            tool_calls = []
+            
+            logger.info(f"Response has {len(response.output)} output items")
+            for output_item in response.output:
+                logger.debug(f"Processing output item: type={output_item.type}, role={getattr(output_item, 'role', 'N/A')}")
+                
+                # Handle top-level function_call output items
+                if output_item.type == "function_call":
+                    logger.info(f"Found top-level function call: {output_item.name}")
+                    tool_calls.append({
+                        "id": output_item.id or f"call_{output_item.name}",
+                        "type": "function",
+                        "function": {
+                            "name": output_item.name,
+                            "arguments": output_item.arguments or "{}"
+                        }
+                    })
+                # Handle message output items with content
+                elif output_item.type == "message" and output_item.role == "assistant":
+                    for content_part in output_item.content:
+                        if content_part.type == "output_text":
+                            content = content_part.text
+                        elif content_part.type == "function_call":
+                            logger.info(f"Found function call in message content: {content_part.name}")
+                            tool_calls.append({
+                                "id": content_part.id or f"call_{content_part.name}",
+                                "type": "function",
+                                "function": {
+                                    "name": content_part.name,
+                                    "arguments": content_part.arguments or "{}"
+                                }
+                            })
+            
+            # Log warning if we got neither content nor tool calls
+            if not content and not tool_calls:
+                logger.warning("Response generated neither content nor tool calls!")
+                logger.debug(f"Raw response: {response.model_dump() if hasattr(response, 'model_dump') else response}")
+            
             return GenerationResponse(
                 content=content,
-                model_used=data.get("model", payload["model"]),
-                usage=data.get("usage"),
-                thinking_trace=self._extract_thinking_trace_responses(data),
-                finish_reason=data.get("finish_reason"),
-                tool_calls=tool_calls,
-                raw_response=data,
+                model_used=response.model,
+                usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage,
+                thinking_trace=self._extract_thinking_trace(response),
+                finish_reason=getattr(response, 'finish_reason', None),
+                tool_calls=tool_calls if tool_calls else None,
+                raw_response=response.model_dump() if hasattr(response, 'model_dump') else response,
             )
-        except httpx.HTTPStatusError as e:
-            try:
-                error_detail = e.response.text
-                logger.error(f"OpenAI Responses API error: {e.response.status_code}")
-                logger.error(f"Error response: {error_detail}")
-                # Try to parse as JSON to get detailed error
-                try:
-                    error_json = json.loads(error_detail)
-                    logger.error(f"OpenAI detailed error: {json.dumps(error_json, indent=2)}")
-                except:
-                    pass
-                logger.error(f"Failed payload was: {json.dumps(payload, indent=2)}")
-            except Exception:
-                logger.error(f"OpenAI Responses API error: {e.response.status_code} - {str(e)}")
-            raise RuntimeError(f"OpenAI generation failed: {e.response.text if hasattr(e.response, 'text') else str(e)}")
-        except Exception as e:
-            logger.error(f"OpenAI Responses generation error: {e}")
-            raise RuntimeError(f"OpenAI generation failed: {str(e)}")
-
-    async def _stream_generate_responses(self, payload: Dict) -> AsyncIterator[GenerationResponse]:
-        """Handle streaming via the Responses API (o1/o3)."""
-        try:
-            async with self.client.stream("POST", f"{self.base_url}/responses", json=payload) as response:
-                response.raise_for_status()
-
-                accumulated_content = ""
-                model_used = payload["model"]
-                thinking_trace = ""
-                tool_events: List[Dict[str, Any]] = []
-                # Accumulate function tool calls as they stream
-                function_calls: Dict[str, Dict[str, Any]] = {}
-
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    chunk_data = line[6:]
-                    if chunk_data.strip() == "[DONE]":
-                        break
-                    try:
-                        event = json.loads(chunk_data)
-                        event_type = event.get("type", "")
-                        
-                        # Handle text content deltas
-                        if event_type == "response.output_text.delta":
-                            delta = event.get("delta", "")
-                            if delta:
-                                accumulated_content += delta
-                        
-                        # Handle reasoning/thinking traces
-                        elif event_type in (
-                            "response.reasoning_summary_text.delta", 
-                            "response.reasoning_text.delta"
-                        ):
-                            delta = event.get("delta", "")
-                            if delta:
-                                thinking_trace += delta
-
-                        # Handle function tool call lifecycle
-                        elif event_type == "response.output_item.added":
-                            item = event.get("item", {})
-                            if item.get("type") == "function_call":
-                                item_id = item.get("id") or event.get("item_id")
-                                name = item.get("name")
-                                call_id = item.get("call_id")
-                                if item_id and name:
-                                    function_calls[item_id] = {
-                                        "id": item_id,
-                                        "call_id": call_id,
-                                        "type": "function",
-                                        "function": {
-                                            "name": name,
-                                            "arguments": "",
-                                        },
-                                    }
-                        elif event_type == "response.function_call_arguments.delta":
-                            item_id = event.get("item_id")
-                            delta = event.get("delta", "")
-                            if item_id and item_id in function_calls and isinstance(delta, str):
-                                function_calls[item_id]["function"]["arguments"] += delta
-                        elif event_type == "response.function_call_arguments.done":
-                            item = event.get("item", {})
-                            item_id = item.get("id") or event.get("item_id")
-                            args_full = item.get("arguments") or event.get("arguments")
-                            if item_id and item_id in function_calls and isinstance(args_full, str):
-                                function_calls[item_id]["function"]["arguments"] = args_full
-
-                        # Handle MCP tool events (for completeness)
-                        elif event_type in (
-                            "response.mcp_call_arguments.delta",
-                            "response.mcp_call_arguments.done",
-                            "response.mcp_call.in_progress",
-                            "response.mcp_call.completed",
-                            "response.mcp_call.failed",
-                        ):
-                            tool_events.append(event)
-
-                        # Always yield the current state for streaming
-                        current_tool_calls = None
-                        if function_calls:
-                            current_tool_calls = list(function_calls.values())
-                        elif tool_events:
-                            current_tool_calls = self._mcp_events_to_tool_calls(tool_events)
-                            
-                        yield GenerationResponse(
-                            content=accumulated_content,
-                            model_used=model_used,
-                            thinking_trace=thinking_trace or None,
-                            tool_calls=current_tool_calls,
-                            raw_response=event,
-                        )
-                    except json.JSONDecodeError:
-                        continue
-        except httpx.HTTPStatusError as e:
-            error_text = e.response.text if hasattr(e.response, 'text') else str(e)
-            logger.error(f"OpenAI Responses streaming error: {e.response.status_code} - {error_text}")
-            raise RuntimeError(f"OpenAI streaming failed: {error_text}")
-        except Exception as e:
-            logger.error(f"OpenAI Responses streaming error: {e}")
-            raise RuntimeError(f"OpenAI streaming failed: {str(e)}")
-    
-    def _mcp_events_to_tool_calls(self, events: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-        """Convert MCP tool streaming events into a compact tool_calls list."""
-        calls: Dict[str, Dict[str, Any]] = {}
-        for e in events:
-            et = e.get("type")
-            item_id = e.get("item_id")
-            if not item_id:
-                # list tools events have no item_id; skip for tool_calls
-                continue
-            call = calls.setdefault(item_id, {"id": item_id, "type": "function", "function": {"name": "", "arguments": ""}})
             
-            # Extract tool name from events that provide it
-            if et in ("response.mcp_call.in_progress", "response.mcp_call.completed", "response.mcp_call.failed"):
-                item = e.get("item", {})
-                if item.get("name"):
-                    call["function"]["name"] = item["name"]
+        except Exception as e:
+            logger.error(f"OpenAI SDK non-streaming error: {e}")
+            raise RuntimeError(f"OpenAI generation failed: {str(e)}")
     
-            if et == "response.mcp_call_arguments.delta":
-                # Append delta to arguments string
-                delta = e.get("delta", "")
-                if isinstance(delta, str):
-                    call["function"]["arguments"] += delta
-            elif et == "response.mcp_call_arguments.done":
-                args = e.get("arguments", "")
-                call["function"]["arguments"] = args
+    async def _tool_loop_generate_responses(self, request_params: Dict, tool_executor: Callable) -> GenerationResponse:
+        """Execute a tool loop for the Responses API, handling tool calls until completion.
         
-        # Filter out calls where a name was never found
-        named_calls = [c for c in calls.values() if c.get("function", {}).get("name")]
-        return named_calls if named_calls else None
-
+        This implements agentic behavior where the model can:
+        1. Make tool calls
+        2. Receive tool results
+        3. Make additional tool calls or provide a final response
+        
+        Returns structured tool execution history for frontend display.
+        """
+        import json
+        
+        max_iterations = 10  # Prevent infinite loops
+        iteration = 0
+        
+        # Stateless mode: build conversation by appending function_call + function_call_output to input
+        conversation_input = list(request_params.get("input", []))
+        
+        # Track all tool executions for the frontend
+        all_tool_executions = []
+        
+        while iteration < max_iterations:
+            iteration += 1
+            logger.debug(f"Tool loop iteration {iteration}/{max_iterations}")
+            
+            # Prepare request for this iteration (stateless mode)
+            loop_params = request_params.copy()
+            loop_params["input"] = conversation_input
+            
+            # Log request structure
+            logger.debug(f"Request has {len(conversation_input)} input items")
+            
+            # Make the API call
+            response = self.client.responses.create(**loop_params)
+            
+            # Check response status and handle errors
+            logger.info(f"Tool loop iteration {iteration}: Response id={response.id}, status: {response.status}")
+            if response.error:
+                logger.error(f"OpenAI API error in tool loop: {response.error}")
+                raise RuntimeError(f"OpenAI API returned error: {response.error}")
+            
+            if response.status != "completed":
+                logger.warning(f"Response status is '{response.status}', not 'completed'")
+                if response.status in ["failed", "cancelled"]:
+                    raise RuntimeError(f"Response generation {response.status}")
+            
+            # Extract content and tool calls
+            content = ""
+            tool_calls = []
+            
+            logger.info(f"Tool loop iteration {iteration}: Response has {len(response.output)} output items")
+            
+            for output_item in response.output:
+                
+                # Handle top-level function_call output items
+                if output_item.type == "function_call":
+                    # Use call_id (not id) - call_id is the function call identifier for matching
+                    call_id = output_item.call_id or output_item.id or f"call_{output_item.name}"
+                    logger.info(f"Tool loop: Found top-level function call: {output_item.name} with call_id={call_id}")
+                    tool_calls.append({
+                        "id": call_id,
+                        "name": output_item.name,
+                        "arguments": output_item.arguments or "{}"
+                    })
+                # Handle message output items with content
+                elif output_item.type == "message" and output_item.role == "assistant":
+                    for content_part in output_item.content:
+                        if content_part.type == "output_text":
+                            content = content_part.text
+                        elif content_part.type == "function_call":
+                            # Use call_id (not id) for matching
+                            call_id = content_part.call_id or content_part.id or f"call_{content_part.name}"
+                            logger.info(f"Tool loop: Found function call in message content: {content_part.name} with call_id={call_id}")
+                            tool_calls.append({
+                                "id": call_id,
+                                "name": content_part.name,
+                                "arguments": content_part.arguments or "{}"
+                            })
+            
+            # If no tool calls, we're done
+            if not tool_calls:
+                logger.info(f"Tool loop iteration {iteration}: No tool calls, completing with content length: {len(content)}")
+                if content:
+                    logger.info(f"Response preview: {content[:100]}...")
+                else:
+                    logger.warning("Response has no content and no tool calls")
+                return GenerationResponse(
+                    content=content,
+                    model_used=response.model,
+                    usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage,
+                    thinking_trace=self._extract_thinking_trace(response),
+                    finish_reason=getattr(response, 'finish_reason', None),
+                    tool_calls=None,
+                    tool_executions=all_tool_executions if all_tool_executions else None,
+                    raw_response=response.model_dump() if hasattr(response, 'model_dump') else response,
+                )
+            
+            # Execute tool calls
+            logger.info(f"Executing {len(tool_calls)} tool calls in iteration {iteration}")
+            tool_results = []
+            
+            for tc in tool_calls:
+                try:
+                    name = tc["name"]
+                    args_str = tc.get("arguments", "{}")
+                    
+                    # Parse arguments
+                    try:
+                        args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse tool arguments for {name}: {args_str}")
+                        args = {}
+                    
+                    # Execute the tool
+                    logger.info(f"Executing tool: {name} with args: {args}")
+                    tool_result = await tool_executor(name, args)
+                    
+                    # Ensure tool_result is JSON serializable
+                    if hasattr(tool_result, 'model_dump'):
+                        tool_result = tool_result.model_dump()
+                    elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
+                        tool_result = str(tool_result)
+                    
+                    # Check if tool execution actually failed (MCP tools return error dicts)
+                    has_error = isinstance(tool_result, dict) and tool_result.get("error")
+                    
+                    tool_results.append({
+                        "call_id": tc["id"],
+                        "output": tool_result
+                    })
+                    
+                    # Record execution for frontend display (with structured output)
+                    all_tool_executions.append({
+                        "id": tc["id"],
+                        "tool_name": name,
+                        "arguments": args,
+                        "result": tool_result if not has_error else None,
+                        "error": tool_result.get("error") if has_error else None,
+                        "status": "failed" if has_error else "completed",
+                        "iteration": iteration
+                    })
+                    
+                    if has_error:
+                        logger.warning(f"Tool {name} returned error: {tool_result.get('error')}")
+                    else:
+                        logger.info(f"Tool {name} executed successfully")
+                    
+                except Exception as e:
+                    logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
+                    error_result = {"error": f"Tool execution failed: {str(e)}"}
+                    tool_results.append({
+                        "call_id": tc["id"],
+                        "output": error_result
+                    })
+                    
+                    # Record failed execution
+                    all_tool_executions.append({
+                        "id": tc["id"],
+                        "tool_name": name,
+                        "arguments": args,
+                        "error": str(e),
+                        "status": "failed",
+                        "iteration": iteration
+                    })
+            
+            # Add tool results to the next request by appending them to the conversation
+            # The Responses API will use previous_response_id to continue the conversation
+            # and we'll need to add function_call_output items
+            
+            # Create a new input with tool results
+            tool_result_items = []
+            for result in tool_results:
+                tool_result_items.append({
+                    "type": "function_call_output",
+                    "call_id": result["call_id"],
+                    "output": json.dumps(result["output"])
+                })
+            
+            # Stateless mode: append function_call items from response.output
+            # followed by function_call_output items
+            # According to OpenAI docs: "function_call must be immediately followed by function_call_output"
+            logger.info(f"Tool loop: Appending function_call items from response to conversation")
+            for output_item in response.output:
+                if output_item.type == "function_call":
+                    # Convert SDK object to dict for proper serialization
+                    func_call_dict = output_item.model_dump(exclude_none=True)
+                    conversation_input.append(func_call_dict)
+                    logger.info(f"  - Appended function_call: {func_call_dict.get('name')} with call_id={func_call_dict.get('call_id')}")
+            
+            logger.info(f"Tool loop: Appending {len(tool_result_items)} function_call_output items to conversation")
+            for item in tool_result_items:
+                logger.info(f"  - call_id={item['call_id']}")
+                conversation_input.append(item)
+            
+        # Max iterations reached
+        logger.warning(f"Tool loop reached maximum iterations ({max_iterations})")
+        return GenerationResponse(
+            content=content or "Maximum tool execution iterations reached",
+            model_used=response.model,
+            usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage,
+            thinking_trace=self._extract_thinking_trace(response),
+            finish_reason="max_iterations",
+            tool_calls=None,
+            tool_executions=all_tool_executions if all_tool_executions else None,
+            raw_response=response.model_dump() if hasattr(response, 'model_dump') else {},
+        )
+    
+    async def _stream_generate_responses(self, request_params: Dict) -> AsyncIterator[GenerationResponse]:
+        """Handle streaming generation using the Responses API."""
+        try:
+            logger.debug(f"Creating streaming response with params: {request_params}")
+            response_stream = self.client.responses.create(**request_params)
+            
+            accumulated_content = ""
+            model_used = request_params["model"]
+            thinking_trace = ""
+            tool_calls = []
+            
+            logger.debug(f"Response stream type: {type(response_stream)}")
+            logger.debug(f"Has __aiter__: {hasattr(response_stream, '__aiter__')}")
+            
+            # Check if this is actually a streaming response or a complete response
+            if hasattr(response_stream, 'output'):
+                # This is a complete response, not a stream
+                logger.debug("Received complete response instead of stream, converting to streaming format")
+                content = ""
+                for output_item in response_stream.output:
+                    if output_item.type == "message" and output_item.role == "assistant":
+                        for content_part in output_item.content:
+                            if content_part.type == "output_text":
+                                content = content_part.text
+                
+                # Yield the complete response as a single streaming event
+                yield GenerationResponse(
+                    content=content,
+                    model_used=response_stream.model,
+                    usage=response_stream.usage,
+                    thinking_trace=self._extract_thinking_trace(response_stream),
+                    finish_reason=getattr(response_stream, 'finish_reason', None),
+                    tool_calls=None,  # TODO: Extract tool calls if present
+                    raw_response=response_stream.model_dump() if hasattr(response_stream, 'model_dump') else response_stream,
+                )
+            elif hasattr(response_stream, '__aiter__'):
+                # Async iterator
+                logger.debug("Using async iterator for streaming")
+                async for event in response_stream:
+                    logger.debug(f"Received streaming event: {type(event)}")
+                    response = self._process_streaming_event(event, accumulated_content, model_used, thinking_trace, tool_calls)
+                    # Update accumulated content for next iteration
+                    accumulated_content = response.content
+                    thinking_trace = response.thinking_trace or ""
+                    yield response
+            else:
+                # Sync iterator (fallback)
+                logger.debug("Using sync iterator for streaming")
+                for event in response_stream:
+                    logger.debug(f"Received streaming event: {type(event)}")
+                    response = self._process_streaming_event(event, accumulated_content, model_used, thinking_trace, tool_calls)
+                    # Update accumulated content for next iteration
+                    accumulated_content = response.content
+                    thinking_trace = response.thinking_trace or ""
+                    yield response
+                    
+        except Exception as e:
+            error_str = str(e)
+            # Check if the error is about unsupported reasoning parameter
+            if "reasoning" in error_str and ("unsupported" in error_str or "not supported" in error_str):
+                logger.warning(f"Model {request_params.get('model', 'unknown')} doesn't support reasoning in streaming, retrying without thinking")
+                # Remove reasoning parameter and retry
+                fallback_params = request_params.copy()
+                if "reasoning" in fallback_params:
+                    del fallback_params["reasoning"]
+                
+                try:
+                    response_stream = self.client.responses.create(**fallback_params)
+                    
+                    accumulated_content = ""
+                    model_used = fallback_params["model"]
+                    thinking_trace = ""
+                    tool_calls = []
+                    
+                    # Handle streaming response
+                    if hasattr(response_stream, '__aiter__'):
+                        # Async iterator
+                        async for event in response_stream:
+                            response = self._process_streaming_event(event, accumulated_content, model_used, thinking_trace, tool_calls)
+                            # Update accumulated content for next iteration
+                            accumulated_content = response.content
+                            thinking_trace = response.thinking_trace or ""
+                            yield response
+                    else:
+                        # Sync iterator (fallback)
+                        for event in response_stream:
+                            response = self._process_streaming_event(event, accumulated_content, model_used, thinking_trace, tool_calls)
+                            # Update accumulated content for next iteration
+                            accumulated_content = response.content
+                            thinking_trace = response.thinking_trace or ""
+                            yield response
+                except Exception as fallback_e:
+                    logger.error(f"OpenAI SDK streaming fallback error: {fallback_e}")
+                    raise RuntimeError(f"OpenAI streaming failed even without reasoning: {str(fallback_e)}")
+            else:
+                logger.error(f"OpenAI SDK streaming error: {e}")
+                raise RuntimeError(f"OpenAI streaming failed: {str(e)}")
+    
+    def _process_streaming_event(self, event, accumulated_content: str, model_used: str, thinking_trace: str, tool_calls: list) -> GenerationResponse:
+        """Process a single streaming event and return a GenerationResponse."""
+        try:
+            event_type = getattr(event, 'type', '')
+            
+            # Debug logging to see what events we're getting
+            logger.debug(f"Streaming event type: {event_type}, event: {event}")
+            
+            # Handle different event types
+            if event_type == "response.output_text.delta":
+                delta = getattr(event, 'delta', '')
+                if delta:
+                    accumulated_content += delta
+                    logger.debug(f"Text delta: '{delta}' (total: {len(accumulated_content)} chars)")
+            elif event_type in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+                delta = getattr(event, 'delta', '')
+                if delta:
+                    thinking_trace += delta
+                    logger.debug(f"Reasoning delta: '{delta}' (total: {len(thinking_trace)} chars)")
+            elif event_type == "response.function_call_arguments.delta":
+                # Handle function call arguments streaming
+                logger.debug("Function call arguments delta")
+            elif event_type == "response.function_call_arguments.done":
+                # Handle completed function call
+                logger.debug("Function call arguments done")
+            elif event_type == "response.done":
+                logger.debug("Response done event")
+            elif event_type == "response.output_text.done":
+                logger.debug("Output text done event")
+            elif event_type == "response.reasoning.done":
+                logger.debug("Reasoning done event")
+            else:
+                logger.debug(f"Unhandled event type: {event_type}")
+                # Log the full event structure for debugging
+                logger.debug(f"Full event structure: {event}")
+            
+            return GenerationResponse(
+                content=accumulated_content,
+                model_used=model_used,
+                thinking_trace=thinking_trace or None,
+                tool_calls=tool_calls if tool_calls else None,
+                raw_response=event.model_dump() if hasattr(event, 'model_dump') else event,
+            )
+            
+        except Exception as e:
+            logger.error(f"Error processing streaming event: {e}")
+            return GenerationResponse(
+                content=accumulated_content,
+                model_used=model_used,
+                thinking_trace=thinking_trace or None,
+                tool_calls=tool_calls if tool_calls else None,
+                raw_response={},
+            )
+    
+    def _messages_to_responses_input(self, messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """Convert messages to the Responses API input format."""
+        input_items = []
+        
+        for message in messages:
+            role = message.get("role", "user")
+            content_text = message.get("content", "")
+            
+            # For the Responses API, use simple string format for content
+            # The error suggests "input_text" is not supported, so use plain string
+            input_items.append({
+                "type": "message",
+                "role": role,
+                "content": content_text
+            })
+            
+        return input_items
+    
+    def _prepare_tools_for_responses(self, tools: List[Dict[str, Any]], mcp_headers: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        """Convert tools to OpenAI function calling format."""
+        responses_tools = []
+        
+        for tool in tools:
+            # Extract tool info based on format
+            if tool.get("type") == "mcp":
+                name = tool.get("name")
+                description = tool.get("description")
+                parameters = tool.get("parameters")
+                output_schema = tool.get("output_schema")
+            elif tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+                func = tool["function"]
+                name = func.get("name")
+                description = func.get("description")
+                parameters = func.get("parameters")
+                output_schema = func.get("output_schema")
+            else:
+                # Bare function format
+                name = tool.get("name")
+                description = tool.get("description")
+                parameters = tool.get("parameters")
+                output_schema = tool.get("output_schema")
+            
+            # Skip tools with missing required fields
+            if not name or not parameters:
+                logger.warning(f"Skipping tool with missing name or parameters: {tool}")
+                continue
+            
+            # Build OpenAI tool definition
+            func_tool = {
+                "type": "function",
+                "name": name,
+                "description": description or f"Execute {name}",
+                "parameters": self._clean_json_schema_for_openai(parameters)
+            }
+            
+            # Add output schema if available (for structured responses)
+            if output_schema:
+                func_tool["output_schema"] = self._clean_json_schema_for_openai(output_schema)
+            
+            responses_tools.append(func_tool)
+        
+        logger.info(f"Prepared {len(responses_tools)} tools for OpenAI")
+        return responses_tools
+    
     def _clean_json_schema_for_openai(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Clean JSON schema for OpenAI's strict structured output requirements:
-        1. Remove 'default' fields (not supported)
-        2. Set 'additionalProperties: false' on ALL objects
-        3. Include ALL properties in 'required' array
-        """
+        """Clean JSON schema for OpenAI's structured output requirements."""
         if not isinstance(schema, dict):
             return schema
         
@@ -500,154 +741,19 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             }
             
         return clean_schema
-
-    def _prepare_tools_for_responses(self, tools: List[Dict[str, Any]], mcp_context_token: Optional[str] = None, mcp_headers: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
-        """Prepare tools for the OpenAI Responses API.
-        
-        OpenAI now has native MCP support, so we can pass MCP tools directly.
-        We also handle traditional function tools for backward compatibility.
-        """
-        responses_tools: List[Dict[str, Any]] = []
-        
-        # Check if we have our intelligence MCP tools
-        has_mcp_tools = any(tool.get("type") == "mcp" for tool in tools)
-        
-        if has_mcp_tools:
-            if not mcp_context_token and not mcp_headers:
-                logger.warning("MCP tools are present, but no mcp_context_token or mcp_headers were provided. MCP server may lack context or fail auth.")
-            
-            # For our intelligence analysis tools, create a single MCP server entry
-            # Get the MCP server URL from environment or use default
-            import os 
-            mcp_server_url = f"http://localhost:{os.getenv('BACKEND_PORT')}/tools/mcp"
-            
-            mcp_server_tool = {
-                "type": "mcp",
-                "server_label": "intelligence_analysis",
-                "server_url": mcp_server_url,
-                "allowed_tools": [tool.get("name") for tool in tools if tool.get("type") == "mcp"],
-                "require_approval": "never"
-            }
-
-            if mcp_headers:
-                mcp_server_tool["headers"] = mcp_headers
-
-            responses_tools.append(mcp_server_tool)
-        
-        # Handle traditional function tools
-        for tool in tools:
-            try:
-                if isinstance(tool, dict) and tool.get("type") == "function" and isinstance(tool.get("function"), dict):
-                    # Flatten the nested structure for the Responses API
-                    func = tool["function"]
-                    parameters = func.get("parameters")
-                    flattened_tool = {
-                        "type": "function",
-                        "name": func.get("name"),
-                        "description": func.get("description"),
-                        "parameters": self._clean_json_schema_for_openai(parameters) if parameters else None,
-                    }
-                    if flattened_tool.get("name"):
-                        responses_tools.append(flattened_tool)
-                elif isinstance(tool, dict) and tool.get("name") and tool.get("parameters") and tool.get("type") != "mcp":
-                    # This is already a bare/flattened function dict, but ensure type is set
-                    parameters = tool.get("parameters")
-                    responses_tools.append({
-                        "type": "function",
-                        "name": tool.get("name"),
-                        "description": tool.get("description"),
-                        "parameters": self._clean_json_schema_for_openai(parameters) if parameters else None,
-                    })
-                elif tool.get("type") == "mcp":
-                    # Skip individual MCP tools as they're handled above
-                    continue
-                else:
-                    logger.warning(f"Skipping invalid Responses tool definition: {tool}")
-            except Exception as e:
-                logger.warning(f"Skipping invalid Responses tool encountered during normalization: {e}")
-                continue
-        
-        return responses_tools
-
-    def _extract_function_tool_calls_from_responses(self, data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
-        """Extract function tool calls from a non-streaming Responses API payload into Chat-Completions-like shape."""
+    
+    def _extract_thinking_trace(self, response) -> Optional[str]:
+        """Extract thinking trace from response."""
         try:
-            calls: List[Dict[str, Any]] = []
-            output_items = data.get("output") or data.get("response", {}).get("output") or []
-            if isinstance(output_items, list):
-                for item in output_items:
-                    try:
-                        if isinstance(item, dict) and item.get("type") == "function_call":
-                            item_id = item.get("id") or item.get("call_id")
-                            name = item.get("name")
-                            args = item.get("arguments") or ""
-                            call_id = item.get("call_id")
-                            if name:
-                                calls.append({
-                                    "id": item_id or f"call_{name}",
-                                    "call_id": call_id,
-                                    "type": "function",
-                                    "function": {"name": name, "arguments": args},
-                                })
-                    except Exception:
-                        continue
-            return calls or None
-        except Exception:
-            return None
-
-    def _messages_to_responses_input(self, system_instructions: Optional[str], messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-        """Convert messages to the expected Responses API input format.
-        
-        The v1/responses endpoint requires a specific nested structure for input messages,
-        where each message's content is an array of content parts. The system prompt is
-        also passed as a message with the 'system' role.
-        """
-        response_input = []
-
-        # Add the system prompt first, if it exists
-        if system_instructions:
-            response_input.append({
-                "type": "message",
-                "role": "system",
-                "content": [{"type": "input_text", "text": system_instructions}]
-            })
-
-        # Process the rest of the messages
-        for m in messages:
-            role = m.get("role", "user")
-            # Skip any duplicate system messages that might be in the list
-            if role == "system":
-                continue
-
-            content_text = m.get("content", "")
-            content_parts = [{"type": "input_text", "text": content_text}]
-            
-            response_input.append({
-                "type": "message",
-                "role": role,
-                "content": content_parts
-            })
-            
-        return response_input
-
-    def _extract_thinking_trace_responses(self, data: Dict[str, Any]) -> Optional[str]:
-        """Best-effort extraction of reasoning/trace from Responses API payloads."""
-        try:
-            output_items = data.get("output", [])
-            for item in output_items:
-                if item.get("type") == "reasoning":
-                    summary_parts = item.get("summary", [])
-                    # Look for summary text, which contains the reasoning
-                    for part in summary_parts:
-                        if part.get("type") == "summary_text":
-                            return part.get("text")
-        except (TypeError, AttributeError):
-            pass  # Ignore parsing errors if structure is unexpected
+            for output_item in response.output:
+                if output_item.type == "reasoning":
+                    for summary_part in getattr(output_item, 'summary', []):
+                        if summary_part.type == "summary_text":
+                            return summary_part.text
+        except (AttributeError, TypeError):
+            pass
         return None
-
+    
     def get_model_info(self, model_name: str) -> Optional[ModelInfo]:
         """Get cached model info"""
         return self._model_cache.get(model_name)
-
-
-

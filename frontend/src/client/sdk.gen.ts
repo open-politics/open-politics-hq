@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, CreateRssSourceData, CreateRssSourceResponse, CreateRssSource1Data, CreateRssSource1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, ListEmbeddingModelsData, ListEmbeddingModelsResponse, CreateEmbeddingModelData, CreateEmbeddingModelResponse, GetAvailableModelsResponse, CheckEmbeddingProviderHealthResponse, GetEmbeddingModelStatsData, GetEmbeddingModelStatsResponse, GenerateEmbeddingsData, GenerateEmbeddingsResponse, SimilaritySearchData, SimilaritySearchResponse, EmbedTextData, EmbedTextResponse, TestEmbeddingProviderData, TestEmbeddingProviderResponse, DeactivateEmbeddingModelData, DeactivateEmbeddingModelResponse, GetLocationArticlesData, GetLocationArticlesResponse, GeojsonViewResponse, GetEntityArticlesData, GetEntityArticlesResponse, GetLeaderInfoData, GetLeaderInfoResponse, GetLegislationDataData, GetLegislationDataResponse, GetEconDataData, GetEconDataResponse, UpdateLeadersResponse, GetTavilyDataResponse, GetEntityScoreOverTimeData, GetEntityScoreOverTimeResponse, GetTopEntitiesByScoreData, GetTopEntitiesByScoreResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, SaveFilterData, SaveFilterResponse, ListFiltersResponse, GetFilterData, GetFilterResponse, DeleteFilterData, DeleteFilterResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ImportInfospaceData, ImportInfospaceResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, GetLocationContentsData, GetLocationContentsResponse, GetLocationEntitiesContentsData, GetLocationEntitiesContentsResponse, LocationFromQueryData, LocationFromQueryResponse, GeojsonEventsViewData, GeojsonEventsViewResponse, DashboardViewResponse, GetLocationEntitiesData, GetLocationEntitiesResponse, GetCoordinatesData, GetCoordinatesResponse, GetGeojsonForArticleIdsData, GetGeojsonForArticleIdsResponse, GetLocationMetadataData, GetLocationMetadataResponse, ChannelRouteData, ChannelRouteResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, CreateMonitorData, CreateMonitorResponse, ListMonitorsData, ListMonitorsResponse, GetMonitorData, GetMonitorResponse, UpdateMonitorData, UpdateMonitorResponse, DeleteMonitorData, DeleteMonitorResponse, ExecuteMonitorManuallyData, ExecuteMonitorManuallyResponse, CreatePipelineData, CreatePipelineResponse, ListPipelinesData, ListPipelinesResponse, GetPipelineData, GetPipelineResponse, UpdatePipelineData, UpdatePipelineResponse, DeletePipelineData, DeletePipelineResponse, ExecutePipelineData, ExecutePipelineResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TransferSourcesData, TransferSourcesResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, UploadProfilePictureData, UploadProfilePictureResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GeocodeLocationData, GeocodeLocationResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
+import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, ListAvailableEmbeddingModelsResponse, GetLocationArticlesData, GetLocationArticlesResponse, GeojsonViewResponse, GetEntityArticlesData, GetEntityArticlesResponse, GetLeaderInfoData, GetLeaderInfoResponse, GetLegislationDataData, GetLegislationDataResponse, GetEconDataData, GetEconDataResponse, UpdateLeadersResponse, GetTavilyDataResponse, GetEntityScoreOverTimeData, GetEntityScoreOverTimeResponse, GetTopEntitiesByScoreData, GetTopEntitiesByScoreResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, SaveFilterData, SaveFilterResponse, ListFiltersResponse, GetFilterData, GetFilterResponse, DeleteFilterData, DeleteFilterResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, GetLocationContentsData, GetLocationContentsResponse, GetLocationEntitiesContentsData, GetLocationEntitiesContentsResponse, LocationFromQueryData, LocationFromQueryResponse, GeojsonEventsViewData, GeojsonEventsViewResponse, DashboardViewResponse, GetLocationEntitiesData, GetLocationEntitiesResponse, GetCoordinatesData, GetCoordinatesResponse, GetGeojsonForArticleIdsData, GetGeojsonForArticleIdsResponse, GetLocationMetadataData, GetLocationMetadataResponse, ChannelRouteData, ChannelRouteResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, CreateMonitorData, CreateMonitorResponse, ListMonitorsData, ListMonitorsResponse, GetMonitorData, GetMonitorResponse, UpdateMonitorData, UpdateMonitorResponse, DeleteMonitorData, DeleteMonitorResponse, ExecuteMonitorManuallyData, ExecuteMonitorManuallyResponse, CreatePipelineData, CreatePipelineResponse, ListPipelinesData, ListPipelinesResponse, GetPipelineData, GetPipelineResponse, UpdatePipelineData, UpdatePipelineResponse, DeletePipelineData, DeletePipelineResponse, ExecutePipelineData, ExecutePipelineResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, UploadProfilePictureData, UploadProfilePictureResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GeocodeLocationData, GeocodeLocationResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
 
 export class AdminService {
     /**
@@ -1373,6 +1373,8 @@ export class AssetsService {
     /**
      * Upload File
      * Upload a file and create an asset.
+     *
+     * Uses FileHandler directly for clean, testable file ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
@@ -1397,6 +1399,8 @@ export class AssetsService {
     /**
      * Upload File
      * Upload a file and create an asset.
+     *
+     * Uses FileHandler directly for clean, testable file ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
@@ -1421,6 +1425,8 @@ export class AssetsService {
     /**
      * Ingest Url
      * Ingest content from a URL.
+     *
+     * Uses WebHandler directly for clean URL ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.url
@@ -1450,6 +1456,8 @@ export class AssetsService {
     /**
      * Ingest Url
      * Ingest content from a URL.
+     *
+     * Uses WebHandler directly for clean URL ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.url
@@ -1479,6 +1487,8 @@ export class AssetsService {
     /**
      * Ingest Text
      * Ingest direct text content.
+     *
+     * Uses TextHandler directly for clean text ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.textContent
@@ -1508,6 +1518,8 @@ export class AssetsService {
     /**
      * Ingest Text
      * Ingest direct text content.
+     *
+     * Uses TextHandler directly for clean text ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.textContent
@@ -1631,6 +1643,62 @@ export class AssetsService {
     }
     
     /**
+     * Ingest Search Results
+     * Ingest search results with their pre-fetched content (no re-scraping).
+     *
+     * This endpoint is optimized for search results from providers like Tavily
+     * that already include the full content. We create ARTICLE assets directly
+     * using the new AssetBuilder pattern.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns AssetRead Successful Response
+     * @throws ApiError
+     */
+    public static ingestSearchResults(data: IngestSearchResultsData): CancelablePromise<IngestSearchResultsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/ingest-search-results',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Ingest Search Results
+     * Ingest search results with their pre-fetched content (no re-scraping).
+     *
+     * This endpoint is optimized for search results from providers like Tavily
+     * that already include the full content. We create ARTICLE assets directly
+     * using the new AssetBuilder pattern.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns AssetRead Successful Response
+     * @throws ApiError
+     */
+    public static ingestSearchResults1(data: IngestSearchResults1Data): CancelablePromise<IngestSearchResults1Response> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/ingest-search-results',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Reprocess Asset
      * Reprocess an asset with new options.
      * @param data The data for the request.
@@ -1676,6 +1744,76 @@ export class AssetsService {
             },
             body: data.requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Asset Content
+     * Update CSV asset content and trigger reprocessing.
+     *
+     * This endpoint:
+     * 1. Validates the asset exists and user has access
+     * 2. Updates the blob storage with new CSV content
+     * 3. Updates existing child row assets in-place (preserves IDs and relationships)
+     * 4. Creates new assets for added rows, deletes assets for removed rows
+     *
+     * IMPORTANT: Row assets are updated in-place rather than deleted/recreated.
+     * This preserves annotations, fragments, and all relationships that reference these assets.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.assetId
+     * @param data.formData
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static updateAssetContent(data: UpdateAssetContentData): CancelablePromise<UpdateAssetContentResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}/update-csv-content',
+            path: {
+                infospace_id: data.infospaceId,
+                asset_id: data.assetId
+            },
+            formData: data.formData,
+            mediaType: 'multipart/form-data',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Asset Content
+     * Update CSV asset content and trigger reprocessing.
+     *
+     * This endpoint:
+     * 1. Validates the asset exists and user has access
+     * 2. Updates the blob storage with new CSV content
+     * 3. Updates existing child row assets in-place (preserves IDs and relationships)
+     * 4. Creates new assets for added rows, deletes assets for removed rows
+     *
+     * IMPORTANT: Row assets are updated in-place rather than deleted/recreated.
+     * This preserves annotations, fragments, and all relationships that reference these assets.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.assetId
+     * @param data.formData
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static updateAssetContent1(data: UpdateAssetContent1Data): CancelablePromise<UpdateAssetContent1Response> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}/update-csv-content',
+            path: {
+                infospace_id: data.infospaceId,
+                asset_id: data.assetId
+            },
+            formData: data.formData,
+            mediaType: 'multipart/form-data',
             errors: {
                 422: 'Validation Error'
             }
@@ -1798,54 +1936,6 @@ export class AssetsService {
                 feed_url: data.feedUrl,
                 max_items: data.maxItems
             },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Create Rss Source
-     * Create a new Source of kind 'rss' and optionally set up a monitor for it.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.requestBody
-     * @returns SourceRead Successful Response
-     * @throws ApiError
-     */
-    public static createRssSource(data: CreateRssSourceData): CancelablePromise<CreateRssSourceResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/assets/create-rss-source',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Create Rss Source
-     * Create a new Source of kind 'rss' and optionally set up a monitor for it.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.requestBody
-     * @returns SourceRead Successful Response
-     * @throws ApiError
-     */
-    public static createRssSource1(data: CreateRssSource1Data): CancelablePromise<CreateRssSource1Response> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/assets/create-rss-source',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
             errors: {
                 422: 'Validation Error'
             }
@@ -2022,7 +2112,7 @@ export class AssetsService {
     
     /**
      * Delete Asset
-     * Delete an asset and its children.
+     * Delete an asset and its children (explicitly handled for reliability).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
@@ -2045,7 +2135,7 @@ export class AssetsService {
     
     /**
      * Delete Asset
-     * Delete an asset and its children.
+     * Delete an asset and its children (explicitly handled for reliability).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
@@ -2118,6 +2208,128 @@ export class AssetsService {
                 skip: data.skip,
                 limit: data.limit
             },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Bulk Delete Assets
+     * Delete multiple assets in one request.
+     *
+     * Much more efficient than individual DELETE requests when cleaning up
+     * multiple assets at once. Validates all assets belong to the infospace
+     * before deleting any.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static bulkDeleteAssets(data: BulkDeleteAssetsData): CancelablePromise<BulkDeleteAssetsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/bulk-delete',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Bulk Delete Assets
+     * Delete multiple assets in one request.
+     *
+     * Much more efficient than individual DELETE requests when cleaning up
+     * multiple assets at once. Validates all assets belong to the infospace
+     * before deleting any.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static bulkDeleteAssets1(data: BulkDeleteAssets1Data): CancelablePromise<BulkDeleteAssets1Response> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/bulk-delete',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Transfer Assets
+     * Transfer assets between infospaces.
+     *
+     * This endpoint allows you to copy or move multiple assets from one infospace to another.
+     * When copying (copy=True), new assets are created in the target infospace with the same content.
+     * When moving (copy=False), assets are moved by changing their infospace_id.
+     *
+     * Args:
+     * asset_ids: List of asset IDs to transfer
+     * source_infospace_id: Source infospace ID
+     * target_infospace_id: Target infospace ID
+     * copy: If True, copy assets (default). If False, move them.
+     *
+     * Returns:
+     * List of transferred assets in the target infospace
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns AssetRead Successful Response
+     * @throws ApiError
+     */
+    public static transferAssets(data: TransferAssetsData): CancelablePromise<TransferAssetsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/transfer',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Transfer Assets
+     * Transfer assets between infospaces.
+     *
+     * This endpoint allows you to copy or move multiple assets from one infospace to another.
+     * When copying (copy=True), new assets are created in the target infospace with the same content.
+     * When moving (copy=False), assets are moved by changing their infospace_id.
+     *
+     * Args:
+     * asset_ids: List of asset IDs to transfer
+     * source_infospace_id: Source infospace ID
+     * target_infospace_id: Target infospace ID
+     * copy: If True, copy assets (default). If False, move them.
+     *
+     * Returns:
+     * List of transferred assets in the target infospace
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns AssetRead Successful Response
+     * @throws ApiError
+     */
+    public static transferAssets1(data: TransferAssets1Data): CancelablePromise<TransferAssets1Response> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/transfer',
+            body: data.requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: 'Validation Error'
             }
@@ -2820,6 +3032,29 @@ export class BundlesService {
     }
     
     /**
+     * Bulk Delete Bundles
+     * Delete multiple bundles in one request.
+     *
+     * More efficient than individual DELETE requests when cleaning up
+     * multiple bundles at once.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static bulkDeleteBundles(data: BulkDeleteBundlesData): CancelablePromise<BulkDeleteBundlesResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/bundles/bundles/bulk-delete',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Add Asset To Bundle
      * Add an existing asset to a bundle by ID.
      * @param data The data for the request.
@@ -2918,6 +3153,14 @@ export class BundlesService {
     /**
      * Transfer Bundle
      * Transfer a bundle to another infospace.
+     *
+     * When copying (copy=True), both the bundle and all its assets are copied to the target infospace.
+     * When moving (copy=False), the bundle is moved but cross-infospace asset movement has limitations.
+     *
+     * Args:
+     * bundle_id: ID of bundle to transfer
+     * target_infospace_id: Target infospace ID
+     * copy: If True, copy bundle and all assets. If False, move bundle.
      * @param data The data for the request.
      * @param data.bundleId
      * @param data.targetInfospaceId
@@ -2935,6 +3178,283 @@ export class BundlesService {
             query: {
                 target_infospace_id: data.targetInfospaceId,
                 copy: data.copy
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Move Bundle To Parent
+     * Move a bundle into another bundle or to root level.
+     * @param data The data for the request.
+     * @param data.bundleId
+     * @param data.requestBody
+     * @returns BundleRead Successful Response
+     * @throws ApiError
+     */
+    public static moveBundleToParent(data: MoveBundleToParentData): CancelablePromise<MoveBundleToParentResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/bundles/bundles/{bundle_id}/move',
+            path: {
+                bundle_id: data.bundleId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Bundle Hierarchy
+     * Get bundle with its complete child hierarchy.
+     * @param data The data for the request.
+     * @param data.bundleId
+     * @param data.maxDepth
+     * @returns BundleHierarchy Successful Response
+     * @throws ApiError
+     */
+    public static getBundleHierarchy(data: GetBundleHierarchyData): CancelablePromise<GetBundleHierarchyResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/bundles/bundles/{bundle_id}/hierarchy',
+            path: {
+                bundle_id: data.bundleId
+            },
+            query: {
+                max_depth: data.maxDepth
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Root Bundles
+     * Get all top-level bundles (those without parent bundles) in an infospace.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @returns BundleRead Successful Response
+     * @throws ApiError
+     */
+    public static getRootBundles(data: GetRootBundlesData): CancelablePromise<GetRootBundlesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/bundles/infospaces/{infospace_id}/bundles/root',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Bulk Bundle Assets
+     * Get assets from multiple bundles in a single request.
+     * Returns a dictionary mapping bundle IDs to their assets.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.bundleIds Comma-separated list of bundle IDs
+     * @param data.skip
+     * @param data.limit
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static getBulkBundleAssets(data: GetBulkBundleAssetsData): CancelablePromise<GetBulkBundleAssetsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/bundles/infospaces/{infospace_id}/bundles/bulk-assets',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                bundle_ids: data.bundleIds,
+                skip: data.skip,
+                limit: data.limit
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
+export class ChatHistoryService {
+    /**
+     * List Conversations
+     * List chat conversations for the current user.
+     *
+     * Query parameters:
+     * - infospace_id: Filter by infospace
+     * - skip: Number of records to skip (pagination)
+     * - limit: Maximum number of records to return
+     * - include_archived: Include archived conversations
+     * - pinned_only: Return only pinned conversations
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.skip
+     * @param data.limit
+     * @param data.includeArchived
+     * @param data.pinnedOnly
+     * @returns ChatConversationsOut Successful Response
+     * @throws ApiError
+     */
+    public static listConversations(data: ListConversationsData = {}): CancelablePromise<ListConversationsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/chat/conversations',
+            query: {
+                infospace_id: data.infospaceId,
+                skip: data.skip,
+                limit: data.limit,
+                include_archived: data.includeArchived,
+                pinned_only: data.pinnedOnly
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Conversation
+     * Create a new chat conversation.
+     *
+     * Optionally include initial messages.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns ChatConversationRead Successful Response
+     * @throws ApiError
+     */
+    public static createConversation(data: CreateConversationData): CancelablePromise<CreateConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/chat/conversations',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Conversation
+     * Get a specific conversation with all its messages.
+     * @param data The data for the request.
+     * @param data.conversationId
+     * @returns ChatConversationWithMessages Successful Response
+     * @throws ApiError
+     */
+    public static getConversation(data: GetConversationData): CancelablePromise<GetConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/chat/conversations/{conversation_id}',
+            path: {
+                conversation_id: data.conversationId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Conversation
+     * Update a conversation's metadata (title, description, etc).
+     * @param data The data for the request.
+     * @param data.conversationId
+     * @param data.requestBody
+     * @returns ChatConversationRead Successful Response
+     * @throws ApiError
+     */
+    public static updateConversation(data: UpdateConversationData): CancelablePromise<UpdateConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/chat/conversations/{conversation_id}',
+            path: {
+                conversation_id: data.conversationId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Conversation
+     * Delete a conversation and all its messages.
+     * @param data The data for the request.
+     * @param data.conversationId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteConversation(data: DeleteConversationData): CancelablePromise<DeleteConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/chat/conversations/{conversation_id}',
+            path: {
+                conversation_id: data.conversationId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Add Message To Conversation
+     * Add a new message to an existing conversation.
+     * @param data The data for the request.
+     * @param data.conversationId
+     * @param data.requestBody
+     * @returns ChatConversationMessageRead Successful Response
+     * @throws ApiError
+     */
+    public static addMessageToConversation(data: AddMessageToConversationData): CancelablePromise<AddMessageToConversationResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/chat/conversations/{conversation_id}/messages',
+            path: {
+                conversation_id: data.conversationId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Conversation Messages
+     * Get messages for a specific conversation.
+     * @param data The data for the request.
+     * @param data.conversationId
+     * @param data.skip
+     * @param data.limit
+     * @returns ChatConversationMessageRead Successful Response
+     * @throws ApiError
+     */
+    public static getConversationMessages(data: GetConversationMessagesData): CancelablePromise<GetConversationMessagesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/chat/conversations/{conversation_id}/messages',
+            path: {
+                conversation_id: data.conversationId
+            },
+            query: {
+                skip: data.skip,
+                limit: data.limit
             },
             errors: {
                 422: 'Validation Error'
@@ -3323,38 +3843,26 @@ export class DatasetsService {
 
 export class EmbeddingsService {
     /**
-     * List Embedding Models
-     * List all available embedding models.
+     * Generate Infospace Embeddings
+     * Generate embeddings for all assets in an infospace.
+     * Uses the infospace's configured embedding model.
+     *
+     * For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
+     * in the request. Background processing is supported for all providers by passing
+     * API keys to the Celery worker.
      * @param data The data for the request.
-     * @param data.activeOnly Only return active models
-     * @returns EmbeddingModelRead Successful Response
-     * @throws ApiError
-     */
-    public static listEmbeddingModels(data: ListEmbeddingModelsData = {}): CancelablePromise<ListEmbeddingModelsResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/embeddings/models',
-            query: {
-                active_only: data.activeOnly
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Create Embedding Model
-     * Create a new embedding model.
-     * @param data The data for the request.
+     * @param data.infospaceId
      * @param data.requestBody
-     * @returns EmbeddingModelRead Successful Response
+     * @returns Message Successful Response
      * @throws ApiError
      */
-    public static createEmbeddingModel(data: CreateEmbeddingModelData): CancelablePromise<CreateEmbeddingModelResponse> {
+    public static generateInfospaceEmbeddings(data: GenerateInfospaceEmbeddingsData): CancelablePromise<GenerateInfospaceEmbeddingsResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/embeddings/models',
+            url: '/api/v1/embeddings/infospaces/{infospace_id}/embeddings/generate',
+            path: {
+                infospace_id: data.infospaceId
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -3364,45 +3872,43 @@ export class EmbeddingsService {
     }
     
     /**
-     * Get Available Models
-     * Get available models from the current embedding provider.
-     * @returns unknown Successful Response
-     * @throws ApiError
-     */
-    public static getAvailableModels(): CancelablePromise<GetAvailableModelsResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/embeddings/models/available'
-        });
-    }
-    
-    /**
-     * Check Embedding Provider Health
-     * Check the health of the embedding provider.
-     * @returns unknown Successful Response
-     * @throws ApiError
-     */
-    public static checkEmbeddingProviderHealth(): CancelablePromise<CheckEmbeddingProviderHealthResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/embeddings/health'
-        });
-    }
-    
-    /**
-     * Get Embedding Model Stats
-     * Get statistics for an embedding model.
+     * Generate Asset Embeddings
+     * Generate embeddings for a single asset.
      * @param data The data for the request.
-     * @param data.modelId
+     * @param data.assetId
+     * @param data.requestBody
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static generateAssetEmbeddings(data: GenerateAssetEmbeddingsData): CancelablePromise<GenerateAssetEmbeddingsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/embeddings/assets/{asset_id}/embeddings/generate',
+            path: {
+                asset_id: data.assetId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Embedding Stats
+     * Get statistics about embedding coverage in an infospace.
+     * @param data The data for the request.
+     * @param data.infospaceId
      * @returns EmbeddingStatsResponse Successful Response
      * @throws ApiError
      */
-    public static getEmbeddingModelStats(data: GetEmbeddingModelStatsData): CancelablePromise<GetEmbeddingModelStatsResponse> {
+    public static getEmbeddingStats(data: GetEmbeddingStatsData): CancelablePromise<GetEmbeddingStatsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/embeddings/models/{model_id}/stats',
+            url: '/api/v1/embeddings/infospaces/{infospace_id}/embeddings/stats',
             path: {
-                model_id: data.modelId
+                infospace_id: data.infospaceId
             },
             errors: {
                 422: 'Validation Error'
@@ -3411,17 +3917,24 @@ export class EmbeddingsService {
     }
     
     /**
-     * Generate Embeddings
-     * Generate embeddings for a list of asset chunks.
+     * Semantic Search
+     * Perform semantic search within an infospace using vector embeddings.
+     *
+     * For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
+     * in the request to generate the query embedding.
      * @param data The data for the request.
+     * @param data.infospaceId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns SemanticSearchResponse Successful Response
      * @throws ApiError
      */
-    public static generateEmbeddings(data: GenerateEmbeddingsData): CancelablePromise<GenerateEmbeddingsResponse> {
+    public static semanticSearch(data: SemanticSearchData): CancelablePromise<SemanticSearchResponse2> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/embeddings/generate',
+            url: '/api/v1/embeddings/infospaces/{infospace_id}/embeddings/search',
+            path: {
+                infospace_id: data.infospaceId
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -3431,91 +3944,66 @@ export class EmbeddingsService {
     }
     
     /**
-     * Similarity Search
-     * Perform similarity search using embeddings.
+     * Clear Infospace Embeddings
+     * Clear all embeddings for an infospace.
+     * Useful when changing embedding models or resetting the vector store.
      * @param data The data for the request.
-     * @param data.requestBody
-     * @returns EmbeddingSearchResponse Successful Response
+     * @param data.infospaceId
+     * @returns Message Successful Response
      * @throws ApiError
      */
-    public static similaritySearch(data: SimilaritySearchData): CancelablePromise<SimilaritySearchResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/embeddings/search',
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Embed Text
-     * Generate embedding for a single text (utility endpoint).
-     * @param data The data for the request.
-     * @param data.text
-     * @param data.modelName
-     * @param data.provider
-     * @returns unknown Successful Response
-     * @throws ApiError
-     */
-    public static embedText(data: EmbedTextData): CancelablePromise<EmbedTextResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/embeddings/embed-text',
-            query: {
-                text: data.text,
-                model_name: data.modelName,
-                provider: data.provider
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Test Embedding Provider
-     * Test the embedding provider with a sample text.
-     * @param data The data for the request.
-     * @param data.testText
-     * @param data.modelName
-     * @returns unknown Successful Response
-     * @throws ApiError
-     */
-    public static testEmbeddingProvider(data: TestEmbeddingProviderData = {}): CancelablePromise<TestEmbeddingProviderResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/embeddings/test',
-            query: {
-                test_text: data.testText,
-                model_name: data.modelName
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Deactivate Embedding Model
-     * Deactivate an embedding model (soft delete).
-     * @param data The data for the request.
-     * @param data.modelId
-     * @returns unknown Successful Response
-     * @throws ApiError
-     */
-    public static deactivateEmbeddingModel(data: DeactivateEmbeddingModelData): CancelablePromise<DeactivateEmbeddingModelResponse> {
+    public static clearInfospaceEmbeddings(data: ClearInfospaceEmbeddingsData): CancelablePromise<ClearInfospaceEmbeddingsResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/embeddings/models/{model_id}',
+            url: '/api/v1/embeddings/infospaces/{infospace_id}/embeddings',
             path: {
-                model_id: data.modelId
+                infospace_id: data.infospaceId
             },
             errors: {
                 422: 'Validation Error'
             }
+        });
+    }
+    
+    /**
+     * Discover Embedding Models
+     * Discover available embedding models from all providers with runtime API keys.
+     *
+     * This endpoint supports runtime API key injection from frontend for:
+     * - OpenAI: requires api_keys.openai
+     * - Voyage AI (Anthropic): requires api_keys.voyage
+     * - Jina AI: requires api_keys.jina
+     * - Ollama: no API key needed
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns AvailableModelsResponse Successful Response
+     * @throws ApiError
+     */
+    public static discoverEmbeddingModels(data: DiscoverEmbeddingModelsData): CancelablePromise<DiscoverEmbeddingModelsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/embeddings/embeddings/models/discover',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Available Embedding Models
+     * List available embedding models from Ollama (legacy endpoint).
+     *
+     * Note: This endpoint only returns Ollama models. Use POST /embeddings/models/discover
+     * with runtime API keys to get models from all providers.
+     * @returns AvailableModelsResponse Successful Response
+     * @throws ApiError
+     */
+    public static listAvailableEmbeddingModels(): CancelablePromise<ListAvailableEmbeddingModelsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/embeddings/embeddings/models'
         });
     }
 }
@@ -4193,7 +4681,7 @@ export class InfospacesService {
     public static createInfospace(data: CreateInfospaceData): CancelablePromise<CreateInfospaceResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/infospaces/infospaces/',
+            url: '/api/v1/infospaces/',
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -4214,7 +4702,7 @@ export class InfospacesService {
     public static listInfospaces(data: ListInfospacesData = {}): CancelablePromise<ListInfospacesResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/infospaces/infospaces/',
+            url: '/api/v1/infospaces/',
             query: {
                 skip: data.skip,
                 limit: data.limit
@@ -4236,7 +4724,7 @@ export class InfospacesService {
     public static createInfospace1(data: CreateInfospace1Data): CancelablePromise<CreateInfospace1Response> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/infospaces/infospaces',
+            url: '/api/v1/infospaces',
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -4257,7 +4745,7 @@ export class InfospacesService {
     public static listInfospaces1(data: ListInfospaces1Data = {}): CancelablePromise<ListInfospaces1Response> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/infospaces/infospaces',
+            url: '/api/v1/infospaces',
             query: {
                 skip: data.skip,
                 limit: data.limit
@@ -4279,7 +4767,7 @@ export class InfospacesService {
     public static getInfospace(data: GetInfospaceData): CancelablePromise<GetInfospaceResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/infospaces/infospaces/{infospace_id}',
+            url: '/api/v1/infospaces/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -4301,7 +4789,7 @@ export class InfospacesService {
     public static updateInfospace(data: UpdateInfospaceData): CancelablePromise<UpdateInfospaceResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',
-            url: '/api/v1/infospaces/infospaces/{infospace_id}',
+            url: '/api/v1/infospaces/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -4324,7 +4812,7 @@ export class InfospacesService {
     public static deleteInfospace(data: DeleteInfospaceData): CancelablePromise<DeleteInfospaceResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/infospaces/infospaces/{infospace_id}',
+            url: '/api/v1/infospaces/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -4345,7 +4833,7 @@ export class InfospacesService {
     public static getInfospaceStats(data: GetInfospaceStatsData): CancelablePromise<GetInfospaceStatsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/infospaces/infospaces/{infospace_id}/stats',
+            url: '/api/v1/infospaces/{infospace_id}/stats',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -4356,20 +4844,59 @@ export class InfospacesService {
     }
     
     /**
-     * Import Infospace
-     * Import an Infospace.
+     * Export Infospace
+     * Export an infospace as a self-contained ZIP package.
+     *
+     * This creates an immediate download of the infospace with all its contents.
+     * For scheduled/async backups, use the /backups endpoints instead.
      * @param data The data for the request.
      * @param data.infospaceId
+     * @param data.includeSources Include sources and their assets
+     * @param data.includeSchemas Include annotation schemas
+     * @param data.includeRuns Include annotation runs
+     * @param data.includeDatasets Include datasets
+     * @param data.includeChunks Include asset chunks (text segments)
+     * @param data.includeEmbeddings Include vector embeddings (can be large)
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static exportInfospace(data: ExportInfospaceData): CancelablePromise<ExportInfospaceResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/export',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                include_sources: data.includeSources,
+                include_schemas: data.includeSchemas,
+                include_runs: data.includeRuns,
+                include_datasets: data.includeDatasets,
+                include_chunks: data.includeChunks,
+                include_embeddings: data.includeEmbeddings
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Import Infospace
+     * Import an Infospace from a ZIP package file.
+     *
+     * This will create a new infospace with all the contents from the package.
+     * @param data The data for the request.
+     * @param data.formData
      * @returns InfospaceRead Successful Response
      * @throws ApiError
      */
     public static importInfospace(data: ImportInfospaceData): CancelablePromise<ImportInfospaceResponse> {
         return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/infospaces/import',
-            query: {
-                infospace_id: data.infospaceId
-            },
+            method: 'POST',
+            url: '/api/v1/infospaces/import',
+            formData: data.formData,
+            mediaType: 'multipart/form-data',
             errors: {
                 422: 'Validation Error'
             }
@@ -4386,6 +4913,8 @@ export class IntelligenceChatService {
      * Example conversation:
      * - User: "What are the main themes in recent political documents?"
      * - AI: *calls search_assets tool* → *analyzes results* → Responds with findings
+     *
+     * Optional: Provide conversation_id to save messages to a conversation history.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns ChatResponse Successful Response
@@ -5487,6 +6016,76 @@ export class SearchService {
             }
         });
     }
+    
+    /**
+     * Search And Ingest
+     * Search using external providers (Tavily, etc.) and create assets from results.
+     *
+     * This endpoint combines web search with content ingestion to create searchable assets
+     * from web content. It supports multiple search providers and can automatically
+     * scrape full content from discovered URLs.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns SearchAndIngestResponse Successful Response
+     * @throws ApiError
+     */
+    public static searchAndIngest(data: SearchAndIngestData): CancelablePromise<SearchAndIngestResponse2> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/search/external',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Assets From Urls
+     * Create assets from specific URLs (typically from search results).
+     *
+     * This endpoint allows for selective asset creation from a list of URLs,
+     * providing more control over which search results become assets.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns SearchAndIngestResponse Successful Response
+     * @throws ApiError
+     */
+    public static createAssetsFromUrls(data: CreateAssetsFromUrlsData): CancelablePromise<CreateAssetsFromUrlsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/search/create-assets-from-urls',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Assets From Results
+     * Create assets directly from search result data without re-scraping.
+     *
+     * This endpoint creates assets using the rich data already available from search results,
+     * avoiding the need to re-scrape URLs and providing faster asset creation.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns SearchAndIngestResponse Successful Response
+     * @throws ApiError
+     */
+    public static createAssetsFromResults(data: CreateAssetsFromResultsData): CancelablePromise<CreateAssetsFromResultsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/search/create-assets-from-results',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
 }
 
 export class SharingService {
@@ -6074,6 +6673,29 @@ export class SourcesService {
     }
     
     /**
+     * Trigger Source Processing
+     * Trigger processing for a specific source.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.sourceId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static triggerSourceProcessing(data: TriggerSourceProcessingData): CancelablePromise<TriggerSourceProcessingResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/sources/{source_id}/process',
+            path: {
+                infospace_id: data.infospaceId,
+                source_id: data.sourceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Transfer Sources
      * Transfer sources between infospaces.
      * @param data The data for the request.
@@ -6085,6 +6707,30 @@ export class SourcesService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/infospaces/{infospace_id}/sources/transfer',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Rss Source
+     * Create a new Source of kind 'rss' and optionally set up a monitor for it.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns SourceRead Successful Response
+     * @throws ApiError
+     */
+    public static createRssSource(data: CreateRssSourceData): CancelablePromise<CreateRssSourceResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/sources/create-rss-source',
+            path: {
+                infospace_id: data.infospaceId
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -6819,6 +7465,101 @@ export class TasksService {
                 args: data.args,
                 kwargs: data.kwargs
             },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
+export class TreeNavigationService {
+    /**
+     * Get Infospace Tree
+     * Get the root-level tree structure for an infospace.
+     *
+     * Returns minimal metadata for bundles and assets:
+     * - Root bundles (no parent_bundle_id)
+     * - Root assets (no parent_asset_id, not in any bundle)
+     *
+     * This provides fast initial rendering. Use the /tree/children endpoint
+     * to lazy-load contents when user expands a node.
+     *
+     * **Performance:** Single query, minimal data transfer (~50-100KB vs 500KB-2MB)
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @returns TreeResponse Successful Response
+     * @throws ApiError
+     */
+    public static getInfospaceTree(data: GetInfospaceTreeData): CancelablePromise<GetInfospaceTreeResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/tree',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Tree Children
+     * Get children of a specific tree node (lazy loading).
+     *
+     * For bundles: Returns child bundles + assets in that bundle
+     * For container assets: Returns child assets (PDF pages, CSV rows, etc.)
+     *
+     * **Performance:** Only loads children when user expands, minimal data transfer
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.parentId Parent node ID (format: 'bundle-123' or 'asset-456')
+     * @param data.skip
+     * @param data.limit
+     * @returns TreeChildrenResponse Successful Response
+     * @throws ApiError
+     */
+    public static getTreeChildren(data: GetTreeChildrenData): CancelablePromise<GetTreeChildrenResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/tree/children',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                parent_id: data.parentId,
+                skip: data.skip,
+                limit: data.limit
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Tree Nodes
+     * Delete tree nodes (bundles and/or assets).
+     *
+     * Handles cascading deletion intelligently:
+     * - Deleting a bundle deletes all assets inside it
+     * - Deleting an asset deletes all child assets
+     * - Much cleaner than separate bundle/asset endpoints
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteTreeNodes(data: DeleteTreeNodesData): CancelablePromise<DeleteTreeNodesResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/tree/delete',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: 'Validation Error'
             }

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { produce } from 'immer';
-import { VariableSplittingConfig } from '@/components/collection/infospaces/annotation/VariableSplittingControls';
+import { VariableSplittingConfig } from '@/components/collection/annotation/VariableSplittingControls';
 
 // Runner-wide settings that should be consistent across all panels
 export interface RunnerWideSettings {

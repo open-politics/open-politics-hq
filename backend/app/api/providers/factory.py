@@ -23,6 +23,7 @@ from app.api.providers.model_registry import ModelRegistryService
 from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
 from app.api.providers.impl.language_ollama import OllamaLanguageModelProvider  
 from app.api.providers.impl.language_gemini import GeminiLanguageModelProvider
+from app.api.providers.impl.language_anthropic import AnthropicLanguageModelProvider
 
 
 
@@ -36,7 +37,9 @@ from app.api.providers.impl.search_tavily import TavilySearchProvider
 # Embedding provider implementations
 from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
 from app.api.providers.impl.embedding_jina import JinaEmbeddingProvider
-# from app.api.providers.impl.embedding_openai import OpenAIEmbeddingProvider # Future
+from app.api.providers.impl.embedding_openai import OpenAIEmbeddingProvider
+from app.api.providers.impl.embedding_voyage import VoyageAIEmbeddingProvider
+from app.api.providers.embedding_registry import EmbeddingProviderRegistryService
 
 from app.api.providers.impl.geospatial_opol import OpolGeospatialProvider
 
@@ -74,21 +77,33 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     """
     Create and configure the unified model registry with all available providers.
     
-    This replaces the old create_classification_provider function.
+    All providers are enabled for model discovery. API keys must be provided at runtime
+    from the frontend - NO environment variable fallbacks.
     """
     registry = ModelRegistryService()
     
-    # Configure OpenAI provider if API key is available
-    if hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
+    # Configure OpenAI if available (server environment variable)
+    # Runtime API keys can also be provided per-request
+    if settings.OPENAI_API_KEY:
+        from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
         registry.configure_provider(
-            name="openai",
-            provider_class=OpenAILanguageModelProvider,
-            config={"api_key": settings.OPENAI_API_KEY},
+            "openai",
+            OpenAILanguageModelProvider,
+            {"api_key": settings.OPENAI_API_KEY},
             enabled=True
         )
-        logger.info("Configured OpenAI provider")
+        logger.info("Configured OpenAI provider with server API key")
     
-    # Configure Ollama provider - always available in Docker setup
+    # Configure Anthropic provider - requires runtime API key from frontend
+    registry.configure_provider(
+        name="anthropic",
+        provider_class=AnthropicLanguageModelProvider,
+        config={"api_key": "placeholder"},  # Must be provided at runtime
+        enabled=True
+    )
+    logger.info("Configured Anthropic provider (requires runtime API key from frontend)")
+    
+    # Configure Ollama provider - uses base URL, no API key needed
     ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
     registry.configure_provider(
         name="ollama", 
@@ -98,19 +113,18 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     )
     logger.info(f"Configured Ollama provider with base_url: {ollama_base_url}")
     
-    # Configure Gemini provider if API key is available
-    if hasattr(settings, 'GOOGLE_API_KEY') and settings.GOOGLE_API_KEY:
-        default_model = getattr(settings, 'DEFAULT_CLASSIFICATION_MODEL_NAME', None)
-        registry.configure_provider(
-            name="gemini",
-            provider_class=GeminiLanguageModelProvider,
-            config={
-                "api_key": settings.GOOGLE_API_KEY,
-                "model_name": default_model
-            },
-            enabled=True
-        )
-        logger.info("Configured Gemini provider")
+    # Configure Gemini provider - requires runtime API key from frontend
+    default_model = getattr(settings, 'DEFAULT_CLASSIFICATION_MODEL_NAME', None)
+    registry.configure_provider(
+        name="gemini",
+        provider_class=GeminiLanguageModelProvider,
+        config={
+            "api_key": "placeholder",  # Must be provided at runtime
+            "model_name": default_model
+        },
+        enabled=True
+    )
+    logger.info("Configured Gemini provider (requires runtime API key from frontend)")
     
     return registry
 
@@ -174,8 +188,7 @@ def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
 
     if provider_type == "ollama":
         ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
-        default_model = getattr(settings, 'OLLAMA_EMBEDDING_MODEL', 'nomic-embed-text')
-        return OllamaEmbeddingProvider(base_url=ollama_base_url, default_model=default_model)
+        return OllamaEmbeddingProvider(base_url=ollama_base_url)
     
     elif provider_type == "jina":
         jina_api_key = getattr(settings, 'JINA_API_KEY', None)
@@ -198,3 +211,34 @@ def create_geospatial_provider(settings: AppSettings) -> GeospatialProvider:
         return OpolGeospatialProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
     else:
         raise ValueError(f"Unsupported geospatial provider type configured: {provider_type}") 
+
+
+# Global embedding registry instance
+_embedding_registry: Optional[EmbeddingProviderRegistryService] = None
+
+
+def create_embedding_registry(settings: AppSettings) -> EmbeddingProviderRegistryService:
+    """
+    Create and configure the unified embedding provider registry.
+    
+    All providers are enabled for model discovery. API keys must be provided at runtime
+    from the frontend for cloud providers (OpenAI, Voyage AI, Jina).
+    """
+    registry = EmbeddingProviderRegistryService()
+    
+    logger.info("Created embedding registry with providers: ollama, openai, voyage, jina")
+    logger.info("Cloud providers require runtime API keys from frontend")
+    
+    return registry
+
+
+def get_embedding_registry() -> EmbeddingProviderRegistryService:
+    """Get the global embedding registry instance."""
+    global _embedding_registry
+    
+    if _embedding_registry is None:
+        from app.core.config import settings
+        _embedding_registry = create_embedding_registry(settings)
+    
+    return _embedding_registry
+

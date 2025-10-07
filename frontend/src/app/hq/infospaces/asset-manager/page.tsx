@@ -1,19 +1,15 @@
 'use client';
 
 import React, { useCallback } from 'react';
-import AssetManager from '@/components/collection/infospaces/assets/AssetManager';
-import { AssetRead } from '@/client';
-import { toast } from 'sonner';
+import AssetManager from '@/components/collection/assets/AssetManager';
 
 export default function AssetManagerPage() {
   const handleLoadIntoRunner = useCallback((runId: number, runName: string) => {
-    // For now, just show the info in a toast
-    // In the future, this could navigate to the runner or open runner interface
-    toast.info(`Loading into runner: ${runName} (ID: ${runId})`);
+    console.info(`Loading into runner: ${runName} (ID: ${runId})`);
   }, []);
 
   return (
-    <div className="h-full flex flex-col w-full max-w-full overflow-hidden">
+    <div className="h-full flex flex-col min-h-[calc(100vh-3em)] w-full max-w-full overflow-hidden">
       <AssetManager onLoadIntoRunner={handleLoadIntoRunner} />
     </div>
   );

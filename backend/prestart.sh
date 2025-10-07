@@ -2,7 +2,7 @@
 set -e
 
 # alembic stamp head
-# alembic revision --autogenerate -m "Sources"
+# alembic revision --autogenerate -m "adding chat conversation history"
 alembic upgrade head
 
 # Let the DB start

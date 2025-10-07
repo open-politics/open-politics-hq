@@ -149,6 +149,9 @@ class AppSettings(BaseSettings):
 
     # === Provider Configurations ===
 
+    # --- GeoCoding Provider ---
+    GEOCODING_PROVIDER_TYPE: Literal["pelias", "mapbox"] = Field(default="pelias", env="GEOCODING_PROVIDER_TYPE")
+
     # --- Storage Provider ---
     STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
 
@@ -188,6 +191,12 @@ class AppSettings(BaseSettings):
     # Tavily API Key
     TAVILY_API_KEY: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
 
+    # --- MCP Server Configuration ---
+    # Optional: Explicit URL for MCP server (only needed for separate MCP service)
+    # Default behavior: Uses localhost since client and server run in same process
+    # Only set this if MCP server is deployed as a separate microservice/container
+    # Example: "http://mcp-service:8022" for dedicated MCP container
+    MCP_SERVER_URL: Optional[str] = Field(default=None, env="MCP_SERVER_URL")
 
     # --- Annotation Processing Configuration ---
     # Default concurrency for parallel annotation processing

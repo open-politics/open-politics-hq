@@ -1,7 +1,7 @@
 import React from 'react'
 import { ModeToggle } from './mode-toggle'
 import { cn } from '@/lib/utils'
-import HistoryContainer from '../collection/unsorted/desk-history-container'
+import HistoryContainer from '../collection/_unsorted_legacy/desk-history-container'
 import Link from 'next/link'
 
 export const Header: React.FC = async () => {

@@ -9,6 +9,7 @@ from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationR
 from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
 from app.api.providers.impl.language_ollama import OllamaLanguageModelProvider
 from app.api.providers.impl.language_gemini import GeminiLanguageModelProvider
+from app.api.providers.impl.language_anthropic import AnthropicLanguageModelProvider
 
 logger = logging.getLogger(__name__)
 
@@ -117,21 +118,110 @@ class ModelRegistryService:
         await self.discover_all_models()
         return self.models_cache.get(model_name)
     
-    async def get_provider_for_model(self, model_name: str) -> Tuple[Optional[LanguageModelProvider], Optional[str]]:
+    async def get_provider_for_model(self, model_name: str, runtime_api_keys: Optional[Dict[str, str]] = None) -> Tuple[Optional[LanguageModelProvider], Optional[str]]:
         """
         Find which provider has a specific model.
+        
+        Args:
+            model_name: Name of the model to find
+            runtime_api_keys: Runtime API keys from frontend (required for OpenAI, Anthropic, Gemini)
         
         Returns:
             Tuple of (provider_instance, provider_name) or (None, None) if not found
         """
+        # First, try to find model in cache
         model_info = await self.get_model_info(model_name)
-        if not model_info:
-            return None, None
         
-        provider_name = model_info.provider
-        provider = self.providers.get(provider_name)
+        # If not found and we have runtime API keys, try to discover from runtime providers
+        if not model_info and runtime_api_keys:
+            logger.info(f"Model '{model_name}' not in cache, attempting discovery with runtime API keys")
+            
+            # Try each provider in runtime_api_keys
+            for provider_name, api_key in runtime_api_keys.items():
+                if provider_name in ["openai", "anthropic", "gemini"] and api_key and api_key != "placeholder":
+                    logger.info(f"Attempting to discover models from runtime provider: {provider_name}")
+                    try:
+                        runtime_provider = await self._create_runtime_provider(provider_name, api_key)
+                        # After discovery, try to find the model again
+                        model_info = await self.get_model_info(model_name)
+                        if model_info:
+                            logger.info(f"Found model '{model_name}' in provider '{provider_name}' after runtime discovery")
+                            return runtime_provider, provider_name
+                    except Exception as e:
+                        logger.error(f"Failed to create runtime provider {provider_name}: {e}")
+            
+            # If still not found after trying all runtime providers
+            if not model_info:
+                logger.error(f"Model '{model_name}' not found after trying all runtime providers")
+                return None, None
         
-        return provider, provider_name
+        # If we found the model info
+        if model_info:
+            provider_name = model_info.provider
+            
+            # For providers that need API keys, create runtime provider
+            if provider_name in ["openai", "anthropic", "gemini"]:
+                if not runtime_api_keys or provider_name not in runtime_api_keys:
+                    logger.error(f"Provider '{provider_name}' requires API key from frontend")
+                    return None, None
+                
+                api_key = runtime_api_keys[provider_name]
+                if not api_key or api_key == "placeholder":
+                    logger.error(f"Invalid API key for provider '{provider_name}'")
+                    return None, None
+                
+                # Create runtime provider with frontend API key
+                runtime_provider = await self._create_runtime_provider(provider_name, api_key)
+                return runtime_provider, provider_name
+            
+            # For Ollama (no API key needed), use initialized provider
+            provider = self.providers.get(provider_name)
+            return provider, provider_name
+        
+        # Model not found at all
+        return None, None
+    
+    async def _create_runtime_provider(self, provider_name: str, api_key: str) -> Optional[LanguageModelProvider]:
+        """Create a provider instance with runtime API key and discover its models."""
+        if provider_name == "openai":
+            from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
+            provider = OpenAILanguageModelProvider(api_key=api_key)
+            # Discover models for this runtime provider
+            try:
+                models = await provider.discover_models()
+                for model in models:
+                    self.models_cache[model.name] = model
+                logger.info(f"Created runtime OpenAI provider and discovered {len(models)} models")
+            except Exception as e:
+                logger.error(f"Failed to discover models for runtime provider {provider_name}: {e}")
+            return provider
+        elif provider_name == "anthropic":
+            from app.api.providers.impl.language_anthropic import AnthropicLanguageModelProvider
+            provider = AnthropicLanguageModelProvider(api_key=api_key)
+            # Discover models for this runtime provider
+            try:
+                models = await provider.discover_models()
+                for model in models:
+                    self.models_cache[model.name] = model
+                logger.info(f"Created runtime Anthropic provider and discovered {len(models)} models")
+            except Exception as e:
+                logger.error(f"Failed to discover models for runtime provider {provider_name}: {e}")
+            return provider
+        elif provider_name == "gemini":
+            from app.api.providers.impl.language_gemini import GeminiLanguageModelProvider
+            provider = GeminiLanguageModelProvider(api_key=api_key)
+            # Discover models for this runtime provider
+            try:
+                models = await provider.discover_models()
+                for model in models:
+                    self.models_cache[model.name] = model
+                logger.info(f"Created runtime Gemini provider and discovered {len(models)} models")
+            except Exception as e:
+                logger.error(f"Failed to discover models for runtime provider {provider_name}: {e}")
+            return provider
+        else:
+            logger.warning(f"Runtime provider creation not supported for: {provider_name}")
+            return None
     
     async def generate(self, 
                       model_name: str,
@@ -141,13 +231,17 @@ class ModelRegistryService:
                       stream: bool = False,
                       thinking_enabled: bool = False,
                       tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
+                      runtime_api_keys: Optional[Dict[str, str]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Generate response using the appropriate provider for the model.
         
         This is the main entry point for all language model interactions.
+        
+        Args:
+            runtime_api_keys: Optional runtime API keys (e.g., {"openai": "sk-...", "anthropic": "sk-ant-..."})
         """
-        provider, provider_name = await self.get_provider_for_model(model_name)
+        provider, provider_name = await self.get_provider_for_model(model_name, runtime_api_keys)
         
         if not provider:
             raise ValueError(f"Model '{model_name}' not found in any provider")

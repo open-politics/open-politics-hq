@@ -1,6 +1,6 @@
 'use client';
 
-import AnnotationSchemaManager from '@/components/collection/infospaces/annotation/AnnotationSchemaManager';
+import AnnotationSchemaManager from '@/components/collection/annotation/AnnotationSchemaManager';
   
 export default function AnnotationSchemesPage() {
   return (

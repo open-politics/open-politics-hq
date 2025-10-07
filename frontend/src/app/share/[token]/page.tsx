@@ -10,12 +10,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, AlertCircle, CheckCircle, InfoIcon, Import, LogIn, ChevronLeft, LayoutDashboard, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
 import { toast } from 'sonner';
-import AssetPublicView from '@/components/collection/infospaces/assets/Helper/AssetPublicView';
-import BundlePublicView from '@/components/collection/infospaces/assets/Helper/BundlePublicView';
-import SharedAnnotationRunViewer from '@/components/collection/infospaces/annotation/shared/SharedAnnotationRunViewer';
-import SharedAnnotationRunDashboard from '@/components/collection/infospaces/annotation/shared/SharedAnnotationRunDashboard';
+import AssetPublicView from '@/components/collection/assets/Helper/AssetPublicView';
+import BundlePublicView from '@/components/collection/assets/Helper/BundlePublicView';
+import SharedAnnotationRunViewer from '@/components/collection/annotation/shared/SharedAnnotationRunViewer';
+import SharedAnnotationRunDashboard from '@/components/collection/annotation/shared/SharedAnnotationRunDashboard';
 import useAuth from '@/hooks/useAuth';
-import { ImportResourceDialog } from '@/components/collection/infospaces/assets/Helper/ImportResourceDialog';
+import { ImportResourceDialog } from '@/components/collection/assets/Helper/ImportResourceDialog';
 
 function isBundle(content: AssetPreview | BundlePreview | AnnotationRunPreview): content is BundlePreview {
     return 'assets' in content;

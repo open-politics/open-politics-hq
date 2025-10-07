@@ -30,7 +30,6 @@ from app.models import (
     Annotation,
     ShareableLink,
     RunSchemaLink,
-    AssetBundleLink,
     Bundle,
     InfospaceBackup
 )
@@ -186,12 +185,21 @@ class InfospaceService:
             ).all()
             logger.info(f"Service: Deleting {len(runs)} annotation runs")
             for run in runs:
-                # Delete run-schema links first
+                # Delete run aggregates first (they reference runs)
+                from app.models import RunAggregate
+                run_aggregates = self.session.exec(
+                    select(RunAggregate).where(RunAggregate.run_id == run.id)
+                ).all()
+                for aggregate in run_aggregates:
+                    self.session.delete(aggregate)
+                
+                # Delete run-schema links
                 run_schema_links = self.session.exec(
                     select(RunSchemaLink).where(RunSchemaLink.run_id == run.id)
                 ).all()
                 for link in run_schema_links:
                     self.session.delete(link)
+                
                 # Then delete the run itself
                 self.session.delete(run)
             
@@ -209,12 +217,12 @@ class InfospaceService:
             ).all()
             logger.info(f"Service: Deleting {len(bundles)} bundles")
             for bundle in bundles:
-                # Delete asset-bundle links first
-                asset_bundle_links = self.session.exec(
-                    select(AssetBundleLink).where(AssetBundleLink.bundle_id == bundle.id)
+                # Clear bundle_id from all assets in this bundle (orphan them)
+                assets_in_bundle = self.session.exec(
+                    select(Asset).where(Asset.bundle_id == bundle.id)
                 ).all()
-                for link in asset_bundle_links:
-                    self.session.delete(link)
+                for asset in assets_in_bundle:
+                    asset.bundle_id = None
                 # Then delete the bundle itself
                 self.session.delete(bundle)
             
@@ -266,7 +274,23 @@ class InfospaceService:
             for link in shareable_links:
                 self.session.delete(link)
             
-            # 11. Delete infospace backups (optional infospace_id, but clean up if present)
+            # 11. Delete chat conversations and their messages
+            from app.models import ChatConversation, ChatConversationMessage
+            conversations = self.session.exec(
+                select(ChatConversation).where(ChatConversation.infospace_id == infospace_id)
+            ).all()
+            logger.info(f"Service: Deleting {len(conversations)} chat conversations")
+            for conversation in conversations:
+                # Delete all messages first
+                messages = self.session.exec(
+                    select(ChatConversationMessage).where(ChatConversationMessage.conversation_id == conversation.id)
+                ).all()
+                for message in messages:
+                    self.session.delete(message)
+                # Then delete the conversation
+                self.session.delete(conversation)
+            
+            # 12. Delete infospace backups (optional infospace_id, but clean up if present)
             infospace_backups = self.session.exec(
                 select(InfospaceBackup).where(InfospaceBackup.infospace_id == infospace_id)
             ).all()
@@ -296,7 +320,7 @@ class InfospaceService:
                 
                 self.session.delete(backup)
             
-            # 12. Finally, delete the infospace itself
+            # 13. Finally, delete the infospace itself
             self.session.delete(db_infospace)
             
             # Commit all deletions
@@ -374,8 +398,27 @@ class InfospaceService:
         include_datasets: bool = True,
         include_assets_for_sources: bool = True,
         include_annotations_for_runs: bool = True,
+        include_chunks: bool = False,
+        include_embeddings: bool = False,
     ) -> DataPackage: 
-        """Export an infospace configuration and its contents as a DataPackage."""
+        """
+        Export an infospace configuration and its contents as a DataPackage.
+        
+        Args:
+            infospace_id: ID of the infospace to export
+            user_id: ID of the user performing the export
+            include_sources: Include sources and their assets
+            include_schemas: Include annotation schemas
+            include_runs: Include annotation runs
+            include_datasets: Include datasets
+            include_assets_for_sources: Include asset content for sources
+            include_annotations_for_runs: Include annotations for runs
+            include_chunks: Include asset chunks (text segments)
+            include_embeddings: Include vector embeddings (can significantly increase size)
+            
+        Returns:
+            DataPackage containing all specified infospace data
+        """
         if not self.storage_provider:
             logger.error("Storage provider not available in InfospaceService; cannot perform package export.")
             raise RuntimeError("Infospace export requires a configured storage provider.")
@@ -389,7 +432,8 @@ class InfospaceService:
         builder = PackageBuilder(
             session=self.session,
             storage_provider=self.storage_provider, 
-            source_instance_id=self.source_instance_id 
+            source_instance_id=self.source_instance_id,
+            settings=self.settings
         )
 
         package_metadata = PackageMetadata(
@@ -402,17 +446,38 @@ class InfospaceService:
 
         infospace_package_content: Dict[str, Any] = {
             "infospace_details": InfospaceRead.model_validate(infospace).model_dump(exclude_none=True),
+            "bundles_content": [],  # Export bundles first
             "sources_content": [], 
             "annotation_schemas_content": [], # Renamed from annotation_schemes_content
             "annotation_runs_content": [],    # Renamed
             "datasets_content": []
         }
 
+        # Export bundles (all of them, preserving hierarchy via parent_bundle_id)
+        if infospace.bundles:
+            logger.info(f"Exporting {len(infospace.bundles)} Bundles for infospace {infospace.id}")
+            for bundle_item in infospace.bundles:
+                try:
+                    # Export bundle structure but NOT asset content (assets exported separately)
+                    bundle_package = await builder.build_bundle_package(
+                        bundle_item,
+                        include_assets_content=False,  # Don't duplicate assets
+                        include_asset_annotations=False
+                    )
+                    infospace_package_content["bundles_content"].append(bundle_package.content)
+                except Exception as e:
+                    logger.error(f"Failed to package Bundle {bundle_item.id} ('{bundle_item.name}') for infospace export: {e}", exc_info=True)
+
         if include_sources and infospace.sources:
             logger.info(f"Exporting {len(infospace.sources)} Sources for infospace {infospace.id}")
             for ds in infospace.sources:
                 try:
-                    ds_package = await builder.build_source_package(ds, include_assets=include_assets_for_sources) 
+                    ds_package = await builder.build_source_package(
+                        ds, 
+                        include_assets=include_assets_for_sources,
+                        include_chunks=include_chunks,
+                        include_embeddings=include_embeddings
+                    ) 
                     infospace_package_content["sources_content"].append(ds_package.content)
                 except Exception as e:
                     logger.error(f"Failed to package Source {ds.id} ('{ds.name}') for infospace export: {e}", exc_info=True)
@@ -430,7 +495,12 @@ class InfospaceService:
             logger.info(f"Exporting {len(infospace.runs)} AnnotationRuns for infospace {infospace.id}")
             for run_item in infospace.runs:
                 try:
-                    run_package = await builder.build_annotation_run_package(run_item, include_annotations=include_annotations_for_runs) # Changed from include_results_for_jobs
+                    run_package = await builder.build_annotation_run_package(
+                        run_item, 
+                        include_annotations=include_annotations_for_runs,
+                        include_chunks=include_chunks,
+                        include_embeddings=include_embeddings
+                    )
                     infospace_package_content["annotation_runs_content"].append(run_package.content)
                 except Exception as e:
                     logger.error(f"Failed to package AnnotationRun {run_item.id} ('{run_item.name}') for infospace export: {e}", exc_info=True)
@@ -439,7 +509,13 @@ class InfospaceService:
             logger.info(f"Exporting {len(infospace.datasets)} Datasets for infospace {infospace.id}")
             for dataset_item in infospace.datasets:
                 try:
-                    dataset_package = await builder.build_dataset_package(dataset_item, include_assets=True, include_annotations=True) # Assuming build_dataset_package
+                    dataset_package = await builder.build_dataset_package(
+                        dataset_item, 
+                        include_assets=True, 
+                        include_annotations=True,
+                        include_chunks=include_chunks,
+                        include_embeddings=include_embeddings
+                    )
                     infospace_package_content["datasets_content"].append(dataset_package.content)
                 except Exception as e:
                     logger.error(f"Failed to package Dataset {dataset_item.id} ('{dataset_item.name}') for infospace export: {e}", exc_info=True)
@@ -505,6 +581,19 @@ class InfospaceService:
                 asset_service=asset_service
             )
 
+            # Two-pass bundle import:
+            # Pass 1: Create bundle structures (before sources, so we have bundle IDs)
+            bundle_contents_for_linking = []
+            for bundle_content in main_package.content.get("bundles_content", []):
+                try:
+                    bundle_meta = PackageMetadata(package_type=ResourceType.BUNDLE, source_entity_uuid=bundle_content.get("bundle", {}).get("uuid", str(uuid.uuid4())))
+                    # Create empty bundle first (no asset linking yet)
+                    temp_bundle_package = DataPackage(metadata=bundle_meta, content=bundle_content, files={})
+                    await importer.import_bundle_package(temp_bundle_package)
+                    bundle_contents_for_linking.append(bundle_content)  # Save for pass 2
+                except Exception as e:
+                    logger.error(f"Failed to import Bundle structure during infospace import: {e}", exc_info=True)
+
             for ds_content in main_package.content.get("sources_content", []):
                 try:
                     ds_meta = PackageMetadata(package_type=ResourceType.SOURCE, source_entity_uuid=ds_content.get("source",{}).get("uuid", str(uuid.uuid4())))
@@ -537,6 +626,46 @@ class InfospaceService:
                     await importer.import_dataset_package(temp_dataset_package)
                 except Exception as e:
                     logger.error(f"Failed to import a Dataset during infospace import: {e}", exc_info=True)
+
+            # Pass 2: Link assets to bundles (now that all assets have been imported)
+            logger.info(f"Pass 2: Linking assets to {len(bundle_contents_for_linking)} bundles")
+            for bundle_content in bundle_contents_for_linking:
+                try:
+                    bundle_data = bundle_content.get("bundle", {})
+                    bundle_uuid = str(bundle_data.get("uuid"))
+                    
+                    # Find the imported bundle
+                    local_bundle_id = importer._get_local_id_from_source_uuid(ResourceType.BUNDLE.value, bundle_uuid)
+                    if not local_bundle_id:
+                        logger.warning(f"Could not find imported bundle with UUID {bundle_uuid} for asset linking")
+                        continue
+                    
+                    bundle = self.session.get(Bundle, local_bundle_id)
+                    if not bundle:
+                        logger.warning(f"Bundle {local_bundle_id} not found for asset linking")
+                        continue
+                    
+                    # Link assets by UUID
+                    asset_refs = bundle_data.get("asset_references", [])
+                    linked_asset_ids = []
+                    for asset_ref in asset_refs:
+                        asset_uuid = str(asset_ref.get("uuid"))
+                        if asset_uuid:
+                            local_asset_id = importer._get_local_id_from_source_uuid(ResourceType.ASSET.value, asset_uuid)
+                            if local_asset_id:
+                                linked_asset_ids.append(local_asset_id)
+                            else:
+                                logger.debug(f"Asset {asset_uuid} not found for bundle {bundle.name}")
+                    
+                    if linked_asset_ids:
+                        assets_to_link = [self.session.get(Asset, aid) for aid in linked_asset_ids if self.session.get(Asset, aid)]
+                        bundle.assets = assets_to_link
+                        bundle.asset_count = len(assets_to_link)
+                        self.session.add(bundle)
+                        logger.info(f"Linked {len(assets_to_link)} assets to bundle '{bundle.name}'")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to link assets to bundle during infospace import pass 2: {e}", exc_info=True)
 
             self.session.commit()
             logger.info(f"Successfully committed all nested entities for imported infospace ID {created_infospace.id}")

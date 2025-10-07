@@ -3,10 +3,9 @@ import { cn } from "@/lib/utils";
 import { fontSans, fontMono } from "@/lib/fonts";
 import { ReactNode } from 'react';
 import ClientWrapper from './ClientWrapper';
-import BackgroundImage from '@/components/collection/unsorted/BackgroundImage';
-import { ToastProvider, ToastViewport } from '@/components/ui/toast';
-import { AppStateProvider } from '@/lib/utils/app-state'
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
+import BackgroundImage from '@/components/collection/_unsorted_legacy/BackgroundImage';
+import { AppStateProvider } from '@/lib/utils/app-state';
+import { SidebarProvider } from "@/components/ui/sidebar";
 
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
@@ -19,20 +18,14 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
             fontMono.variable
           )}
         >
-
           <AppStateProvider>
-          <SidebarProvider>
-              <SidebarInset>
-                <ClientWrapper>
-                  <BackgroundImage />
-                  <ToastProvider>
-                    {children}
-                    <ToastViewport />
-                  </ToastProvider>
-                  {/* <Footer /> */}
-                </ClientWrapper>
-              </SidebarInset>
-          </SidebarProvider>
+            <SidebarProvider>
+              <ClientWrapper>
+                <BackgroundImage />
+                {children}
+                {/* <Footer /> */}
+              </ClientWrapper>
+            </SidebarProvider>
           </AppStateProvider>
       </body>
     </html>

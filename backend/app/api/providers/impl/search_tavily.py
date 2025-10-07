@@ -36,30 +36,104 @@ class TavilySearchProvider(SearchProvider):
             # The Tavily client's search method is synchronous.
             # We run it in a thread pool to avoid blocking the async event loop.
             loop = asyncio.get_event_loop()
+            
+            # Prepare search parameters according to Tavily API documentation
+            search_params = {
+                "query": query,
+                "auto_parameters": False,  # We'll set parameters explicitly
+                "topic": "general",
+                "search_depth": "basic",  # Default to basic, can be overridden
+                "chunks_per_source": 3,
+                "max_results": limit,
+                "time_range": None,
+                "days": 7,
+                "include_answer": True,
+                "include_raw_content": True,  # Include raw content for better article extraction
+                "include_images": True,      # Enable images by default
+                "include_image_descriptions": True,  # Include AI-generated image descriptions
+                "include_favicon": True,     # Include favicons for better UX
+                "include_domains": [],
+                "exclude_domains": [],
+                "country": None
+            }
+            
+            # Add optional parameters from kwargs if provided
+            if "include_domains" in kwargs and kwargs["include_domains"]:
+                search_params["include_domains"] = kwargs["include_domains"]
+            if "exclude_domains" in kwargs and kwargs["exclude_domains"]:
+                search_params["exclude_domains"] = kwargs["exclude_domains"]
+            
+            # Allow overriding default settings via kwargs
+            if "include_images" in kwargs:
+                search_params["include_images"] = kwargs["include_images"]
+            if "include_raw_content" in kwargs:
+                search_params["include_raw_content"] = kwargs["include_raw_content"]
+            if "include_answer" in kwargs:
+                search_params["include_answer"] = kwargs["include_answer"]
+            if "search_depth" in kwargs:
+                search_params["search_depth"] = kwargs["search_depth"]
+            if "topic" in kwargs:
+                search_params["topic"] = kwargs["topic"]
+            if "chunks_per_source" in kwargs:
+                search_params["chunks_per_source"] = kwargs["chunks_per_source"]
+            if "days" in kwargs:
+                search_params["days"] = kwargs["days"]
+            if "time_range" in kwargs:
+                search_params["time_range"] = kwargs["time_range"]
+            if "country" in kwargs:
+                search_params["country"] = kwargs["country"]
+            
             search_results = await loop.run_in_executor(
                 None, 
-                self.client.search, 
-                query, 
-                "advanced", # search_depth
-                None, # topic
-                limit, # max_results
-                None, # include_images
-                None, # include_answer
-                None, # include_raw_content
-                None, # search_filter
+                lambda: self.client.search(**search_params)
             )
             
             standardized_results = []
             if search_results and "results" in search_results:
                 for res in search_results["results"]:
-                    standardized_results.append({
+                    # Enhanced result with rich content based on new API format
+                    result = {
                         "title": res.get("title", ""),
                         "url": res.get("url", ""),
                         "content": res.get("content", ""),
                         "score": res.get("score", None),
                         "raw": res
-                    })
-            logger.info(f"Tavily search for '{query}' returned {len(standardized_results)} results.")
+                    }
+                    
+                    # Add raw content if available (full article text)
+                    if "raw_content" in res and res["raw_content"]:
+                        result["raw_content"] = res["raw_content"]
+                    
+                    # Add published date if available
+                    if "published_date" in res:
+                        result["published_date"] = res["published_date"]
+                    
+                    
+                    # Add favicon if available
+                    if "favicon" in res:
+                        result["favicon"] = res["favicon"]
+                    
+                    standardized_results.append(result)
+            
+            # Include global metadata in the raw data of the first result if available
+            if standardized_results and search_results:
+                # Add global metadata to the first result's raw data for easy access
+                if "images" in search_results and search_results["images"]:
+                    standardized_results[0]["raw"]["tavily_images"] = search_results["images"]
+
+                if "auto_parameters" in search_results:
+                    standardized_results[0]["raw"]["tavily_auto_parameters"] = search_results["auto_parameters"]
+                if "response_time" in search_results:
+                    standardized_results[0]["raw"]["tavily_response_time"] = search_results["response_time"]
+                if "request_id" in search_results:
+                    standardized_results[0]["raw"]["tavily_request_id"] = search_results["request_id"]
+
+                if "answer" in search_results:
+                    standardized_results[0]["raw"]["summary_answer"] = search_results["answer"]
+            
+            images_count = len(search_results.get("images", [])) if search_results else 0
+            logger.info(f"Tavily search for '{query}' returned {len(standardized_results)} results and {images_count} images.")
+            
             return standardized_results
             
         except Exception as e:

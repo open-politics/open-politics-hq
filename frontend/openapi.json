@@ -2340,7 +2340,7 @@
           "Assets"
         ],
         "summary": "Upload File",
-        "description": "Upload a file and create an asset.",
+        "description": "Upload a file and create an asset.\n\nUses FileHandler directly for clean, testable file ingestion.",
         "operationId": "upload_file",
         "security": [
           {
@@ -2399,7 +2399,7 @@
           "Assets"
         ],
         "summary": "Ingest Url",
-        "description": "Ingest content from a URL.",
+        "description": "Ingest content from a URL.\n\nUses WebHandler directly for clean URL ingestion.",
         "operationId": "ingest_url",
         "security": [
           {
@@ -2483,7 +2483,7 @@
           "Assets"
         ],
         "summary": "Ingest Text",
-        "description": "Ingest direct text content.",
+        "description": "Ingest direct text content.\n\nUses TextHandler directly for clean text ingestion.",
         "operationId": "ingest_text",
         "security": [
           {
@@ -2689,6 +2689,69 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/assets/ingest-search-results": {
+      "post": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Ingest Search Results",
+        "description": "Ingest search results with their pre-fetched content (no re-scraping).\n\nThis endpoint is optimized for search results from providers like Tavily\nthat already include the full content. We create ARTICLE assets directly \nusing the new AssetBuilder pattern.",
+        "operationId": "ingest_search_results",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkSearchResultIngestion"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AssetRead"
+                  },
+                  "title": "Response Assets-Ingest Search Results"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/assets/{asset_id}/reprocess": {
       "post": {
         "tags": [
@@ -2729,6 +2792,74 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ReprocessOptions"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/assets/{asset_id}/update-csv-content": {
+      "put": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Update Asset Content",
+        "description": "Update CSV asset content and trigger reprocessing.\n\nThis endpoint:\n1. Validates the asset exists and user has access\n2. Updates the blob storage with new CSV content\n3. Updates existing child row assets in-place (preserves IDs and relationships)\n4. Creates new assets for added rows, deletes assets for removed rows\n\nIMPORTANT: Row assets are updated in-place rather than deleted/recreated.\nThis preserves annotations, fragments, and all relationships that reference these assets.",
+        "operationId": "update_asset_content",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_assets-update_asset_content"
               }
             }
           }
@@ -2899,65 +3030,6 @@
               "application/json": {
                 "schema": {
                   "title": "Response Assets-Preview Rss Feed"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/infospaces/{infospace_id}/assets/create-rss-source": {
-      "post": {
-        "tags": [
-          "assets",
-          "Assets"
-        ],
-        "summary": "Create Rss Source",
-        "description": "Create a new Source of kind 'rss' and optionally set up a monitor for it.",
-        "operationId": "create_rss_source",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RssSourceCreateRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SourceRead"
                 }
               }
             }
@@ -3193,7 +3265,7 @@
           "Assets"
         ],
         "summary": "Delete Asset",
-        "description": "Delete an asset and its children.",
+        "description": "Delete an asset and its children (explicitly handled for reliability).",
         "operationId": "delete_asset",
         "security": [
           {
@@ -3324,6 +3396,117 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/assets/bulk-delete": {
+      "post": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Bulk Delete Assets",
+        "description": "Delete multiple assets in one request.\n\nMuch more efficient than individual DELETE requests when cleaning up\nmultiple assets at once. Validates all assets belong to the infospace\nbefore deleting any.",
+        "operationId": "bulk_delete_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/assets/transfer": {
+      "post": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Transfer Assets",
+        "description": "Transfer assets between infospaces.\n\nThis endpoint allows you to copy or move multiple assets from one infospace to another.\nWhen copying (copy=True), new assets are created in the target infospace with the same content.\nWhen moving (copy=False), assets are moved by changing their infospace_id.\n\nArgs:\n    asset_ids: List of asset IDs to transfer\n    source_infospace_id: Source infospace ID\n    target_infospace_id: Target infospace ID\n    copy: If True, copy assets (default). If False, move them.\n\nReturns:\n    List of transferred assets in the target infospace",
+        "operationId": "transfer_assets",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetRead"
+                  },
+                  "type": "array",
+                  "title": "Response Assets-Transfer Assets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/infospaces/{infospace_id}/assets/supported-types": {
@@ -4687,6 +4870,53 @@
         }
       }
     },
+    "/api/v1/bundles/bundles/bulk-delete": {
+      "post": {
+        "tags": [
+          "Bundles"
+        ],
+        "summary": "Bulk Delete Bundles",
+        "description": "Delete multiple bundles in one request.\n\nMore efficient than individual DELETE requests when cleaning up\nmultiple bundles at once.",
+        "operationId": "bulk_delete_bundles",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteBundlesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/bundles/bundles/{bundle_id}/assets/{asset_id}": {
       "post": {
         "tags": [
@@ -4937,7 +5167,7 @@
           "Bundles"
         ],
         "summary": "Transfer Bundle",
-        "description": "Transfer a bundle to another infospace.",
+        "description": "Transfer a bundle to another infospace.\n\nWhen copying (copy=True), both the bundle and all its assets are copied to the target infospace.\nWhen moving (copy=False), the bundle is moved but cross-infospace asset movement has limitations.\n\nArgs:\n    bundle_id: ID of bundle to transfer\n    target_infospace_id: Target infospace ID\n    copy: If True, copy bundle and all assets. If False, move bundle.",
         "operationId": "transfer_bundle",
         "security": [
           {
@@ -4998,13 +5228,267 @@
         }
       }
     },
+    "/api/v1/bundles/bundles/{bundle_id}/move": {
+      "post": {
+        "tags": [
+          "Bundles"
+        ],
+        "summary": "Move Bundle To Parent",
+        "description": "Move a bundle into another bundle or to root level.",
+        "operationId": "move_bundle_to_parent",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Bundle Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BundleMoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/bundles/{bundle_id}/hierarchy": {
+      "get": {
+        "tags": [
+          "Bundles"
+        ],
+        "summary": "Get Bundle Hierarchy",
+        "description": "Get bundle with its complete child hierarchy.",
+        "operationId": "get_bundle_hierarchy",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Bundle Id"
+            }
+          },
+          {
+            "name": "max_depth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "default": 10,
+              "title": "Max Depth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleHierarchy"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/infospaces/{infospace_id}/bundles/root": {
+      "get": {
+        "tags": [
+          "Bundles"
+        ],
+        "summary": "Get Root Bundles",
+        "description": "Get all top-level bundles (those without parent bundles) in an infospace.",
+        "operationId": "get_root_bundles",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BundleRead"
+                  },
+                  "title": "Response Bundles-Get Root Bundles"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundles/infospaces/{infospace_id}/bundles/bulk-assets": {
+      "get": {
+        "tags": [
+          "Bundles"
+        ],
+        "summary": "Get Bulk Bundle Assets",
+        "description": "Get assets from multiple bundles in a single request.\nReturns a dictionary mapping bundle IDs to their assets.",
+        "operationId": "get_bulk_bundle_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "bundle_ids",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated list of bundle IDs",
+              "title": "Bundle Ids"
+            },
+            "description": "Comma-separated list of bundle IDs"
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Bundles-Get Bulk Bundle Assets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/chat/chat": {
       "post": {
         "tags": [
           "Intelligence Chat"
         ],
         "summary": "Intelligence Chat",
-        "description": "Intelligence analysis chat with tool orchestration.\n\nThe AI model can search, analyze, and interact with your intelligence data.\nExample conversation:\n- User: \"What are the main themes in recent political documents?\"\n- AI: *calls search_assets tool* → *analyzes results* → Responds with findings",
+        "description": "Intelligence analysis chat with tool orchestration.\n\nThe AI model can search, analyze, and interact with your intelligence data.\nExample conversation:\n- User: \"What are the main themes in recent political documents?\"\n- AI: *calls search_assets tool* → *analyzes results* → Responds with findings\n\nOptional: Provide conversation_id to save messages to a conversation history.",
         "operationId": "intelligence_chat",
         "requestBody": {
           "content": {
@@ -5222,6 +5706,430 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat/conversations": {
+      "get": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "List Conversations",
+        "description": "List chat conversations for the current user.\n\nQuery parameters:\n- infospace_id: Filter by infospace\n- skip: Number of records to skip (pagination)\n- limit: Maximum number of records to return\n- include_archived: Include archived conversations\n- pinned_only: Return only pinned conversations",
+        "operationId": "list_conversations",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          },
+          {
+            "name": "pinned_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Pinned Only"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatConversationsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "Create Conversation",
+        "description": "Create a new chat conversation.\n\nOptionally include initial messages.",
+        "operationId": "create_conversation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatConversationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatConversationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat/conversations/{conversation_id}": {
+      "get": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "Get Conversation",
+        "description": "Get a specific conversation with all its messages.",
+        "operationId": "get_conversation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatConversationWithMessages"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "Update Conversation",
+        "description": "Update a conversation's metadata (title, description, etc).",
+        "operationId": "update_conversation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatConversationUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatConversationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "Delete Conversation",
+        "description": "Delete a conversation and all its messages.",
+        "operationId": "delete_conversation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat/conversations/{conversation_id}/messages": {
+      "post": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "Add Message To Conversation",
+        "description": "Add a new message to an existing conversation.",
+        "operationId": "add_message_to_conversation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMessageToConversationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatConversationMessageRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Chat History"
+        ],
+        "summary": "Get Conversation Messages",
+        "description": "Get messages for a specific conversation.",
+        "operationId": "get_conversation_messages",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChatConversationMessageRead"
+                  },
+                  "title": "Response Chat History-Get Conversation Messages"
+                }
               }
             }
           },
@@ -6204,14 +7112,14 @@
         }
       }
     },
-    "/api/v1/embeddings/models": {
-      "get": {
+    "/api/v1/embeddings/infospaces/{infospace_id}/embeddings/generate": {
+      "post": {
         "tags": [
           "embeddings"
         ],
-        "summary": "List Embedding Models",
-        "description": "List all available embedding models.",
-        "operationId": "list_embedding_models",
+        "summary": "Generate Infospace Embeddings",
+        "description": "Generate embeddings for all assets in an infospace.\nUses the infospace's configured embedding model.\n\nFor cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided\nin the request. Background processing is supported for all providers by passing\nAPI keys to the Celery worker.",
+        "operationId": "generate_infospace_embeddings",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -6219,55 +7127,13 @@
         ],
         "parameters": [
           {
-            "name": "active_only",
-            "in": "query",
-            "required": false,
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "boolean",
-              "description": "Only return active models",
-              "default": true,
-              "title": "Active Only"
-            },
-            "description": "Only return active models"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/EmbeddingModelRead"
-                  },
-                  "title": "Response Embeddings-List Embedding Models"
-                }
-              }
+              "type": "integer",
+              "title": "Infospace Id"
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Create Embedding Model",
-        "description": "Create a new embedding model.",
-        "operationId": "create_embedding_model",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
           }
         ],
         "requestBody": {
@@ -6275,7 +7141,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EmbeddingModelCreate"
+                "$ref": "#/components/schemas/GenerateEmbeddingsRequest"
               }
             }
           }
@@ -6286,7 +7152,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EmbeddingModelRead"
+                  "$ref": "#/components/schemas/Message"
                 }
               }
             }
@@ -6304,64 +7170,14 @@
         }
       }
     },
-    "/api/v1/embeddings/models/available": {
-      "get": {
+    "/api/v1/embeddings/assets/{asset_id}/embeddings/generate": {
+      "post": {
         "tags": [
           "embeddings"
         ],
-        "summary": "Get Available Models",
-        "description": "Get available models from the current embedding provider.",
-        "operationId": "get_available_models",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/embeddings/health": {
-      "get": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Check Embedding Provider Health",
-        "description": "Check the health of the embedding provider.",
-        "operationId": "check_embedding_provider_health",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/embeddings/models/{model_id}/stats": {
-      "get": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Get Embedding Model Stats",
-        "description": "Get statistics for an embedding model.",
-        "operationId": "get_embedding_model_stats",
+        "summary": "Generate Asset Embeddings",
+        "description": "Generate embeddings for a single asset.",
+        "operationId": "generate_asset_embeddings",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -6369,12 +7185,70 @@
         ],
         "parameters": [
           {
-            "name": "model_id",
+            "name": "asset_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Model Id"
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateAssetEmbeddingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/embeddings/infospaces/{infospace_id}/embeddings/stats": {
+      "get": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Get Embedding Stats",
+        "description": "Get statistics about embedding coverage in an infospace.",
+        "operationId": "get_embedding_stats",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
             }
           }
         ],
@@ -6402,106 +7276,14 @@
         }
       }
     },
-    "/api/v1/embeddings/generate": {
+    "/api/v1/embeddings/infospaces/{infospace_id}/embeddings/search": {
       "post": {
         "tags": [
           "embeddings"
         ],
-        "summary": "Generate Embeddings",
-        "description": "Generate embeddings for a list of asset chunks.",
-        "operationId": "generate_embeddings",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmbeddingGenerateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/embeddings/search": {
-      "post": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Similarity Search",
-        "description": "Perform similarity search using embeddings.",
-        "operationId": "similarity_search",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmbeddingSearchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EmbeddingSearchResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/embeddings/embed-text": {
-      "post": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Embed Text",
-        "description": "Generate embedding for a single text (utility endpoint).",
-        "operationId": "embed_text",
+        "summary": "Semantic Search",
+        "description": "Perform semantic search within an infospace using vector embeddings.\n\nFor cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided\nin the request to generate the query embedding.",
+        "operationId": "semantic_search",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -6509,147 +7291,33 @@
         ],
         "parameters": [
           {
-            "name": "text",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Text"
-            }
-          },
-          {
-            "name": "model_name",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Model Name"
-            }
-          },
-          {
-            "name": "provider",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/EmbeddingProvider"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/embeddings/test": {
-      "post": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Test Embedding Provider",
-        "description": "Test the embedding provider with a sample text.",
-        "operationId": "test_embedding_provider",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "test_text",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "This is a test sentence for embedding generation.",
-              "title": "Test Text"
-            }
-          },
-          {
-            "name": "model_name",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Model Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/embeddings/models/{model_id}": {
-      "delete": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "Deactivate Embedding Model",
-        "description": "Deactivate an embedding model (soft delete).",
-        "operationId": "deactivate_embedding_model",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "model_id",
+            "name": "infospace_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Model Id"
+              "title": "Infospace Id"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticSearchRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticSearchResponse"
+                }
               }
             }
           },
@@ -6664,6 +7332,128 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/embeddings/infospaces/{infospace_id}/embeddings": {
+      "delete": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Clear Infospace Embeddings",
+        "description": "Clear all embeddings for an infospace.\nUseful when changing embedding models or resetting the vector store.",
+        "operationId": "clear_infospace_embeddings",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/embeddings/embeddings/models/discover": {
+      "post": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Discover Embedding Models",
+        "description": "Discover available embedding models from all providers with runtime API keys.\n\nThis endpoint supports runtime API key injection from frontend for:\n- OpenAI: requires api_keys.openai\n- Voyage AI (Anthropic): requires api_keys.voyage\n- Jina AI: requires api_keys.jina\n- Ollama: no API key needed",
+        "operationId": "discover_embedding_models",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailableModelsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/embeddings/embeddings/models": {
+      "get": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "List Available Embedding Models",
+        "description": "List available embedding models from Ollama (legacy endpoint).\n\nNote: This endpoint only returns Ollama models. Use POST /embeddings/models/discover\nwith runtime API keys to get models from all providers.",
+        "operationId": "list_available_embedding_models",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailableModelsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/files/upload": {
@@ -7494,7 +8284,7 @@
         }
       }
     },
-    "/api/v1/infospaces/infospaces/": {
+    "/api/v1/infospaces/": {
       "post": {
         "tags": [
           "Infospaces",
@@ -7600,7 +8390,7 @@
         }
       }
     },
-    "/api/v1/infospaces/infospaces": {
+    "/api/v1/infospaces": {
       "post": {
         "tags": [
           "Infospaces",
@@ -7706,7 +8496,7 @@
         }
       }
     },
-    "/api/v1/infospaces/infospaces/{infospace_id}": {
+    "/api/v1/infospaces/{infospace_id}": {
       "get": {
         "tags": [
           "Infospaces",
@@ -7852,7 +8642,7 @@
         }
       }
     },
-    "/api/v1/infospaces/infospaces/{infospace_id}/stats": {
+    "/api/v1/infospaces/{infospace_id}/stats": {
       "get": {
         "tags": [
           "Infospaces",
@@ -7903,15 +8693,15 @@
         }
       }
     },
-    "/api/v1/infospaces/infospaces/import": {
-      "get": {
+    "/api/v1/infospaces/{infospace_id}/export": {
+      "post": {
         "tags": [
           "Infospaces",
           "Infospaces"
         ],
-        "summary": "Import Infospace",
-        "description": "Import an Infospace.",
-        "operationId": "import_infospace",
+        "summary": "Export Infospace",
+        "description": "Export an infospace as a self-contained ZIP package.\n\nThis creates an immediate download of the infospace with all its contents.\nFor scheduled/async backups, use the /backups endpoints instead.",
+        "operationId": "export_infospace",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -7920,14 +8710,122 @@
         "parameters": [
           {
             "name": "infospace_id",
-            "in": "query",
+            "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
               "title": "Infospace Id"
             }
+          },
+          {
+            "name": "include_sources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include sources and their assets",
+              "default": true,
+              "title": "Include Sources"
+            },
+            "description": "Include sources and their assets"
+          },
+          {
+            "name": "include_schemas",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include annotation schemas",
+              "default": true,
+              "title": "Include Schemas"
+            },
+            "description": "Include annotation schemas"
+          },
+          {
+            "name": "include_runs",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include annotation runs",
+              "default": true,
+              "title": "Include Runs"
+            },
+            "description": "Include annotation runs"
+          },
+          {
+            "name": "include_datasets",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include datasets",
+              "default": true,
+              "title": "Include Datasets"
+            },
+            "description": "Include datasets"
+          },
+          {
+            "name": "include_chunks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include asset chunks (text segments)",
+              "default": false,
+              "title": "Include Chunks"
+            },
+            "description": "Include asset chunks (text segments)"
+          },
+          {
+            "name": "include_embeddings",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include vector embeddings (can be large)",
+              "default": false,
+              "title": "Include Embeddings"
+            },
+            "description": "Include vector embeddings (can be large)"
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/import": {
+      "post": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "Import Infospace",
+        "description": "Import an Infospace from a ZIP package file.\n\nThis will create a new infospace with all the contents from the package.",
+        "operationId": "import_infospace",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_Infospaces-import_infospace"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7949,7 +8847,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/login/access-token": {
@@ -8904,6 +9807,147 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/search/external": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Search And Ingest",
+        "description": "Search using external providers (Tavily, etc.) and create assets from results.\n\nThis endpoint combines web search with content ingestion to create searchable assets\nfrom web content. It supports multiple search providers and can automatically\nscrape full content from discovered URLs.",
+        "operationId": "search_and_ingest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAndIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/search/create-assets-from-urls": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Create Assets From Urls",
+        "description": "Create assets from specific URLs (typically from search results).\n\nThis endpoint allows for selective asset creation from a list of URLs,\nproviding more control over which search results become assets.",
+        "operationId": "create_assets_from_urls",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectiveAssetCreationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAndIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/search/create-assets-from-results": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Create Assets From Results",
+        "description": "Create assets directly from search result data without re-scraping.\n\nThis endpoint creates assets using the rich data already available from search results,\navoiding the need to re-scrape URLs and providing faster asset creation.",
+        "operationId": "create_assets_from_results",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectAssetCreationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAndIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sharing/{infospace_id}/links": {
@@ -10238,6 +11282,66 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/sources/{source_id}/process": {
+      "post": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Trigger Source Processing",
+        "description": "Trigger processing for a specific source.",
+        "operationId": "trigger_source_processing",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sources-Trigger Source Processing"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/sources/transfer": {
       "post": {
         "tags": [
@@ -10284,6 +11388,65 @@
             "OAuth2PasswordBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/sources/create-rss-source": {
+      "post": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Create Rss Source",
+        "description": "Create a new Source of kind 'rss' and optionally set up a monitor for it.",
+        "operationId": "create_rss_source",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RssSourceCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/sso/discourse/login": {
@@ -11218,6 +12381,194 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Tasks-Execute Task Manually"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/tree": {
+      "get": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Get Infospace Tree",
+        "description": "Get the root-level tree structure for an infospace.\n\nReturns minimal metadata for bundles and assets:\n- Root bundles (no parent_bundle_id)\n- Root assets (no parent_asset_id, not in any bundle)\n\nThis provides fast initial rendering. Use the /tree/children endpoint\nto lazy-load contents when user expands a node.\n\n**Performance:** Single query, minimal data transfer (~50-100KB vs 500KB-2MB)",
+        "operationId": "get_infospace_tree",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/tree/children": {
+      "get": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Get Tree Children",
+        "description": "Get children of a specific tree node (lazy loading).\n\nFor bundles: Returns child bundles + assets in that bundle\nFor container assets: Returns child assets (PDF pages, CSV rows, etc.)\n\n**Performance:** Only loads children when user expands, minimal data transfer",
+        "operationId": "get_tree_children",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Parent node ID (format: 'bundle-123' or 'asset-456')",
+              "title": "Parent Id"
+            },
+            "description": "Parent node ID (format: 'bundle-123' or 'asset-456')"
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TreeChildrenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/tree/delete": {
+      "post": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Delete Tree Nodes",
+        "description": "Delete tree nodes (bundles and/or assets).\n\nHandles cascading deletion intelligently:\n- Deleting a bundle deletes all assets inside it\n- Deleting an asset deletes all child assets\n- Much cleaner than separate bundle/asset endpoints",
+        "operationId": "delete_tree_nodes",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TreeDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
                 }
               }
             }
@@ -14706,6 +16057,19 @@
   },
   "components": {
     "schemas": {
+      "AddMessageToConversationRequest": {
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/ChatConversationMessageCreate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "AddMessageToConversationRequest",
+        "description": "Request to add a message to an existing conversation."
+      },
       "AnalysisAdapterRead": {
         "properties": {
           "name": {
@@ -15970,6 +17334,11 @@
           "kind": {
             "$ref": "#/components/schemas/AssetKind"
           },
+          "stub": {
+            "type": "boolean",
+            "title": "Stub",
+            "default": false
+          },
           "user_id": {
             "anyOf": [
               {
@@ -16082,6 +17451,16 @@
               }
             ],
             "title": "Event Timestamp"
+          },
+          "processing_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -16109,6 +17488,7 @@
           "video_scene",
           "audio_segment",
           "article",
+          "rss_feed",
           "file"
         ],
         "title": "AssetKind"
@@ -16205,6 +17585,11 @@
           },
           "kind": {
             "$ref": "#/components/schemas/AssetKind"
+          },
+          "stub": {
+            "type": "boolean",
+            "title": "Stub",
+            "default": false
           },
           "id": {
             "type": "integer",
@@ -16390,6 +17775,37 @@
         ],
         "title": "AssetRead"
       },
+      "AssetTransferRequest": {
+        "properties": {
+          "asset_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Asset Ids"
+          },
+          "source_infospace_id": {
+            "type": "integer",
+            "title": "Source Infospace Id"
+          },
+          "target_infospace_id": {
+            "type": "integer",
+            "title": "Target Infospace Id"
+          },
+          "copy": {
+            "type": "boolean",
+            "title": "Copy",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_ids",
+          "source_infospace_id",
+          "target_infospace_id"
+        ],
+        "title": "AssetTransferRequest"
+      },
       "AssetUpdate": {
         "properties": {
           "title": {
@@ -16412,6 +17828,17 @@
                 "type": "null"
               }
             ]
+          },
+          "stub": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stub"
           },
           "text_content": {
             "anyOf": [
@@ -16495,6 +17922,23 @@
         ],
         "title": "AssetsOut"
       },
+      "AvailableModelsResponse": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingModelInfo"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "required": [
+          "models"
+        ],
+        "title": "AvailableModelsResponse",
+        "description": "Response listing available embedding models."
+      },
       "BackupRestoreRequest": {
         "properties": {
           "backup_id": {
@@ -16553,6 +17997,21 @@
         ],
         "title": "BackupShareRequest"
       },
+      "Body_Infospaces-import_infospace": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Infospace package file (.zip)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_Infospaces-import_infospace"
+      },
       "Body_assets-add_files_to_bundle_background": {
         "properties": {
           "files": {
@@ -16596,6 +18055,20 @@
           "files"
         ],
         "title": "Body_assets-create_assets_background_bulk"
+      },
+      "Body_assets-update_asset_content": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_assets-update_asset_content"
       },
       "Body_assets-upload_file": {
         "properties": {
@@ -16830,6 +18303,66 @@
         ],
         "title": "Body_utils-extract_pdf_text"
       },
+      "BulkDeleteBundlesRequest": {
+        "properties": {
+          "bundle_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Bundle Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bundle_ids"
+        ],
+        "title": "BulkDeleteBundlesRequest"
+      },
+      "BulkDeleteRequest": {
+        "properties": {
+          "asset_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Asset Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_ids"
+        ],
+        "title": "BulkDeleteRequest"
+      },
+      "BulkSearchResultIngestion": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultItem"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "BulkSearchResultIngestion",
+        "description": "Bulk ingestion of search results with their pre-fetched content"
+      },
       "BulkUrlIngestion": {
         "properties": {
           "urls": {
@@ -16934,6 +18467,17 @@
               }
             ],
             "title": "Bundle Metadata"
+          },
+          "parent_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Bundle Id"
           }
         },
         "type": "object",
@@ -16941,6 +18485,93 @@
           "name"
         ],
         "title": "BundleCreate"
+      },
+      "BundleHierarchy": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "asset_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Count"
+          },
+          "child_bundle_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Bundle Count"
+          },
+          "parent_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Bundle Id"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/BundleHierarchy"
+            },
+            "type": "array",
+            "title": "Children",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "BundleHierarchy"
+      },
+      "BundleMoveRequest": {
+        "properties": {
+          "parent_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Bundle Id"
+          }
+        },
+        "type": "object",
+        "title": "BundleMoveRequest"
       },
       "BundlePreview": {
         "properties": {
@@ -17075,6 +18706,28 @@
               }
             ],
             "title": "Bundle Metadata"
+          },
+          "parent_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Bundle Id"
+          },
+          "child_bundle_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Bundle Count"
           }
         },
         "type": "object",
@@ -17150,10 +18803,670 @@
               }
             ],
             "title": "Bundle Metadata"
+          },
+          "parent_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Bundle Id"
           }
         },
         "type": "object",
         "title": "BundleUpdate"
+      },
+      "ChatConversationCreate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "conversation_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Metadata"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChatConversationMessageCreate"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "infospace_id"
+        ],
+        "title": "ChatConversationCreate",
+        "description": "Schema for creating a new chat conversation."
+      },
+      "ChatConversationMessageCreate": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "message_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Metadata"
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Calls"
+          },
+          "tool_executions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Executions"
+          },
+          "thinking_trace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Trace"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatConversationMessageCreate",
+        "description": "Schema for creating a new chat message."
+      },
+      "ChatConversationMessageRead": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "message_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Metadata"
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Calls"
+          },
+          "tool_executions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Executions"
+          },
+          "thinking_trace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Trace"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "conversation_id": {
+            "type": "integer",
+            "title": "Conversation Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content",
+          "id",
+          "conversation_id",
+          "created_at"
+        ],
+        "title": "ChatConversationMessageRead",
+        "description": "Schema for reading a chat message."
+      },
+      "ChatConversationRead": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "conversation_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Metadata"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "is_archived": {
+            "type": "boolean",
+            "title": "Is Archived"
+          },
+          "is_pinned": {
+            "type": "boolean",
+            "title": "Is Pinned"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "last_message_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message At"
+          },
+          "message_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "id",
+          "uuid",
+          "infospace_id",
+          "user_id",
+          "is_archived",
+          "is_pinned",
+          "created_at",
+          "updated_at",
+          "last_message_at"
+        ],
+        "title": "ChatConversationRead",
+        "description": "Schema for reading a chat conversation."
+      },
+      "ChatConversationUpdate": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "conversation_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Metadata"
+          },
+          "is_archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Archived"
+          },
+          "is_pinned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Pinned"
+          }
+        },
+        "type": "object",
+        "title": "ChatConversationUpdate",
+        "description": "Schema for updating a chat conversation."
+      },
+      "ChatConversationWithMessages": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "conversation_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Metadata"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "is_archived": {
+            "type": "boolean",
+            "title": "Is Archived"
+          },
+          "is_pinned": {
+            "type": "boolean",
+            "title": "Is Pinned"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "last_message_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message At"
+          },
+          "message_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Count"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatConversationMessageRead"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "id",
+          "uuid",
+          "infospace_id",
+          "user_id",
+          "is_archived",
+          "is_pinned",
+          "created_at",
+          "updated_at",
+          "last_message_at",
+          "messages"
+        ],
+        "title": "ChatConversationWithMessages",
+        "description": "Schema for chat conversation with full message history."
+      },
+      "ChatConversationsOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ChatConversationRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "ChatConversationsOut",
+        "description": "Paginated list of chat conversations."
       },
       "ChatMessage": {
         "properties": {
@@ -17222,6 +19535,36 @@
             "type": "boolean",
             "title": "Thinking Enabled",
             "default": false
+          },
+          "api_keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Keys"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "auto_save": {
+            "type": "boolean",
+            "title": "Auto Save",
+            "default": false
           }
         },
         "type": "object",
@@ -17269,6 +19612,21 @@
               }
             ],
             "title": "Tool Calls"
+          },
+          "tool_executions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Executions"
           },
           "thinking_trace": {
             "anyOf": [
@@ -17835,33 +20193,75 @@
         ],
         "title": "DatasetsOut"
       },
-      "EmbeddingGenerateRequest": {
+      "DirectAssetCreationRequest": {
         "properties": {
-          "chunk_ids": {
+          "search_results": {
             "items": {
-              "type": "integer"
+              "additionalProperties": true,
+              "type": "object"
             },
             "type": "array",
-            "title": "Chunk Ids"
+            "title": "Search Results"
           },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
           },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
+          },
+          "search_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Metadata"
           }
         },
         "type": "object",
         "required": [
-          "chunk_ids",
-          "model_name",
-          "provider"
+          "search_results",
+          "infospace_id"
         ],
-        "title": "EmbeddingGenerateRequest"
+        "title": "DirectAssetCreationRequest",
+        "description": "Request for creating assets directly from search result data"
       },
-      "EmbeddingModelCreate": {
+      "DiscoverModelsRequest": {
+        "properties": {
+          "api_keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Keys",
+            "description": "Runtime API keys for providers"
+          }
+        },
+        "type": "object",
+        "title": "DiscoverModelsRequest",
+        "description": "Request for discovering embedding models with runtime API keys."
+      },
+      "EmbeddingModelInfo": {
         "properties": {
           "name": {
             "type": "string",
@@ -17885,19 +20285,6 @@
               }
             ],
             "title": "Description"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config",
-            "default": {}
           },
           "max_sequence_length": {
             "anyOf": [
@@ -17917,272 +20304,43 @@
           "provider",
           "dimension"
         ],
-        "title": "EmbeddingModelCreate"
-      },
-      "EmbeddingModelRead": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "dimension": {
-            "type": "integer",
-            "title": "Dimension"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config",
-            "default": {}
-          },
-          "max_sequence_length": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Sequence Length"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          },
-          "embedding_time_ms": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Time Ms"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "provider",
-          "dimension",
-          "id",
-          "is_active",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "EmbeddingModelRead"
-      },
-      "EmbeddingProvider": {
-        "type": "string",
-        "enum": [
-          "ollama",
-          "jina",
-          "openai",
-          "huggingface"
-        ],
-        "title": "EmbeddingProvider"
-      },
-      "EmbeddingSearchRequest": {
-        "properties": {
-          "query_text": {
-            "type": "string",
-            "title": "Query Text"
-          },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit",
-            "default": 10
-          },
-          "distance_threshold": {
-            "type": "number",
-            "title": "Distance Threshold",
-            "default": 1.0
-          },
-          "distance_function": {
-            "type": "string",
-            "title": "Distance Function",
-            "default": "cosine"
-          }
-        },
-        "type": "object",
-        "required": [
-          "query_text",
-          "model_name",
-          "provider"
-        ],
-        "title": "EmbeddingSearchRequest"
-      },
-      "EmbeddingSearchResponse": {
-        "properties": {
-          "query_text": {
-            "type": "string",
-            "title": "Query Text"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/EmbeddingSearchResult"
-            },
-            "type": "array",
-            "title": "Results"
-          },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "distance_function": {
-            "type": "string",
-            "title": "Distance Function"
-          }
-        },
-        "type": "object",
-        "required": [
-          "query_text",
-          "results",
-          "model_name",
-          "distance_function"
-        ],
-        "title": "EmbeddingSearchResponse"
-      },
-      "EmbeddingSearchResult": {
-        "properties": {
-          "chunk_id": {
-            "type": "integer",
-            "title": "Chunk Id"
-          },
-          "asset_id": {
-            "type": "integer",
-            "title": "Asset Id"
-          },
-          "text_content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text Content"
-          },
-          "distance": {
-            "type": "number",
-            "title": "Distance"
-          },
-          "similarity": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Similarity"
-          }
-        },
-        "type": "object",
-        "required": [
-          "chunk_id",
-          "asset_id",
-          "text_content",
-          "distance"
-        ],
-        "title": "EmbeddingSearchResult"
+        "title": "EmbeddingModelInfo",
+        "description": "Information about an embedding model."
       },
       "EmbeddingStatsResponse": {
         "properties": {
-          "model_id": {
+          "total_assets": {
             "type": "integer",
-            "title": "Model Id"
+            "title": "Total Assets"
           },
-          "model_name": {
-            "type": "string",
-            "title": "Model Name"
-          },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "dimension": {
+          "total_chunks": {
             "type": "integer",
-            "title": "Dimension"
+            "title": "Total Chunks"
           },
-          "embedding_count": {
+          "embedded_chunks": {
             "type": "integer",
-            "title": "Embedding Count"
+            "title": "Embedded Chunks"
           },
-          "table_size": {
-            "type": "string",
-            "title": "Table Size"
+          "coverage_percentage": {
+            "type": "number",
+            "title": "Coverage Percentage"
           },
-          "avg_embedding_time_ms": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Avg Embedding Time Ms"
+          "models_used": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Models Used"
           }
         },
         "type": "object",
         "required": [
-          "model_id",
-          "model_name",
-          "provider",
-          "dimension",
-          "embedding_count",
-          "table_size"
+          "total_assets",
+          "total_chunks",
+          "embedded_chunks",
+          "coverage_percentage",
+          "models_used"
         ],
-        "title": "EmbeddingStatsResponse"
+        "title": "EmbeddingStatsResponse",
+        "description": "Response with embedding statistics."
       },
       "ExportBatchRequest": {
         "properties": {
@@ -18225,6 +20383,188 @@
         },
         "type": "object",
         "title": "ExportMixedBatchRequest"
+      },
+      "ExternalSearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": "tavily"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 10
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "scrape_content": {
+            "type": "boolean",
+            "title": "Scrape Content",
+            "default": true
+          },
+          "create_assets": {
+            "type": "boolean",
+            "title": "Create Assets",
+            "default": true
+          },
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
+          },
+          "include_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Domains"
+          },
+          "exclude_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Domains"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "search_depth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Depth",
+            "default": "basic"
+          },
+          "include_images": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Images",
+            "default": true
+          },
+          "include_answer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Answer",
+            "default": true
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic",
+            "default": "general"
+          },
+          "chunks_per_source": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunks Per Source",
+            "default": 3
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days",
+            "default": 7
+          },
+          "time_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Range"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "infospace_id"
+        ],
+        "title": "ExternalSearchRequest"
       },
       "FieldJustificationConfig": {
         "properties": {
@@ -18269,6 +20609,74 @@
           "object_name"
         ],
         "title": "FileUploadResponse"
+      },
+      "GenerateAssetEmbeddingsRequest": {
+        "properties": {
+          "overwrite": {
+            "type": "boolean",
+            "title": "Overwrite",
+            "description": "Regenerate existing embeddings",
+            "default": false
+          },
+          "async_processing": {
+            "type": "boolean",
+            "title": "Async Processing",
+            "description": "Process in background",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "GenerateAssetEmbeddingsRequest",
+        "description": "Request to generate embeddings for a single asset."
+      },
+      "GenerateEmbeddingsRequest": {
+        "properties": {
+          "overwrite": {
+            "type": "boolean",
+            "title": "Overwrite",
+            "description": "Regenerate existing embeddings",
+            "default": false
+          },
+          "asset_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Kinds",
+            "description": "Filter by asset types"
+          },
+          "async_processing": {
+            "type": "boolean",
+            "title": "Async Processing",
+            "description": "Process in background",
+            "default": true
+          },
+          "api_keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Keys",
+            "description": "Runtime API keys for cloud providers"
+          }
+        },
+        "type": "object",
+        "title": "GenerateEmbeddingsRequest",
+        "description": "Request to generate embeddings for an infospace."
       },
       "HTTPValidationError": {
         "properties": {
@@ -18778,6 +21186,72 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "vector_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Backend"
+          },
+          "embedding_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Model"
+          },
+          "embedding_dim": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Dim"
+          },
+          "chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Size"
+          },
+          "chunk_overlap": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Overlap"
+          },
+          "chunk_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Strategy"
           }
         },
         "type": "object",
@@ -19699,6 +22173,17 @@
           },
           "fragment_value": {
             "title": "Fragment Value"
+          },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
           }
         },
         "type": "object",
@@ -20062,6 +22547,67 @@
         ],
         "title": "RunStatus"
       },
+      "SearchAndIngestResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "results_found": {
+            "type": "integer",
+            "title": "Results Found"
+          },
+          "results": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results"
+          },
+          "assets_created": {
+            "type": "integer",
+            "title": "Assets Created",
+            "default": 0
+          },
+          "asset_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Asset Ids",
+            "default": []
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "provider",
+          "results_found",
+          "status",
+          "message"
+        ],
+        "title": "SearchAndIngestResponse"
+      },
       "SearchRequest": {
         "properties": {
           "query": {
@@ -20098,6 +22644,64 @@
           "query"
         ],
         "title": "SearchRequest"
+      },
+      "SearchResultItem": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "source_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url",
+          "content"
+        ],
+        "title": "SearchResultItem",
+        "description": "Single search result with pre-fetched content"
       },
       "SearchResultOut": {
         "properties": {
@@ -20173,6 +22777,198 @@
           "semantic"
         ],
         "title": "SearchType"
+      },
+      "SelectiveAssetCreationRequest": {
+        "properties": {
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Urls"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
+          },
+          "scrape_content": {
+            "type": "boolean",
+            "title": "Scrape Content",
+            "default": true
+          },
+          "search_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "urls",
+          "infospace_id"
+        ],
+        "title": "SelectiveAssetCreationRequest",
+        "description": "Request for creating assets from specific search result URLs"
+      },
+      "SemanticSearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Search query text"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "Maximum results",
+            "default": 10
+          },
+          "asset_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Kinds",
+            "description": "Filter by asset types"
+          },
+          "date_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date From",
+            "description": "Filter from date"
+          },
+          "date_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date To",
+            "description": "Filter to date"
+          },
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id",
+            "description": "Filter by bundle"
+          },
+          "distance_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance Threshold",
+            "description": "Maximum distance"
+          },
+          "distance_function": {
+            "type": "string",
+            "title": "Distance Function",
+            "description": "Distance function: cosine, l2, inner_product",
+            "default": "cosine"
+          },
+          "api_keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Keys",
+            "description": "Runtime API keys for cloud providers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SemanticSearchRequest",
+        "description": "Request for semantic search."
+      },
+      "SemanticSearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total_found": {
+            "type": "integer",
+            "title": "Total Found"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "results",
+          "total_found",
+          "infospace_id"
+        ],
+        "title": "SemanticSearchResponse",
+        "description": "Response from semantic search."
       },
       "ShareableLinkCreate": {
         "properties": {
@@ -20631,6 +23427,17 @@
             "title": "Monitoring Tasks",
             "default": []
           },
+          "asset_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Count"
+          },
           "is_monitored": {
             "type": "boolean",
             "title": "Is Monitored",
@@ -21021,6 +23828,227 @@
         ],
         "title": "ToolCallRequest",
         "description": "Request to execute a tool call."
+      },
+      "TreeChildrenResponse": {
+        "properties": {
+          "parent_id": {
+            "type": "string",
+            "title": "Parent Id"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/TreeNode"
+            },
+            "type": "array",
+            "title": "Children"
+          },
+          "total_children": {
+            "type": "integer",
+            "title": "Total Children"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parent_id",
+          "children",
+          "total_children",
+          "has_more"
+        ],
+        "title": "TreeChildrenResponse",
+        "description": "Response containing children of a node."
+      },
+      "TreeDeleteRequest": {
+        "properties": {
+          "node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Node Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_ids"
+        ],
+        "title": "TreeDeleteRequest"
+      },
+      "TreeNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TreeNodeType"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_container": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Container"
+          },
+          "children_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Children Count"
+          },
+          "has_children": {
+            "type": "boolean",
+            "title": "Has Children",
+            "default": false
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "asset_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Count"
+          },
+          "child_bundle_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Bundle Count"
+          },
+          "processing_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stub": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stub"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "name",
+          "updated_at"
+        ],
+        "title": "TreeNode",
+        "description": "Minimal representation of a tree node for efficient tree rendering."
+      },
+      "TreeNodeType": {
+        "type": "string",
+        "enum": [
+          "bundle",
+          "asset"
+        ],
+        "title": "TreeNodeType",
+        "description": "Type of node in the file tree."
+      },
+      "TreeResponse": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/TreeNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "total_bundles": {
+            "type": "integer",
+            "title": "Total Bundles"
+          },
+          "total_assets": {
+            "type": "integer",
+            "title": "Total Assets"
+          },
+          "total_nodes": {
+            "type": "integer",
+            "title": "Total Nodes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes",
+          "total_bundles",
+          "total_assets",
+          "total_nodes"
+        ],
+        "title": "TreeResponse",
+        "description": "Response containing tree structure."
       },
       "UpdatePassword": {
         "properties": {

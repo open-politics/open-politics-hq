@@ -16,6 +16,7 @@ from app.api.deps import (
     ContentIngestionServiceDep,
     BundleServiceDep,
     TaskServiceDep,
+    MonitorServiceDep,
 )
 from app.api.services.source_service import SourceService
 from app.api.services.service_utils import validate_infospace_access
@@ -29,8 +30,10 @@ from app.schemas import (
     SourceCreateRequest,
     BundleCreate,
     TaskCreate,
+    MonitorCreate,
 )
 from sqlmodel import select, func
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -39,6 +42,14 @@ router = APIRouter(
     prefix="/infospaces/{infospace_id}/sources",
     tags=["Sources"]
 )
+
+class RssSourceCreateRequest(BaseModel):
+    feed_url: str
+    source_name: Optional[str] = None
+    auto_monitor: bool = False
+    monitoring_schedule: Optional[str] = None
+    target_bundle_id: Optional[int] = None
+    target_bundle_name: Optional[str] = None
 
 # Routes
 
@@ -60,8 +71,8 @@ def create_source(
     source_service = SourceService(session)
     bundle_id_to_use = source_in.target_bundle_id
 
-    # Create a bundle if necessary
-    if source_in.enable_monitoring and not bundle_id_to_use:
+    # Create a bundle if necessary (always create one for ingestion)
+    if not bundle_id_to_use:
         bundle_name = (
             source_in.target_bundle_name or f"Ingestion for {source_in.name}"
         )
@@ -82,9 +93,17 @@ def create_source(
                 bundle_in=bundle_create, user_id=current_user.id, infospace_id=infospace_id
             )
             bundle_id_to_use = new_bundle.id
+    
+    # Store the target bundle ID in the source details for use during ingestion
+    if bundle_id_to_use:
+        source_details = source_in.details or {}
+        source_details['target_bundle_id'] = bundle_id_to_use
+        source_create = SourceCreate.model_validate(source_in)
+        source_create.details = source_details
+    else:
+        source_create = SourceCreate.model_validate(source_in)
 
     # Create the source
-    source_create = SourceCreate.model_validate(source_in)
     source = source_service.create_source(
         user_id=current_user.id, infospace_id=infospace_id, source_in=source_create
     )
@@ -340,6 +359,73 @@ def delete_source(
         logger.exception(f"Route: Unexpected error deleting source {source_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during deletion")
 
+@router.post("/{source_id}/process", status_code=status.HTTP_202_ACCEPTED)
+def trigger_source_processing(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    source_id: int,
+    session: SessionDep,
+) -> Dict[str, Any]:
+    """
+    Trigger processing for a specific source.
+    """
+    logger.info(f"Route: Triggering processing for Source {source_id} in infospace {infospace_id}")
+    try:
+        # Validate infospace access
+        validate_infospace_access(session, infospace_id, current_user.id)
+        
+        # Get the source
+        source = session.get(Source, source_id)
+        if not source:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source not found"
+            )
+        
+        # Verify source belongs to infospace
+        if source.infospace_id != infospace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source not found in this infospace"
+            )
+        
+        # Check if source is already processing
+        if source.status == SourceStatus.PROCESSING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Source is already being processed"
+            )
+        
+        # Use SourceService to trigger processing
+        source_service = SourceService(session)
+        success = source_service.trigger_source_processing(
+            source_id=source_id,
+            user_id=current_user.id,
+            infospace_id=infospace_id
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to trigger source processing"
+            )
+        
+        return {
+            "message": "Source processing triggered successfully",
+            "source_id": source_id,
+            "status": "processing_queued"
+        }
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error triggering processing for source {source_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Internal server error during processing trigger"
+        )
+
 @router.post("/transfer", response_model=SourceTransferResponse)
 def transfer_sources(
     *,
@@ -414,3 +500,112 @@ def transfer_sources(
         session.rollback()
         logger.exception(f"Route: Error transferring sources: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during source transfer")
+
+@router.post("/create-rss-source", response_model=SourceRead)
+async def create_rss_source(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    infospace_id: int,
+    request: RssSourceCreateRequest,
+    content_service: ContentIngestionServiceDep,
+    bundle_service: BundleServiceDep,
+    monitor_service: MonitorServiceDep,
+) -> Any:
+    """
+    Create a new Source of kind 'rss' and optionally set up a monitor for it.
+    """
+    from app.api.services.monitor_service import MonitorService
+    
+    source_name = request.source_name
+    if not source_name:
+        try:
+            feed_info = await content_service.preview_rss_feed(
+                request.feed_url, max_items=0
+            )
+            source_name = f"RSS: {feed_info['feed_info']['title']}"
+        except Exception:
+            source_name = f"RSS Feed: {request.feed_url}"
+
+    # 1. Determine or create the target bundle first
+    bundle_id_to_use = request.target_bundle_id
+    if not bundle_id_to_use:
+        # Create a new bundle
+        bundle_name = request.target_bundle_name or f"RSS: {source_name}"
+        
+        # Check if bundle with this name already exists
+        existing_bundle = session.exec(
+            select(Bundle).where(Bundle.name == bundle_name, Bundle.infospace_id == infospace_id)
+        ).first()
+        
+        if existing_bundle:
+            bundle_id_to_use = existing_bundle.id
+        else:
+            bundle_create = BundleCreate(
+                name=bundle_name,
+                description=f"Assets ingested from RSS feed: {source_name}",
+            )
+            new_bundle = bundle_service.create_bundle(
+                bundle_in=bundle_create, user_id=current_user.id, infospace_id=infospace_id
+            )
+            bundle_id_to_use = new_bundle.id
+    
+    # 2. Create the Source with bundle_id in details
+    source_create = SourceCreate(
+        name=source_name, 
+        kind="rss", 
+        details={
+            "feed_url": request.feed_url,
+            "target_bundle_id": bundle_id_to_use  # Store bundle_id for processing
+        }
+    )
+
+    stmt = select(Source).where(
+        Source.infospace_id == infospace_id,
+        Source.details["feed_url"].as_string() == request.feed_url,
+    )
+    existing_source = session.exec(stmt).first()
+
+    if existing_source:
+        source = existing_source
+        # Update the target_bundle_id if it's not already set
+        if not existing_source.details or 'target_bundle_id' not in existing_source.details:
+            if not existing_source.details:
+                existing_source.details = {}
+            existing_source.details['target_bundle_id'] = bundle_id_to_use
+            session.add(existing_source)
+            session.commit()
+            session.refresh(existing_source)
+    else:
+        source = Source.model_validate(
+            source_create,
+            update={"infospace_id": infospace_id, "user_id": current_user.id},
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+
+    # 3. If auto_monitor is true, create a Monitor (using the same bundle)
+    if request.auto_monitor and request.monitoring_schedule:
+        monitor_service_instance = MonitorService(
+            session, annotation_service=None, task_service=None
+        )
+
+        monitor_create = MonitorCreate(
+            name=f"Monitor for {source.name}",
+            schedule=request.monitoring_schedule,
+            target_bundle_ids=[bundle_id_to_use],
+            target_schema_ids=[],
+            run_config_override={"source_id": source.id},
+        )
+
+        try:
+            monitor = monitor_service_instance.create_monitor(
+                monitor_in=monitor_create,
+                user_id=current_user.id,
+                infospace_id=infospace_id,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create monitor: {e}")
+
+    return source

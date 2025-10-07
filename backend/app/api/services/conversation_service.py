@@ -10,6 +10,7 @@ import asyncio
 from jose import jwt
 
 from app.api.providers.model_registry import ModelRegistryService
+from app.api.providers.search_registry import SearchProviderRegistryService
 from app.api.providers.base import GenerationResponse
 from app.api.services.service_utils import validate_infospace_access
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation
@@ -56,9 +57,10 @@ class IntelligenceConversationService:
         self.asset_service = asset_service
         self.annotation_service = annotation_service
         self.content_ingestion_service = content_ingestion_service
+        self.search_registry = SearchProviderRegistryService()
         logger.info("IntelligenceConversationService initialized")
     
-    async def get_universal_tools(self, user_id: int, infospace_id: int) -> List[Dict[str, Any]]:
+    async def get_universal_tools(self, user_id: int, infospace_id: int, api_keys: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         """
         Get universal intelligence analysis capabilities (tools + resources).
         
@@ -72,25 +74,16 @@ class IntelligenceConversationService:
                 annotation_service=self.annotation_service,
                 content_ingestion_service=self.content_ingestion_service,
                 user_id=user_id,
-                infospace_id=infospace_id
+                infospace_id=infospace_id,
+                api_keys=api_keys  # Pass API keys to MCP client
             ) as mcp_client:
-                # Get both tools and resources
+                # Get tools from MCP server
+                # Note: search_and_ingest tool already provides Tavily integration
+                # via the internal search provider system
                 tools = await mcp_client.get_available_tools()
                 
-                # Add Tavily MCP tool if API key is present
-                if settings.TAVILY_API_KEY:
-                    tavily_mcp_tool = {
-                        "type": "mcp",
-                        "server_label": "tavily",
-                        "server_url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={settings.TAVILY_API_KEY}",
-                        "require_approval": "never",
-                    }
-                    tools.append(tavily_mcp_tool)
-                
-                # No longer need to manually handle resources; they are now tools
-                all_capabilities = tools
-                logger.info(f"Retrieved {len(tools)} total capabilities from MCP server")
-                return all_capabilities
+                logger.info(f"Retrieved {len(tools)} tools from MCP server")
+                return tools
                 
         except Exception as e:
             logger.error(f"Failed to get universal tools: {e}")
@@ -174,6 +167,7 @@ class IntelligenceConversationService:
                                infospace_id: int,
                                stream: bool = False,
                                thinking_enabled: bool = False,
+                               api_keys: Optional[Dict[str, str]] = None,
                                **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Intelligence analysis chat with full tool orchestration.
@@ -194,8 +188,9 @@ class IntelligenceConversationService:
         # Validate access
         validate_infospace_access(self.session, infospace_id, user_id)
         
-        # Create a secure context token for this conversation
-        context_token = create_mcp_context_token(user_id, infospace_id)
+        # Create a secure context token for this conversation with API keys encoded
+        from app.api.mcp.client import create_mcp_context_token_with_api_keys
+        context_token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys or {})
         
         # Check if the model exists and get its capabilities
         model_info = await self.model_registry.get_model_info(model_name)
@@ -209,7 +204,7 @@ class IntelligenceConversationService:
         supports_tools = bool(getattr(model_info, "supports_tools", False))
         
         # Only provide tools when supported
-        tools = await self.get_universal_tools(user_id, infospace_id) if supports_tools else None
+        tools = await self.get_universal_tools(user_id, infospace_id, api_keys) if supports_tools else None
         
         # Add system context about the infospace
         infospace = self.session.get(Infospace, infospace_id)
@@ -230,10 +225,12 @@ class IntelligenceConversationService:
                 tools=tools,
                 stream=stream,
                 thinking_enabled=thinking_enabled,
+                # Pass runtime API keys from frontend
+                runtime_api_keys=api_keys,
                 # Pass the context token to the provider for auth header
                 mcp_headers={"Authorization": f"Bearer {context_token}"},
-                # Pass the tool executor to the provider for non-MCP tools
-                tool_executor=lambda name, args: self.execute_tool_call(name, args, user_id, infospace_id),
+                # Pass the tool executor to the provider for non-MCP tools (includes api_keys)
+                tool_executor=lambda name, args: self.execute_tool_call(name, args, user_id, infospace_id, api_keys),
                 **kwargs
             )
 
@@ -254,6 +251,7 @@ class IntelligenceConversationService:
                         model_name=model_name,
                         tools=None,  # No tools
                         stream=stream,
+                        runtime_api_keys=api_keys,
                         mcp_headers={"Authorization": f"Bearer {context_token}"},
                         **kwargs
                     )
@@ -274,6 +272,7 @@ class IntelligenceConversationService:
                         model_name=model_name,
                         tools=tools,
                         stream=stream,
+                        runtime_api_keys=api_keys,
                         mcp_headers={"Authorization": f"Bearer {context_token}"},
                         **clean_kwargs
                     )
@@ -288,7 +287,8 @@ class IntelligenceConversationService:
                                tool_name: str,
                                arguments: Dict[str, Any],
                                user_id: int,
-                               infospace_id: int) -> Dict[str, Any]:
+                               infospace_id: int,
+                               api_keys: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Execute a tool call or resource read made by the AI model using MCP.
         
@@ -301,6 +301,7 @@ class IntelligenceConversationService:
             arguments: Arguments for the tool call
             user_id: ID of the user
             infospace_id: ID of the infospace
+            api_keys: Optional runtime API keys for cloud providers
             
         Returns:
             Tool execution result
@@ -316,7 +317,8 @@ class IntelligenceConversationService:
                 annotation_service=self.annotation_service,
                 content_ingestion_service=self.content_ingestion_service,
                 user_id=user_id,
-                infospace_id=infospace_id
+                infospace_id=infospace_id,
+                api_keys=api_keys  # Pass API keys to MCP client
             ) as mcp_client:
                 # We no longer need to distinguish between tool execution and resource reading,
                 # as all capabilities are now exposed as tools.
@@ -605,27 +607,58 @@ class IntelligenceConversationService:
     
     def _build_infospace_context(self, infospace: Infospace) -> str:
         """Build system context about the infospace for the AI model"""
-        context = f"""You are an AI intelligence analyst working in the "{infospace.name}" infospace.
+        context = f"""<workspace>
+You're working in "{infospace.name}".
+{infospace.description or "A research workspace for analyzing documents and data."}
+</workspace>
 
-Description: {infospace.description or "No description provided"}
+<capabilities>
+This workspace lets you discover, organize, and analyze documents:
+- Search and navigate through document collections (assets and bundles)
+- Find information using keyword or semantic search
+- Gather new content from the web when needed
+- Create organized collections for specific research topics
+</capabilities>
 
-You have access to intelligence analysis tools that allow you to:
-- Search for assets (documents, articles, media) using text queries
-- Perform semantic searches using embeddings
-- Get detailed information about specific assets
-- View existing annotations and analysis results
-- Create new analysis runs using annotation schemas
-- List available schemas and bundles
+<tool_results_display>
+After executing a tool, reference its results using this marker:
+<tool_results tool="tool_name" />
 
-When users ask questions about intelligence, documents, or analysis:
-1. Use search tools to find relevant assets
-2. Get details about interesting assets
-3. Check existing annotations if available
-4. Create new analysis runs if needed
-5. Present findings in a clear, analytical manner
+The system will automatically display rich, interactive results at that location.
 
-Always think step-by-step about what information you need and use the appropriate tools to gather it.
-"""
+Example: "I found 6 bundles <tool_results tool="navigate" />. Loading Climate Research now <tool_results tool="navigate" />."
+</tool_results_display>
+
+<workflow_patterns>
+Navigation (start lean, go deeper as needed):
+• List resources: navigate(resource="bundles", depth="titles")
+• Search for content: navigate(resource="assets", mode="search", query="climate policy")
+• Load specific items: navigate(resource="bundles", mode="load", ids=[4], depth="previews")
+• Read full content: navigate(resource="assets", mode="load", ids=[123], depth="full")
+
+Organization (chain operations efficiently):
+• Create and populate: Search → Create bundle → Add assets in one turn
+• Find and gather: navigate(mode="search") → organize(operation="create")
+
+Web research (two-step process):
+• Step 1: search_web(query="...") → Review results
+• Step 2: ingest_urls(urls=[...]) → Save selected items as permanent assets
+</workflow_patterns>
+
+<instructions>
+1. Start by navigating to understand what's available before making assumptions
+2. Use depth="titles" first, only request depth="full" when you need to read complete content
+3. Chain multiple operations in a single response when they logically follow
+4. Keep your responses concise—the UI displays full details interactively
+5. Think step-by-step about what information you need to answer thoroughly
+</instructions>
+
+<response_format>
+- Use <tool_results tool="name" /> markers to reference tool outputs
+- Present findings clearly with evidence from the documents
+- Suggest logical next steps when relevant
+- Be direct and analytical in your language
+</response_format>"""
         return context
     
     async def get_available_models(self, user_id: int, capability: Optional[str] = None) -> List[Dict[str, Any]]:

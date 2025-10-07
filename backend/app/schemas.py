@@ -10,6 +10,7 @@ Includes:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import enum
 from enum import Enum
 from typing import Any, Dict, List, Optional, Literal, Union, Set
 from dataclasses import dataclass
@@ -231,6 +232,13 @@ class InfospaceRead(InfospaceBase):
     id: int
     owner_id: int
     created_at: datetime
+    # Vector store configuration
+    vector_backend: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dim: Optional[int] = None
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    chunk_strategy: Optional[str] = None
 
 class InfospaceUpdate(SQLModel):
     name: Optional[str] = None
@@ -302,6 +310,7 @@ class SourceRead(SourceBase):
     error_message: Optional[str]
     source_metadata: Optional[Dict[str, Any]] = {}
     monitoring_tasks: List[TaskRead] = []
+    asset_count: Optional[int] = None
 
     @computed_field  # type: ignore[misc]
     @property
@@ -334,6 +343,7 @@ class SourceTransferResponse(SQLModel):
 class AssetBase(SQLModel):
     title: Optional[str] = None
     kind: AssetKind
+    stub: bool = False
 
 class AssetCreate(AssetBase):
     user_id: Optional[int] = None
@@ -346,10 +356,12 @@ class AssetCreate(AssetBase):
     source_identifier: Optional[str] = None
     source_metadata: Optional[Dict[str, Any]] = None
     event_timestamp: Optional[datetime] = None
+    processing_status: Optional[ProcessingStatus] = None
 
 class AssetUpdate(SQLModel):
     title: Optional[str] = None
     kind: Optional[AssetKind] = None
+    stub: Optional[bool] = None
     text_content: Optional[str] = None
     blob_path: Optional[str] = None
     source_identifier: Optional[str] = None
@@ -360,6 +372,7 @@ class AssetRead(AssetBase):
     id: int
     uuid: str
     title: str
+    stub: bool = False
     parent_asset_id: Optional[int]
     part_index: Optional[int]
     infospace_id: int
@@ -405,6 +418,7 @@ class BundleCreate(BundleBase):
     asset_ids: List[int] = []
     purpose: Optional[str] = None
     bundle_metadata: Optional[Dict[str, Any]] = None
+    parent_bundle_id: Optional[int] = None
 
 class BundleUpdate(SQLModel):
     name: Optional[str] = None
@@ -412,6 +426,7 @@ class BundleUpdate(SQLModel):
     tags: Optional[List[str]] = None
     purpose: Optional[str] = None
     bundle_metadata: Optional[Dict[str, Any]] = None
+    parent_bundle_id: Optional[int] = None
 
 class BundleRead(BundleBase):
     id: int
@@ -423,6 +438,20 @@ class BundleRead(BundleBase):
     user_id: int
     purpose: Optional[str] = None
     bundle_metadata: Optional[Dict[str, Any]] = None
+    parent_bundle_id: Optional[int] = None
+    child_bundle_count: Optional[int] = None
+
+class BundleMoveRequest(SQLModel):
+    parent_bundle_id: Optional[int] = None  # None means move to root level
+
+class BundleHierarchy(SQLModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    asset_count: Optional[int] = None
+    child_bundle_count: Optional[int] = None
+    parent_bundle_id: Optional[int] = None
+    children: List["BundleHierarchy"] = []
 
 # ───────────────────────────────────── Annotation Schema ──── #
 
@@ -1220,13 +1249,17 @@ class ChatRequest(SQLModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     thinking_enabled: bool = False
+    api_keys: Optional[Dict[str, str]] = None  # Runtime API keys for providers (e.g., {"tavily": "key", "openai": "key"})
+    conversation_id: Optional[int] = None  # Optional: Save messages to this conversation
+    auto_save: bool = False  # Optional: Automatically save messages to conversation history
 
 class ChatResponse(SQLModel):
     """Response from intelligence analysis chat."""
     content: str
     model_used: str
     usage: Optional[Dict[str, Any]] = None  # Changed from Dict[str, int] to handle complex usage objects
-    tool_calls: Optional[List[Dict]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # More flexible typing for tool calls
+    tool_executions: Optional[List[Dict[str, Any]]] = None  # History of executed tools with structured results
     thinking_trace: Optional[str] = None
     finish_reason: Optional[str] = None
 
@@ -1253,3 +1286,206 @@ class ModelListResponse(SQLModel):
     """Response listing available models."""
     models: List[ModelInfo]
     providers: List[str]
+
+
+# ─────────────────────────────────────────── Chat Conversations & History ──── #
+
+class ChatConversationMessageBase(SQLModel):
+    """Base schema for chat conversation messages."""
+    role: str
+    content: str
+    message_metadata: Optional[Dict[str, Any]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_executions: Optional[List[Dict[str, Any]]] = None
+    thinking_trace: Optional[str] = None
+    model_used: Optional[str] = None
+    usage: Optional[Dict[str, Any]] = None
+
+class ChatConversationMessageCreate(SQLModel):
+    """Schema for creating a new chat message."""
+    role: str
+    content: str
+    message_metadata: Optional[Dict[str, Any]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_executions: Optional[List[Dict[str, Any]]] = None
+    thinking_trace: Optional[str] = None
+    model_used: Optional[str] = None
+    usage: Optional[Dict[str, Any]] = None
+
+class ChatConversationMessageRead(ChatConversationMessageBase):
+    """Schema for reading a chat message."""
+    id: int
+    conversation_id: int
+    created_at: datetime
+
+class ChatConversationBase(SQLModel):
+    """Base schema for chat conversations."""
+    title: str
+    description: Optional[str] = None
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    conversation_metadata: Optional[Dict[str, Any]] = None
+
+class ChatConversationCreate(ChatConversationBase):
+    """Schema for creating a new chat conversation."""
+    infospace_id: int
+    messages: Optional[List[ChatConversationMessageCreate]] = None
+
+class ChatConversationUpdate(SQLModel):
+    """Schema for updating a chat conversation."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    conversation_metadata: Optional[Dict[str, Any]] = None
+    is_archived: Optional[bool] = None
+    is_pinned: Optional[bool] = None
+
+class ChatConversationRead(ChatConversationBase):
+    """Schema for reading a chat conversation."""
+    id: int
+    uuid: str
+    infospace_id: int
+    user_id: int
+    is_archived: bool
+    is_pinned: bool
+    created_at: datetime
+    updated_at: datetime
+    last_message_at: Optional[datetime]
+    message_count: Optional[int] = None
+
+class ChatConversationWithMessages(ChatConversationRead):
+    """Schema for chat conversation with full message history."""
+    messages: List[ChatConversationMessageRead]
+
+class ChatConversationsOut(SQLModel):
+    """Paginated list of chat conversations."""
+    data: List[ChatConversationRead]
+    count: int
+
+class AddMessageToConversationRequest(SQLModel):
+    """Request to add a message to an existing conversation."""
+    message: ChatConversationMessageCreate
+
+# ─────────────────────────────────────────────── MCP Tool Responses ──── #
+
+class BaseToolResponse(SQLModel):
+    """Base response schema for MCP tools, following existing response patterns."""
+    message: str
+    status: str = "success"
+
+class SearchAssetsResponse(BaseToolResponse):
+    """Structured response for search_assets tool."""
+    assets: List[AssetRead]
+    total_found: int
+    search_method: str
+    query: str
+
+class AnalyzeAssetsResponse(BaseToolResponse):
+    """Structured response for analyze_assets tool."""
+    run_id: int
+    run_name: str
+    assets_analyzed: int
+
+class SearchAndIngestResponse(BaseToolResponse):
+    """Structured response for search_and_ingest tool."""
+    query: str
+    provider: str
+    results_processed: int
+    assets_created: int
+    asset_ids: List[int]
+    bundle_id: Optional[int] = None
+    scrape_content: bool
+    search_results: Optional[List[Dict[str, Any]]] = None  # Raw search results (Asset-compatible format)
+
+class DiscoverRSSFeedsResponse(BaseToolResponse):
+    """Structured response for discover_rss_feeds tool."""
+    country: Optional[str] = None
+    category: Optional[str] = None
+    feeds_found: int
+    feeds: List[Dict[str, Any]]
+
+class IngestRSSFeedsResponse(BaseToolResponse):
+    """Structured response for ingest_rss_feeds tool."""
+    country: str
+    category_filter: Optional[str] = None
+    max_feeds: int
+    max_items_per_feed: int
+    assets_created: int
+    asset_ids: List[int]
+    bundle_id: Optional[int] = None
+
+class CurateAssetFragmentResponse(BaseToolResponse):
+    """Structured response for curate_asset_fragment tool."""
+    asset_id: int
+    fragment_key: str
+    fragment_value: str
+
+# Elicitation schemas for clarifying questions
+class SearchClarificationRequest(SQLModel):
+    """Schema for eliciting search clarification."""
+    search_type: str = Field(description="Type of search to perform", default="web")
+    max_results: int = Field(description="Maximum number of results", default=10, ge=1, le=50)
+    include_domains: Optional[List[str]] = Field(description="Specific domains to include", default=None)
+    exclude_domains: Optional[List[str]] = Field(description="Domains to exclude", default=None)
+    scrape_content: bool = Field(description="Whether to scrape full content from URLs", default=True)
+    bundle_id: Optional[int] = Field(description="Bundle ID to add results to", default=None)
+
+class AnalysisClarificationRequest(SQLModel):
+    """Schema for eliciting analysis clarification."""
+    schema_id: Optional[int] = Field(description="Annotation schema ID to use", default=None)
+    custom_instructions: Optional[str] = Field(description="Custom analysis instructions", default=None)
+    include_context: bool = Field(description="Include parent asset context", default=False)
+    context_window: int = Field(description="Context window size", default=0, ge=0, le=10000)
+
+# ─────────────────────────────────────────────────────────── File Tree ──── #
+
+class TreeNodeType(str, enum.Enum):
+    """Type of node in the file tree."""
+    BUNDLE = "bundle"
+    ASSET = "asset"
+
+class TreeNode(SQLModel):
+    """Minimal representation of a tree node for efficient tree rendering."""
+    id: str  # Format: "bundle-123" or "asset-456"
+    type: TreeNodeType
+    name: str
+    
+    # Optional fields based on type
+    kind: Optional[AssetKind] = None  # For assets
+    is_container: Optional[bool] = None  # For assets that can have children
+    children_count: Optional[int] = None  # Total immediate children count
+    has_children: bool = False  # Quick flag for expandable nodes
+    parent_id: Optional[str] = None  # For nested items
+    
+    # Metadata
+    updated_at: datetime
+    created_at: Optional[datetime] = None
+    asset_count: Optional[int] = None  # For bundles
+    child_bundle_count: Optional[int] = None  # For bundles
+    
+    # Processing status for assets
+    processing_status: Optional[ProcessingStatus] = None
+    
+    # Stub flag for assets
+    stub: Optional[bool] = None
+
+class TreeResponse(SQLModel):
+    """Response containing tree structure."""
+    nodes: List[TreeNode]
+    total_bundles: int
+    total_assets: int
+    total_nodes: int
+
+class TreeChildrenRequest(SQLModel):
+    """Request for fetching children of a node."""
+    parent_id: str  # Format: "bundle-123" or "asset-456"
+    skip: int = 0
+    limit: int = 100
+
+class TreeChildrenResponse(SQLModel):
+    """Response containing children of a node."""
+    parent_id: str
+    children: List[TreeNode]
+    total_children: int
+    has_more: bool

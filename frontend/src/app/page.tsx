@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import LandingLayout from './landing_layout';
-import { Announcement } from '@/components/collection/unsorted/announcement';
+import { Announcement } from '@/components/collection/_unsorted_legacy/announcement';
 import { Play, NewspaperIcon, Globe2, ZoomIn } from 'lucide-react';
 import TextWriter from "@/components/ui/extra-animated-base-components/text-writer";
 

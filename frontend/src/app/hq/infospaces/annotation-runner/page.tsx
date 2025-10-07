@@ -1,8 +1,8 @@
 "use client";
 
 import { useAnnotationRunStore } from "@/zustand_stores/useAnnotationRunStore";
-import AnnotationRunner from "@/components/collection/infospaces/annotation/AnnotationRunner";
-import AnnotationRunnerDock from "@/components/collection/infospaces/annotation/AnnotationRunnerDock";
+import AnnotationRunner from "@/components/collection/annotation/AnnotationRunner";
+import AnnotationRunnerDock from "@/components/collection/annotation/AnnotationRunnerDock";
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { AnnotationRunRead, AnnotationRunCreate, AnnotationSchemaRead, AssetRead, AnnotationRead } from "@/client";
 import { toast } from "sonner";

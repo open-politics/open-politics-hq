@@ -302,6 +302,55 @@ class PackageBuilder:
         
         self.files[zip_path] = content_bytes
         return zip_path
+    
+    async def _export_asset_chunks(
+        self,
+        asset: Asset,
+        include_embeddings: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Export chunks (and optionally embeddings) for an asset.
+        
+        Args:
+            asset: The asset whose chunks to export
+            include_embeddings: Whether to include vector embeddings
+            
+        Returns:
+            List of chunk dictionaries with text content and optional embeddings
+        """
+        from app.models import AssetChunk
+        
+        chunks_data = []
+        
+        # Get all chunks for this asset
+        chunks = self.session.exec(
+            select(AssetChunk)
+            .where(AssetChunk.asset_id == asset.id)
+            .order_by(AssetChunk.chunk_index)
+        ).all()
+        
+        for chunk in chunks:
+            chunk_dict = {
+                "chunk_index": chunk.chunk_index,
+                "text_content": chunk.text_content,
+                "blob_reference": chunk.blob_reference,
+                "chunk_metadata": chunk.chunk_metadata,
+            }
+            
+            # Include embeddings if requested and available
+            if include_embeddings:
+                if chunk.embedding_json:
+                    chunk_dict["embedding"] = chunk.embedding_json
+                    chunk_dict["embedding_model_id"] = chunk.embedding_model_id
+                elif chunk.embedding_legacy:
+                    # Convert legacy embedding to list
+                    chunk_dict["embedding"] = chunk.embedding_legacy
+                    chunk_dict["embedding_model_id"] = chunk.embedding_model_id
+            
+            chunks_data.append(chunk_dict)
+        
+        logger.debug(f"Exported {len(chunks_data)} chunks for asset {asset.id}, embeddings included: {include_embeddings}")
+        return chunks_data
 
     async def build_asset_package(
         self, 
@@ -356,7 +405,9 @@ class PackageBuilder:
     async def build_source_package(
         self,
         source: Source,
-        include_assets: bool = True
+        include_assets: bool = True,
+        include_chunks: bool = False,
+        include_embeddings: bool = False
     ) -> DataPackage:
         logger.debug(f"Building package for Source ID: {source.id}, Name: {source.name}")
         # Using direct model_dump from the Source model for package content.
@@ -400,6 +451,14 @@ class PackageBuilder:
                         asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, asset_file_bytes)
                     else:
                         asset_data["blob_path_fetch_failed"] = True # Indicate failure for this specific asset's blob
+                
+                # Handle chunks and embeddings if requested
+                if include_chunks or include_embeddings:
+                    asset_data["chunks"] = await self._export_asset_chunks(
+                        asset_item, 
+                        include_embeddings=include_embeddings
+                    )
+                
                 source_content["assets"].append(asset_data)
 
         package_metadata = PackageMetadata(
@@ -433,7 +492,9 @@ class PackageBuilder:
         self,
         run: AnnotationRun,
         include_annotations: bool = True,
-        include_justifications: bool = True
+        include_justifications: bool = True,
+        include_chunks: bool = False,
+        include_embeddings: bool = False
     ) -> DataPackage:
         logger.debug(f"Building package for AnnotationRun ID: {run.id}, Name: {run.name}")
         run_content = run.model_dump(exclude_none=True, exclude={'annotations', 'target_schemas'})
@@ -499,6 +560,13 @@ class PackageBuilder:
                         original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
                         blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = blob_file_ref
+                
+                # Handle chunks and embeddings if requested
+                if include_chunks or include_embeddings:
+                    asset_data["chunks"] = await self._export_asset_chunks(
+                        asset, 
+                        include_embeddings=include_embeddings
+                    )
                 
                 run_content["assets"].append(asset_data)
             
@@ -579,7 +647,9 @@ class PackageBuilder:
         self,
         dataset: Dataset,
         include_assets: bool = True,
-        include_annotations: bool = True
+        include_annotations: bool = True,
+        include_chunks: bool = False,
+        include_embeddings: bool = False
     ) -> DataPackage:
         logger.debug(f"Building package for Dataset ID: {dataset.id}, Name: {dataset.name}")
         dataset_content = dataset.model_dump(exclude_none=True, exclude={'assets', 'source_jobs', 'source_schemas'})
@@ -600,6 +670,13 @@ class PackageBuilder:
                         original_filename = (asset_item_in_ds.source_metadata or {}).get("filename") or asset_item_in_ds.title or Path(asset_item_in_ds.blob_path).name
                         blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = blob_file_ref
+                
+                # Handle chunks and embeddings if requested
+                if include_chunks or include_embeddings:
+                    asset_data["chunks"] = await self._export_asset_chunks(
+                        asset_item_in_ds, 
+                        include_embeddings=include_embeddings
+                    )
                 
                 if include_annotations:
                     asset_data["annotations"] = []
@@ -962,8 +1039,28 @@ class PackageImporter:
             else:
                 logger.warning(f"Could not resolve parent asset UUID {parent_uuid} for asset {asset_uuid}. Parent relationship will be lost.")
         
+        # Handle bundle relationship resolution
+        resolved_bundle_id = None
+        if asset_data_in_pkg.get("bundle_id"):
+            # Asset was in a bundle in the original infospace
+            # We need to find the imported bundle by its original UUID
+            # The bundle export includes the UUID, and we track it during import
+            original_bundle_id = asset_data_in_pkg.get("bundle_id")
+            
+            # Try to find bundle by checking if we have bundle UUID in asset data
+            # AssetRead includes bundle_id but not bundle UUID, so we need to query
+            # Check if bundle was already imported by looking through our uuid_map
+            for source_uuid, mapping in self.uuid_map.get(ResourceType.BUNDLE.value, {}).items():
+                # We don't have the original bundle UUID here directly, so we'll try a different approach
+                # We'll set this after all bundles are imported, or resolve via asset_data if available
+                pass
+            
+            # For now, we'll leave bundle_id as None and rely on the bundle import setting it
+            # via the new_bundle.assets = assets_to_link approach in import_bundle_package
+            logger.debug(f"Asset {asset_uuid} had bundle_id {original_bundle_id} in original infospace, will be linked during bundle import")
+        
         if parent_source_id is None and asset_data_in_pkg.get("kind") != "INFOSPACE_EXPORT_ANCHOR": # Example of a special kind
-            logger.warning(f"Asset UUID {asset_uuid} is being imported without a direct parent_source_id. Ensure this is intended.")
+            logger.debug(f"Asset UUID {asset_uuid} is being imported without a direct parent_source_id. This is expected for bundle-only assets.")
         
         asset_kind_str = asset_data_in_pkg.get("kind", AssetKind.TEXT.value) # Default to TEXT if kind missing
         try:
@@ -1473,12 +1570,23 @@ class PackageImporter:
         if b_data.get("asset_references") and isinstance(b_data["asset_references"], list):
             for asset_ref in b_data["asset_references"]:
                 if asset_ref.get("full_content"):
+                    # Full asset content provided - import the asset
                     asset_data_in_pkg = asset_ref["full_content"]
                     imported_asset = await self._import_asset_data(asset_data_in_pkg, package.files, parent_source_id=None)
                     if imported_asset:
                         local_asset_ids.append(imported_asset.id)
                 else:
-                    logger.warning(f"Bundle asset reference (UUID: {asset_ref.get('uuid')}) without full_content. Linking by UUID is not supported yet. Asset will be skipped.")
+                    # Just a reference - try to find the asset by UUID
+                    asset_uuid = str(asset_ref.get("uuid"))
+                    if asset_uuid:
+                        local_asset_id = self._get_local_id_from_source_uuid(ResourceType.ASSET.value, asset_uuid)
+                        if local_asset_id:
+                            local_asset_ids.append(local_asset_id)
+                            logger.debug(f"Linked existing asset {asset_uuid} to bundle {new_bundle.name}")
+                        else:
+                            logger.warning(f"Bundle asset reference UUID {asset_uuid} not found in imported assets. Asset will be skipped from bundle.")
+                    else:
+                        logger.warning(f"Bundle asset reference without UUID or full_content. Asset will be skipped.")
         
         if local_asset_ids:
             assets_to_link = [self.session.get(Asset, asset_id) for asset_id in local_asset_ids]

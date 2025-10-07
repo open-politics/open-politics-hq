@@ -18,6 +18,7 @@ pyjwt
 python-jose
 beautifulsoup4
 openai
+anthropic
 sdmx1
 tavily-python
 sentinelsat
@@ -52,3 +53,4 @@ newspaper4k
 lxml[html_clean]
 uvloop
 httptools
+openpyxl

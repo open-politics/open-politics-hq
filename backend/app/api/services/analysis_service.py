@@ -112,7 +112,8 @@ class AnalysisService:
         infospace_id: int,
         asset_id: int,
         fragment_key: str,
-        fragment_value: Any
+        fragment_value: Any,
+        source_run_id: Optional[int] = None
     ) -> Annotation:
         """
         Promotes a fragment of information to a permanent, curated feature of an asset.
@@ -130,7 +131,8 @@ class AnalysisService:
                 infospace_id=infospace_id,
                 asset_id=asset_id,
                 field_name=fragment_key,
-                value=fragment_value
+                value=fragment_value,
+                source_run_id=source_run_id
             )
             return annotation
         except ValueError as ve:

@@ -68,9 +68,11 @@ def monitor_rss_source(self, source_id: int, override_options: Optional[Dict[str
                     logger.warning(f"Could not parse last_processed_at for source {source_id}: {e}")
             
             # Configure ingestion options
+            # NOTE: scrape_full_content defaults to False because RSS feeds include
+            # full content in <content:encoded> - no need to scrape!
             ingestion_options = {
                 'max_items': override_options.get('max_items', 50) if override_options else 50,
-                'scrape_full_content': override_options.get('scrape_full_content', True) if override_options else True,
+                'scrape_full_content': override_options.get('scrape_full_content', False) if override_options else False,
                 'use_bulk_scraping': override_options.get('use_bulk_scraping', True) if override_options else True,
                 'create_image_assets': override_options.get('create_image_assets', True) if override_options else True,
                 'max_threads': override_options.get('max_threads', 4) if override_options else 4,
@@ -222,9 +224,10 @@ def monitor_news_source(self, source_id: int, override_options: Optional[Dict[st
                 options=monitoring_options
             )
             
-            # Link all assets to source
+            # Link only top-level assets to source (not child assets)
             for asset in assets:
-                asset.source_id = source.id
+                if asset.parent_asset_id is None:
+                    asset.source_id = source.id
                 session.add(asset)
             
             # Update source metadata

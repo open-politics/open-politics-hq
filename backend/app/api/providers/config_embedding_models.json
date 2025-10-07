@@ -40,6 +40,17 @@
           "languages": ["en"],
           "use_cases": ["fast_search", "lightweight_apps"]
         },
+        "embeddinggemma:latest": {
+          "name": "embeddinggemma:latest",
+          "dimension": 3584,
+          "description": "Google Gemma embedding model for high-quality embeddings",
+          "max_sequence_length": 8192,
+          "recommended": true,
+          "tags": ["high-quality", "google", "large"],
+          "model_size": "1.7GB",
+          "languages": ["en", "multilingual"],
+          "use_cases": ["semantic_search", "rag", "high_accuracy"]
+        },
         "snowflake-arctic-embed": {
           "name": "snowflake-arctic-embed",
           "dimension": 1024,
@@ -180,6 +191,81 @@
           "use_cases": ["high_accuracy", "complex_tasks"]
         }
       }
+    },
+    "voyage": {
+      "name": "Voyage AI",
+      "type": "cloud",
+      "description": "Cloud-based embedding models from Voyage AI (recommended by Anthropic)",
+      "api_key_env": "VOYAGE_API_KEY",
+      "base_url": "https://api.voyageai.com/v1/embeddings",
+      "models": {
+        "voyage-3": {
+          "name": "voyage-3",
+          "dimension": 1024,
+          "description": "Latest general-purpose embedding model from Voyage AI",
+          "max_sequence_length": 32000,
+          "recommended": true,
+          "tags": ["general", "latest", "high-quality"],
+          "cost_per_1k_tokens": 0.0001,
+          "languages": ["multilingual"],
+          "use_cases": ["general_purpose", "semantic_search", "rag"]
+        },
+        "voyage-3-lite": {
+          "name": "voyage-3-lite",
+          "dimension": 512,
+          "description": "Lightweight version of Voyage 3 for faster inference",
+          "max_sequence_length": 32000,
+          "recommended": false,
+          "tags": ["fast", "lightweight", "cost-effective"],
+          "cost_per_1k_tokens": 0.00005,
+          "languages": ["multilingual"],
+          "use_cases": ["fast_inference", "cost_sensitive"]
+        },
+        "voyage-3.5": {
+          "name": "voyage-3.5",
+          "dimension": 1024,
+          "description": "Enhanced version of Voyage 3 with improved performance",
+          "max_sequence_length": 32000,
+          "recommended": true,
+          "tags": ["general", "enhanced", "high-performance"],
+          "cost_per_1k_tokens": 0.00012,
+          "languages": ["multilingual"],
+          "use_cases": ["high_accuracy", "general_purpose", "rag"]
+        },
+        "voyage-finance-2": {
+          "name": "voyage-finance-2",
+          "dimension": 1024,
+          "description": "Specialized model for financial documents",
+          "max_sequence_length": 32000,
+          "recommended": false,
+          "tags": ["finance", "specialized", "domain-specific"],
+          "cost_per_1k_tokens": 0.00012,
+          "languages": ["en"],
+          "use_cases": ["financial_analysis", "specialized_finance"]
+        },
+        "voyage-law-2": {
+          "name": "voyage-law-2",
+          "dimension": 1024,
+          "description": "Specialized model for legal documents",
+          "max_sequence_length": 32000,
+          "recommended": false,
+          "tags": ["legal", "specialized", "domain-specific"],
+          "cost_per_1k_tokens": 0.00012,
+          "languages": ["en"],
+          "use_cases": ["legal_analysis", "specialized_legal"]
+        },
+        "voyage-code-2": {
+          "name": "voyage-code-2",
+          "dimension": 1536,
+          "description": "Specialized model for code and technical content",
+          "max_sequence_length": 16000,
+          "recommended": false,
+          "tags": ["code", "specialized", "technical"],
+          "cost_per_1k_tokens": 0.00012,
+          "languages": ["code"],
+          "use_cases": ["code_search", "technical_documentation"]
+        }
+      }
     }
   },
   "default_providers": {
@@ -187,10 +273,11 @@
     "production": "jina"
   },
   "recommended_models": {
-    "general_purpose": ["nomic-embed-text", "jina-embeddings-v2-base-en", "bge-base"],
-    "high_performance": ["jina-embeddings-v3", "bge-large", "text-embedding-ada-002"],
-    "fast_inference": ["all-minilm", "jina-embeddings-v2-small-en"],
-    "multilingual": ["bge-large", "jina-embeddings-v3", "text-embedding-ada-002"],
-    "cost_effective": ["nomic-embed-text", "jina-embeddings-v2-small-en", "text-embedding-3-small"]
+    "general_purpose": ["nomic-embed-text", "voyage-3", "jina-embeddings-v2-base-en", "bge-base"],
+    "high_performance": ["voyage-3.5", "jina-embeddings-v3", "bge-large", "text-embedding-ada-002"],
+    "fast_inference": ["all-minilm", "voyage-3-lite", "jina-embeddings-v2-small-en"],
+    "multilingual": ["voyage-3", "bge-large", "jina-embeddings-v3", "text-embedding-ada-002"],
+    "cost_effective": ["nomic-embed-text", "voyage-3-lite", "jina-embeddings-v2-small-en", "text-embedding-3-small"],
+    "specialized": ["voyage-finance-2", "voyage-law-2", "voyage-code-2"]
   }
 } 

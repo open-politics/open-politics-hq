@@ -3,7 +3,7 @@ from sqlmodel import Session, create_engine, select, text
 
 from app import crud
 from app.core.config import settings
-from app.models import User, Infospace, AnnotationSchema, Asset, AssetKind, Source, Bundle, Task, AssetBundleLink, SourceStatus, AnalysisAdapter, EmbeddingModel, EmbeddingProvider
+from app.models import User, Infospace, AnnotationSchema, Asset, AssetKind, Source, Bundle, Task, SourceStatus, AnalysisAdapter, EmbeddingModel, EmbeddingProvider
 from app.api.providers.embedding_config import embedding_models_config
 from app.schemas import UserCreate, InfospaceCreate
 from app.core.security import get_password_hash

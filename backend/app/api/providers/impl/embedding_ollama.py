@@ -1,202 +1,206 @@
+"""
+Ollama Embedding Provider Implementation
+"""
 import logging
 import httpx
-from typing import Any, Dict, List, Optional
+from typing import List, Dict, Any, Optional
+
 from app.api.providers.base import EmbeddingProvider
-from app.api.providers.embedding_config import embedding_models_config
 
 logger = logging.getLogger(__name__)
 
+
 class OllamaEmbeddingProvider(EmbeddingProvider):
     """
-    Ollama embedding provider implementation.
+    Ollama implementation of the EmbeddingProvider interface.
+    Uses Ollama's /api/embed endpoint for generating embeddings.
     """
     
-    def __init__(self, base_url: str = "http://localhost:11434", default_model: str = "nomic-embed-text"):
+    def __init__(self, base_url: str = "http://ollama:11434"):
+        self.base_url = base_url.rstrip('/')
+        self.client = httpx.AsyncClient(timeout=120.0)
+        self._model_cache = {}
+        logger.info(f"Ollama embedding provider initialized with base_url: {self.base_url}")
+    
+    async def embed_texts(self, texts: List[str], model_name: Optional[str] = None) -> List[List[float]]:
         """
-        Initialize Ollama embedding provider.
+        Generate embeddings for a list of texts using Ollama's batch endpoint.
         
         Args:
-            base_url: Ollama server base URL
-            default_model: Default embedding model to use
+            texts: List of text strings to embed
+            model_name: Ollama embedding model name (e.g., "nomic-embed-text", "mxbai-embed-large")
+        
+        Returns:
+            List of embedding vectors
         """
-        self.base_url = base_url.rstrip('/')
-        self.default_model = default_model
-        
-        # Load models from configuration
-        config_models = embedding_models_config.get_provider_models("ollama")
-        self.available_models = config_models
-        
-        logger.info(f"OllamaEmbeddingProvider initialized with base_url: {self.base_url}, default_model: {self.default_model}")
-        logger.info(f"Loaded {len(self.available_models)} models from configuration")
-
-    async def embed_texts(self, texts: List[str], model_name: Optional[str] = None) -> List[List[float]]:
-        """Generate embeddings for multiple texts."""
         if not texts:
             return []
+        
+        if not model_name:
+            raise ValueError("model_name is required for Ollama embeddings")
+        
+        try:
+            payload = {
+                "model": model_name,
+                "input": texts,
+                "truncate": True
+            }
             
-        model = model_name or self.default_model
-        
-        # Check if model is available
-        if not await self.check_model_availability(model):
-            logger.warning(f"Model {model} not available, attempting to pull it")
-            if not await self.pull_model_if_needed(model):
-                logger.error(f"Failed to pull model {model}, using empty embeddings")
-                return [[] for _ in texts]
-        
-        embeddings = []
-        
-        # Use longer timeout for embedding generation
-        timeout = httpx.Timeout(60.0, connect=10.0)
-        
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            for text in texts:
-                try:
-                    # Truncate text if too long (basic safety measure)
-                    max_length = 8000  # Conservative limit
-                    truncated_text = text[:max_length] if len(text) > max_length else text
-                    
-                    response = await client.post(
-                        f"{self.base_url}/api/embeddings",
-                        json={
-                            "model": model,
-                            "prompt": truncated_text
-                        }
-                    )
-                    response.raise_for_status()
-                    
-                    data = response.json()
-                    if "embedding" in data and data["embedding"]:
-                        embeddings.append(data["embedding"])
-                    else:
-                        logger.error(f"No embedding returned for text: {truncated_text[:50]}...")
-                        embeddings.append([])
-                        
-                except httpx.TimeoutException as e:
-                    logger.error(f"Timeout error for Ollama embedding: {e}")
-                    embeddings.append([])
-                except httpx.RequestError as e:
-                    logger.error(f"Request error for Ollama embedding: {e}")
-                    embeddings.append([])
-                except httpx.HTTPStatusError as e:
-                    logger.error(f"HTTP error for Ollama embedding: {e.response.status_code} - {e.response.text}")
-                    # If it's a model not found error, try to pull the model
-                    if e.response.status_code == 404:
-                        logger.info(f"Model {model} not found, attempting to pull")
-                        if await self.pull_model_if_needed(model):
-                            # Retry the request once
-                            try:
-                                retry_response = await client.post(
-                                    f"{self.base_url}/api/embeddings",
-                                    json={
-                                        "model": model,
-                                        "prompt": truncated_text
-                                    }
-                                )
-                                retry_response.raise_for_status()
-                                retry_data = retry_response.json()
-                                if "embedding" in retry_data and retry_data["embedding"]:
-                                    embeddings.append(retry_data["embedding"])
-                                else:
-                                    embeddings.append([])
-                            except Exception as retry_e:
-                                logger.error(f"Retry failed for Ollama embedding: {retry_e}")
-                                embeddings.append([])
-                        else:
-                            embeddings.append([])
-                    else:
-                        embeddings.append([])
-                except Exception as e:
-                    logger.error(f"Unexpected error for Ollama embedding: {e}")
-                    embeddings.append([])
-        
-        return embeddings
-
+            response = await self.client.post(f"{self.base_url}/api/embed", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            
+            embeddings = data.get("embeddings", [])
+            
+            if not embeddings:
+                logger.error(f"No embeddings returned from Ollama for model {model_name}")
+                return []
+            
+            logger.debug(f"Generated {len(embeddings)} embeddings using {model_name}")
+            return embeddings
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Ollama embedding API error: {e.response.status_code} - {e.response.text}")
+            raise RuntimeError(f"Ollama embedding failed: {e.response.text}")
+        except Exception as e:
+            logger.error(f"Ollama embedding error: {e}")
+            raise RuntimeError(f"Ollama embedding failed: {str(e)}")
+    
     async def embed_single(self, text: str, model_name: Optional[str] = None) -> List[float]:
-        """Generate embedding for a single text."""
-        results = await self.embed_texts([text], model_name)
-        return results[0] if results else []
-
-    def get_available_models(self) -> List[Dict[str, Any]]:
-        """Get list of available embedding models."""
-        return list(self.available_models.values())
-
-    def get_model_dimension(self, model_name: str) -> int:
-        """Get embedding dimension for a specific model."""
-        dimension = embedding_models_config.get_model_dimension("ollama", model_name)
-        if dimension:
-            return dimension
+        """
+        Generate embedding for a single text.
         
-        # Default dimension if model not found in our registry
-        logger.warning(f"Unknown Ollama model '{model_name}', defaulting to 768 dimensions")
-        return 768
-
-    async def check_model_availability(self, model_name: str) -> bool:
-        """Check if a model is available on the Ollama server."""
+        Args:
+            text: Text string to embed
+            model_name: Ollama embedding model name
+        
+        Returns:
+            Single embedding vector
+        """
+        embeddings = await self.embed_texts([text], model_name)
+        if not embeddings:
+            raise RuntimeError("Failed to generate embedding")
+        return embeddings[0]
+    
+    async def discover_models(self) -> List[Dict[str, Any]]:
+        """
+        Discover available embedding models from Ollama.
+        
+        Strategy:
+        1. Get all models from /api/tags
+        2. Use /api/show to check for embedding capability via tags/details
+        3. Fall back to testing embedding generation if metadata unclear
+        """
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
-                response.raise_for_status()
+            response = await self.client.get(f"{self.base_url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            
+            all_models = data.get("models", [])
+            embedding_models = []
+            
+            logger.info(f"Checking {len(all_models)} Ollama models for embedding capability...")
+            
+            for model_data in all_models:
+                model_name = model_data.get("name", "")
                 
-                data = response.json()
-                if "models" in data:
-                    available_model_names = [model["name"] for model in data["models"]]
-                    return model_name in available_model_names
+                # Try to get detailed model info from /api/show
+                is_embedding_model = False
+                try:
+                    show_resp = await self.client.post(
+                        f"{self.base_url}/api/show", 
+                        json={"model": model_name}
+                    )
                     
-        except Exception as e:
-            logger.error(f"Error checking Ollama model availability: {e}")
+                    if show_resp.status_code == 200:
+                        show_data = show_resp.json() or {}
+                        
+                        # Check for embedding indicator in model details
+                        details = show_data.get("details", {}) or {}
+                        model_family = details.get("family", "").lower()
+                        format_type = details.get("format", "").lower()
+                        
+                        # Check model metadata/tags for embedding indicator
+                        model_file = show_data.get("modelfile", "").lower()
+                        
+                        # Look for embedding indicators in metadata
+                        is_embedding_model = (
+                            "embed" in model_family or
+                            "embed" in format_type or
+                            "embedding" in model_file or
+                            details.get("is_embedding", False)
+                        )
+                        
+                        logger.debug(f"Model {model_name}: family={model_family}, format={format_type}, is_embedding={is_embedding_model}")
+                
+                except Exception as e:
+                    logger.debug(f"Could not probe {model_name} metadata: {e}")
+                
+                # If metadata doesn't indicate embedding capability,
+                # try to generate a test embedding to verify
+                if not is_embedding_model:
+                    try:
+                        test_embedding = await self.embed_single("test", model_name)
+                        dimension = len(test_embedding)
+                        is_embedding_model = True
+                        logger.debug(f"✓ {model_name} can generate embeddings ({dimension}d)")
+                    except Exception as e:
+                        logger.debug(f"✗ {model_name} cannot generate embeddings: {e}")
+                        continue
+                
+                # If identified as embedding model, get dimension and add to list
+                if is_embedding_model:
+                    try:
+                        test_embedding = await self.embed_single("test", model_name)
+                        dimension = len(test_embedding)
+                        
+                        model_info = {
+                            "name": model_name,
+                            "provider": "ollama",
+                            "dimension": dimension,
+                            "description": f"Ollama {model_name} ({dimension}d)",
+                            "max_sequence_length": None  # Ollama doesn't expose this
+                        }
+                        embedding_models.append(model_info)
+                        self._model_cache[model_name] = model_info
+                        logger.info(f"✓ Discovered embedding model: {model_name} ({dimension}d)")
+                        
+                    except Exception as e:
+                        logger.warning(f"Model {model_name} identified as embedding but failed test: {e}")
+                        continue
             
-        return False
-
-    async def pull_model_if_needed(self, model_name: str) -> bool:
-        """Pull a model if it's not available locally."""
-        try:
-            if await self.check_model_availability(model_name):
-                return True
-                
-            logger.info(f"Pulling Ollama model: {model_name}")
-            async with httpx.AsyncClient(timeout=300.0) as client:  # Long timeout for model pulling
-                response = await client.post(
-                    f"{self.base_url}/api/pull",
-                    json={"name": model_name}
-                )
-                response.raise_for_status()
-                logger.info(f"Successfully pulled Ollama model: {model_name}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error pulling Ollama model {model_name}: {e}")
+            logger.info(f"Discovered {len(embedding_models)} Ollama embedding models")
+            return embedding_models
             
-        return False
-
-    async def health_check(self) -> bool:
-        """Check if Ollama server is accessible."""
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
-                response.raise_for_status()
-                return True
         except Exception as e:
-            logger.error(f"Ollama health check failed: {e}")
-            return False
-
-    async def get_server_info(self) -> Dict[str, Any]:
-        """Get information about the Ollama server."""
+            logger.error(f"Failed to discover Ollama embedding models: {e}")
+            return []
+    
+    def get_available_models(self) -> List[Dict[str, Any]]:
+        """Get cached available models."""
+        return list(self._model_cache.values())
+    
+    def get_model_dimension(self, model_name: str) -> int:
+        """
+        Get the embedding dimension for a specific model.
+        If not cached, generates a test embedding to detect dimension.
+        """
+        if model_name in self._model_cache:
+            return self._model_cache[model_name]["dimension"]
+        
+        # Fallback: generate test embedding synchronously (not ideal, but works)
+        import asyncio
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
-                response.raise_for_status()
-                data = response.json()
-                
-                return {
-                    "server_accessible": True,
-                    "models_available": len(data.get("models", [])),
-                    "model_list": [model["name"] for model in data.get("models", [])],
-                    "base_url": self.base_url
-                }
+            loop = asyncio.get_event_loop()
+            test_embedding = loop.run_until_complete(self.embed_single("test", model_name))
+            dimension = len(test_embedding)
+            self._model_cache[model_name] = {"dimension": dimension}
+            return dimension
         except Exception as e:
-            logger.error(f"Failed to get Ollama server info: {e}")
-            return {
-                "server_accessible": False,
-                "error": str(e),
-                "base_url": self.base_url
-            } 
+            logger.error(f"Failed to detect dimension for {model_name}: {e}")
+            # Default fallback for common models
+            if "nomic" in model_name.lower():
+                return 768
+            elif "mxbai" in model_name.lower():
+                return 1024
+            return 384  # Common default

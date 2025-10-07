@@ -118,7 +118,12 @@ class SourceConfigurationRegistry {
               search_depth: { type: 'string', enum: ['basic', 'advanced'], default: 'basic' },
               include_domains: { type: 'array', items: { type: 'string' } },
               exclude_domains: { type: 'array', items: { type: 'string' } },
-              date_range: { type: 'string' }
+              date_range: { type: 'string' },
+              topic: { type: 'string', enum: ['general', 'news', 'finance', 'tech'], default: 'general' },
+              chunks_per_source: { type: 'number', minimum: 1, maximum: 10, default: 3 },
+              include_images: { type: 'boolean', default: false },
+              include_answer: { type: 'boolean', default: true },
+              days: { type: 'number', minimum: 1, maximum: 365, default: 7 }
             },
             required: ['query']
           }
@@ -197,6 +202,44 @@ class SourceConfigurationRegistry {
             required: false,
             placeholder: 'spam.com, ads.com',
             help: 'Exclude results from these domains (optional)'
+          },
+          {
+            name: 'search_config.topic',
+            label: 'Topic',
+            type: 'select',
+            required: false,
+            options: [
+              { label: 'General', value: 'general' },
+              { label: 'News', value: 'news' },
+              { label: 'Finance', value: 'finance' },
+              { label: 'Technology', value: 'tech' }
+            ],
+            help: 'Search topic for better results'
+          },
+          {
+            name: 'search_config.search_depth',
+            label: 'Search Depth',
+            type: 'select',
+            required: false,
+            options: [
+              { label: 'Basic', value: 'basic' },
+              { label: 'Advanced', value: 'advanced' }
+            ],
+            help: 'Search depth for more comprehensive results'
+          },
+          {
+            name: 'search_config.include_images',
+            label: 'Include Images',
+            type: 'boolean',
+            required: false,
+            help: 'Include images in search results'
+          },
+          {
+            name: 'search_config.include_answer',
+            label: 'Include AI Answer',
+            type: 'boolean',
+            required: false,
+            help: 'Include AI-generated answer summary'
           }
         ]
       }

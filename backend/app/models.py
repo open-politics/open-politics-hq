@@ -65,6 +65,7 @@ class AssetKind(str, enum.Enum):
     VIDEO_SCENE = "video_scene"
     AUDIO_SEGMENT = "audio_segment"
     ARTICLE = "article"
+    RSS_FEED = "rss_feed"  # RSS feed container (parent of article children)
     FILE = "file"
 
 
@@ -230,8 +231,8 @@ class Infospace(SQLModel, table=True):
 
     # Vector preferences (override the global defaults)
     vector_backend: Optional[str] = Field(default="pgvector")
-    embedding_model: Optional[str] = Field(default="text-embedding-ada-002")
-    embedding_dim: Optional[int] = Field(default=1024)
+    embedding_model: Optional[str] = Field(default=None)  # None = embeddings disabled
+    embedding_dim: Optional[int] = Field(default=None)
     chunk_size: Optional[int] = Field(default=512)
     chunk_overlap: Optional[int] = Field(default=50)
     chunk_strategy: Optional[str] = Field(default="token")
@@ -253,13 +254,6 @@ class Infospace(SQLModel, table=True):
     monitors: List["Monitor"] = Relationship(back_populates="infospace")
 
 # ─────────────────────────────────────────────────────────────── Bundles ──── #
-
-class AssetBundleLink(SQLModel, table=True):
-    """Link table for many-to-many relationship between Asset and Bundle."""
-    asset_id: int = Field(foreign_key="asset.id", primary_key=True)
-    bundle_id: int = Field(foreign_key="bundle.id", primary_key=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
 
 class MonitorBundleLink(SQLModel, table=True):
     monitor_id: int = Field(foreign_key="monitor.id", primary_key=True)
@@ -300,6 +294,7 @@ class Asset(SQLModel, table=True):
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     title: str
     kind: AssetKind
+    stub: bool = Field(default=False, index=True)  # True = reference only, False = has content
     text_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     blob_path: Optional[str] = None
     source_identifier: Optional[str] = Field(default=None, index=True)
@@ -314,6 +309,7 @@ class Asset(SQLModel, table=True):
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     source_id: Optional[int] = Field(default=None, foreign_key="source.id")
+    bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_timestamp: Optional[datetime] = Field(default=None)
@@ -333,7 +329,10 @@ class Asset(SQLModel, table=True):
     )
     children_assets: List["Asset"] = Relationship(
         back_populates="parent_asset",
-        sa_relationship_kwargs=dict(foreign_keys="[Asset.parent_asset_id]")
+        sa_relationship_kwargs=dict(
+            foreign_keys="[Asset.parent_asset_id]",
+            cascade="all, delete-orphan"
+        )
     )
     # Version lineage relationships
     previous_asset: Optional["Asset"] = Relationship(
@@ -352,9 +351,15 @@ class Asset(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="assets")
     user: Optional[User] = Relationship(back_populates="assets")
     source: Optional[Source] = Relationship(back_populates="assets")
-    bundles: List["Bundle"] = Relationship(back_populates="assets", link_model=AssetBundleLink)
-    annotations: List["Annotation"] = Relationship(back_populates="asset")
-    chunks: List["AssetChunk"] = Relationship(back_populates="asset")
+    bundle: Optional["Bundle"] = Relationship(back_populates="assets")
+    annotations: List["Annotation"] = Relationship(
+        back_populates="asset",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    chunks: List["AssetChunk"] = Relationship(
+        back_populates="asset",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
     __table_args__ = (
         Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
@@ -474,6 +479,10 @@ class Bundle(SQLModel, table=True):
     asset_count: Optional[int] = Field(default=0)
     version: str = Field(default="1.0")
     
+    # Nested bundle support
+    parent_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
+    child_bundle_count: Optional[int] = Field(default=0)
+    
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
     
@@ -483,8 +492,21 @@ class Bundle(SQLModel, table=True):
     # Relationships
     infospace: Optional[Infospace] = Relationship(back_populates="bundles")
     user: Optional[User] = Relationship(back_populates="bundles")
-    assets: List["Asset"] = Relationship(back_populates="bundles", link_model=AssetBundleLink)
+    assets: List["Asset"] = Relationship(back_populates="bundle")
     monitors: List["Monitor"] = Relationship(back_populates="target_bundles", link_model=MonitorBundleLink)
+    
+    # Nested bundle relationships
+    parent_bundle: Optional["Bundle"] = Relationship(
+        back_populates="child_bundles",
+        sa_relationship_kwargs=dict(
+            foreign_keys="[Bundle.parent_bundle_id]",
+            remote_side="Bundle.id",
+        ),
+    )
+    child_bundles: List["Bundle"] = Relationship(
+        back_populates="parent_bundle",
+        sa_relationship_kwargs=dict(foreign_keys="[Bundle.parent_bundle_id]")
+    )
 
     __table_args__ = (
         UniqueConstraint("infospace_id", "name", "version"),
@@ -670,6 +692,74 @@ class SearchHistory(SQLModel, table=True):
     result_count: Optional[int] = None
 
     user: Optional[User] = Relationship()
+
+
+# ───────────────────────────────────────────────────────── Chat Conversations ──── #
+
+class ChatConversation(SQLModel, table=True):
+    """Stores chat conversation sessions for intelligence analysis."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    title: str
+    description: Optional[str] = None
+    
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+    
+    # Model configuration used in this conversation
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    
+    # Conversation metadata
+    conversation_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    # Status tracking
+    is_archived: bool = Field(default=False)
+    is_pinned: bool = Field(default=False)
+    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+    last_message_at: Optional[datetime] = None
+    
+    # Relationships
+    infospace: Optional["Infospace"] = Relationship()
+    user: Optional[User] = Relationship()
+    messages: List["ChatConversationMessage"] = Relationship(back_populates="conversation")
+    
+    __table_args__ = (
+        Index("ix_chatconversation_user_infospace", "user_id", "infospace_id"),
+        Index("ix_chatconversation_updated", "updated_at"),
+    )
+
+
+class ChatConversationMessage(SQLModel, table=True):
+    """Individual messages within a chat conversation."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    conversation_id: int = Field(foreign_key="chatconversation.id")
+    
+    role: str  # "system", "user", "assistant", "tool"
+    content: str = Field(sa_column=Column(Text))
+    
+    # Message metadata
+    message_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    # Tool execution tracking
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(default=None, sa_column=Column(JSON))
+    tool_executions: Optional[List[Dict[str, Any]]] = Field(default=None, sa_column=Column(JSON))
+    thinking_trace: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    # Model usage tracking
+    model_used: Optional[str] = None
+    usage: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    conversation: Optional[ChatConversation] = Relationship(back_populates="messages")
+    
+    __table_args__ = (
+        Index("ix_chatconversationmessage_conversation", "conversation_id", "created_at"),
+    )
 
 # ───────────────────────────────────────────────────────────── Index hints ──── #
 # Alembic migrations should create additional GIN/GIST indexes on JSON columns

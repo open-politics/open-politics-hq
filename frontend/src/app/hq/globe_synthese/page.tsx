@@ -5,8 +5,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/ui/use-toast';
 import Globe from '@/components/collection/globes/index';
-import Search from '@/components/collection/unsorted/Search';
-import LocationDetailPanel from '@/components/collection/unsorted/LocationDetailPanel';
+import Search from '@/components/collection/_unsorted_legacy/Search';
+import LocationDetailPanel from '@/components/collection/_unsorted_legacy/LocationDetailPanel';
 import { useLayoutStore } from '@/zustand_stores/storeLayout';
 import { useArticleTabNameStore } from '@/hooks/useArticleTabNameStore';
 import { useGeoDataStore } from '@/zustand_stores/storeGeodata';
@@ -93,7 +93,6 @@ const GlobePage = () => {
                 <div className="overflow-y-auto h-full">
                   <LocationDetailPanel
                     location={selectedLocation}
-                    isVisible={isVisible}
                     toggleVisibility={toggleVisibility}
                     results={results}
                     summary={summary}

@@ -45,7 +45,8 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
         source_service = SourceService(session)
         content_ingestion_service = ContentIngestionService(session)
 
-        source = source_service.get_source(source_id, -1, -1) # Bypassing user check for system task
+        # Get source directly without user validation for system task
+        source = session.get(Source, source_id)
         if not source:
             raise ValueError(f"Source {source_id} not found.")
 
@@ -56,20 +57,76 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
         try:
             locator = source_service._extract_locator_from_source(source)
             
-            # The bundle_id to collect assets into might be in the source's details or task config.
-            # For simplicity, we assume it's passed or handled within discover_and_create_assets if needed.
-            # This example focuses on the core dispatch.
+            # Get bundle_id from source details or task config
+            bundle_id = None
+            if task_origin_details_override and 'target_bundle_id' in task_origin_details_override:
+                bundle_id = task_origin_details_override['target_bundle_id']
+            elif source.details and 'target_bundle_id' in source.details:
+                bundle_id = source.details['target_bundle_id']
+            
+            # Validate that the bundle still exists (it may have been deleted)
+            if bundle_id:
+                from app.models import Bundle
+                bundle = session.get(Bundle, bundle_id)
+                if not bundle:
+                    logger.warning(f"Bundle {bundle_id} referenced in source {source_id} no longer exists. Finding or creating bundle.")
+                    from app.schemas import BundleCreate
+                    from app.api.services.bundle_service import BundleService
+                    from sqlmodel import select
+                    
+                    bundle_service = BundleService(session)
+                    bundle_name = f"Ingestion for {source.name}"
+                    
+                    # First, try to find existing bundle with this name (reuse it)
+                    existing_bundle = session.exec(
+                        select(Bundle).where(
+                            Bundle.infospace_id == source.infospace_id,
+                            Bundle.name == bundle_name
+                        )
+                    ).first()
+                    
+                    if existing_bundle:
+                        # Reuse existing bundle
+                        bundle_id = existing_bundle.id
+                        logger.info(f"Reusing existing bundle {bundle_id} ('{bundle_name}') for source {source_id}")
+                    else:
+                        # Create new bundle (name is safe - doesn't exist yet)
+                        new_bundle = bundle_service.create_bundle(
+                            bundle_in=BundleCreate(
+                                name=bundle_name,
+                                description=f"Auto-created bundle for source {source.name}"
+                            ),
+                            user_id=source.user_id,
+                            infospace_id=source.infospace_id
+                        )
+                        bundle_id = new_bundle.id
+                        logger.info(f"Created new bundle {bundle_id} ('{bundle_name}') for source {source_id}")
+                    
+                    # Update source.details with bundle_id (new or reused)
+                    if source.details is None:
+                        source.details = {}
+                    source.details['target_bundle_id'] = bundle_id
+                    session.add(source)
+                    session.commit()
+            
+            logger.info(f"Ingesting content for source {source_id} into bundle {bundle_id}")
             
             assets = await content_ingestion_service.ingest_content(
                 locator=locator,
                 infospace_id=source.infospace_id,
                 user_id=source.user_id,
-                bundle_id=None, # Or get from source details if applicable
+                bundle_id=bundle_id,
                 options={**(source.details or {}), **(task_origin_details_override or {})}
             )
 
+            # Link assets to source and ensure bundle_id is set (ingest_content should have done this)
             for asset in assets:
-                asset.source_id = source.id
+                # Only set source_id on top-level assets (not child assets)
+                if asset.parent_asset_id is None:
+                    asset.source_id = source.id
+                    # Ensure bundle_id is set (defensive check)
+                    if bundle_id and not asset.bundle_id:
+                        asset.bundle_id = bundle_id
                 session.add(asset)
 
             source.status = SourceStatus.COMPLETE

@@ -8,15 +8,18 @@ interface CurationPayload {
   assetId: number;
   fragmentKey: string;
   fragmentValue: any;
+  sourceRunId?: number; // Original annotation run ID for proper source tracking
 }
 
 interface UseFragmentCurationReturn {
   curate: (payloads: CurationPayload[]) => Promise<void>;
   isCurationLoading: boolean;
+  curationProgress: { current: number; total: number } | null;
 }
 
 export function useFragmentCuration(): UseFragmentCurationReturn {
   const [isCurationLoading, setIsLoading] = useState(false);
+  const [curationProgress, setCurationProgress] = useState<{ current: number; total: number } | null>(null);
   const { toast } = useToast();
   const { activeInfospace } = useInfospaceStore();
 
@@ -31,22 +34,35 @@ export function useFragmentCuration(): UseFragmentCurationReturn {
     }
 
     setIsLoading(true);
+    setCurationProgress({ current: 0, total: payloads.length });
 
-    const results = await Promise.allSettled(
-      payloads.map(payload => {
-        const requestBody: PromoteFragmentRequest = {
+    // FIXED: Process sequentially to avoid race condition when updating asset.fragments
+    // Multiple parallel requests would read the same initial state and overwrite each other
+    const results: Array<{ status: 'fulfilled' | 'rejected'; value?: any; reason?: any }> = [];
+    
+    for (let i = 0; i < payloads.length; i++) {
+      const payload = payloads[i];
+      try {
+        const requestBody: any = { // Using any temporarily until client types are regenerated
           fragment_key: payload.fragmentKey,
           fragment_value: payload.fragmentValue,
+          source_run_id: payload.sourceRunId, // Pass original run ID
         };
-        return AnalysisServiceService.promoteFragment({
+        const result = await AnalysisServiceService.promoteFragment({
           infospaceId: activeInfospace.id,
           assetId: payload.assetId,
           requestBody,
         });
-      })
-    );
+        results.push({ status: 'fulfilled', value: result });
+        setCurationProgress({ current: i + 1, total: payloads.length });
+      } catch (error) {
+        results.push({ status: 'rejected', reason: error });
+        setCurationProgress({ current: i + 1, total: payloads.length });
+      }
+    }
 
     setIsLoading(false);
+    setCurationProgress(null);
 
     const successfulCurations = results.filter(result => result.status === 'fulfilled').length;
     const failedCurations = results.length - successfulCurations;
@@ -60,11 +76,11 @@ export function useFragmentCuration(): UseFragmentCurationReturn {
     }
 
     if (failedCurations > 0) {
-      const firstError = results.find(result => result.status === 'rejected') as PromiseRejectedResult | undefined;
+      const firstError = results.find(result => result.status === 'rejected');
       let errorMessage = 'An unknown error occurred.';
-      if (firstError) {
-        const error = firstError.reason as ApiError;
-        errorMessage = error.body?.detail || error.message;
+      if (firstError && firstError.reason) {
+        const error = firstError.reason as any;
+        errorMessage = error.body?.detail || error.message || String(error);
       }
       toast({
         title: 'Curation Failed',
@@ -74,5 +90,5 @@ export function useFragmentCuration(): UseFragmentCurationReturn {
     }
   }, [activeInfospace, toast]);
 
-  return { curate, isCurationLoading };
+  return { curate, isCurationLoading, curationProgress };
 }

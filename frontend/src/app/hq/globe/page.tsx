@@ -3,13 +3,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/ui/use-toast';
 import { RefreshCcw } from 'lucide-react';
-import Globe from '@/components/collection/unsorted/gGlobe';
-import Search from '@/components/collection/unsorted/Search';
-import LocationDetailPanel from '@/components/collection/unsorted/LocationDetailPanel';
-import { BookmarkedArticles } from '@/components/collection/unsorted/BookMarkedArticles';
+import Globe from '@/components/collection/_unsorted_legacy/gGlobe';
+import Search from '@/components/collection/_unsorted_legacy/Search';
+import LocationDetailPanel from '@/components/collection/_unsorted_legacy/LocationDetailPanel';
+import { BookmarkedArticles } from '@/components/collection/_unsorted_legacy/BookMarkedArticles';
 import { useLayoutStore } from '@/zustand_stores/storeLayout';
 import { useArticleTabNameStore } from '@/hooks/useArticleTabNameStore';
-import { Announcement } from '@/components/collection/unsorted/announcement';
+import { Announcement } from '@/components/collection/_unsorted_legacy/announcement';
 import { FileText } from 'lucide-react';
 
 const GlobePage = () => {

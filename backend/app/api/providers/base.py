@@ -257,6 +257,7 @@ class GeospatialProvider(Protocol):
         pass
 
 
+
 # ─────────────────────────────────────────── Language Models ──── #
 
 from dataclasses import dataclass
@@ -283,6 +284,7 @@ class GenerationResponse:
     model_used: str
     usage: Optional[Dict[str, int]] = None
     tool_calls: Optional[List[Dict]] = None
+    tool_executions: Optional[List[Dict]] = None  # History of tool executions with results
     thinking_trace: Optional[str] = None  # For reasoning models
     finish_reason: Optional[str] = None
     raw_response: Optional[Dict] = None  # Provider-specific full response

@@ -5,6 +5,8 @@ import {
   BundleCreate,
   BundleUpdate,
   AssetRead,
+  BundleMoveRequest,
+  BundleHierarchy,
 } from '@/client';
 import { toast } from 'sonner';
 import { useInfospaceStore } from './storeInfospace';
@@ -21,6 +23,11 @@ interface BundleState {
   addAssetToBundle: (bundleId: number, assetId: number) => Promise<boolean>;
   removeAssetFromBundle: (bundleId: number, assetId: number) => Promise<boolean>;
   getBundleAssets: (bundleId: number) => Promise<AssetRead[]>;
+  
+  // Nested bundle operations
+  moveBundleToParent: (bundleId: number, parentBundleId: number | null) => Promise<BundleRead | null>;
+  getBundleHierarchy: (bundleId: number, maxDepth?: number) => Promise<BundleHierarchy | null>;
+  getRootBundles: (infospaceId: number) => Promise<BundleRead[]>;
 }
 
 export const useBundleStore = create<BundleState>((set, get) => ({
@@ -199,6 +206,64 @@ export const useBundleStore = create<BundleState>((set, get) => ({
       set({ error: message, isLoading: false });
       toast.error(message);
       throw new Error(message);
+    }
+  },
+
+  // Nested bundle operations
+  moveBundleToParent: async (bundleId: number, parentBundleId: number | null) => {
+    set({ isLoading: true, error: null });
+    try {
+      const moveRequest: BundleMoveRequest = { parent_bundle_id: parentBundleId };
+      const movedBundle = await BundlesService.moveBundleToParent({ 
+        bundleId, 
+        requestBody: moveRequest 
+      });
+      
+      // Update the bundle in local state
+      set(state => ({
+        bundles: state.bundles.map(b => b.id === bundleId ? movedBundle : b),
+        isLoading: false
+      }));
+      
+      const action = parentBundleId ? 'moved to parent folder' : 'moved to root level';
+      toast.success(`Bundle "${movedBundle.name}" ${action}.`);
+      return movedBundle;
+    } catch (err: any) {
+      const message = err.body?.detail || err.message || 'Failed to move bundle';
+      toast.error(message);
+      set({ error: message, isLoading: false });
+      return null;
+    }
+  },
+
+  getBundleHierarchy: async (bundleId: number, maxDepth: number = 10) => {
+    set({ isLoading: true, error: null });
+    try {
+      const hierarchy = await BundlesService.getBundleHierarchy({ 
+        bundleId, 
+        maxDepth 
+      });
+      set({ isLoading: false });
+      return hierarchy;
+    } catch (err: any) {
+      const message = err.body?.detail || err.message || 'Failed to get bundle hierarchy';
+      toast.error(message);
+      set({ error: message, isLoading: false });
+      return null;
+    }
+  },
+
+  getRootBundles: async (infospaceId: number) => {
+    set({ isLoading: true, error: null });
+    try {
+      const rootBundles = await BundlesService.getRootBundles({ infospaceId });
+      set({ isLoading: false });
+      return rootBundles;
+    } catch (err: any) {
+      const message = err.body?.detail || err.message || 'Failed to get root bundles';
+      toast.error(message);
+      set({ error: message, isLoading: false, bundles: [] });
+      return [];
     }
   }
 })); 

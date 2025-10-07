@@ -1,39 +1,13 @@
   'use client'
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Brain, Microscope, FileText, Search, Activity, Terminal, Settings } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { useApiKeysStore } from "@/zustand_stores/storeApiKeys"
-import { useState } from "react"
+import { Brain, Microscope, FileText, Search, Activity, Terminal, Settings, MessageSquare } from "lucide-react"
 import Link from "next/link"
-import ModelManager from '@/components/collection/infospaces/management/ModelManager'
-import { toast } from 'sonner'
+import ProviderManager from '@/components/collection/management/ProviderManager'
+import ModelManager from '@/components/collection/management/ModelManager'
 import withAuth from '@/hooks/withAuth'
 
 function DesksPage() {
-  const { apiKeys, setApiKey, selectedProvider, selectedModel } = useApiKeysStore();
-  const [tempApiKey, setTempApiKey] = useState('');
-
-  const handleSaveApiKey = () => {
-    console.log('Save attempt:', { selectedProvider, tempApiKey: tempApiKey ? '[HIDDEN]' : 'empty' });
-    if (selectedProvider && tempApiKey) {
-      console.log('Calling setApiKey with provider:', selectedProvider);
-      setApiKey(selectedProvider, tempApiKey);
-      setTempApiKey('');
-      console.log('After setApiKey, current apiKeys:', apiKeys);
-      toast.success(`API key saved for ${selectedProvider}`);
-    } else {
-      console.log('Save failed - missing provider or key');
-      toast.error('Please select a provider and enter an API key');
-    }
-  };
-
-  const maskApiKey = (key: string) => {
-    if (!key) return '';
-    if (key.length <= 8) return key;
-    return `${key.slice(0, 4)}${'*'.repeat(key.length - 8)}${key.slice(-4)}`;
-  };
 
   return (
     <div className="p-6 max-h-full rounded-lg overflow-y-auto">
@@ -75,7 +49,7 @@ function DesksPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-3">
                     <div className="p-1.5 rounded-md bg-teal-500/20 dark:bg-teal-500/20 text-teal-700 dark:text-teal-400">
-                      <Search className="w-4 h-4" />
+                      <MessageSquare className="w-4 h-4" />
                     </div>
                     <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
                       Chat
@@ -101,7 +75,7 @@ function DesksPage() {
                       <Activity className="w-4 h-4" />
                     </div>
                     <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
-                      Monitors
+                      Monitor
                     </CardTitle>
                   </div>
                   <CardDescription className="text-sm text-gray-600 dark:text-gray-400">
@@ -193,47 +167,17 @@ function DesksPage() {
                     <Brain className="w-4 h-4" />
                   </div>
                   <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
-                    AI Model
+                    AI & Search Configuration
                   </CardTitle>
                 </div>
                 <CardDescription className="text-sm text-gray-600 dark:text-gray-400">
-                  Configure your LLM provider and model settings
+                  Configure your LLM and search provider settings
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="space-y-3">
-                  <ModelManager />
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">API Keys</label>
-                    <div className="flex gap-2 mt-1">
-                      <Input
-                        type="password"
-                        placeholder="Enter API key for selected provider"
-                        value={tempApiKey}
-                        onChange={(e) => setTempApiKey(e.target.value)}
-                        className="text-sm"
-                      />
-                      <Button 
-                        onClick={handleSaveApiKey}
-                        disabled={!selectedProvider || !tempApiKey}
-                        size="sm"
-                        className="bg-gray-600 hover:bg-gray-700 text-white"
-                      >
-                        Save
-                      </Button>
-                    </div>
-                    {/* Show all saved API keys */}
-                    <div className="mt-2 space-y-1">
-                      {Object.entries(apiKeys).map(([provider, key]) => (
-                        <div key={provider} className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                          <span className="w-1 h-1 bg-green-500 rounded-full flex-shrink-0"></span>
-                          <span className="flex-shrink-0">{provider}:</span>
-                          <span className="font-mono truncate min-w-0">{maskApiKey(key)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                <ProviderManager />
+                <div className="mt-6">
+                  <ModelManager showProviderSelector={false} />
                 </div>
               </CardContent>
             </Card>

@@ -660,8 +660,8 @@ def call_pelias_api(location, lang=None):
         return custom_mappings[location.lower()]
 
     try:
-        pelias_url = settings.PELIAS_PLACEHOLDER_PORT
-        url = f"http://{pelias_url}/parser/search?text={location}"
+        pelias_port = settings.PELIAS_PLACEHOLDER_PORT
+        url = f"http://engine-pelias-placeholder:{pelias_port}/parser/search?text={location}"
         if lang:
             url += f"&lang={lang}"
 

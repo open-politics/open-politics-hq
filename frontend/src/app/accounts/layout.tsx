@@ -1,12 +1,14 @@
 'use client'
 
-import Header from "@/components/collection/unsorted/Header"
+import Header from "@/components/collection/_unsorted_legacy/Header"
 
 export default function AccountsLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div>
+    <div className="flex flex-col min-h-screen w-full">
       <Header />
-      {children}
+      <div className="flex-1">
+        {children}
+      </div>
     </div>
   )
 }
