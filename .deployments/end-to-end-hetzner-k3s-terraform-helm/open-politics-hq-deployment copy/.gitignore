@@ -1,0 +1,24 @@
+# Terraform state
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Sensitive variables
+.tfvars
+hq-cluster-chart/values.yaml
+
+# Local credentials and configurations
+kubeconfig
+.kube/
+~/.kube/config
+
+# Temporary files
+*.bak
+*.swp
+
+# OS-specific files
+.DS_Store
+
+# Backups of configurations
+.backups/
