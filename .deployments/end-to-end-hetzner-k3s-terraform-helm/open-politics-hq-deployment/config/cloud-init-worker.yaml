@@ -1,0 +1,22 @@
+#cloud-config
+packages:
+  - curl
+
+users:
+  - name: cluster
+    ssh-authorized-keys:
+      - __ADMIN_PUBLIC_KEY__
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+
+write_files:
+  - path: /root/.ssh/id_rsa
+    content: |
+__WORKER_PRIVATE_KEY_CONTENT__
+    permissions: "0600"
+
+runcmd:
+  - apt-get update -y
+  - until curl -k https://${master_ip}:6443; do sleep 5; done
+  - REMOTE_TOKEN=$(ssh -o StrictHostKeyChecking=accept-new -i /root/.ssh/id_rsa cluster@${master_ip} sudo cat /var/lib/rancher/k3s/server/node-token)
+  - curl -sfL https://get.k3s.io | K3S_URL=https://${master_ip}:6443 K3S_TOKEN=$REMOTE_TOKEN INSTALL_K3S_EXEC="--kubelet-arg cloud-provider=external --node-ip=${private_ip}" sh -

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine-pelias-placeholder
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.peliasPlaceholder.service.type }}
+  ports:
+    - port: {{ .Values.peliasPlaceholder.service.port }}
+      targetPort: {{ .Values.peliasPlaceholder.service.port }}
+      protocol: TCP
+      name: http
+  selector:
+    app: pelias-placeholder
+

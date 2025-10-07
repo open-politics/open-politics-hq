@@ -1,0 +1,27 @@
+# Hetzner Cloud API Token
+# Get this from: https://console.hetzner.com/projects -> Access -> API Tokens
+hcloud_token = ""
+
+# Number of worker nodes (adjust based on your needs)
+worker_count = 1
+
+# So two servers in total 
+
+# Server types (see: https://www.hetzner.com/cloud#pricing)
+
+master_server_type = "ccx13"
+worker_server_type = "ccx13"
+
+# Hetzner location (fsn1, nbg1, hel1, ash, hil)
+location = "fsn1"
+
+# SSH key name (must exist in Hetzner Cloud Console)
+# The scripts can generate and manage this automatically
+ssh_key_name = "hq-admin-key"
+
+# Domain configuration
+# This domain will be used for SSL certificates and ingress
+domain = "your.domain.org"
+
+# Cluster identifier (used to safely label and clean up resources)
+cluster_slug = "hq"

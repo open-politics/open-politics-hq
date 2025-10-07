@@ -1,0 +1,1 @@
+helm upgrade hq-stack ./hq-cluster-chart -n hq --values ./hq-cluster-chart/values.yaml 
