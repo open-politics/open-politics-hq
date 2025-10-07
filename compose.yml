@@ -65,7 +65,7 @@ services:
       - '6380:6380'
     volumes:
       - redis_data:/data
-      - ./store/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./.store/redis.conf:/usr/local/etc/redis/redis.conf
     command: redis-server /usr/local/etc/redis/redis.conf --appendonly yes
     networks:
       - default
