@@ -21,15 +21,19 @@ You define analytical questions in plain language. The system applies them syste
 
 Run the analysis. Get a structured dataset. Build charts showing how framing shifts over time or differs by political party.
 
-This works across PDFs, news articles, parliamentary records, CSVs, images, web scrapes—any content you can upload or fetch.
+This works across PDFs, news articles, parliamentary records, CSVs, images, web scrapes - we are working on extending this to more content types and sources.
 
 ## Why This Exists
 
-Qualitative analysis doesn't scale. Reading and coding 500 documents by hand takes weeks. Computational methods require programming skills most researchers don't have.
+This started with a simple frustration: as a political scientist, I needed tools that didn't exist outside of well-funded institutions. Qualitative analysis doesn't scale—coding 500 documents by hand takes weeks. Computational methods require programming skills most domain experts don't have.
 
-Meanwhile, sophisticated intelligence systems exist but are locked behind institutional walls—think tanks, intelligence agencies, corporate research teams with dedicated engineers.
+But the breakthrough isn't specific to political research. The principle is universal: **experts in any domain can articulate their analytical questions in natural language**. A journalist knows what constitutes "framing." A bureaucrat knows whether a form is properly filled out. An NGO worker knows what signals a policy shift. They just can't turn that expertise into code.
 
-We're building this as **public infrastructure**. Open source. Self-hostable. Bring your own LLM keys for privacy. Design your own analytical frameworks, share, compare and evolve then.
+Natural language schemas solve this. Define your question once, apply it systematically to thousands of documents. The same infrastructure that analyzes parliamentary speeches can sort intake emails, process grant applications, or track regulatory changes.
+
+This capability is too fundamental to remain locked behind institutional walls. We're building it as **public infrastructure**—open source, self-hostable, composable. Not because we're opposed to businesses or governments using it (they should!), but because our mission is clear: **enhance the public's capacity to understand and participate in complex information landscapes**.
+
+The technology isn't exotic—schemas, maps, geocoders, local AI, vector search. Basic components. That's precisely the point. These are foundational capabilities a sophisticated open society needs, like libraries or archives, and they should be equally accessible.
 
 ## How It Works
 
@@ -38,7 +42,9 @@ We're building this as **public infrastructure**. Open source. Self-hostable. Br
 3. **Run analysis** using AI to apply your schema at scale
 4. **Explore results** through tables, visualizations, maps, or export the data
 
-The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
+**The key insight:** Schemas work for anything. "Does this legislative text mention climate adaptation?" "What's the requested amount in this grant application?" "Which department is mentioned in this email?" Domain experts already know what questions matter—schemas let them encode that expertise without programming.
+
+This makes analytical methods transparent and reproducible. Share your schema with colleagues or the public. They can see exactly how you defined "populist rhetoric" or "properly completed form" and apply the same lens to their own data, critique your definitions, or propose improvements.
 
 
 
@@ -121,11 +127,16 @@ Configure API keys in the web interface or run Ollama locally for complete priva
 
 ## Who This Is For
 
-- **Journalists** investigating patterns across large document sets
-- **Researchers** applying qualitative methods at quantitative scale
-- **NGOs and advocacy groups** tracking policy developments
-- **Students** learning research methods with real-world data
-- **Citizens** who want sophisticated tools for understanding politics
+The natural language schema approach works for any domain where expertise is articulated in language rather than code. We focus on public-interest applications:
+
+- **Journalists** — investigate patterns across large document sets without engineering support
+- **Researchers** — apply qualitative methods at quantitative scale, make analytical frameworks transparent
+- **NGOs and advocacy groups** — track policy developments, process citizen reports, analyze stakeholder communications
+- **Government agencies** — process intake forms, classify public comments, analyze regulatory submissions
+- **Students and educators** — learn research methods with real tools, not toy examples
+- **Citizens** — understand complex political developments with the same capabilities institutions have
+
+If you're working on something that serves the public interest, we want this infrastructure to work for you. If you're a business or private institution, the code is open source—use it, but consider how your work might benefit the commons.
 
 ## Contributing
 
@@ -148,4 +159,4 @@ We're building this in the open. The codebase, analytical methods, and documenta
 
 AGPLv3 — see [LICENSE](LICENSE)
 
-This means you can use, modify, and distribute this software, but any modifications or services built on it must also be open source. You can get an enterprise license for private use modifications which are not publicly deployed for one year at a time.
+This means you can use, modify, and distribute this software, but any modifications or services built on it must also be open source. You can get an enterprise license for private use modifications which are not publicly deployed for one year at a time under strict ethical guidelines.
