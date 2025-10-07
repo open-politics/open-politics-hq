@@ -36,7 +36,10 @@ Which side gets final word? → string
 # Your description becomes your method, you can measure and evolve it. 
 ```
 
-<img src=".github/assets/images/table-with-annotations.png" alt="Table with annotation">
+
+<img src=".github/assets/images/dashboard.png" alt="Table with annotation">
+
+
 
 Run it. Get structured data showing systematic patterns. Export visualizations.
 
