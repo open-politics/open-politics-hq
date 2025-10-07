@@ -13,6 +13,8 @@ Open-source research infrastructure. Self-hostable. Made for the public.
   <img src=".github/assets/images/exactly.png" alt="Open Politics HQ Platform" width="600">
 </div>
 
+
+
 The modern information landscape is a mess and often hard to navigate. Sometimes there is something you want to prove, or a topic to review deeper, sometimes you just want to know what keeps happening in your home country. And whether you are a business with a process problem, an NGO with not enough hands on deck, an Org with unstructred documents or a student with a need for better research tools, this is for you.
 
 ## The Idea
@@ -43,9 +45,9 @@ Importantly: none of this would exist without the many people dedicated to open 
 
 
 
-<video controls width="800" muted loop autoplay playsinline style="max-width:100%;border-radius:8px;">
-<source src="https://github.com/open-politics/open-politics-hq/raw/main/.github/assets/videos/dashboard-demo.mp4" type="video/mp4">
-</video>
+
+https://github.com/user-attachments/assets/60b8fa3f-d5ba-4928-a65c-121ba670e160
+
 
 ## How It Works
 
@@ -56,9 +58,10 @@ Importantly: none of this would exist without the many people dedicated to open 
 
 The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
 
-<video controls width="800" muted loop autoplay playsinline style="max-width:100%;border-radius:8px;">
-<source src="https://github.com/open-politics/open-politics-hq/raw/main/.github/assets/videos/chat-demo.mp4" type="video/mp4">
-</video>
+
+
+https://github.com/user-attachments/assets/978cf874-5476-4d78-85e6-4485678e1dcc
+
 
 
 ## Links
