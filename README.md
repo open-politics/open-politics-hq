@@ -15,13 +15,11 @@ Open-source research infrastructure. Self-hostable. Made for the public.
 
 The modern information landscape is a mess and often hard to navigate. Sometimes there is something you want to prove, or a topic to review deeper, sometimes you just want to know what keeps happening in your home country. And whether you are a business with a process problem, an NGO with not enough hands on deck, an Org with unstructred documents or a student with a need for better research tools, this is for you.
 
-
-
 ## The Idea
 
 A journalist knows how to identify "security framing" in news coverage. A policy analyst knows what counts as "meaningful stakeholder engagement" in legislative proposals. A bureaucrat knows whether a grant application is properly filled out.
 
-That expertise lives in their heads, maybe in spreadsheets and notes. But sophisticated analysis infrastructure — the kind that lets you systematically apply your analytical framework across thousands of documents — has only been available to well-funded institutions.
+That expertise lives in their heads, maybe in spreadsheets and notes. This works great for tens of documents. At hundreds or thousands, you're either stuck or you need to hire engineers. Meanwhile, sophisticated analysis infrastructure — the kind that lets you systematically apply analytical frameworks at scale — has only been available to well-funded institutions.
 
 **This gives everyone their own intelligence HQ.** Define your analytical questions in plain language. Apply them at scale. The key innovation: schemas are shareable, transparent, and improvable. Other researchers can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
 
@@ -35,24 +33,11 @@ Which side gets final word? → string
 
 Run it. Get structured data showing systematic patterns. Export visualizations.
 
-The principle scales: anywhere you know what you're looking for, schemas let you look systematically. [See examples across domains](#examples-in-practice) →
+The principle scales. A journalist knows "framing." A policy analyst knows "stakeholder engagement." An NGO worker knows what signals a policy shift. Schemas let you take that knowledge and apply it systematically across thousands of documents. The same infrastructure that analyzes legislation can sort emails, process intake forms, track regulatory changes, or monitor media coverage.
 
-We will soon open a library to examples of how to use the platform in various ways.
-
-## Why This Exists
-
-The gap is obvious once you see it. Researchers, journalists, NGO workers all do qualitative analysis — reading documents, identifying patterns, building arguments. This works great for tens of documents. At hundreds or thousands, you're either stuck or you need to hire engineers.
-
-Meanwhile, intelligence agencies, think tanks, and corporations have sophisticated analysis infrastructure. The tools exist, they're just not accessible. 
-
-Our proposal is in recognizing that **everyone can already articulate their analytical questions in a kind of code, in natural language.** A journalist knows "framing." A policy analyst knows "stakeholder engagement." An NGO worker knows what signals a policy shift. Everyone has Excel, but not everyone has infrastructure to systematically apply their analytical methods at scale.
-
-Natural language schemas change this. The same infrastructure that analyzes legislation can sort emails, process intake forms, track regulatory changes, or monitor media coverage. Now everyone can have their HQ for their information needs.
-
-This capability shouldn't be locked behind institutional walls. We're building it as **public infrastructure** — schemas, geocoding, vector search, local AI. Basic components, simple when you list them out. But that's the point. In our opinion these are basic intelligence capabilities an open society needs, like libraries or archives, and they should be equally accessible.
+This capability shouldn't be locked behind institutional walls. We're building it as **public infrastructure** — schemas, geocoding, vector search, local AI. Basic components, simple when you list them out. But that's the point. These are basic intelligence capabilities an open society needs, like libraries or archives, and they should be equally accessible.
 
 Open source. Self-hostable. Bring your own LLM keys if you want privacy. Share your analytical frameworks publicly if you want transparency. Use it for journalism, research, advocacy, governance — anything that serves the public interest.
-
 
 Importantly: none of this would exist without the many people dedicated to open source. We're assembling the hard work of countless other projects. We are standing on the shoulders of a massive collaborative ecosystem that makes this possible. We are grateful for their work and we are proud to be part of it.
 
@@ -82,7 +67,7 @@ The schemas are the key innovation. They let you formalize your analytical metho
 
 ### Option 1: Use the Hosted Instance
 
-The easiest way to start. We host the infrastructure, you bring your own LLM API keys (OpenAI, Anthropic, Google, or use local Ollama if you boot this up yourself).
+The easiest way to start. We host the infrastructure, you bring your own LLM API keys ([see supported providers](#llm-support)).
 
 1. **Register** at [open-politics.org/accounts/register](https://open-politics.org/accounts/register)
 2. **Add your API keys** on the home page
