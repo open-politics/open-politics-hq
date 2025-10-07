@@ -1,299 +1,234 @@
-# FastAPI Project - Backend
+# Backend
 
-## Requirements
+FastAPI + Celery + PostgreSQL. The backend orchestrates content ingestion, schema-based analysis, and background processing for research workflows.
 
-*   [Docker](https://www.docker.com/).
-*   [Poetry](https://python-poetry.org/) for Python package and environment management.
-
-## Local Development
-
-*   Start the stack with Docker Compose:
+## Quick Start
 
 ```bash
+# From project root
 docker compose up -d
 ```
 
-*   Now you can open your browser and interact with these URLs:
+Backend runs at http://localhost/api with interactive docs at http://localhost/docs
 
-    Frontend, built with Docker, with routes handled based on the path: http://localhost
+## Architecture Philosophy
 
-    Backend, JSON based web API based on OpenAPI: http://localhost/api/
+The backend is organized around two core workflows: **content ingestion** and **schema-based analysis**. Everything else supports these patterns.
 
-    Automatic interactive documentation with Swagger UI (from the OpenAPI backend): http://localhost/docs
+### Content Ingestion Flow
 
-    Adminer, database web administration: http://localhost:8080
+The system follows a consistent pattern regardless of input type:
 
-    Traefik UI, to see how the routes are being handled by the proxy: http://localhost:8090
+**Route → Handler → AssetBuilder → Processor → Storage**
 
-**Note**: The first time you start your stack, it might take a minute for it to be ready. While the backend waits for the database to be ready and configures everything. You can check the logs to monitor it.
+1. **Routes** receive raw input (file upload, URL, text, RSS feed)
+2. **Handlers** adapt input into standardized format
+3. **AssetBuilder** creates parent asset with metadata
+4. **Processors** transform content and extract child assets
+5. **Storage** persists files and database records
 
-To check the logs, run:
+This separation means each layer has a single responsibility. Handlers know about input formats. Processors know about content extraction. Neither needs to know about the other.
 
-```bash
-docker compose logs
-```
+**Key Pattern:** Handlers are thin adapters. Processors do heavy lifting. AssetBuilder coordinates both.
 
-To check the logs of a specific service, add the name of the service, e.g.:
+### Schema Analysis Flow
 
-```bash
-docker compose logs backend
-```
+Schema execution follows a different orchestration pattern:
 
-If your Docker is not running in `localhost` (the URLs above wouldn't work) you would need to use the IP or domain where your Docker is running.
+**AnnotationRun Creation → Celery Task → Batch Processing → Result Storage**
 
-## Backend local development, additional details
+1. User creates AnnotationRun specifying schemas and target assets
+2. `AnnotationService` queues Celery task
+3. Task fetches assets, batches them, calls LLM providers
+4. Results are demultiplexed and stored as Annotations
+5. Frontend polls for completion and displays results
 
-### General workflow
+**Key Pattern:** Synchronous API calls queue work. Celery handles processing. Database tracks state.
 
-The override.yml build the backend container with auto-build on, no more modifications needed for easy development.a
+## Core Architectural Patterns
 
-### Enabling Open User Registration
+### 1. Handler Pattern for Input Diversity
 
-By default the backend has user registration disabled, but there's already a route to register users. If you want to allow users to register themselves, you can set the environment variable `USERS_OPEN_REGISTRATION` to `True` in the `.env` file.
+Each content type has its own handler sharing the same interface:
 
-After modifying the environment variables, restart the Docker containers to apply the changes. You can do this by running:
+- **FileHandler**: Uploads to storage, detects type, queues processing
+- **WebHandler**: Scrapes URL, extracts metadata, creates web asset
+- **SearchHandler**: Processes search results, creates articles
+- **RSSHandler**: Parses feed XML, creates article items
+- **TextHandler**: Creates text asset directly from string
 
-```console
-$ docker compose up -d
-```
+Handlers decide whether processing happens immediately (small files) or in background (large PDFs). This keeps routes simple—they just call the appropriate handler.
 
-### VS Code
+### 2. Processor Pattern for Content Transformation
 
-There are already configurations in place to run the backend through the VS Code debugger, so that you can use breakpoints, pause and explore variables, etc.
+Processors are registered by file extension or asset kind:
 
-The setup is also already configured so you can run the tests through the VS Code Python tests tab.
+- **PDFProcessor**: Extracts text page-by-page → PDF_PAGE children
+- **CSVProcessor**: Parses rows → CSV_ROW children with column data
+- **ExcelProcessor**: Parses sheets and rows → hierarchical structure
+- **WebProcessor**: Scrapes HTML, downloads images → IMAGE children
 
-### Docker Compose Override
+Processors receive `ProcessingContext` with storage access, scraping tools, and options. They return child assets. The context pattern means processors don't need to know about FastAPI, sessions, or authentication.
 
-During development, you can change Docker Compose settings that will only affect the local development environment in the file `docker-compose.override.yml`.
+### 3. Provider Pattern for External Services
 
-The changes to that file only affect the local development environment, not the production environment. So, you can add "temporary" changes that help the development workflow.
+Everything external is abstracted behind provider interfaces:
 
-For example, the directory with the backend code is mounted as a Docker "host volume", mapping the code you change live to the directory inside the container. That allows you to test your changes right away, without having to build the Docker image again. It should only be done during development, for production, you should build the Docker image with a recent version of the backend code. But during development, it allows you to iterate very fast.
+- **StorageProvider**: MinIO, S3, Google Cloud Storage
+- **ScrapingProvider**: newspaper4k or external scraping services
+- **SearchProvider**: Tavily or other search APIs
+- **LLMProvider**: OpenAI, Google, Anthropic, Ollama
 
-There is also a command override that runs `/start-reload.sh` (included in the base image) instead of the default `/start.sh` (also included in the base image). It starts a single server process (instead of multiple, as would be for production) and reloads the process whenever the code changes. Have in mind that if you have a syntax error and save the Python file, it will break and exit, and the container will stop. After that, you can restart the container by fixing the error and running again:
+Providers are created by factories that read settings. Adding support for a new service means implementing the interface and registering in the factory. Routes and services use dependency injection to get the right provider.
 
-```console
-$ docker compose up -d
-```
+### 4. Service Layer for Business Logic
 
-There is also a commented out `command` override, you can uncomment it and comment the default one. It makes the backend container run a process that does "nothing", but keeps the container alive. That allows you to get inside your running container and execute commands inside, for example a Python interpreter to test installed dependencies, or start the development server that reloads when it detects changes.
+Services sit between routes and database, encapsulating workflows:
 
-To get inside the container with a `bash` session you can start the stack with:
+- **AssetService**: CRUD operations, deduplication logic
+- **BundleService**: Manages collections of assets
+- **AnnotationService**: Creates schemas, orchestrates runs, stores results
+- **ConversationService**: Manages chat, executes tool calls
+- **PipelineService**: Orchestrates multi-step workflows
 
-```console
-$ docker compose up -d
-```
+Services accept database sessions and providers via dependency injection. This makes testing straightforward—mock providers, pass test session.
 
-and then `exec` inside the running container:
+### 5. Celery for Asynchronous Processing
 
-```console
-$ docker compose exec backend bash
-```
+Any operation taking more than a few seconds goes through Celery:
 
-You should see an output like:
+- **process_content**: Extracts children from parent assets
+- **process_annotation_run**: Applies schemas to assets in batch
+- **process_source**: Polls RSS feeds or scheduled ingestion
+- **embed_asset_task**: Generates vector embeddings
 
-```console
-root@7f2607af31c3:/app#
-```
+Tasks are defined in `app/api/tasks/` and registered with Celery. They create their own database session and provider instances. Pattern: lightweight task function delegates to service for actual work.
 
-that means that you are in a `bash` session inside your container, as a `root` user, under the `/app` directory, this directory has another directory called "app" inside, that's where your code lives inside the container: `/app/app`.
+## Data Model Hierarchy
 
-There you can use the script `/start-reload.sh` to run the debug live reloading server. You can run that script from inside the container with:
+**Infospace** (workspace)  
+└── **Assets** (content items)  
+    ├── **Bundles** (collections)  
+    └── **AnnotationSchemas** (analytical frameworks)  
+        └── **AnnotationRuns** (analysis jobs)  
+            └── **Annotations** (structured results)
 
-```console
-$ bash /start-reload.sh
-```
+Assets have `kind` field (PDF, CSV, WEB, ARTICLE, etc.) and can have parent-child relationships. PDF asset has PDF_PAGE children. CSV asset has CSV_ROW children.
 
-...it will look like:
+Schemas define fields to extract. Runs apply schemas to assets. Annotations store extracted data.
 
-```console
-root@7f2607af31c3:/app# bash /start-reload.sh
-```
+## Development Workflow
 
-and then hit enter. That runs the live reloading server that auto reloads when it detects code changes.
+### Local Development
 
-Nevertheless, if it doesn't detect a change but a syntax error, it will just stop with an error. But as the container is still alive and you are in a Bash session, you can quickly restart it after fixing the error, running the same command ("up arrow" and "Enter").
-
-...this previous detail is what makes it useful to have the container alive doing nothing and then, in a Bash session, make it run the live reload server.
-
-### Backend tests
-
-To test the backend run:
-
-```console
-$ bash ./scripts/test.sh
-```
-
-The tests run with Pytest, modify and add tests to `./backend/app/tests/`.
-
-If you use GitHub Actions the tests will run automatically.
-
-#### Test running stack
-
-If your stack is already up and you just want to run the tests, you can use:
+`compose.override.yml` enables hot reload:
 
 ```bash
-docker compose exec backend bash /app/tests-start.sh
+docker compose up --build
+# Edit files in app/, changes appear immediately
 ```
 
-That `/app/tests-start.sh` script just calls `pytest` after making sure that the rest of the stack is running. If you need to pass extra arguments to `pytest`, you can pass them to that command and they will be forwarded.
+### Database Migrations
 
-For example, to stop on first error:
+After changing models in `app/models.py`:
 
 ```bash
-docker compose exec backend bash /app/tests-start.sh -x
+docker compose exec backend bash
+alembic revision --autogenerate -m "description"
+alembic upgrade head
 ```
 
-#### Test Coverage
+Migrations are in `app/alembic/versions/`. Review generated migrations before applying.
 
-When the tests are run, a file `htmlcov/index.html` is generated, you can open it in your browser to see the coverage of the tests.
+### Testing
 
-### Migrations
+No testing suite yet.
 
-As during local development your app directory is mounted as a volume inside the container, you can also run the migrations with `alembic` commands inside the container and the migration code will be in your app directory (instead of being only inside the container). So you can add it to your git repository.
+## Extending the System
 
-Make sure you create a "revision" of your models and that you "upgrade" your database with that revision every time you change them. As this is what will update the tables in your database. Otherwise, your application will have errors.
+### Adding a New Content Type
 
-*   Start an interactive session in the backend container:
+The pattern is consistent:
 
-```console
-$ docker compose exec backend bash
-```
+1. Create handler in `app/api/handlers/` if input format is new
+2. Add processor in `app/api/processors/` if content needs extraction
+3. Register processor by extension or asset kind in `registry.py`
+4. Add route in `app/api/routes/` that uses the handler
 
-*   Alembic is already configured to import your SQLModel models from `./backend/app/models.py`.
+System automatically handles storage, parent-child relationships, and background processing.
 
-*   After changing a model (for example, adding a column), inside the container, create a revision, e.g.:
+### Adding an LLM Provider
 
-```console
-$ alembic revision --autogenerate -m "Add column last_name to User model"
-```
+Implement provider interface in `app/api/providers/impl/`:
 
-*   Commit to the git repository the files generated in the alembic directory.
+- `generate_text()` for streaming completions
+- `generate_structured()` for JSON outputs
+- Register in factory
 
-*   After creating the revision, run the migration in the database (this is what will actually change the database):
+Annotation system will automatically support new provider.
 
-```console
-$ alembic upgrade head
-```
+### Adding a Chat Tool
 
-If you don't want to use migrations at all, uncomment the lines in the file at `./backend/app/core/db.py` that end in:
+Tools are defined in `ConversationService`. Each tool:
 
-```python
-SQLModel.metadata.create_all(engine)
-```
+1. Has JSON schema describing parameters
+2. Implements async handler function
+3. Returns structured data for LLM
 
-and comment the line in the file `prestart.sh` that contains:
+System handles tool call detection, execution, and result formatting.
 
-```console
-$ alembic upgrade head
-```
+## Key Directories
 
-If you don't want to start with the default models and want to remove them / modify them, from the beginning, without having any previous revision, you can remove the revision files (`.py` Python files) under `./backend/app/alembic/versions/`. And then create a first migration as described above.
+- `app/api/handlers/` - Input adapters for different content types
+- `app/api/processors/` - Content extraction and transformation
+- `app/api/providers/` - External service abstractions
+- `app/api/routes/` - FastAPI endpoints
+- `app/api/services/` - Business logic layer
+- `app/api/tasks/` - Celery background jobs
+- `app/models.py` - SQLModel database schema
+- `app/schemas.py` - Pydantic API contracts
+- `app/core/` - Configuration and app initialization
 
-# Backend Technical Overview
+## Configuration
 
-This document provides a technical overview of the backend application, built with FastAPI. It follows a service-oriented architecture designed for modularity and extensibility.
+Key environment variables in `.env`:
 
-## Core Technologies
+**Database:** PostgreSQL connection details  
+**Storage:** MinIO or S3 credentials  
+**Celery:** Redis URL for job queue  
+**Providers:** API keys for LLMs, search, etc.
 
-*   **Framework:** [FastAPI](https://fastapi.tiangolo.com/) for high-performance web APIs.
-*   **ORM & Data Validation:** [SQLModel](https://sqlmodel.tiangolo.com/) (built on Pydantic and SQLAlchemy) for database models, ORM interactions, and data validation.
-*   **Database:** PostgreSQL (assumed, standard for SQLAlchemy/Alembic setups). Migrations likely managed by Alembic (though migration files not shown).
-*   **Asynchronous Tasks:** [Celery](https://docs.celeryq.dev/en/stable/) for background task processing (e.g., data ingestion, classification jobs, recurring tasks).
-*   **Scheduling:** Celery Beat for scheduling recurring tasks.
-*   **Object Storage:** MinIO (or compatible S3 service) for storing uploaded files (PDFs, CSVs).
+Users can override provider keys in web interface. System-level keys in `.env` are fallbacks.
 
-## Architecture Principles
+## Production Deployment
 
-The backend adheres to the following architectural principles:
+The system runs either fully local or with managed services:
 
-1.  **Service Layer Pattern:** Business logic is encapsulated within service classes (`app/api/services/`). API routes delegate operations to these services, keeping routes thin and focused on request/response handling.
-2.  **Provider Pattern:** External integrations (object storage, classification models, web scraping) are abstracted behind provider interfaces (`app/api/services/providers/base.py`). Concrete implementations (`app/api/services/providers/*.py`) allow swapping external services without altering core business logic.
-3.  **Dependency Injection:** FastAPI's dependency injection system (`app/api/deps.py`) is used to provide database sessions (`SessionDep`), authenticated users (`CurrentUser`), and service instances (via factory functions like `get_ingestion_service()`) to routes and other components.
+**Fully Local:** All services in Docker Compose  
+**Hybrid:** App in Docker, managed PostgreSQL/Redis/S3  
+**Kubernetes:** Helm chart in `.deployments/kubernetes/`
 
-## Directory Structure
+For production:
+- Remove `compose.override.yml` (dev-only hot reload)
+- Set proper secrets (not example values)
+- Configure backup strategy for PostgreSQL
+- Set up monitoring for Celery workers
 
-```
-backend/
-├── alembic/              # Database migrations (if using Alembic)
-├── app/                  # Main application code
-│   ├── api/              # API specific code (V1, V2 entry points)
-│   │   ├── deps.py       # FastAPI dependencies (DB session, auth)
-│   │   ├── main.py       # API router assembly (includes routes from routes/)
-│   │   ├── routes/       # API endpoint definitions (FastAPI routers)
-│   │   │   ├── v1/         # Version 1 specific routes
-│   │   │   └── v2/         # Version 2 specific routes
-│   │   │   └── ...         # Shared/Unversioned routes
-│   │   └── services/     # Business logic layer
-│   │       ├── providers/  # External service integrations (Storage, LLM, etc.)
-│   │       └── *.py        # Specific service implementations
-│   ├── core/             # Core application components
-│   │   ├── config.py     # Application settings (from environment)
-│   │   ├── db.py         # Database session setup (SQLAlchemy/SQLModel engine)
-│   │   ├── security.py   # Authentication helpers (password hashing, JWT)
-│   │   ├── celery_app.py # Celery application instance setup
-│   │   └── beat_utils.py # Celery Beat schedule management helpers
-│   ├── models.py         # SQLModel data models (database tables, Pydantic validation)
-│   ├── tasks/            # Celery background tasks & scheduling
-│   ├── main.py           # FastAPI application creation and setup
-│   ├── backend_pre_start.py # DB readiness check script
-│   └── celeryworker_pre_start.py # DB readiness check for workers
-├── tests/                # Application tests
-├── .env                  # Environment variables (DB connection, secrets, etc.)
-├── requirements.txt      # Python dependencies
-└── README.md             # This file
-```
+## Understanding the Codebase
 
-## Key Components & Workflow
+Start by reading these in order:
 
-1.  **`app/main.py`**: Creates the FastAPI `app` instance, configures CORS, includes API routers from `app/api/main.py`.
-2.  **`app/models.py`**: Defines all data structures using SQLModel, including database table definitions, relationships, and Pydantic models for API request/response validation.
-3.  **`app/core/`**: Handles setup for database connection (`db.py`, `engine`), application settings (`config.py`), authentication (`security.py`), and the Celery app (`celery_app.py`, `beat_utils.py`).
-4.  **`app/api/deps.py`**: Defines reusable FastAPI dependencies, primarily for getting a database session (`SessionDep`) and the currently authenticated user (`CurrentUser`).
-5.  **`app/api/routes/`**: Contains subdirectories (`v1`, `v2`) and potentially shared route files. Each file defines endpoints related to specific resources (e.g., `workspaces.py`, `datasources.py`). Routes validate input using Pydantic models, use dependencies, and call **Service** methods or trigger background **Tasks**.
-6.  **`app/api/services/`**: Contains the core business logic. Services abstract database interactions and external provider calls.
-    *   `WorkspaceService`: Manages CRUD for Workspaces.
-    *   `IngestionService`: Handles DataSources/DataRecords (uploads, scraping, etc.).
-    *   `ClassificationService`: Manages Schemes, Jobs, Results, orchestrates classification.
-    *   `ShareableService`: Manages ShareableLinks and coordinates import/export.
-    *   `RecurringTaskService`: Manages RecurringTasks and schedules.
-7.  **`app/api/services/providers/`**: Defines interfaces (`base.py`) and implementations for external services (Storage, Classification, Scraping, Search, Geospatial). Factory functions (`get_*_provider()`) enable easy swapping.
-8.  **`app/tasks/`**: Contains Celery task definitions for background processing.
-    *   `ingestion.py`: `process_datasource` task for ingestion work.
-    *   `classification.py`: `process_classification_job` task for running classifications.
-    *   `recurring_*.py`: Tasks for recurring ingestion/classification.
-    *   `scheduling.py`: `check_recurring_tasks` task run by Celery Beat.
-    *   `utils.py`: Shared utilities for tasks.
+1. `app/api/handlers/README.md` - Input processing patterns
+2. `app/api/processors/README.md` - Content extraction patterns
+3. `app/api/services/asset_builder.py` - Asset creation workflow
+4. `app/api/services/annotation_service.py` - Schema execution workflow
+5. `app/api/routes/assets.py` - How routes tie it together
 
-## High-Level Workflows
+Pattern repeats throughout: thin routing layer, handlers for adaptation, services for logic, providers for external systems.
 
-*   **User Uploads PDF:**
-    *   API Request -> `routes/datasources.py` -> `IngestionService.create_datasource` -> `StorageProvider.upload_file`, Create `DataSource` -> Trigger `process_datasource` task.
-    *   (Background) `tasks/ingestion.py:process_datasource` -> `StorageProvider.get_file` -> Extract text -> `IngestionService.create_records_batch` -> `IngestionService.update_datasource_status`.
-*   **User Creates Classification Job:**
-    *   API Request -> `routes/classification_jobs.py` -> `ClassificationService.create_job` -> Create `ClassificationJob` -> Trigger `process_classification_job` task.
-    *   (Background) `tasks/classification.py:process_classification_job` -> Fetch data -> Loop: `ClassificationService.classify_text` (calls `ClassificationProvider`) -> `ClassificationService.create_results_batch` -> `ClassificationService.update_job_status`.
-*   **Recurring Classification:**
-    *   (Scheduled) Celery Beat -> `tasks/scheduling.py:check_recurring_tasks` -> Dispatch `process_recurring_classify`.
-    *   (Background) `tasks/recurring_classification.py:process_recurring_classify` -> Fetch config -> `ClassificationService.create_job` -> Trigger `process_classification_job`.
+## Resources
 
-## Key Features Overview
-
-*   **Workspaces:** Isolate user data (DataSources, Schemes, Jobs).
-*   **Data Ingestion:** Supports PDF, CSV, URL Lists, Text Blocks. Background processing via Celery.
-*   **Classification:** Flexible classification using user-defined Schemes. Background processing via Celery.
-*   **Sharing:** Generate shareable links for various resources (Workspaces, DataSources, Schemes, Jobs) with configurable permissions and expiry.
-*   **Import/Export:** Export Workspaces, DataSources, Schemes, and Jobs to JSON files. Import them into workspaces.
-*   **Recurring Tasks:** Schedule recurring ingestion (e.g., scraping URLs) or classification jobs.
-
-## Setup & Running
-
-1.  **Environment:** Configure database connection, MinIO credentials, Celery broker/backend URLs, secrets, etc., in a `.env` file (refer to `app/core/config.py`).
-2.  **Dependencies:** `pip install -r requirements.txt` (or `poetry install`).
-3.  **Database:** Ensure PostgreSQL is running. Run database migrations (e.g., `alembic upgrade head`).
-4.  **Run API Server:** `uvicorn app.main:app --reload` (for development).
-5.  **Run Celery Worker:** `celery -A app.core.celery_app worker --loglevel=info`
-6.  **Run Celery Beat Scheduler:** `celery -A app.core.celery_app beat --loglevel=info`
-
-(Note: Specific commands might vary based on deployment setup).
+- **Interactive API docs:** http://localhost/docs (when running)
+- **Internal documentation:** `app/api/DOCUMENTATION_INDEX.md`
+- **Forum:** https://forum.open-politics.org
+- **Dev meetings:** Wednesdays 15:30 Berlin Time
