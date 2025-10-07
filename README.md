@@ -13,7 +13,7 @@ Open-source research infrastructure. Self-hostable. Made for the public.
   <img src=".github/assets/images/exactly.png" alt="Open Politics HQ Platform" width="600">
 </div>
 
-## What Makes This Different
+## The Idea
 
 A journalist knows how to identify "security framing" in news coverage. A policy analyst knows what counts as "meaningful stakeholder engagement" in legislative proposals. A bureaucrat knows whether a grant application is properly filled out.
 
