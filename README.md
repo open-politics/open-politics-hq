@@ -1,120 +1,151 @@
 # 🌐 Open Politics HQ
 
-> **Open source intelligence platform for 21st century research and analysis**
+> Open-source intelligence platform for political research and analysis
 
 ---
-**Open Source Political Intelligence - What is that?** @ CCCB Datengarten  
+**Talk: Open Source Political Intelligence** @ CCCB Datengarten  
 [🎥 Watch Presentation](https://media.ccc.de/v/dg-111)
 
 <div align="center">
   <img src=".github/assets/images/exactly.png" alt="Open Politics HQ Platform" width="600">
 </div>
 
-A multi-purpose intelligence platform that accelerates any individual or organization's insight from structured and unstructured data.
+## What This Does
 
-Why? 
+You define analytical questions in plain language. The system applies them systematically across hundreds or thousands of documents. You get structured data you can analyze, visualize, and share.
 
- The modern information landscape is a battlefield across thousands of documents, sources, and events. Reading and sorting everything is impossible. Conducting research with creative yet reliable methods is difficult.
+**Example:** A researcher studying climate policy wants to analyze 500 legislative proposals. Instead of reading each one, they define a schema:
+- "What's the main policy mechanism proposed? (carbon tax, cap-and-trade, regulation, subsidy, etc.)"
+- "Rate the emphasis on economic impact vs environmental urgency (1-10 scale)"
+- "Which industries are mentioned as affected?"
 
- Such systems existe widely but are often restricted to well-funded entities. Our mission is to curate and assemble the tools needed for sophisticated open source intelligence into an integrated platform that is accessible to everyone.
+Run the analysis. Get a structured dataset. Build charts showing how framing shifts over time or differs by political party.
 
-Our approach:
+This works across PDFs, news articles, parliamentary records, CSVs, images, web scrapes—any content you can upload or fetch.
 
-Combining the qualitative with the quantitative. We do not want to replace the human experts, rather harness the existing proficiency we all are ready to articulate in natural language, but not in bringing that to proof, studies, insight or something that we can show the world.
+## Why This Exists
 
-Design the question in natural language, the most profound programming language with the most flexible structure that is out there. This allows experts from many domains (journalists, researchers, NGOs, etc.) to work on the "lenses" that are used to extract the information from the content.
+Qualitative analysis doesn't scale. Reading and coding 500 documents by hand takes weeks. Computational methods require programming skills most researchers don't have.
+
+Meanwhile, sophisticated intelligence systems exist but are locked behind institutional walls—think tanks, intelligence agencies, corporate research teams with dedicated engineers.
+
+We're building this as **public infrastructure**. Open source. Self-hostable. Bring your own LLM keys for privacy. Design your own analytical frameworks, share, compare and evolve then.
+
+## How It Works
+
+1. **Ingest content** from files, URLs, search results, RSS feeds
+2. **Define schemas** that describe what information to extract
+3. **Run analysis** using AI to apply your schema at scale
+4. **Explore results** through tables, visualizations, maps, or export the data
+
+The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
 
 
 
-- **[Webapp](https://open-politics.org)**
-- **[Documentation](https://docs.open-politics.org)** for user guides & tutorials
-- **[Forum](https://forum.open-politics.org)** 
-  
+## Links
 
-### Usage
+- **[Webapp](https://open-politics.org)** — hosted instance (public registration opening soon)
+- **[Documentation](https://docs.open-politics.org)** — user guides and tutorials
+- **[Forum](https://forum.open-politics.org)** — community discussions
 
-> Public registration opening very soon.
+## Getting Started
 
-### Hosted Webapp
-1. Register [here](https://open-politics.org/accounts/register) 
+### Option 1: Use the Hosted Instance
 
-2. Log [here](https://open-politics.org/accounts/login)
+The easiest way to start. We host the infrastructure, you bring your own LLM API keys (OpenAI, Anthropic, Google, or use local Ollama if you boot this up yourself).
 
-> Note: You can log in to the [forum](https://forum.open-politics.org) with the same account.
+1. **Register** at [open-politics.org/accounts/register](https://open-politics.org/accounts/register)
+2. **Add your API keys** on the home page
+3. **Start uploading content** and creating schemas
 
-### Self-Hosted with Docker
-1. Clone the repository and prepare the environment:
+> Your account also works on the [forum](https://forum.open-politics.org) for community support.
+
+### Option 2: Self-Host with Docker
+
+For privacy, customization, or institutional requirements. Run everything on your own infrastructure.
+
 ```bash
 git clone https://github.com/open-politics/open-politics-hq.git
 cd open-politics-hq
 bash prepare.sh
 cp .env.example .env
+# Edit .env with your configuration
+docker compose up
 ```
 
-Log in with the 
+Default admin credentials (change these):
 ```bash
 FIRST_SUPERUSER=app_user
 FIRST_SUPERUSER_PASSWORD=app_user_password
 ```
-set in the .env file.
+
+You can run fully local (including Ollama for LLMs) or use a hybrid setup with managed services for PostgreSQL, Redis, and object storage.
 
 
-## 🏗️ Services
+## Architecture
 
-HQ allows flexible deployment options from fully self-hosted to hybrid cloud setups. Check out also our Kubernetes Helm chart [here](.deployments/kubernetes/open-politics-hq-deployment).
+The platform is built from several independent services that work together. You can run them all locally or mix local and managed services.
 
-### 📦 Core Services
+### Core Components
 
-| Service | Technology | Purpose |
-|---------|------------|---------|
-| **Backend** | FastAPI & MCP Server | API endpoints, business logic, and Model Context Protocol server |
-| **Frontend** | Next.js | Web application interface and user experience |
-| **Celery Worker** | Python | Background task processing and job queues |
-| **Redis** | In-memory store | Caching, session storage, and message broker |
-| **Ollama** | Local LLM | On-premises large language model inference |
-| **Pelias** | Geocoding | Geographic data processing and location services |
-| **MinIO** | Object storage | File storage and document management |
-| **PostgreSQL** | Database + PGVector | Core database with vector search capabilities |
+| Component | What It Does | Technology |
+|-----------|-------------|------------|
+| **Backend** | API, analysis jobs, MCP server | FastAPI + Python |
+| **Frontend** | Web interface | Next.js + React |
+| **Worker** | Background processing for large jobs | Celery |
+| **Database** | Data storage with vector search | PostgreSQL + PGVector |
+| **Object Storage** | File storage for uploads | MinIO (S3-compatible) |
+| **Cache/Queue** | Session management, job queues | Redis |
+| **Geocoding** | Location extraction and mapping | Pelias |
+| **LLM** (optional) | Local AI inference | Ollama |
 
-### 🚀 Deployment Options
+### Deployment Flexibility
 
-#### 🏠 Fully Self-Hosted
-Complete local deployment with all services running on your infrastructure:
-```bash
-# All services included
-- Backend, Frontend, Celery Worker
-- Redis, Ollama, Pelias, MinIO, PostgreSQL
-```
+**Fully Local:** Run everything on your own hardware. Good for air-gapped environments or complete data control.
 
-#### ☁️ Hybrid Cloud
-Lean local deployment with managed cloud services:
-```bash
-# Core services locally
-- Backend, Frontend, Celery Worker, Pelias
+**Hybrid:** Run the application locally but use managed services (AWS RDS, Upstash Redis, S3) to reduce operational burden.
 
-# Managed alternatives
-- Redis → Upstash Redis
-- MinIO → AWS S3 / Google Cloud Storage
-- PostgreSQL → Managed PostgreSQL (AWS RDS, Google Cloud SQL, etc.)
-```
+**Kubernetes:** We provide a Helm chart at [`.deployments/kubernetes/open-politics-hq-deployment`](.deployments/kubernetes/open-politics-hq-deployment)
 
-Kubernetes deployment:
+### LLM Support
 
-see the helm chart [here](.deployments/kubernetes/open-politics-hq-deployment)
+Connect any of these AI providers:
+- **Anthropic** (Claude, etc.)
+- **OpenAI** (GPT-4, GPT-4o, etc.)
+- **Google** (Gemini models)
+- **Ollama** (run models locally—Llama, Mistral, etc.)
 
-
-### Implemented LLM Providers:
-- Ollama
-- OpenAI
-- Google
-
-Set their API keys on the home page:
+Configure API keys in the web interface or run Ollama locally for complete privacy.
 
 
 
-## Contact
-engage@open-politics.org
+## Who This Is For
 
+- **Journalists** investigating patterns across large document sets
+- **Researchers** applying qualitative methods at quantitative scale
+- **NGOs and advocacy groups** tracking policy developments
+- **Students** learning research methods with real-world data
+- **Citizens** who want sophisticated tools for understanding politics
+
+## Contributing
+
+We're building this in the open. The codebase, analytical methods, and documentation are all public and improvable.
+
+**Ways to contribute:**
+- Report bugs or suggest features (GitHub Issues)
+- Improve documentation or add examples
+- Build and share analytical schemas
+- Contribute code (see backend and frontend READMEs)
+- Join community discussions on the forum
+
+## Contact & Community
+
+- **Email:** engage@open-politics.org
+- **Forum:** [forum.open-politics.org](https://forum.open-politics.org)
+- **Dev Meetings:** Wednesdays 15:30 Berlin Time
 
 ## License
-AGPLv3 licensed - see [LICENSE](LICENSE)
+
+AGPLv3 — see [LICENSE](LICENSE)
+
+This means you can use, modify, and distribute this software, but any modifications or services built on it must also be open source. You can get an enterprise license for private use modifications which are not publicly deployed for one year at a time.
