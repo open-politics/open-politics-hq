@@ -31,11 +31,12 @@ image:
     image: minio/minio
     tag: "latest"
     pullPolicy: IfNotPresent
-    nodes: 0
+    nodes: 1
   peliasPlaceholder:
     image: pelias/placeholder
     tag: "latest"
     pullPolicy: IfNotPresent
+    nodes: 1
 
 # Image pull secrets (if using private registry)
 # imagePullSecrets:
@@ -111,11 +112,11 @@ env:
     MINIO_PORT: "9000"
     MINIO_SECURE: "true"
   secrets:
-    SECRET_KEY: "cazsAt-dewtu3-pevzub"
+    SECRET_KEY: ""
     FIRST_SUPERUSER: "admin@example.com"
-    FIRST_SUPERUSER_PASSWORD: "cazsAt-dewtu3-pevzub"
+    FIRST_SUPERUSER_PASSWORD: ""
     USERS_OPEN_REGISTRATION: "True"
-    OPOL_API_KEY: "DOMO1ZKJTLkv3qkh"
+    OPOL_API_KEY: ""
     OPOL_MODE: "remote"
     LOCAL_LLM: "False"
     LOCAL_LLM_MODEL: "llama3.2:latest"
