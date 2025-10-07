@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { DataGrid, Column, RenderEditCellProps } from 'react-data-grid';
-import 'react-data-grid/lib/styles.css';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Loader2, Save, X, Download, FileSpreadsheet, AlertCircle, Undo2, Type } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { toast } from 'sonner';
@@ -19,17 +18,10 @@ interface EditableCsvViewerProps {
   fetchMediaBlob: (blobPath: string) => Promise<string | null>;
 }
 
-// Custom text editor component
-function TextEditor({ row, column, onRowChange, onClose }: RenderEditCellProps<any>) {
-  return (
-    <input
-      className="w-full h-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-primary"
-      autoFocus
-      value={row[column.key] as string}
-      onChange={(e) => onRowChange({ ...row, [column.key]: e.target.value })}
-      onBlur={() => onClose(false)}
-    />
-  );
+interface ColumnDef {
+  key: string;
+  name: string;
+  width?: number;
 }
 
 const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
@@ -46,13 +38,14 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [csvText, setCsvText] = useState<string | null>(null);
   const [rows, setRows] = useState<any[]>([]);
-  const [columns, setColumns] = useState<Column<any>[]>([]);
+  const [columns, setColumns] = useState<ColumnDef[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [originalCsvText, setOriginalCsvText] = useState<string | null>(null);
   const [showInfoAlert, setShowInfoAlert] = useState(true);
   const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; columnKey: string } | null>(null);
   const [cellEditValue, setCellEditValue] = useState<string>('');
+  const [editingCell, setEditingCell] = useState<{ rowIdx: number; columnKey: string } | null>(null);
 
   // Load and parse CSV
   useEffect(() => {
@@ -122,15 +115,10 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
     // Parse header
     const headerLine = lines[0].split(delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
     
-    // Create columns for react-data-grid with better default widths
-    const cols: Column<any>[] = headerLine.map((header, idx) => ({
+    // Create columns with better default widths
+    const cols: ColumnDef[] = headerLine.map((header, idx) => ({
       key: `col_${idx}`,
       name: header || `Column ${idx + 1}`,
-      resizable: true,
-      sortable: true,
-      editable: true,
-      renderEditCell: TextEditor,
-      // More generous default widths - 150-300px range
       width: Math.max(150, Math.min(300, header.length * 12))
     }));
     
@@ -138,10 +126,7 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
     cols.unshift({
       key: 'rowNum',
       name: '#',
-      width: 50,
-      frozen: true,
-      resizable: false,
-      renderCell: ({ row }) => <div className="text-center text-muted-foreground">{row.rowNum}</div>
+      width: 50
     });
 
     setColumns(cols);
@@ -161,32 +146,34 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
     setRows(dataRows);
   };
 
-  // Handle row updates
-  const handleRowsChange = useCallback((newRows: any[]) => {
+  // Handle cell value change
+  const handleCellChange = useCallback((rowIdx: number, columnKey: string, value: string) => {
+    const newRows = [...rows];
+    newRows[rowIdx] = {
+      ...newRows[rowIdx],
+      [columnKey]: value
+    };
     setRows(newRows);
     setHasChanges(true);
     
-    // Update cell edit value if we're editing the changed row
-    if (selectedCell) {
-      const updatedRow = newRows[selectedCell.rowIdx];
-      if (updatedRow) {
-        setCellEditValue(updatedRow[selectedCell.columnKey] || '');
-      }
+    // Update cell edit value if we're editing this cell
+    if (selectedCell?.rowIdx === rowIdx && selectedCell?.columnKey === columnKey) {
+      setCellEditValue(value);
     }
-  }, [selectedCell]);
+  }, [rows, selectedCell]);
 
   // Handle cell selection
-  const handleCellClick = useCallback((args: { row: any; column: Column<any>; rowIdx: number }) => {
+  const handleCellClick = useCallback((rowIdx: number, columnKey: string) => {
     // Don't track row number column
-    if (args.column.key === 'rowNum') {
+    if (columnKey === 'rowNum') {
       setSelectedCell(null);
       setCellEditValue('');
       return;
     }
     
-    setSelectedCell({ rowIdx: args.rowIdx, columnKey: args.column.key });
-    setCellEditValue(args.row[args.column.key] || '');
-  }, []);
+    setSelectedCell({ rowIdx, columnKey });
+    setCellEditValue(rows[rowIdx]?.[columnKey] || '');
+  }, [rows]);
 
   // Handle text area edit
   const handleTextAreaChange = useCallback((value: string) => {
@@ -395,15 +382,69 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
         </div>
       )}
 
-      {/* Data Grid */}
-      <div className={cn("overflow-hidden", selectedCell ? "flex-none max-h-[50vh]" : "flex-1")}>
-        <DataGrid
-          columns={columns}
-          rows={rows}
-          onRowsChange={handleRowsChange}
-          onCellClick={handleCellClick}
-          className="rdg-light fill-grid"
-        />
+      {/* Data Table */}
+      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[50vh]" : "flex-1")}>
+        <div className="min-w-full inline-block align-middle">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-muted/50 sticky top-0 z-10">
+              <tr>
+                {columns.map((col) => (
+                  <th
+                    key={col.key}
+                    style={{ width: col.width ? `${col.width}px` : undefined, minWidth: col.width ? `${col.width}px` : undefined }}
+                    className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider border-r border-border"
+                  >
+                    {col.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="bg-background divide-y divide-border">
+              {rows.map((row, rowIdx) => (
+                <tr key={rowIdx} className="hover:bg-muted/30">
+                  {columns.map((col) => (
+                    <td
+                      key={`${rowIdx}-${col.key}`}
+                      className="px-2 py-1 text-sm border-r border-border whitespace-nowrap overflow-hidden"
+                      style={{ maxWidth: col.width ? `${col.width}px` : undefined }}
+                    >
+                      {col.key === 'rowNum' ? (
+                        <div className="text-center text-muted-foreground font-medium">{row.rowNum}</div>
+                      ) : editingCell?.rowIdx === rowIdx && editingCell?.columnKey === col.key ? (
+                        <Input
+                          autoFocus
+                          value={row[col.key] || ''}
+                          onChange={(e) => handleCellChange(rowIdx, col.key, e.target.value)}
+                          onBlur={() => setEditingCell(null)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setEditingCell(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingCell(null);
+                            }
+                          }}
+                          className="h-7 px-2 py-1 text-sm border-primary"
+                        />
+                      ) : (
+                        <div
+                          className={cn(
+                            "cursor-pointer px-2 py-1 rounded hover:bg-muted/50 truncate",
+                            selectedCell?.rowIdx === rowIdx && selectedCell?.columnKey === col.key && "bg-primary/10 ring-1 ring-primary"
+                          )}
+                          onClick={() => handleCellClick(rowIdx, col.key)}
+                          onDoubleClick={() => setEditingCell({ rowIdx, columnKey: col.key })}
+                          title={row[col.key]}
+                        >
+                          {row[col.key] || '\u00A0'}
+                        </div>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Cell Editor Panel - shows when a cell is selected */}
@@ -443,32 +484,6 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
         </div>
       )}
 
-      <style jsx global>{`
-        .fill-grid {
-          block-size: 100%;
-        }
-        .rdg {
-          font-size: 12px;
-          line-height: 1.4;
-        }
-        .rdg-cell {
-          padding: 6px 8px;
-          border-right: 1px solid hsl(var(--border));
-        }
-        .rdg-header-row {
-          font-weight: 600;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-        }
-        .rdg-header-row .rdg-cell {
-          padding: 8px;
-        }
-        /* Compact row height */
-        .rdg-row {
-          min-height: 35px;
-        }
-      `}</style>
     </div>
   );
 };
