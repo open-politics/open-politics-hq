@@ -43,7 +43,9 @@ Importantly: none of this would exist without the many people dedicated to open 
 
 
 
-<video src=".github/assets/videos/dashboard-demo.mp4" controls autoplay muted playsinline style="max-width:100%;border-radius:8px;">Your browser does not support the video tag.</video>
+<video controls width="800" muted loop autoplay playsinline style="max-width:100%;border-radius:8px;">
+<source src="https://github.com/open-politics/open-politics-hq/raw/main/.github/assets/videos/dashboard-demo.mp4" type="video/mp4">
+</video>
 
 ## How It Works
 
@@ -54,7 +56,9 @@ Importantly: none of this would exist without the many people dedicated to open 
 
 The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
 
-<video src=".github/assets/videos/chat-demo.mp4" controls autoplay muted playsinline style="max-width:100%;border-radius:8px;">Your browser does not support the video tag.</video>
+<video controls width="800" muted loop autoplay playsinline style="max-width:100%;border-radius:8px;">
+<source src="https://github.com/open-politics/open-politics-hq/raw/main/.github/assets/videos/chat-demo.mp4" type="video/mp4">
+</video>
 
 
 ## Links
