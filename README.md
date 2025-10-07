@@ -109,7 +109,15 @@ FIRST_SUPERUSER=app_user
 FIRST_SUPERUSER_PASSWORD=app_user_password
 ```
 
-You can run fully local (including Ollama for LLMs) or use a hybrid setup with managed services for PostgreSQL, Redis, and object storage.
+
+
+### Deployment Flexibility
+
+**Fully Local:** Run everything on your own hardware. Good for air-gapped environments or complete data control.
+
+**Hybrid:** Run the application locally but use managed services (AWS RDS, Upstash Redis, S3) to reduce operational burden.
+
+**Kubernetes:** We provide a Helm chart at [`.deployments/kubernetes/open-politics-hq-deployment`](.deployments/kubernetes/open-politics-hq-deployment)
 
 
 ## Architecture
@@ -129,21 +137,14 @@ The platform is built from several independent services that work together. You 
 | **Geocoding** | Location extraction and mapping | Pelias |
 | **LLM** (optional) | Local AI inference | Ollama |
 
-### Deployment Flexibility
-
-**Fully Local:** Run everything on your own hardware. Good for air-gapped environments or complete data control.
-
-**Hybrid:** Run the application locally but use managed services (AWS RDS, Upstash Redis, S3) to reduce operational burden.
-
-**Kubernetes:** We provide a Helm chart at [`.deployments/kubernetes/open-politics-hq-deployment`](.deployments/kubernetes/open-politics-hq-deployment)
 
 ### LLM Support
 
 Connect any of these AI providers:
-- **Anthropic** (Claude, etc.)
-- **OpenAI** (GPT-4, GPT-4o, etc.)
+- **Anthropic** (Claude Sonnet, etc.)
+- **OpenAI** (GPT-5, etc.)
 - **Google** (Gemini models)
-- **Ollama** (run models locally — Llama, Mistral, etc.)
+- **Ollama** (run models locally — Llama, OAI OSS, Qwen, etc.)
 
 Configure API keys in the web interface or run Ollama locally for complete privacy.
 
@@ -167,24 +168,21 @@ The idea of this HQ is what you make of it.
 Journalist analyzes 200 articles. Schema extracts: primary source type, emotional intensity (1-5), headline framing. Result: Chart comparing systematic patterns across outlets.
 
 **💬 Customer Support Automation**  
-Small business processes 500 tickets (CSV/email). Schema: issue category, sentiment, urgency flag, mentioned features. Result: Auto-routing + trend analysis.
+Small business processes 500 tickets (CSV/email). Schema: issue category, sentiment, urgency flag, mentioned features. Result: tagging + trend analysis.
 
 **🗺️ Geographic News Mapping**  
 Citizen tracks local infrastructure coverage. Schema extracts: location (geocoded), project type, status, sentiment. Result: Interactive map color-coded by coverage tone.
-
-**🎤 Interview Transcript Coding**  
-Researcher codes 40 transcripts. Schema: trust level, institutions mentioned, framing, key themes. Result: Structured dataset ready for analysis in hours, not weeks.
 
 **📋 Grant Application Screening**  
 NGO reviews 100 applications (PDFs). Schema: sections complete, budget clarity, mission alignment, requested amount. Result: Quick filtering to focus review time.
 
 **📊 Policy Monitoring**  
-Advocacy group tracks legislation (RSS/web). Schema: policy area, stance, urgency indicators, sponsors. Result: Dashboard with alerts when relevant bills advance.
+Advocacy group tracks legislation (RSS/web). Schema: policy area, stance, urgency indicators, sponsors. Result: Dashboard with upticks when relevant bills advance.
 
 ---
 
 **Supported formats:** PDFs, web articles, text, CSV, RSS feeds  
-**Coming soon:** Images, audio, email ingestion
+**Coming soon:** Images, audio, email inbox ingestion
 
 ## Contributing
 
