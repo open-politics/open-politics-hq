@@ -13,39 +13,52 @@ Open-source research infrastructure. Self-hostable. Made for the public.
   <img src=".github/assets/images/exactly.png" alt="Open Politics HQ Platform" width="600">
 </div>
 
+The modern information landscape is a mess and often hard to navigate. Sometimes there is something you want to prove, or a topic to review deeper, sometimes you just want to know what keeps happening in your home country. And whether you are a business with a process problem, an NGO with not enough hands on deck, an Org with unstructred documents or a student with a need for better research tools, this is for you.
+
+
+
 ## The Idea
 
 A journalist knows how to identify "security framing" in news coverage. A policy analyst knows what counts as "meaningful stakeholder engagement" in legislative proposals. A bureaucrat knows whether a grant application is properly filled out.
 
-That expertise lives in their heads, maybe in spreadsheets and notes. But sophisticated analysis infrastructure—the kind that lets you systematically apply your analytical framework across thousands of documents—has only been available to well-funded institutions.
+That expertise lives in their heads, maybe in spreadsheets and notes. But sophisticated analysis infrastructure — the kind that lets you systematically apply your analytical framework across thousands of documents — has only been available to well-funded institutions.
 
 **This gives everyone their own intelligence HQ.** Define your analytical questions in plain language. Apply them at scale. The key innovation: schemas are shareable, transparent, and improvable. Other researchers can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
 
-Example schema for legislative analysis:
+**Quick example:** A journalist analyzing 200 news articles creates a schema:
+
 ```
-- What's the main policy mechanism? (carbon tax, cap-and-trade, regulation, subsidy)
-- Rate emphasis on economic vs environmental framing (1-10 scale)
-- Which industries are mentioned as affected? (list)
-- Is international cooperation mentioned? (yes/no)
+Primary source cited? → [government, activist, expert, anonymous]
+Emotional intensity?  → 1-5
+Which side gets final word? → string
 ```
 
-Run it on 500 bills. Get a structured dataset. Build charts showing how framing evolved over time or differs by party. Export for statistical analysis.
+Run it. Get structured data showing systematic patterns. Export visualizations.
 
-The same approach works for parliamentary speeches, news monitoring, citizen feedback processing, grant application review—anywhere domain expertise can be expressed in language.
+The principle scales: anywhere you know what you're looking for, schemas let you look systematically. [See examples across domains](#examples-in-practice) →
+
+We will soon open a library to examples of how to use the platform in various ways.
 
 ## Why This Exists
 
-The gap is obvious once you see it. Researchers, journalists, NGO workers all do qualitative analysis—reading documents, identifying patterns, building arguments. This works great for tens of documents. At hundreds or thousands, you're either stuck or you need to hire engineers.
+The gap is obvious once you see it. Researchers, journalists, NGO workers all do qualitative analysis — reading documents, identifying patterns, building arguments. This works great for tens of documents. At hundreds or thousands, you're either stuck or you need to hire engineers.
 
-Meanwhile, intelligence agencies, think tanks, and corporations have sophisticated analysis infrastructure. The tools exist, they're just not accessible.
+Meanwhile, intelligence agencies, think tanks, and corporations have sophisticated analysis infrastructure. The tools exist, they're just not accessible. 
 
-The breakthrough is recognizing that **domain experts can already articulate their analytical questions in natural language.** A journalist knows "framing." A policy analyst knows "stakeholder engagement." An NGO worker knows what signals a policy shift. Everyone has Excel, but not everyone has infrastructure to systematically apply their analytical methods at scale.
+Our proposal is in recognizing that **everyone can already articulate their analytical questions in a kind of code, in natural language.** A journalist knows "framing." A policy analyst knows "stakeholder engagement." An NGO worker knows what signals a policy shift. Everyone has Excel, but not everyone has infrastructure to systematically apply their analytical methods at scale.
 
 Natural language schemas change this. The same infrastructure that analyzes legislation can sort emails, process intake forms, track regulatory changes, or monitor media coverage. Now everyone can have their HQ for their information needs.
 
-This capability shouldn't be locked behind institutional walls. We're building it as **public infrastructure**—schemas, geocoding, vector search, local AI. Basic components, almost comedically simple when you list them out. But that's the point. These are foundational capabilities an open society needs, like libraries or archives, and they should be equally accessible.
+This capability shouldn't be locked behind institutional walls. We're building it as **public infrastructure** — schemas, geocoding, vector search, local AI. Basic components, simple when you list them out. But that's the point. In our opinion these are basic intelligence capabilities an open society needs, like libraries or archives, and they should be equally accessible.
 
-Open source. Self-hostable. Bring your own LLM keys if you want privacy. Share your analytical frameworks publicly if you want transparency. Use it for journalism, research, advocacy, governance—anything that serves the public interest.
+Open source. Self-hostable. Bring your own LLM keys if you want privacy. Share your analytical frameworks publicly if you want transparency. Use it for journalism, research, advocacy, governance — anything that serves the public interest.
+
+
+Importantly: none of this would exist without the many people dedicated to open source. We're assembling the hard work of countless other projects. We are standing on the shoulders of a massive collaborative ecosystem that makes this possible. We are grateful for their work and we are proud to be part of it.
+
+
+
+<video src=".github/assets/videos/dashboard-demo.mp4" controls autoplay muted playsinline style="max-width:100%;border-radius:8px;">Your browser does not support the video tag.</video>
 
 ## How It Works
 
@@ -56,6 +69,7 @@ Open source. Self-hostable. Bring your own LLM keys if you want privacy. Share y
 
 The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
 
+<video src=".github/assets/videos/chat-demo.mp4" controls autoplay muted playsinline style="max-width:100%;border-radius:8px;">Your browser does not support the video tag.</video>
 
 
 ## Links
@@ -129,7 +143,7 @@ Connect any of these AI providers:
 - **Anthropic** (Claude, etc.)
 - **OpenAI** (GPT-4, GPT-4o, etc.)
 - **Google** (Gemini models)
-- **Ollama** (run models locally—Llama, Mistral, etc.)
+- **Ollama** (run models locally — Llama, Mistral, etc.)
 
 Configure API keys in the web interface or run Ollama locally for complete privacy.
 
@@ -143,7 +157,34 @@ Configure API keys in the web interface or run Ollama locally for complete priva
 - **Students** learning research methods with real-world data
 - **Citizens** who want sophisticated tools for understanding politics
 
-And yes.. also business as the general principle applies to many processes and workflows needed by companies (customer support, sales, marketing, etc.)
+And yes.. also many businesses as the general principle applies to many processes and workflows needed by companies (customer support, sales, marketing, etc.). 
+
+The idea of this HQ is what you make of it.
+
+## Examples in Practice
+
+**📰 Media Bias Analysis**  
+Journalist analyzes 200 articles. Schema extracts: primary source type, emotional intensity (1-5), headline framing. Result: Chart comparing systematic patterns across outlets.
+
+**💬 Customer Support Automation**  
+Small business processes 500 tickets (CSV/email). Schema: issue category, sentiment, urgency flag, mentioned features. Result: Auto-routing + trend analysis.
+
+**🗺️ Geographic News Mapping**  
+Citizen tracks local infrastructure coverage. Schema extracts: location (geocoded), project type, status, sentiment. Result: Interactive map color-coded by coverage tone.
+
+**🎤 Interview Transcript Coding**  
+Researcher codes 40 transcripts. Schema: trust level, institutions mentioned, framing, key themes. Result: Structured dataset ready for analysis in hours, not weeks.
+
+**📋 Grant Application Screening**  
+NGO reviews 100 applications (PDFs). Schema: sections complete, budget clarity, mission alignment, requested amount. Result: Quick filtering to focus review time.
+
+**📊 Policy Monitoring**  
+Advocacy group tracks legislation (RSS/web). Schema: policy area, stance, urgency indicators, sponsors. Result: Dashboard with alerts when relevant bills advance.
+
+---
+
+**Supported formats:** PDFs, web articles, text, CSV, RSS feeds  
+**Coming soon:** Images, audio, email ingestion
 
 ## Contributing
 
@@ -167,3 +208,15 @@ We're building this in the open. The codebase, analytical methods, and documenta
 AGPLv3 — see [LICENSE](LICENSE)
 
 This means you can use, modify, and distribute this software, but any modifications or services built on it must also be open source. You can get an enterprise license for private use modifications which are not publicly deployed for one year at a time under strict ethical guidelines.
+
+
+
+## Project Origins & Story
+
+This project started at Freie Universität Berlin's Political Science department, born from a student's frustration with the disconnect of theoretically available tools and the practical ones available. Our first official funding came from the European Horizon NGI Search project, and before that we were lucky to have a warm circle of friends and early supporters who believed in the idea before there was much to show.
+
+The business model is intentionally simple: we'll try to keep a free hosted version running as much as we can shoulder, but hosting HQ is rather cheap as most of the cost comes from LLMs. We focus on helping organizations deploy and use the platform effectively — infrastructure orchestration, custom implementations, training. The platform itself always stays open source and self-hostable. 
+
+Our "marketing" is the research that gets done with these tools. If people publish interesting work using HQ, that's worth more than any advertising campaign.
+
+If you want to support this mission or just talk about what you're building, reach out: engage@open-politics.org
