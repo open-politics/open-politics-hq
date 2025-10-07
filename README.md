@@ -15,7 +15,7 @@ Open-source research infrastructure. Self-hostable. Made for the public.
 
 
 
-The modern information landscape is a mess and often hard to navigate. Sometimes there is something you want to prove, or a topic to review deeper, sometimes you just want to know what keeps happening in your home country. And whether you are a business with a process problem, an NGO with not enough hands on deck, an Org with unstructred documents or a student with a need for better research tools, this is for you.
+The modern information landscape is chaotic and difficult to navigate. Whether you need to prove a point, dive deeper into a topic, or simply understand what's happening, the challenge is the same: making sense of vast amounts of unstructured information. This platform serves businesses struggling with process inefficiencies, NGOs overwhelmed by document management, organizations drowning in unstructured data, and students seeking better research tools.
 
 ## The Idea
 
@@ -32,6 +32,8 @@ Primary source cited? → [government, activist, expert, anonymous]
 Emotional intensity?  → 1-5
 Which side gets final word? → string
 ```
+
+[#Table with annotation](.github/assets/images/table-with-annotations.png)
 
 Run it. Get structured data showing systematic patterns. Export visualizations.
 
