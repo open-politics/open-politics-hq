@@ -10,21 +10,25 @@
   <img src=".github/assets/images/exactly.png" alt="Open Politics HQ Platform" width="600">
 </div>
 
+A multi-purpose intelligence platform that accelerates any individual or organization's insight from structured and unstructured data.
+
 Why? 
 
- The modern information landscape is a (see up) battlefield across thousands of documents, sources, and events. Reading and sorting everything is impossible. Conducting research with creative yet reliable methods is difficult.
+ The modern information landscape is a battlefield across thousands of documents, sources, and events. Reading and sorting everything is impossible. Conducting research with creative yet reliable methods is difficult.
 
-Our approach?
+ Such systems existe widely but are often restricted to well-funded entities. Our mission is to curate and assemble the tools needed for sophisticated open source intelligence into an integrated platform that is accessible to everyone.
 
-Combining the qualitative with the quantitative. 
+Our approach:
+
+Combining the qualitative with the quantitative. We do not want to replace the human experts, rather harness the existing proficiency we all are ready to articulate in natural language, but not in bringing that to proof, studies, insight or something that we can show the world.
 
 Design the question in natural language, the most profound programming language with the most flexible structure that is out there. This allows experts from many domains (journalists, researchers, NGOs, etc.) to work on the "lenses" that are used to extract the information from the content.
 
-We apply these lenses methodically to our data stored in our [information spaces](https://docs.open-politics.org/information-spaces).
 
 
 - **[Webapp](https://open-politics.org)**
 - **[Documentation](https://docs.open-politics.org)** for user guides & tutorials
+- **[Forum](https://forum.open-politics.org)** 
   
 
 ### Usage
