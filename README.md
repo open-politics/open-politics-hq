@@ -1,8 +1,8 @@
 # 🌐 Open Politics HQ
 
-> **Turn analytical methods into shareable schemas. Apply them at scale.**
+> ** Open Source Multi-Purpose Intelligence Platform **
 
-Open-source research infrastructure. Self-hostable. Made for the public.
+
 
 ---
 
@@ -15,7 +15,7 @@ Open-source research infrastructure. Self-hostable. Made for the public.
 
 
 
-The modern information landscape is chaotic and difficult to navigate. Whether you need to prove a point, dive deeper into a topic, or simply understand what's happening, the challenge is the same: making sense of vast amounts of unstructured information. This platform serves businesses struggling with process inefficiencies, NGOs overwhelmed by document management, organizations drowning in unstructured data, and students seeking better research tools.
+The modern information landscape is chaotic and difficult to navigate. Whether you need to prove a point, dive deeper into a topic, or simply understand what's happening, the challenge is the same: making sense of vast amounts of unstructured information. This platform serves students seeking better research tools, organizations drowning in unstructured data, NGOs overwhelmed by document management, and businesses struggling with process inefficiencies.
 
 ## The Idea
 
@@ -23,17 +23,20 @@ A journalist knows how to identify "security framing" in news coverage. A policy
 
 That expertise lives in their heads, maybe in spreadsheets and notes. This works great for tens of documents. At hundreds or thousands, you're either stuck or you need to hire engineers. Meanwhile, sophisticated analysis infrastructure — the kind that lets you systematically apply analytical frameworks at scale — has only been available to well-funded institutions.
 
-**This gives everyone their own intelligence HQ.** Define your analytical questions in plain language. Apply them at scale. The key innovation: schemas are shareable, transparent, and improvable. Other researchers can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
+**HQ.** Define your analytical questions in plain language. Apply them at scale. The key innovation: schemas are shareable, transparent, and improvable. Other researchers can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
 
-**Quick example:** A journalist analyzing 200 news articles creates a schema:
+**For example:** Imagine as a journalist, you are analyzing 200 news articles. You create a schema:
 
 ```
 Primary source cited? → [government, activist, expert, anonymous]
 Emotional intensity?  → 1-5
 Which side gets final word? → string
+
+# + your specific definitions of "emotional intesity"
+# Your description becomes your method, you can measure and evolve it. 
 ```
 
-[#Table with annotation](.github/assets/images/table-with-annotations.png)
+<img src=".github/assets/images/table-with-annotations.png" alt="Table with annotation" width="600">
 
 Run it. Get structured data showing systematic patterns. Export visualizations.
 
