@@ -81,6 +81,13 @@ https://github.com/user-attachments/assets/978cf874-5476-4d78-85e6-4485678e1dcc
 
 The **Chat & MCP (Model Context Protocol)** centralizes all platform tools (asset management, schema-based analysis, vector search, content ingestion) into a unified analysis accedd point that lets you work with structured analytical methods through conversational AI. This combination allows for various workflows or researching & synthesizing data. Editing MCP configs (upcoming on a per user-level) furthermore allows you acces almost arbitray outside data and use it for your analysis.
 
+## Infospaces & Vector Storage
+
+Your assets, schemas and analysis results are scoped to "Information Spaces" that you can use to curate information. 
+Each Information Space is a dedicated vector space. Use vector embeddings from local or cloud models to search through your data, cluster it (upcoming) and find duplicates.
+
+<img src=".github/assets/images/infospace-manager.png" alt="Infospace Manager">
+
 ## Links
 
 - **[Webapp](https://open-politics.org)** — hosted instance (public registration opening soon)
