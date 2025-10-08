@@ -79,7 +79,7 @@ The schemas are the key innovation. They let you formalize your analytical metho
 
 https://github.com/user-attachments/assets/978cf874-5476-4d78-85e6-4485678e1dcc
 
-The **Chat & MCP (Model Context Protocol)** centralizes all platform tools (asset management, schema-based analysis, vector search, content ingestion) into a unified analysis accedd point that lets you work with structured analytical methods through conversational AI. This combination allows for various workflows or researching & synthesizing data. Editing MCP configs (upcoming on a per user-level) furthermore allows you to grant your LLM access to almost arbitray outside data and use it for your analysis.
+The **Chat & MCP (Model Context Protocol)** centralizes all platform tools (asset management, schema-based analysis, vector search, content ingestion) into a unified analysis access point that lets you work with structured analytical methods through conversational AI. This combination allows for various workflows or researching & synthesizing data. Editing MCP configs (upcoming on a per user-level) furthermore allows you to grant your LLM access to almost arbitray outside data and use it for your analysis.
 
 ## Infospaces & Vector Storage
 
