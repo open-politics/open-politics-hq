@@ -60,18 +60,20 @@ https://github.com/user-attachments/assets/60b8fa3f-d5ba-4928-a65c-121ba670e160
 ## How It Works
 
 1. **Ingest content** from files, URLs, search results, RSS feeds
+<img src=".github/assets/images/asset-manager.png" alt="Example result">
+
 2. **Define schemas** that describe what information to extract
 3. **Run analysis** using AI to apply your schema at scale
 4. **Explore results** through tables, visualizations, maps, or export the data
+
 
 **Supported formats:** PDFs, web articles, text, CSV, RSS feeds  
 **Coming soon:** Images, audio, email inbox ingestion
 
 
-<img src=".github/assets/images/annotation-schema.png" alt="Example result">
-
 The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
 
+<img src=".github/assets/images/annotation-schema.png" alt="Example annotation schema">
 
 ## Chat & MCP
 
