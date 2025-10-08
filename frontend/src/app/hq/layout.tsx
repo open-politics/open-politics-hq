@@ -12,11 +12,12 @@ import {
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
 import useAuth from "@/hooks/useAuth"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
-import { ArrowLeft, Menu as MenuIcon } from "lucide-react"
+import { ArrowLeft, Menu as MenuIcon, ExternalLink } from "lucide-react"
 import { useEffect, useState, useRef } from 'react';
 // import createGlobe from "cobe";
 import { useTheme } from "next-themes"; 
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 
 // Helper to generate breadcrumbs from the current path and infospace
 function useBreadcrumbs(activeInfospace: any) {
@@ -100,21 +101,35 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
           </div>
         </div> */}
         
-        <header className="flex h-12 shrink-0 items-center gap-2 px-3 relative z-10">
-          <div className="flex items-center gap-0">
-            <SidebarTrigger className="size-4 mt-5 border-r border-border/50" />
-            <Breadcrumb className="mt-4.5 ml-12 pr-6">
-              <BreadcrumbList>
-                {breadcrumbs.map((item, idx) => (
-                  <span key={item.href} className="flex font-medium items-center">
-                    <BreadcrumbItem>
-                      <BreadcrumbLink className="" href={item.href}>{item.label}</BreadcrumbLink>
-                    </BreadcrumbItem>
-                    {idx < breadcrumbs.length - 1 && <BreadcrumbSeparator />}
-                  </span>
-                ))}
-              </BreadcrumbList>
-            </Breadcrumb>
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-2 px-4 relative z-10">
+          <SidebarTrigger className="-ml-1" />
+          <div className="h-4 w-[1px] mx-2 bg-border" />
+          <Breadcrumb>
+            <BreadcrumbList>
+              {breadcrumbs.map((item, idx) => (
+                <span key={item.href} className="flex items-center">
+                  <BreadcrumbItem>
+                    <BreadcrumbLink href={item.href}>{item.label}</BreadcrumbLink>
+                  </BreadcrumbItem>
+                  {idx < breadcrumbs.length - 1 && <BreadcrumbSeparator />}
+                </span>
+              ))}
+            </BreadcrumbList>
+          </Breadcrumb>
+          <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md">
+            <Link 
+              href="https://docs.open-politics.org" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-200 transition-colors font-medium"
+            >
+              <span className="text-sm">📚 Check out our updated docs</span>
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+            <span className="text-blue-400">•</span>
+            <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full font-semibold">
+              v0.9.9
+            </span>
           </div>
         </header>
         <main className="flex-1 h-full overflow-hidden relative z-10">

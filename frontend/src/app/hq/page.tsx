@@ -24,11 +24,7 @@ function DesksPage() {
 
   return (
     <div className="p-6 max-h-full rounded-lg overflow-y-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">HQ</h1>
-        </div>
-      </div>
+      
 
       {/* Tools Section */}
       <div className="mb-6">
