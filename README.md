@@ -158,8 +158,8 @@ The platform is built from several independent services that work together. You 
 ### LLM Support
 
 Connect any of these AI providers:
-- **Anthropic** (Claude Sonnet, etc.)
-- **OpenAI** (GPT-4, GPT-3.5, etc.)
+- **Anthropic** (Claude Sonnet 4.5, etc.)
+- **OpenAI** (GPT-5 etc.)
 - **Google** (Gemini models)
 - **Ollama** (run models locally — Llama, OAI OSS, Qwen, etc.)
 
