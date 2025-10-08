@@ -32,7 +32,7 @@ const Footer = () => {
             <h3 className="text-lg font-semibold mb-4">Contact</h3>
             <a href="mailto:engage@open-politics.org" className="text-sm hover:underline">engage@open-politics.org</a>
             <div className="mt-4">
-              <Link href="https://discord.gg/AhqmEUr99T" className="text-sm hover:underline">Discord</Link>
+              <Link href="https://forum.open-politics.org" className="text-sm hover:underline">Forum</Link>
             </div>
             <div className="mt-4">
               <Link href="/webpages/imprint" className="text-sm hover:underline">Imprint</Link>

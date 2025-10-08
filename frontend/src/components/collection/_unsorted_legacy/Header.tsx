@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FaGithub } from "react-icons/fa6";
-import { NewspaperIcon, Globe2, ZoomIn, Menu, X, ChevronRight, Sun, Moon } from "lucide-react";
+import { Menu, X, ChevronRight, Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,7 +22,6 @@ import {
   useSidebar
 } from "@/components/ui/sidebar"; 
 import { NavUser } from '../../ui/nav-user';
-import TextWriter from "@/components/ui/extra-animated-base-components/text-writer";
 import Image from 'next/image';
 
 const Header = () => {
@@ -59,7 +58,7 @@ const Header = () => {
               alt="Open Politics Project" 
               width={450} 
               height={60} 
-              className="opacity-90 mt-2"
+              className="opacity-90"
               priority
             />
           </Link>
@@ -120,20 +119,9 @@ const Header = () => {
               {/* Auth Navigation */}
               {isLoggedIn && !isLoggingOut ? (
                 <div className="flex items-center space-x-2">
-                  <Button variant="ghost" asChild className="ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg">
+                  <Button variant="outline" asChild className="border-blue-500/50 hover:border-blue-500 hover:bg-blue-500/5 transition-all duration-300">
                     <Link href="/hq">
-                      <TextWriter
-                        text={<div className="flex items-center gap-1">
-                          <NewspaperIcon className="w-4 h-4" />
-                          <Globe2 className="w-4 h-4" />
-                          <ZoomIn className="w-4 h-4" />
-                          <span>HQ</span>
-                        </div>}
-                        typingDelay={100}
-                        startDelay={500}
-                        className="animate-shimmer-once"
-                        cursorColor="transparent"
-                      />
+                      <span className="font-semibold">HQ</span>
                     </Link>
                   </Button>
                 </div>
@@ -243,17 +231,9 @@ const Header = () => {
                       {isLoggedIn && !isLoggingOut ? (
                         <>
                           <SidebarMenuItem>
-                            <SidebarMenuButton asChild className="ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg">
+                            <SidebarMenuButton asChild className="border-blue-500/50 hover:border-blue-500 hover:bg-blue-500/5 transition-all duration-300">
                               <Link href="/hq">
-                                <TextWriter
-                                  text={<div className="flex items-center gap-1">
-                                    <span>HQ</span>
-                                  </div>}
-                                  typingDelay={100}
-                                  startDelay={500}
-                                  className="animate-shimmer-once"
-                                  cursorColor="transparent"
-                                />
+                                <span className="font-semibold">HQ</span>
                               </Link>
                             </SidebarMenuButton>
                           </SidebarMenuItem>

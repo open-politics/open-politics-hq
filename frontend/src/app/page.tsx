@@ -4,8 +4,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import LandingLayout from './landing_layout';
 import { Announcement } from '@/components/collection/_unsorted_legacy/announcement';
-import { Play, NewspaperIcon, Globe2, ZoomIn } from 'lucide-react';
-import TextWriter from "@/components/ui/extra-animated-base-components/text-writer";
+import { Play } from 'lucide-react';
 
 import useAuth from '@/hooks/useAuth';
 
@@ -15,9 +14,10 @@ const sleep = (time: number) => new Promise((resolve) => setTimeout(resolve, tim
 
 interface TypeAsyncProps {
   words: string[];
+  className?: string;
 }
 
-const TypeAsync: React.FC<TypeAsyncProps> = ({ words = [] }) => {
+const TypeAsync: React.FC<TypeAsyncProps> = ({ words = [], className = '' }) => {
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(true);
 
@@ -55,7 +55,7 @@ const TypeAsync: React.FC<TypeAsyncProps> = ({ words = [] }) => {
     }
   }, [words]);
 
-  return <span style={{ letterSpacing: '0.1em' }} dangerouslySetInnerHTML={{ __html: text }} />;
+  return <span className={className} style={{ letterSpacing: '0.1em' }} dangerouslySetInnerHTML={{ __html: text }} />;
 };
 
 interface HiProps {
@@ -77,12 +77,12 @@ const HomePage: React.FC<HiProps> = () => {
         {/* Main Content Section */}
         <section className="flex flex-col items-center justify-center flex-grow p-8">
           <div className="text-center mb-8">
-            <h1 className="text-4xl md:text-6xl font-bold leading-none dark:text-white">
+            <h1 className="text-4xl md:text-6xl font-bold leading-none text-main-styled-text">
               <span className="flex flex-col items-center">
                 <span style={{ letterSpacing: '0.1em' }}>What are you</span>
                 <span className="flex items-center">
                   <span id="shimmer-ast" className="shimmer mt-2" style={{ letterSpacing: '0.1em' }}>*</span>
-                  <TypeAsync words={words} />
+                  <TypeAsync words={words} className="text-main-styled-text" />
                 </span>
                 <span style={{ letterSpacing: '0.1em' }}>for?</span>
               </span>
@@ -108,25 +108,14 @@ const HomePage: React.FC<HiProps> = () => {
           </div>
          ) : (
           <div className="mt-2 text-center">
-            <p className="text-blue-500 font-bold mb-3">Welcome back{user?.full_name ? `, ${user?.full_name}` : ''  }!</p>
+            <p className="text-main-styled-text font-bold mb-3">Welcome back{user?.full_name ? `, ${user?.full_name}` : ''  }!</p>
             <Button 
-              variant="ghost" 
+              variant="outline" 
               asChild 
-              className="group relative overflow-hidden ring-1 ring-blue-500 ring-offset-0 px-6 rounded-lg transition-all duration-300"
+              className="border-blue-500/50 hover:border-blue-500 hover:bg-blue-500/5 transition-all duration-300"
             >
               <Link href="/hq">
-                <TextWriter
-                  text={<div className="flex items-center gap-1 relative z-10">
-                    <NewspaperIcon className="w-4 h-4" />
-                    <Globe2 className="w-4 h-4" />
-                    <ZoomIn className="w-4 h-4" />
-                    <span>HQ</span>
-                  </div>}
-                  typingDelay={100}
-                  startDelay={500}
-                  className="animate-shimmer-once"
-                  cursorColor="transparent"
-                />
+                <span className="font-semibold">Enter HQ</span>
               </Link>
             </Button>
           </div>
@@ -179,19 +168,6 @@ const HomePage: React.FC<HiProps> = () => {
           60% { color: green; }
           80% { color: blue; }
           100% { color: violet; }
-        }
-
-        .group:hover .absolute {
-          animation: rainbow-shimmer 2s linear infinite;
-          background-size: 200% 200%;
-        }
-        
-        @keyframes rainbow-shimmer {
-          0% { background-position: 0% 50%; background-image: linear-gradient(to right, rgba(239, 68, 68, 0.3), rgba(249, 115, 22, 0.3), rgba(234, 179, 8, 0.3)); }
-          25% { background-position: 50% 50%; background-image: linear-gradient(to right, rgba(234, 179, 8, 0.3), rgba(34, 197, 94, 0.3), rgba(59, 130, 246, 0.3)); }
-          50% { background-position: 100% 50%; background-image: linear-gradient(to right, rgba(59, 130, 246, 0.3), rgba(139, 92, 246, 0.3), rgba(239, 68, 68, 0.3)); }
-          75% { background-position: 50% 50%; background-image: linear-gradient(to right, rgba(139, 92, 246, 0.3), rgba(239, 68, 68, 0.3), rgba(249, 115, 22, 0.3)); }
-          100% { background-position: 0% 50%; background-image: linear-gradient(to right, rgba(239, 68, 68, 0.3), rgba(249, 115, 22, 0.3), rgba(234, 179, 8, 0.3)); }
         }
       `}</style>
     </LandingLayout>
