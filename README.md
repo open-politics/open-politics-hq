@@ -15,7 +15,9 @@
 
 
 
-The modern information landscape is chaotic and difficult to navigate. Whether you need to prove a point, dive deeper into a topic, or simply understand what's happening, the challenge is the same: making sense of vast amounts of unstructured information. This platform serves students seeking better research tools, organizations drowning in unstructured data, NGOs overwhelmed by document management, and businesses struggling with process inefficiencies.
+**The modern information landscape is a chaotic mess and, most often, difficult to navigate.**
+
+Maybe you need to prove a point, are aiming to dive deeper into a topic, or simply want to understand what's happening. Whether you're an organisation drowning in unstructured data, an NGO with not enough hands on deck, an independent journalist tracking patterns across hundreds of sources, a researcher needing systematic analysis tools, or a business struggling with process inefficiencies, this is for you.
 
 ## The Idea
 
@@ -23,9 +25,9 @@ A journalist knows how to identify "security framing" in news coverage. A policy
 
 That expertise lives in their heads, maybe in spreadsheets and notes. This works great for tens of documents. At hundreds or thousands, you're either stuck or you need to hire engineers. Meanwhile, sophisticated analysis infrastructure — the kind that lets you systematically apply analytical frameworks at scale — has only been available to well-funded institutions.
 
-**HQ.** Define your analytical questions in plain language. Apply them at scale. The key innovation: schemas are shareable, transparent, and improvable. Other researchers can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
+**Thus HQ:** define your analytical questions in plain language. Apply them at scale. Your schemas are your "lenses" you use to see the data. They are shareable, transparent, and improvable. Other researchers can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
 
-**For example:** Imagine as a journalist, you are analyzing 200 news articles. You create a schema:
+**For example:** Imagine as a journalist, you are analysing 200 news articles. You create a schema:
 
 ```
 Primary source cited? → [government, activist, expert, anonymous]
@@ -41,13 +43,13 @@ Which side gets final word? → string
 
 
 
-Run it. Get structured data showing systematic patterns. Export visualizations.
+**Run it. Get structured data showing systematic patterns. Export visualizations.**
 
-The principle scales. A journalist knows "framing." A policy analyst knows "stakeholder engagement." An NGO worker knows what signals a policy shift. Schemas let you take that knowledge and apply it systematically across thousands of documents. The same infrastructure that analyzes legislation can sort emails, process intake forms, track regulatory changes, or monitor media coverage.
+The principle scales. A journalist knows "framing." A policy analyst knows "stakeholder engagement." An NGO worker knows what signals a policy shift. Schemas let you take that knowledge and apply it systematically across thousands of documents. The same infrastructure that analyses legislation can sort emails, process intake forms, track regulatory changes, or monitor media coverage.
 
-This capability shouldn't be locked behind institutional walls. We're building it as **public infrastructure** — schemas, geocoding, vector search, local AI. Basic components, simple when you list them out. But that's the point. These are basic intelligence capabilities an open society needs, like libraries or archives, and they should be equally accessible.
+This capability shouldn't be locked behind institutional walls. We're building it as **public infrastructure**: schemas, geocoding, vector search, local AI. Basic components, simple when you list them out. But that's the point. These are basic intelligence capabilities an open society needs, like libraries or archives, and they should be equally accessible.
 
-Open source. Self-hostable. Bring your own LLM keys if you want privacy. Share your analytical frameworks publicly if you want transparency. Use it for journalism, research, advocacy, governance — anything that serves the public interest.
+Open source. Self hostable. Bring your own LLM keys if you want privacy. Share your analytical frameworks publicly if you want transparency. Use it for journalism, research, advocacy, governance, anything that serves the public interest.
 
 Importantly: none of this would exist without the many people dedicated to open source. We're assembling the hard work of countless other projects. We are standing on the shoulders of a massive collaborative ecosystem that makes this possible. We are grateful for their work and we are proud to be part of it.
 
@@ -79,7 +81,7 @@ The schemas are the key innovation. They let you formalize your analytical metho
 
 https://github.com/user-attachments/assets/978cf874-5476-4d78-85e6-4485678e1dcc
 
-The **Chat & MCP (Model Context Protocol)** centralizes all platform tools (asset management, schema-based analysis, vector search, content ingestion) into a unified analysis access point that lets you work with structured analytical methods through conversational AI. This combination allows for various workflows or researching & synthesizing data. Editing MCP configs (upcoming on a per user-level) furthermore allows you to grant your LLM access to almost arbitray outside data and use it for your analysis.
+The **Chat & MCP (Model Context Protocol)** centralizes all platform tools (asset management, schema based analysis, vector search, content ingestion) into a unified analysis access point that lets you work with structured analytical methods through conversational AI. This combination allows for various workflows for researching & synthesizing data. Editing MCP configs (upcoming on a per user level) furthermore allows you to grant your LLM access to almost arbitrary outside data and use it for your analysis.
 
 ## Infospaces & Vector Storage
 
@@ -102,7 +104,7 @@ The easiest way to start. We host the infrastructure, you bring your own LLM API
 
 1. **Register** at [open-politics.org/accounts/register](https://open-politics.org/accounts/register)
 2. **Add your API keys** on the home page
-3. **Start uploading content** and creating schemas
+3. **Start analysing** — upload content and create your first schema
 
 > Your account also works on the [forum](https://forum.open-politics.org) for community support.
 
@@ -157,7 +159,7 @@ The platform is built from several independent services that work together. You 
 
 Connect any of these AI providers:
 - **Anthropic** (Claude Sonnet, etc.)
-- **OpenAI** (GPT-5, etc.)
+- **OpenAI** (GPT-4, GPT-3.5, etc.)
 - **Google** (Gemini models)
 - **Ollama** (run models locally — Llama, OAI OSS, Qwen, etc.)
 
@@ -190,10 +192,10 @@ This means you can use, modify, and distribute this software, but any modificati
 
 ## Project Origins & Story
 
-This project started at Freie Universität Berlin's Political Science department, born from a student's frustration with the disconnect of theoretically available tools and the practical ones available. Our first official funding came from the European Horizon NGI Search project, and before that we were lucky to have a warm circle of friends and early supporters who believed in the idea before there was much to show.
+This project started at Freie Universität Berlin's Political Science department. The gap between what research infrastructure could theoretically do and what was practically accessible to most researchers was obvious. Someone had to build the bridge. Our first official funding came from the European Horizon NGI Search project, and before that we were lucky to have a warm circle of friends and early supporters who believed in the idea before there was much to show. No venture capital, just journalists and neighbours who got it.
 
-The business model is intentionally simple: we'll try to keep a free hosted version running as much as we can shoulder, but hosting HQ is rather cheap as most of the cost comes from LLMs. We focus on helping organizations deploy and use the platform effectively — infrastructure orchestration, custom implementations, training. The platform itself always stays open source and self-hostable. 
+The business model is intentionally simple: we'll try to keep a free hosted version running as much as we can shoulder, but hosting HQ is rather cheap as most of the cost comes from LLMs. We focus on helping organisations deploy and use the platform effectively: infrastructure orchestration, custom implementations, training. The platform itself always stays open source and self hostable.
 
-Our "marketing" is the research that gets done with these tools. If people publish interesting work using HQ, that's worth more than any advertising campaign.
+Our marketing is the research that gets done with these tools. If people publish interesting work using HQ, that's worth more than any advertising campaign.
 
 If you want to support this mission or just talk about what you're building, reach out: engage@open-politics.org
