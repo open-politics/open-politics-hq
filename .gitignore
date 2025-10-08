@@ -27,3 +27,4 @@ misc/
 # Docker
 .dockerignore
 
+docs/
