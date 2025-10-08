@@ -12,6 +12,7 @@ import {
   Home,
   PieChart,
   Microscope,
+  Users,
   Settings2,
   SquareTerminal,
   Globe,
@@ -92,7 +93,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     {
       title: "Forum",
       url: "https://forum.open-politics.org",
-      icon: MessageSquare,
+      icon: Users,
     },
     {
       title: "GitHub",

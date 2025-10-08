@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sidebar"; 
 import { NavUser } from '../../ui/nav-user';
 import TextWriter from "@/components/ui/extra-animated-base-components/text-writer";
+import Image from 'next/image';
 
 const Header = () => {
   const { theme, setTheme, systemTheme, resolvedTheme } = useTheme();
@@ -52,38 +53,25 @@ const Header = () => {
       <div className="w-full mx-auto px-2">
         <div className="flex h-14 items-center justify-between mx-auto">
           {/* Logo */}
-          <Link href="/" className="flex items-center space-x-1 relative">
-            {/* <div className="absolute left-0 -z-10">
-              <Image 
-                src={currentTheme === 'dark' ? "/logos/logo-white.svg" : "/logos/logo-black.svg"} 
-                alt="Open Politics Project" 
-                width={15} 
-                height={15} 
-                className={`opacity-90 ${
-                  currentTheme === 'dark' 
-                    ? 'drop-shadow-[0_0_3px_rgba(255,255,255,0.3)]' 
-                    : 'drop-shadow-[0_0_3px_rgba(10,61,145,0.3)]'
-                }`}
-              />
-            </div> */}
-            <div className="w-5" />
-            <div className="logo-text-container">
-              <span className="text-lg font-semibold text-primary relative">
-                {/* <div className="animated-line" />
-                <div className="text-highlight mb-2" /> */}
-                <span className="text-lg font-semibold text-primary relative">Open Politics Project</span>
-              </span>
-            </div>
+          <Link href="/" className="flex items-center space-x-1 relative h-8">
+            <Image 
+              src={currentTheme === 'dark' ? "/logos/logo-long-dark-new-2.jpg" : "/logos/logo-long-light-new.jpg"}
+              alt="Open Politics Project" 
+              width={240} 
+              height={60} 
+              className="opacity-90 mt-2"
+              priority
+            />
           </Link>
 
           {/* Navigation Links and Icons */}
           <div className="flex items-center gap-1">
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-1">
-              <Button variant="ghost" asChild>
+              <Button variant="ghost" asChild className="text-gray-900 dark:text-gray-100">
                 <Link href="/webpages/about">About</Link>
               </Button>
-              <Button variant="ghost" asChild>
+              <Button variant="ghost" asChild className="text-gray-900 dark:text-gray-100">
                 <Link href="https://docs.open-politics.org">Documentation</Link>
               </Button>
               {/* <Button variant="ghost" asChild>
@@ -92,7 +80,7 @@ const Header = () => {
 
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost">Contact</Button>
+                  <Button variant="ghost" className="text-gray-900 dark:text-gray-100">Contact</Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-48 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
                   <div className="flex flex-col space-y-0.5">
@@ -111,7 +99,7 @@ const Header = () => {
               {/* GitHub Links */}
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 px-0">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 px-0 text-gray-900 dark:text-gray-100">
                     <FaGithub />
                   </Button>
                 </PopoverTrigger>
@@ -150,13 +138,13 @@ const Header = () => {
                   </Button>
                 </div>
               ) : (
-                <Button variant="ghost" asChild>
+                <Button variant="ghost" asChild className="text-gray-900 dark:text-gray-100">
                   <Link href="/accounts/login">Login</Link>
                 </Button>
               )}
               
               {/* Manual theme switcher (not mode-switcher  ) */}
-              <Button variant="ghost" onClick={toggleTheme}>
+              <Button variant="ghost" onClick={toggleTheme} className="text-gray-900 dark:text-gray-100">
                 {resolvedTheme === "dark" ? (
                   <Sun className="h-4 w-4" />
                 ) : (
@@ -289,7 +277,7 @@ const Header = () => {
                       <div className="my-2 border-t border-border"></div>
 
                       <div className="flex items-center justify-between py-2">
-                        <Button variant="ghost" onClick={toggleTheme}>
+                        <Button variant="ghost" onClick={toggleTheme} className="text-gray-900 dark:text-gray-100">
                           {resolvedTheme === "dark" ? (
                             <Sun className="h-4 w-4" />
                           ) : (
