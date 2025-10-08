@@ -1,6 +1,6 @@
 # 🌐 Open Politics HQ
 
-> ** Open Source Multi-Purpose Intelligence Platform **
+> Open Source Intelligence Platform
 
 
 
@@ -64,16 +64,20 @@ https://github.com/user-attachments/assets/60b8fa3f-d5ba-4928-a65c-121ba670e160
 3. **Run analysis** using AI to apply your schema at scale
 4. **Explore results** through tables, visualizations, maps, or export the data
 
+**Supported formats:** PDFs, web articles, text, CSV, RSS feeds  
+**Coming soon:** Images, audio, email inbox ingestion
+
 
 <img src=".github/assets/images/annotation-schema.png" alt="Example result">
 
 The schemas are the key innovation. They let you formalize your analytical method in natural language, making qualitative approaches reproducible and transparent. Other researchers can see exactly how you defined "populist rhetoric" or "security framing" and apply the same lens to their data.
 
 
+## Chat & MCP
 
 https://github.com/user-attachments/assets/978cf874-5476-4d78-85e6-4485678e1dcc
 
-
+The **Chat & MCP (Model Context Protocol)** centralizes all platform tools (asset management, schema-based analysis, vector search, content ingestion) into a unified analysis accedd point that lets you work with structured analytical methods through conversational AI. This combination allows for various workflows or researching & synthesizing data. Editing MCP configs (upcoming on a per user-level) furthermore allows you acces almost arbitray outside data and use it for your analysis.
 
 ## Links
 
@@ -140,7 +144,6 @@ The platform is built from several independent services that work together. You 
 | **Geocoding** | Location extraction and mapping | Pelias |
 | **LLM** (optional) | Local AI inference | Ollama |
 
-
 ### LLM Support
 
 Connect any of these AI providers:
@@ -150,42 +153,6 @@ Connect any of these AI providers:
 - **Ollama** (run models locally — Llama, OAI OSS, Qwen, etc.)
 
 Configure API keys in the web interface or run Ollama locally for complete privacy.
-
-
-
-## Who This Is For
-
-- **Journalists** investigating patterns across large document sets
-- **Researchers** applying qualitative methods at quantitative scale
-- **NGOs and advocacy groups** tracking policy developments
-- **Students** learning research methods with real-world data
-- **Citizens** who want sophisticated tools for understanding politics
-
-And yes.. also many businesses as the general principle applies to many processes and workflows needed by companies (customer support, sales, marketing, etc.). 
-
-The idea of this HQ is what you make of it.
-
-## Examples in Practice
-
-**📰 Media Bias Analysis**  
-Journalist analyzes 200 articles. Schema extracts: primary source type, emotional intensity (1-5), headline framing. Result: Chart comparing systematic patterns across outlets.
-
-**💬 Customer Support Automation**  
-Small business processes 500 tickets (CSV/email). Schema: issue category, sentiment, urgency flag, mentioned features. Result: tagging + trend analysis.
-
-**🗺️ Geographic News Mapping**  
-Citizen tracks local infrastructure coverage. Schema extracts: location (geocoded), project type, status, sentiment. Result: Interactive map color-coded by coverage tone.
-
-**📋 Grant Application Screening**  
-NGO reviews 100 applications (PDFs). Schema: sections complete, budget clarity, mission alignment, requested amount. Result: Quick filtering to focus review time.
-
-**📊 Policy Monitoring**  
-Advocacy group tracks legislation (RSS/web). Schema: policy area, stance, urgency indicators, sponsors. Result: Dashboard with upticks when relevant bills advance.
-
----
-
-**Supported formats:** PDFs, web articles, text, CSV, RSS feeds  
-**Coming soon:** Images, audio, email inbox ingestion
 
 ## Contributing
 
