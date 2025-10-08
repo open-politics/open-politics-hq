@@ -55,7 +55,7 @@ const Header = () => {
           {/* Logo */}
           <Link href="/" className="flex items-center space-x-1 relative h-8">
             <Image 
-              src={currentTheme === 'dark' ? "/logos/logo-opp-dark.jpg" : "/logos/logo-opp-light.jpg"}
+              src={currentTheme === 'dark' ? "/logos/logo-opp-dark3.jpeg" : "/logos/logo-opp-light3.jpeg"}
               alt="Open Politics Project" 
               width={450} 
               height={60} 
