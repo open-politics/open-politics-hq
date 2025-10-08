@@ -96,7 +96,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     },
     {
       title: "GitHub",
-      url: "https://github.com/open-politics",
+      url: "https://github.com/open-politics/open-politics-hq",
       icon: GithubIcon,
     }
   ]
