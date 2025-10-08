@@ -607,9 +607,15 @@ class IntelligenceConversationService:
     
     def _build_infospace_context(self, infospace: Infospace) -> str:
         """Build system context about the infospace for the AI model"""
+        # Get current date and time
+        now = datetime.now(timezone.utc)
+        current_datetime = now.strftime("%A, %B %d, %Y at %H:%M UTC")
+        
         context = f"""<workspace>
 You're working in "{infospace.name}".
 {infospace.description or "A research workspace for analyzing documents and data."}
+
+Current date and time: {current_datetime}
 </workspace>
 
 <capabilities>
