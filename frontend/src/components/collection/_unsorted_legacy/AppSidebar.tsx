@@ -123,13 +123,6 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     //   isActive: true,
     //   colorClass: "sidebar-purple",
     // },
-    {
-      title: "Monitor",
-      url: "/hq/infospaces/monitors",
-      icon: Activity,
-      isActive: true,
-      colorClass: "sidebar-pink",
-    }
   ], [])
 
   const storesNav = React.useMemo(() => [
