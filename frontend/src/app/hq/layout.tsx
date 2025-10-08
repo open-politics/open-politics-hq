@@ -157,11 +157,19 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
   }, [isClient, isLoading, isLoggedIn, router]);
   
   if (!isClient || isLoading || isLoggingOut) {
-    return <LottiePlaceholder />
+    return (
+      <div className="h-screen w-full flex justify-center items-center">
+        <LottiePlaceholder />
+      </div>
+    )
   }
 
   if (!isLoggedIn) {
-    return <LottiePlaceholder />
+    return (
+      <div className="h-screen w-full flex justify-center items-center">
+        <LottiePlaceholder />
+      </div>
+    )
   }
 
   return (
