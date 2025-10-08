@@ -103,18 +103,18 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
 
   const toolsNav = React.useMemo(() => [
     {
-      title: "Analyser",
-      url: "/hq/infospaces/annotation-runner",
-      icon: Terminal,
-      isActive: true,
-      colorClass: "sidebar-blue",
-    },
-    {
       title: "Chat",
       url: "/hq/chat",
       icon: MessageSquare,
       isActive: true,
       colorClass: "sidebar-teal",
+    },
+    {
+      title: "Analyser",
+      url: "/hq/infospaces/annotation-runner",
+      icon: Terminal,
+      isActive: true,
+      colorClass: "sidebar-blue",
     },
     // {
     //   title: "Web Search",
