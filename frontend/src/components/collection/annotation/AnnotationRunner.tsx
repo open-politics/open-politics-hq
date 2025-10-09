@@ -33,7 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils";
 import AssetDetailView from '../assets/Views/AssetDetailView';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
-import EnhancedAnnotationDialog from './EnhancedAnnotationDialog';
+import AssetDetailOverlay from '../assets/Views/AssetDetailOverlay';
 import { useTutorialStore } from '../../../zustand_stores/storeTutorial';
 import {
   Tooltip,
@@ -285,10 +285,9 @@ export default function AnnotationRunner({
   const [selectedMapPointForDialog, setSelectedMapPointForDialog] = useState<MapPoint | null>(null);
   const [previousAnnotationResult, setPreviousAnnotationResult] = useState<FormattedAnnotation | null>(null); // Track previous annotation when viewing asset
 
-  // NEW: Enhanced annotation dialog state
-  const [isEnhancedDialogOpen, setIsEnhancedDialogOpen] = useState(false);
-  const [enhancedSelectedResult, setEnhancedSelectedResult] = useState<FormattedAnnotation | null>(null);
-  const [enhancedSelectedSchema, setEnhancedSelectedSchema] = useState<AnnotationSchemaRead | null>(null);
+  // Asset detail overlay state - shows the normal asset view when clicking results
+  const [isAssetDetailOpen, setIsAssetDetailOpen] = useState(false);
+  const [selectedAssetIdForDetail, setSelectedAssetIdForDetail] = useState<number | null>(null);
 
   // Clear all dialog selections
   const closeDetailsDialog = useCallback(() => {
@@ -299,11 +298,10 @@ export default function AnnotationRunner({
     setPreviousAnnotationResult(null);
   }, []);
 
-  // NEW: Close enhanced dialog
-  const closeEnhancedDialog = useCallback(() => {
-    setIsEnhancedDialogOpen(false);
-    setEnhancedSelectedResult(null);
-    setEnhancedSelectedSchema(null);
+  // Close asset detail overlay
+  const closeAssetDetail = useCallback(() => {
+    setIsAssetDetailOpen(false);
+    setSelectedAssetIdForDetail(null);
   }, []);
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -314,23 +312,22 @@ export default function AnnotationRunner({
     const config = activeRun?.configuration as any;
     const schemeIds = (activeRun as any)?.schema_ids || config?.schema_ids || (activeRun as any)?.target_schema_ids || [];
     if (!schemeIds || schemeIds.length === 0) return [];
-    return allSchemas.filter(s => schemeIds.includes(s.id));
+    const filtered = allSchemas.filter(s => schemeIds.includes(s.id));
+    console.log('[AnnotationRunner] runSchemes computed', {
+      activeRunId: activeRun?.id,
+      schemeIds,
+      allSchemasCount: allSchemas.length,
+      filteredCount: filtered.length
+    });
+    return filtered;
   }, [activeRun, allSchemas]);
 
-  // NEW: Handle field interactions from charts/visualizations
+  // Handle field interactions from charts/visualizations - now just shows the asset
   const handleFieldInteraction = useCallback((result: FormattedAnnotation, fieldKey: string) => {
-    const schema = runSchemes.find(s => s.id === result.schema_id) || runSchemes[0];
-    
-    // Add the selected field information to the result for auto-selection in enhanced dialog
-    const resultWithSelectedField = {
-      ...result,
-      _selectedField: fieldKey
-    } as FormattedAnnotation & { _selectedField?: string };
-    
-    setEnhancedSelectedResult(resultWithSelectedField);
-    setEnhancedSelectedSchema(schema);
-    setIsEnhancedDialogOpen(true);
-  }, [runSchemes]);
+    // Open the asset detail view for this result
+    setSelectedAssetIdForDetail(result.asset_id);
+    setIsAssetDetailOpen(true);
+  }, []);
 
   const runDataSources = useMemo(() => allSources, [allSources]);
 
@@ -698,13 +695,21 @@ export default function AnnotationRunner({
                           setIsResultDialogOpen(true);
                         }}
                         activeRunId={activeRun?.id}
-                        // NEW: Result interaction callbacks
+                        // Result interaction callbacks - show normal asset detail view
                         onResultSelect={(result) => {
-                          // Use enhanced dialog for better annotation viewing experience
-                          const schema = runSchemes.find(s => s.id === result.schema_id) || runSchemes[0];
-                          setEnhancedSelectedResult(result);
-                          setEnhancedSelectedSchema(schema);
-                          setIsEnhancedDialogOpen(true);
+                          // Open the asset detail overlay for the result's asset
+                          // NOTE: PanelRenderer has access to allResults which are filtered/processed
+                          // We need to pass ALL results from the current view, not just currentRunResults
+                          console.log('[AnnotationRunner] Opening asset detail for result', {
+                            resultId: result.id,
+                            assetId: result.asset_id,
+                            schemaId: result.schema_id,
+                            currentRunResultsCount: currentRunResults.length,
+                            runSchemesCount: runSchemes.length,
+                            runSchemes: runSchemes.map(s => ({ id: s.id, name: s.name }))
+                          });
+                          setSelectedAssetIdForDetail(result.asset_id);
+                          setIsAssetDetailOpen(true);
                         }}
                         onRetrySingleResult={retrySingleResult}
                         retryingResultId={isRetryingResultId}
@@ -960,13 +965,27 @@ export default function AnnotationRunner({
       </DialogContent>
     </Dialog>
 
-    {/* NEW: Enhanced Annotation Dialog */}
-    <EnhancedAnnotationDialog
-      isOpen={isEnhancedDialogOpen}
-      onClose={closeEnhancedDialog}
-      result={enhancedSelectedResult}
-      schema={enhancedSelectedSchema}
-    />
+    {/* Asset Detail Overlay - shows the normal asset view when clicking results */}
+    {(() => {
+      console.log('[AnnotationRunner] Rendering AssetDetailOverlay with', {
+        isOpen: isAssetDetailOpen,
+        assetId: selectedAssetIdForDetail,
+        currentRunResultsCount: currentRunResults?.length || 0,
+        runSchemesCount: runSchemes?.length || 0,
+        activeRunId: activeRun?.id
+      });
+      return (
+        <AssetDetailOverlay
+          open={isAssetDetailOpen}
+          onClose={closeAssetDetail}
+          assetId={selectedAssetIdForDetail}
+          highlightAssetIdOnOpen={null}
+          annotationResults={currentRunResults}
+          schemas={runSchemes}
+          // Don't pass onLoadIntoRunner since we're already in the runner context
+        />
+      );
+    })()}
 
     <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
       <AlertDialogContent>

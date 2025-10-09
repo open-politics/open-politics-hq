@@ -984,7 +984,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         return (
           <div className="h-full flex flex-col overflow-y-auto">
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
                 <AnnotationResultsTable 
                   results={filteredResults as any} 
                   schemas={allSchemas} 
@@ -1023,7 +1023,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         return (
           <div className="h-full flex flex-col overflow-y-auto">
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
                 <AnnotationResultsChart
                   results={filteredResults}
                   schemas={allSchemas}
@@ -1057,7 +1057,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
                 <AnnotationResultsPieChart
                 results={filteredResults}
                 schemas={allSchemas}
@@ -1106,7 +1106,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
                 <AnnotationResultsMap
                   points={geocodedPoints}
                   results={filteredResults}
@@ -1147,7 +1147,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
                 <AnnotationResultsGraph
                   results={filteredResults}
                   schemas={allSchemas}

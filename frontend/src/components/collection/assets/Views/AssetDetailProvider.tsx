@@ -5,6 +5,8 @@ import React, { useState, createContext, useContext, useCallback } from 'react';
 import AssetDetailOverlay from './AssetDetailOverlay';
 import AssetManagerOverlay from '../Helper/AssetManagerOverlay'; // Assuming this will be adapted or replaced
 import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { FormattedAnnotation } from '@/lib/annotations/types';
+import { AnnotationSchemaRead } from '@/client';
 
 // --- Create Context ---
 interface AssetDetailContextType {
@@ -25,11 +27,16 @@ export const useAssetDetail = () => {
 interface AssetDetailProviderProps {
   children: React.ReactNode;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
+  // NEW: Optional annotation context for when provider is used in annotation runner
+  annotationResults?: FormattedAnnotation[];
+  schemas?: AnnotationSchemaRead[];
 }
 
 export default function AssetDetailProvider({
   children,
-  onLoadIntoRunner
+  onLoadIntoRunner,
+  annotationResults,
+  schemas
 }: AssetDetailProviderProps) {
   // Removed: const { isDetailOpen, selectedDocumentId, closeDocumentDetail } = useDocumentStore();
   const [isManagerOpen, setIsManagerOpen] = useState(false);
@@ -91,6 +98,8 @@ export default function AssetDetailProvider({
           highlightAssetIdOnOpen={highlightAssetIdOnOpen} // Pass highlight ID
           onLoadIntoRunner={handleLoadIntoRunner}
           onOpenManagerRequest={handleOpenManagerRequest}
+          annotationResults={annotationResults}
+          schemas={schemas}
         />
         <AssetManagerOverlay
           isOpen={isManagerOpen}

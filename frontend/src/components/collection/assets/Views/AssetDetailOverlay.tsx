@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import AssetDetailView from './AssetDetailView';
@@ -9,7 +9,13 @@ import { Maximize, Loader2, AlertCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
-import { AssetRead } from '@/client';
+import { AssetRead, AnnotationSchemaRead } from '@/client';
+import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { FormattedAnnotation } from '@/lib/annotations/types';
+import AnnotationResultDisplay from '../../annotation/AnnotationResultDisplay';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Card } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
 
 interface AssetDetailOverlayProps {
   open: boolean;
@@ -18,6 +24,9 @@ interface AssetDetailOverlayProps {
   highlightAssetIdOnOpen: number | null;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
   onOpenManagerRequest?: () => void;
+  // NEW: Optional annotation results to display alongside the asset
+  annotationResults?: FormattedAnnotation[];
+  schemas?: AnnotationSchemaRead[];
 }
 
 export default function AssetDetailOverlay({
@@ -26,7 +35,9 @@ export default function AssetDetailOverlay({
   assetId,
   highlightAssetIdOnOpen,
   onLoadIntoRunner,
-  onOpenManagerRequest
+  onOpenManagerRequest,
+  annotationResults = [],
+  schemas = []
 }: AssetDetailOverlayProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
@@ -110,11 +121,44 @@ export default function AssetDetailOverlay({
     }
   };
 
+  // Filter annotation results for this specific asset
+  const assetResults = useMemo(() => {
+    if (!assetId || !annotationResults) {
+      console.log('[AssetDetailOverlay] No assetId or annotationResults', { assetId, annotationResultsCount: annotationResults?.length });
+      return [];
+    }
+    const filtered = annotationResults.filter(result => result.asset_id === assetId);
+    console.log('[AssetDetailOverlay] Filtered annotation results', {
+      assetId,
+      totalResults: annotationResults.length,
+      filteredResults: filtered.length,
+      filtered: filtered.map(r => ({ id: r.id, schema_id: r.schema_id }))
+    });
+    return filtered;
+  }, [assetId, annotationResults]);
+
+  // Check if we should show the annotations panel
+  const showAnnotations = assetResults.length > 0 && schemas.length > 0;
+  
+  console.log('[AssetDetailOverlay] Rendering with', {
+    open,
+    assetId,
+    asset: asset?.id,
+    assetKind: asset?.kind,
+    assetResultsCount: assetResults.length,
+    schemasCount: schemas.length,
+    showAnnotations,
+    annotationResultsTotal: annotationResults?.length
+  });
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0">
-        <DialogHeader className="flex flex-row items-center justify-between p-4 border-b">
-          <DialogTitle>Asset Details {assetId ? `(ID: ${assetId})` : ''}</DialogTitle>
+      <DialogContent className={showAnnotations ? "max-w-[95vw] max-h-[90vh] flex flex-col p-0" : "max-w-4xl max-h-[90vh] flex flex-col p-0"}>
+        <DialogHeader className="flex flex-row items-center justify-between p-4 border-b flex-shrink-0">
+          <DialogTitle>
+            Asset Details {assetId ? `(ID: ${assetId})` : ''}
+            {showAnnotations && ` • ${assetResults.length} Annotation${assetResults.length !== 1 ? 's' : ''}`}
+          </DialogTitle>
           {asset && (
             <Button
               variant="outline"
@@ -127,28 +171,104 @@ export default function AssetDetailOverlay({
             </Button>
           )}
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto p-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="h-6 w-6 animate-spin mr-2" />
-              <p>Loading details...</p>
+        
+        <div className="flex-1 min-h-0 flex">
+          {/* Left Panel: Asset Detail */}
+          <div className={showAnnotations ? "flex-1 overflow-y-auto border-r" : "flex-1 overflow-y-auto"}>
+            <div className="p-4">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                  <p>Loading details...</p>
+                </div>
+              ) : loadError ? (
+                <div className="flex flex-col items-center justify-center h-full text-destructive">
+                  <AlertCircle className="h-10 w-10 mb-4" />
+                  <p className="text-center">{loadError}</p>
+                </div>
+              ) : asset ? (
+                <TextSpanHighlightProvider>
+                  <AssetDetailView
+                    onEdit={handleEdit}
+                    schemas={[]}
+                    selectedAssetId={assetId}
+                    highlightAssetIdOnOpen={highlightAssetIdOnOpen}
+                    onLoadIntoRunner={handleLoadIntoRunner}
+                  />
+                </TextSpanHighlightProvider>
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <p>No asset found or item does not exist.</p>
+                </div>
+              )}
             </div>
-          ) : loadError ? (
-            <div className="flex flex-col items-center justify-center h-full text-destructive">
-              <AlertCircle className="h-10 w-10 mb-4" />
-              <p className="text-center">{loadError}</p>
+          </div>
+          
+          {/* Right Panel: Annotation Results (only shown if we have results) */}
+          {showAnnotations && (
+            <div className="w-[500px] flex flex-col overflow-hidden bg-muted/20">
+              <div className="p-3 border-b bg-card flex-shrink-0">
+                <h3 className="font-semibold text-sm">Annotation Results</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {assetResults.length} result{assetResults.length !== 1 ? 's' : ''} for this asset
+                </p>
+              </div>
+              <ScrollArea className="flex-1">
+                <div className="p-3 space-y-3">
+                  {assetResults.map((result) => {
+                    const schema = schemas.find(s => s.id === result.schema_id);
+                    if (!schema) {
+                      console.warn('[AssetDetailOverlay] No schema found for result', {
+                        resultId: result.id,
+                        schemaId: result.schema_id,
+                        availableSchemas: schemas.map(s => s.id)
+                      });
+                      return null;
+                    }
+                    
+                    return (
+                      <Card key={result.id} className="p-3">
+                        <AnnotationResultDisplay
+                          result={result}
+                          schema={schema}
+                          compact={false}
+                          renderContext="default"
+                        />
+                      </Card>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
             </div>
-          ) : asset ? (
-            <AssetDetailView
-              onEdit={handleEdit}
-              schemas={[]}
-              selectedAssetId={assetId}
-              highlightAssetIdOnOpen={highlightAssetIdOnOpen}
-              onLoadIntoRunner={handleLoadIntoRunner}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p>No asset found or item does not exist.</p>
+          )}
+          
+          {/* Debug Panel - temporarily show when annotations should be there but aren't */}
+          {!showAnnotations && assetId && annotationResults && annotationResults.length > 0 && (
+            <div className="w-[300px] flex flex-col overflow-hidden bg-yellow-50 dark:bg-yellow-950/20 border-l-2 border-yellow-500">
+              <div className="p-3 border-b bg-yellow-100 dark:bg-yellow-900/20">
+                <h3 className="font-semibold text-sm text-yellow-900 dark:text-yellow-100">Debug Info</h3>
+                <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-0.5">
+                  Why aren't annotations showing?
+                </p>
+              </div>
+              <ScrollArea className="flex-1">
+                <div className="p-3 space-y-2 text-xs">
+                  <div><strong>Asset ID:</strong> {assetId}</div>
+                  <div><strong>Total Results:</strong> {annotationResults.length}</div>
+                  <div><strong>Filtered Results:</strong> {assetResults.length}</div>
+                  <div><strong>Schemas Available:</strong> {schemas.length}</div>
+                  <div><strong>Show Annotations:</strong> {showAnnotations ? 'Yes' : 'No'}</div>
+                  <Separator className="my-2" />
+                  <div className="space-y-1">
+                    <strong>Sample Results Asset IDs:</strong>
+                    {annotationResults.slice(0, 5).map(r => (
+                      <div key={r.id} className="font-mono text-[10px]">
+                        Result {r.id}: asset_id={r.asset_id} {r.asset_id === assetId ? '✓' : '✗'}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </ScrollArea>
             </div>
           )}
         </div>

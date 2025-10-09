@@ -46,7 +46,7 @@ import { Textarea } from "@/components/ui/textarea"
 import Link from 'next/link';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { toast } from 'sonner';
-import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings } from 'lucide-react';
+import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
@@ -672,9 +672,7 @@ const AssetDetailView = ({
             <Button variant="ghost" size="icon" className="h-6 w-6 text-green-600 hover:bg-green-100" onClick={handleSaveEdit} disabled={isSavingEdit}>
               {isSavingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
             </Button>
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-red-600 hover:bg-red-100" onClick={handleCancelEdit} disabled={isSavingEdit}>
-              <X className="h-3.5 w-3.5" />
-            </Button>
+            
           </div>
         ) : (
           <div className="flex items-center gap-1 flex-grow min-w-0">
@@ -1438,6 +1436,105 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
     );
 };
 
+// CSV Row Content - displays structured column data for CSV row assets
+const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, renderEditableField: any }) => {
+  const rowData = (asset.source_metadata as any)?.original_row_data || {};
+  const columnNames = Object.keys(rowData);
+
+  return (
+    <div className="p-4 space-y-4">
+      <div>
+        <h3 className="text-lg font-semibold mb-3 flex items-center">
+          <FileSpreadsheet className="h-5 w-5 mr-2 text-primary" />
+          CSV Row Details
+        </h3>
+        {renderEditableField(asset, 'title')}
+      </div>
+
+      {/* Basic Asset Information */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+        <div className="min-w-0">
+          <strong className="text-muted-foreground">Asset ID:</strong>
+          <div className="font-mono truncate">{asset.id}</div>
+        </div>
+        <div className="min-w-0">
+          <strong className="text-muted-foreground">UUID:</strong>
+          <div className="font-mono text-xs truncate" title={asset.uuid}>{asset.uuid}</div>
+        </div>
+        <div className="min-w-0">
+          <strong className="text-muted-foreground">Kind:</strong>
+          <div><Badge variant="outline">{asset.kind}</Badge></div>
+        </div>
+        <div className="min-w-0">
+          <strong className="text-muted-foreground">Row Position:</strong>
+          <div className="font-semibold">{asset.part_index !== null ? asset.part_index + 1 : 'N/A'}</div>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* Column Data */}
+      {columnNames.length > 0 ? (
+        <div>
+          <h4 className="text-sm font-semibold mb-3 text-muted-foreground flex items-center gap-2">
+            <TableIcon className="h-4 w-4" />
+            Column Data ({columnNames.length} columns)
+          </h4>
+          <div className="grid gap-3 w-full">
+            {columnNames.map((columnName, index) => (
+              <div key={index} className="border rounded-lg p-3 min-w-0">
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <strong className="text-sm text-muted-foreground truncate flex-1 min-w-0" title={columnName}>{columnName}</strong>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(String(rowData[columnName] || ''));
+                      toast.success(`Copied "${columnName}" value`);
+                    }}
+                    className="h-6 px-2 text-xs flex-shrink-0"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                </div>
+                <div className="text-sm bg-muted/30 p-2 rounded font-mono break-all w-full overflow-x-auto">
+                  {String(rowData[columnName] || '')}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>No Column Data</AlertTitle>
+          <AlertDescription>
+            This CSV row asset does not have structured column data available.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Timestamps */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+        <div className="min-w-0">
+          <strong className="text-muted-foreground">Created:</strong>
+          <div className="truncate" title={format(new Date(asset.created_at), "PPp")}>
+            {format(new Date(asset.created_at), "PPp")}
+          </div>
+        </div>
+        {asset.updated_at && (
+          <div className="min-w-0">
+            <strong className="text-muted-foreground">Updated:</strong>
+            <div className="truncate" title={format(new Date(asset.updated_at), "PPp")}>
+              {format(new Date(asset.updated_at), "PPp")}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: { asset: AssetRead, renderEditableField: any, renderTextDisplay: any }) => (
     <div className="p-4 bg-muted/30 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
         <h3 className="text-lg font-semibold mb-3 flex items-center"><FileText className="h-5 w-5 mr-2 text-primary" />Asset Details</h3>
@@ -1494,6 +1591,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
         return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} />;
       case 'csv':
         return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} refreshTrigger={refreshTrigger} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} fetchMediaBlob={fetchMediaBlob} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
+      case 'csv_row':
+        return <CsvRowContent asset={asset} renderEditableField={renderEditableField} />;
       default:
         return <DefaultAssetContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} />;
     }
