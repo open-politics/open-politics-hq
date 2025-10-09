@@ -12,8 +12,9 @@ import { cn } from "@/lib/utils";
 import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipProvider } from '@/components/ui/tooltip';
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Switch } from '@/components/ui/switch';
+import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { AnnotationRunParams } from '@/lib/annotations/types';
 import { SchemePreview } from './schemaCreation/SchemePreview';
@@ -22,6 +23,8 @@ import AssetSelector from '../assets/AssetSelector';
 import { toast } from 'sonner';
 import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
 import ProviderSelector from '../management/ProviderSelector';
+import { useFavoriteRunsStore } from '@/zustand_stores/storeFavoriteRuns';
+import { AnnotationRunRead } from '@/client';
 
 // --- NEW: Scheme Selector Component ---
 interface SchemeSelectorForRunProps {
@@ -104,7 +107,9 @@ const SchemeSelectorForRun: React.FC<SchemeSelectorForRunProps> = ({
 interface AnnotationRunnerDockProps {
   allAssets: AssetRead[];
   allSchemes: AnnotationSchemaRead[];
+  allRuns: AnnotationRunRead[];
   onCreateRun: (params: AnnotationRunParams) => Promise<void>;
+  onSelectRun: (runId: number) => void;
   activeRunId: number | null;
   isCreatingRun: boolean;
   onClearRun: () => void;
@@ -113,7 +118,9 @@ interface AnnotationRunnerDockProps {
 export default function AnnotationRunnerDock({
   allAssets,
   allSchemes,
+  allRuns,
   onCreateRun,
+  onSelectRun,
   activeRunId,
   isCreatingRun,
   onClearRun,
@@ -135,6 +142,22 @@ export default function AnnotationRunnerDock({
   const [tempApiKey, setTempApiKey] = useState('');
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
   const { apiKeys, selectedProvider, selectedModel, setApiKey, setSelectedProvider } = useApiKeysStore();
+  const { isFavorite } = useFavoriteRunsStore();
+
+  // Sort runs with favorites first, then by most recent
+  const sortedRuns = useMemo(() => {
+    return [...allRuns].sort((a, b) => {
+      const aIsFavorite = isFavorite(a.id);
+      const bIsFavorite = isFavorite(b.id);
+      
+      // Favorites first
+      if (aIsFavorite && !bIsFavorite) return -1;
+      if (!aIsFavorite && bIsFavorite) return 1;
+      
+      // Then by most recent (updated_at)
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+  }, [allRuns, isFavorite]);
 
   // Helper function to check if AI is properly configured
   const isAiConfigured = useMemo(() => {
@@ -318,33 +341,159 @@ export default function AnnotationRunnerDock({
     console.log('DOCK Store Changed:', { selectedProvider, apiKeys });
   }, [selectedProvider, apiKeys]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+O to toggle dock
+      if (e.key === 'o' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setIsExpanded(!isExpanded);
+      }
+      
+      // Ctrl+N to clear/new run
+      if (e.key === 'n' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        // Only trigger if we're not in an input/textarea
+        const activeElement = document.activeElement;
+        if (activeElement?.tagName !== 'INPUT' && activeElement?.tagName !== 'TEXTAREA') {
+          e.preventDefault();
+          if (activeRunId) {
+            onClearRun();
+          }
+          // Reset form
+          setSelectedAssetItems(new Set());
+          setSelectedSchemeIds(new Set());
+          setNewRunName('');
+          setNewRunDescription('');
+          toast.info('New run started');
+        }
+      }
+      
+      // Ctrl+[ to cycle to previous run
+      if (e.key === '[' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (sortedRuns.length === 0) return;
+        
+        const currentIndex = sortedRuns.findIndex(r => r.id === activeRunId);
+        if (currentIndex === -1) {
+          // No active run, select the first one (most recent favorite or most recent)
+          onSelectRun(sortedRuns[0].id);
+          toast.info(`Loaded: ${sortedRuns[0].name}`);
+        } else {
+          // Go to previous run (wraps around to end)
+          const prevIndex = currentIndex === 0 ? sortedRuns.length - 1 : currentIndex - 1;
+          onSelectRun(sortedRuns[prevIndex].id);
+          toast.info(`Loaded: ${sortedRuns[prevIndex].name}`);
+        }
+      }
+      
+      // Ctrl+] to cycle to next run
+      if (e.key === ']' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (sortedRuns.length === 0) return;
+        
+        const currentIndex = sortedRuns.findIndex(r => r.id === activeRunId);
+        if (currentIndex === -1) {
+          // No active run, select the first one
+          onSelectRun(sortedRuns[0].id);
+          toast.info(`Loaded: ${sortedRuns[0].name}`);
+        } else {
+          // Go to next run (wraps around to start)
+          const nextIndex = (currentIndex + 1) % sortedRuns.length;
+          onSelectRun(sortedRuns[nextIndex].id);
+          toast.info(`Loaded: ${sortedRuns[nextIndex].name}`);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isExpanded, activeRunId, onClearRun, sortedRuns, onSelectRun]);
+
   return (
     <TooltipProvider>
       <div className={cn(
         "fixed bottom-4 left-1/2 transform -translate-x-1/2 flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-xl border",
         isExpanded 
-          ? "w-[95vw] sm:w-auto sm:min-w-[600px] sm:max-w-[900px] max-w-[95vw] shadow-lg hover:shadow-xl"
-          : "w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[700px] max-w-[95vw] shadow-2xl ring-1 ring-primary/20" 
+          ? "w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
+          : "w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[400px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20" 
       )}>
-        <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl" onClick={() => setIsExpanded(!isExpanded)}>
-                      <div className="flex items-center gap-2 sm:gap-4">
-                <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
-                  <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
-                  <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
-              </div>
-            <div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Annotation Runner</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+        <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-2.5 sm:py-3 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl border-b" onClick={() => setIsExpanded(!isExpanded)}>
+          {/* Mobile: Just show icon */}
+          <div className="sm:hidden flex items-center justify-center w-full h-full">
+            <div className="p-1.5 flex items-center justify-center rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+              <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
+            </div>
+          </div>
+          
+          {/* Desktop: Full layout */}
+          <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0">
+            <div className="p-2 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+              <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
+              <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate mb-0.5">Annotation Runner</h3>
+              <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
                 {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
               </p>
             </div>
+            
+            {/* Keyboard shortcuts section - only show when expanded */}
+            {isExpanded && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border/50">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground font-medium">Toggle</span>
+                  <KbdGroup>
+                    <Kbd className="h-5 px-1.5">Ctrl</Kbd>
+                    <Kbd className="h-5 px-1.5">O</Kbd>
+                  </KbdGroup>
+                </div>
+                <div className="w-px h-4 bg-border"></div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground font-medium">New</span>
+                  <KbdGroup>
+                    <Kbd className="h-5 px-1.5">Ctrl</Kbd>
+                    <Kbd className="h-5 px-1.5">N</Kbd>
+                  </KbdGroup>
+                </div>
+                <div className="w-px h-4 bg-border"></div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted">
+                      <span className="font-medium">More...</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="p-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-muted-foreground w-20">Prev Run</span>
+                        <KbdGroup>
+                          <Kbd>Ctrl</Kbd>
+                          <Kbd>[</Kbd>
+                        </KbdGroup>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-muted-foreground w-20">Next Run</span>
+                        <KbdGroup>
+                          <Kbd>Ctrl</Kbd>
+                          <Kbd>]</Kbd>
+                        </KbdGroup>
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            
             {activeRunId && (
-              <Badge variant="secondary" className="ml-2 text-sm bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800">
+              <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800">
                 Run #{activeRunId}
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-2 sm:gap-3">
+          
+          {/* Desktop: Action buttons */}
+          <div className="hidden sm:flex items-center gap-2">
             {activeRunId && (
               <Button 
                 variant="ghost" 
@@ -352,7 +501,7 @@ export default function AnnotationRunnerDock({
                 onClick={(e) => { e.stopPropagation(); onClearRun(); }}
                 className="h-8 px-3 hover:bg-destructive/10 hover:text-destructive"
               >
-                <XCircle className="h-4 w-4 mr-1.5" />
+                <XCircle className="h-3.5 w-3.5 mr-1.5" />
                 Clear
               </Button>
             )}
@@ -372,29 +521,29 @@ export default function AnnotationRunnerDock({
         </div>
 
         {isExpanded && (
-          <div className="p-3 sm:p-6 max-h-[70vh] sm:max-h-[75vh] overflow-y-auto">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6">
-                                    <div className="space-y-3 sm:space-y-4">
+          <div className="p-3 sm:p-4 max-h-[70vh] sm:max-h-[75vh] overflow-y-auto">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+                                    <div className="space-y-3">
                       {/* Basic Settings */}
-                      <div className="space-y-2 sm:space-y-3">
                       <div className="space-y-2">
-                        <Label htmlFor="new-job-name-dock" className="text-sm font-medium">Run Name</Label>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="new-job-name-dock" className="text-xs font-medium">Run Name</Label>
                         <Input 
                           id="new-job-name-dock" 
                           placeholder="Enter a descriptive name..." 
                           value={newRunName} 
                           onChange={(e) => setNewRunName(e.target.value)}
-                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 h-9"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="new-job-description-dock" className="text-sm font-medium">Description</Label>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="new-job-description-dock" className="text-xs font-medium">Description</Label>
                         <Textarea 
                           id="new-job-description-dock" 
                           placeholder="Optional description for this run..." 
                           value={newRunDescription} 
                           onChange={(e) => setNewRunDescription(e.target.value)}
-                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 min-h-[80px] resize-none"
+                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 min-h-[70px] resize-none text-sm"
                         />
                       </div>
                     </div>
@@ -403,31 +552,31 @@ export default function AnnotationRunnerDock({
                     <div className="border rounded-lg bg-muted/20">
                       <button
                         onClick={() => toggleSection('processing')}
-                        className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
+                        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
                       >
                         <div className="flex items-center gap-2">
-                          <Settings2 className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">Processing Settings</span>
+                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-xs font-medium">Processing Settings</span>
                         </div>
-                        <ChevronRight className={cn("h-4 w-4 transition-transform", expandedSections.processing && "rotate-90")} />
+                        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expandedSections.processing && "rotate-90")} />
                       </button>
                       
                       {expandedSections.processing && (
-                        <div className="p-3 pt-0 space-y-4 border-t">
+                        <div className="p-2.5 pt-0 space-y-3 border-t">
                           {/* CSV Row Processing Configuration */}
                           {csvProcessingInfo.csvAssetCount > 0 && (
-                            <div className="space-y-2">
+                            <div className="space-y-1.5">
                               <div className="flex items-center space-x-2">
                                 <Switch
                                   id="csv-row-processing"
                                   checked={csvRowProcessing}
                                   onCheckedChange={setCsvRowProcessing}
                                 />
-                                <Label htmlFor="csv-row-processing" className="text-sm font-medium cursor-pointer">
+                                <Label htmlFor="csv-row-processing" className="text-xs font-medium cursor-pointer">
                                   Process CSV Rows Individually
                                 </Label>
                               </div>
-                              <p className="text-xs text-muted-foreground ml-6">
+                              <p className="text-[11px] text-muted-foreground ml-6">
                                 {csvRowProcessing 
                                   ? `Process each row as a separate asset (~${csvProcessingInfo.totalRowsEstimate} rows)`
                                   : `Process CSV files as complete documents (${csvProcessingInfo.csvAssetCount} files)`
@@ -437,18 +586,18 @@ export default function AnnotationRunnerDock({
                           )}
                           
                           {/* Parallel Processing Configuration */}
-                          <div className="space-y-3">
+                          <div className="space-y-2">
                             <div className="flex items-center space-x-2">
                               <Switch
                                 id="enable-parallel-processing"
                                 checked={enableParallelProcessing}
                                 onCheckedChange={setEnableParallelProcessing}
                               />
-                              <Label htmlFor="enable-parallel-processing" className="text-sm font-medium cursor-pointer">
+                              <Label htmlFor="enable-parallel-processing" className="text-xs font-medium cursor-pointer">
                                 Enable Parallel Processing
                               </Label>
                             </div>
-                            <p className="text-xs text-muted-foreground ml-6">
+                            <p className="text-[11px] text-muted-foreground ml-6">
                               {enableParallelProcessing 
                                 ? 'Process multiple assets concurrently for faster completion'
                                 : 'Process assets one at a time (slower but more reliable)'
@@ -456,12 +605,12 @@ export default function AnnotationRunnerDock({
                             </p>
                             
                             {enableParallelProcessing && (
-                              <div className="ml-6 space-y-2">
-                                <Label htmlFor="annotation-concurrency" className="text-sm font-medium">
+                              <div className="ml-6 space-y-1.5">
+                                <Label htmlFor="annotation-concurrency" className="text-xs font-medium">
                                   Concurrency Level: {annotationConcurrency}
                                 </Label>
-                                <div className="flex items-center space-x-3">
-                                  <span className="text-xs text-muted-foreground">1</span>
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-[11px] text-muted-foreground">1</span>
                                   <input
                                     id="annotation-concurrency"
                                     type="range"
@@ -471,9 +620,9 @@ export default function AnnotationRunnerDock({
                                     onChange={(e) => setAnnotationConcurrency(parseInt(e.target.value))}
                                     className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
                                   />
-                                  <span className="text-xs text-muted-foreground">20</span>
+                                  <span className="text-[11px] text-muted-foreground">20</span>
                                 </div>
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-[11px] text-muted-foreground">
                                   Higher values process faster but may overwhelm external APIs
                                 </p>
                               </div>
@@ -487,21 +636,21 @@ export default function AnnotationRunnerDock({
                     <div className="border rounded-lg bg-muted/20">
                       <button
                         onClick={() => toggleSection('advanced')}
-                        className="w-full flex items-center justify-between p-3 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
+                        className="w-full flex items-center justify-between p-2.5 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
                       >
                         <div className="flex items-center gap-2">
-                          <Settings2 className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">Advanced Settings</span>
+                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-xs font-medium">Advanced Settings</span>
                         </div>
-                        <ChevronRight className={cn("h-4 w-4 transition-transform", expandedSections.advanced && "rotate-90")} />
+                        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expandedSections.advanced && "rotate-90")} />
                       </button>
                       
                       {expandedSections.advanced && (
-                        <div className="p-3 pt-0 space-y-4 border-t">
+                        <div className="p-2.5 pt-0 space-y-3 border-t">
                           {/* Justification Configuration */}
-                          <div className="space-y-3">
-                            <Label className="text-sm font-medium">Justification Mode</Label>
-                            <div className="space-y-2">
+                          <div className="space-y-2">
+                            <Label className="text-xs font-medium">Justification Mode</Label>
+                            <div className="space-y-1.5">
                               <div className="flex items-center space-x-2">
                                 <input
                                   type="radio"
@@ -509,13 +658,13 @@ export default function AnnotationRunnerDock({
                                   name="justification-mode"
                                   checked={justificationOverride === 'schema'}
                                   onChange={() => setJustificationOverride('schema')}
-                                  className="w-4 h-4 text-primary bg-background border-border focus:ring-primary"
+                                  className="w-3.5 h-3.5 text-primary bg-background border-border focus:ring-primary"
                                 />
-                                <Label htmlFor="justification-schema" className="text-sm font-medium cursor-pointer">
+                                <Label htmlFor="justification-schema" className="text-xs font-medium cursor-pointer">
                                   Schema Default
                                 </Label>
                               </div>
-                              <p className="text-xs text-muted-foreground ml-6">
+                              <p className="text-[11px] text-muted-foreground ml-5">
                                 Only request justifications for fields specifically configured in each schema
                               </p>
                               
@@ -526,31 +675,31 @@ export default function AnnotationRunnerDock({
                                   name="justification-mode"
                                   checked={justificationOverride === 'all'}
                                   onChange={() => setJustificationOverride('all')}
-                                  className="w-4 h-4 text-primary bg-background border-border focus:ring-primary"
+                                  className="w-3.5 h-3.5 text-primary bg-background border-border focus:ring-primary"
                                 />
-                                <Label htmlFor="justification-all" className="text-sm font-medium cursor-pointer">
+                                <Label htmlFor="justification-all" className="text-xs font-medium cursor-pointer">
                                   All Fields
                                 </Label>
                               </div>
-                              <p className="text-xs text-muted-foreground ml-6">
+                              <p className="text-[11px] text-muted-foreground ml-5">
                                 Request justifications for all fields in all schemas, regardless of configuration
                               </p>
                             </div>
                           </div>
                           
                           {/* Include Thoughts Configuration */}
-                          <div className="space-y-2">
+                          <div className="space-y-1.5">
                             <div className="flex items-center space-x-2">
                               <Switch
                                 id="include-thoughts"
                                 checked={includeThoughts}
                                 onCheckedChange={setIncludeThoughts}
                               />
-                              <Label htmlFor="include-thoughts" className="text-sm font-medium cursor-pointer">
+                              <Label htmlFor="include-thoughts" className="text-xs font-medium cursor-pointer">
                                 Include Reasoning Traces
                               </Label>
                             </div>
-                            <p className="text-xs text-muted-foreground ml-6">
+                            <p className="text-[11px] text-muted-foreground ml-6">
                               {includeThoughts 
                                 ? 'Include detailed reasoning and thought processes in results'
                                 : 'Only include final classification results'
@@ -559,16 +708,16 @@ export default function AnnotationRunnerDock({
                           </div>
 
                           {/* AI Model Configuration */}
-                          <div className="space-y-3">
-                            <Label className="text-sm font-medium">AI Model Configuration</Label>
-                            <div className="space-y-3">
+                          <div className="space-y-2">
+                            <Label className="text-xs font-medium">AI Model Configuration</Label>
+                            <div className="space-y-2">
                               <ProviderSelector />
                               
                               {/* API Key Management */}
                               {selectedProvider && selectedProvider !== 'ollama' && (
-                                <div className="space-y-2 max-w-full">
+                                <div className="space-y-1.5 max-w-full">
                                   <div className="flex items-center justify-between">
-                                    <Label className="text-xs font-medium text-muted-foreground">
+                                    <Label className="text-[11px] font-medium text-muted-foreground">
                                       API Key for {selectedProvider}
                                     </Label>
                                     {selectedProvider === 'gemini_native' && (
@@ -576,19 +725,19 @@ export default function AnnotationRunnerDock({
                                         href="https://aistudio.google.com/app/apikey" 
                                         target="_blank" 
                                         rel="noopener noreferrer" 
-                                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                        className="text-[11px] text-blue-600 hover:text-blue-800 hover:underline"
                                       >
                                         Get API key
                                       </a>
                                     )}
                                   </div>
-                                  <div className="flex gap-2">
+                                  <div className="flex gap-1.5">
                                     <Input
                                       type="password"
                                       placeholder={`Enter API key for ${selectedProvider}`}
                                       value={tempApiKey}
                                       onChange={(e) => setTempApiKey(e.target.value)}
-                                      className="text-xs"
+                                      className="text-xs h-8"
                                       onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
                                           handleSaveApiKey();
@@ -599,7 +748,7 @@ export default function AnnotationRunnerDock({
                                       onClick={handleSaveApiKey}
                                       disabled={!tempApiKey.trim()}
                                       size="sm"
-                                      className="px-3"
+                                      className="px-2 h-8 text-xs"
                                     >
                                       Save
                                     </Button>
@@ -607,10 +756,10 @@ export default function AnnotationRunnerDock({
                                   
                                   {/* Show saved API keys */}
                                   {Object.entries(apiKeys).length > 0 && (
-                                    <div className="space-y-1">
+                                    <div className="space-y-0.5">
                                       {Object.entries(apiKeys).map(([provider, key]) => (
-                                        <div key={provider} className="flex items-center gap-2 text-xs min-w-0">
-                                          <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></div>
+                                        <div key={provider} className="flex items-center gap-1.5 text-[11px] min-w-0">
+                                          <div className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0"></div>
                                           <span className="text-green-700 font-medium truncate">
                                             {provider}: {maskApiKey(key)}
                                           </span>
@@ -623,17 +772,17 @@ export default function AnnotationRunnerDock({
                               
                               {/* Configuration Status */}
                               {isAiConfigured ? (
-                                <div className="flex items-center gap-2 p-2 rounded-md bg-green-50 border border-green-200">
-                                  <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                  <span className="text-xs text-green-700 font-medium">
+                                <div className="flex items-center gap-1.5 p-1.5 rounded-md bg-green-50 border border-green-200">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                                  <span className="text-[11px] text-green-700 font-medium">
                                     {selectedProvider} configured ({selectedModel || 'default model'})
                                     {selectedProvider === 'ollama' && ' - Local'}
                                   </span>
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-2 p-2 rounded-md bg-amber-50 border border-amber-200">
-                                  <div className="w-2 h-2 rounded-full bg-amber-500"></div>
-                                  <span className="text-xs text-amber-700">
+                                <div className="flex items-center gap-1.5 p-1.5 rounded-md bg-amber-50 border border-amber-200">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
+                                  <span className="text-[11px] text-amber-700">
                                     {selectedProvider === 'ollama'
                                       ? 'Ollama is ready - no API key needed'
                                       : selectedProvider 
@@ -649,50 +798,51 @@ export default function AnnotationRunnerDock({
                       )}
                     </div>
                 </div>
-                <div className="flex flex-col justify-end space-y-3 sm:space-y-4">
-                    <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/20 dark:bg-gray-950/10 space-y-3">
-                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Run Summary</h4>
-                      <div className="space-y-2">
+                <div className="flex flex-col justify-end space-y-3">
+                    <div className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/20 dark:bg-gray-950/10 space-y-2">
+                      <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300">Run Summary</h4>
+                      <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
-                            <span className="text-sm font-medium">Assets Selected</span>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm"></div>
+                            <span className="text-xs font-medium">Assets Selected</span>
                           </div>
-                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800">
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800 text-xs">
                             {actualAssetCount}
                           </Badge>
                         </div>
                         {csvProcessingInfo.csvAssetCount > 0 && (
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className="w-3 h-3 rounded-full bg-green-600 shadow-sm"></div>
-                              <span className="text-sm font-medium">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded-full bg-green-600 shadow-sm"></div>
+                              <span className="text-xs font-medium">
                                 {csvRowProcessing ? 'CSV Rows to Process' : 'CSV Files to Process'}
                               </span>
                             </div>
-                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800">
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800 text-xs">
                               {csvRowProcessing ? `~${csvProcessingInfo.totalRowsEstimate}` : csvProcessingInfo.csvAssetCount}
                             </Badge>
                           </div>
                         )}
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-sky-500 shadow-sm"></div>
-                            <span className="text-sm font-medium">Schemas Selected</span>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-sky-500 shadow-sm"></div>
+                            <span className="text-xs font-medium">Schemas Selected</span>
                           </div>
-                          <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/20 dark:text-sky-400 dark:border-sky-800">
+                          <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/20 dark:text-sky-400 dark:border-sky-800 text-xs">
                             {selectedSchemeIds.size}
                           </Badge>
                         </div>
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                             <div className={cn(
-                              "w-3 h-3 rounded-full shadow-sm",
+                              "w-2 h-2 rounded-full shadow-sm",
                               isAiConfigured ? "bg-emerald-500" : "bg-red-500"
                             )}></div>
-                            <span className="text-sm font-medium">AI Model</span>
+                            <span className="text-xs font-medium">AI Model</span>
                           </div>
                           <Badge variant="outline" className={cn(
+                            "text-xs",
                             isAiConfigured 
                               ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-800"
                               : "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-800"
@@ -708,11 +858,11 @@ export default function AnnotationRunnerDock({
                           </Badge>
                         </div>
                         {csvProcessingInfo.csvAssetCount > 0 && (
-                          <div className="mt-3 p-2 rounded-md bg-green-50 border border-green-200 dark:bg-green-950/20 dark:border-green-800">
-                            <div className="flex items-start gap-2">
-                              <div className="w-4 h-4 rounded-full bg-green-500 shadow-sm mt-0.5 flex-shrink-0"></div>
-                              <div className="text-xs text-green-700 dark:text-green-400">
-                                <p className="font-medium mb-1">
+                          <div className="mt-2 p-2 rounded-md bg-green-50 border border-green-200 dark:bg-green-950/20 dark:border-green-800">
+                            <div className="flex items-start gap-1.5">
+                              <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm mt-0.5 flex-shrink-0"></div>
+                              <div className="text-[11px] text-green-700 dark:text-green-400">
+                                <p className="font-medium mb-0.5">
                                   {csvRowProcessing ? 'CSV Row Processing Enabled' : 'CSV File Processing'}
                                 </p>
                                 <p>
@@ -730,41 +880,41 @@ export default function AnnotationRunnerDock({
                     <Button 
                       onClick={handleRunClick} 
                       disabled={isCreatingRun || selectedAssetItems.size === 0 || selectedSchemeIds.size === 0 || !isAiConfigured}
-                      className="h-12 font-medium transition-all duration-200 disabled:opacity-50 text-base"
+                      className="h-10 font-medium transition-all duration-200 disabled:opacity-50 text-sm"
                       size="lg"
                     >
                         {isCreatingRun ? (
                           <>
-                            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Creating Run...
                           </>
                         ) : (
                           <>
-                            <Play className="h-5 w-5 mr-2" />
+                            <Play className="h-4 w-4 mr-2" />
                             Create & Start Run
                           </>
                         )}
                     </Button>
                 </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-6 border-t border-gray-200 dark:border-gray-700 pt-3 sm:pt-6 mt-3 sm:mt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
                 <div className="flex flex-col h-[300px] sm:h-[400px]">
-                  <div className="flex items-center gap-2 mb-3 px-1">
-                    <div className="p-1.5 rounded-md bg-green-500/20 dark:bg-green-500/20 text-green-700 dark:text-green-400">
-                      <FileText className="w-4 h-4" />
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <div className="p-1 rounded-md bg-green-500/20 dark:bg-green-500/20 text-green-700 dark:text-green-400">
+                      <FileText className="w-3.5 h-3.5" />
                     </div>
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Select Assets to Annotate</h3>
+                    <h3 className="text-xs font-semibold text-gray-900 dark:text-gray-100">Select Assets to Annotate</h3>
                   </div>
                   <div className="flex-1 min-h-0">
                     <AssetSelector selectedItems={selectedAssetItems} onSelectionChange={setSelectedAssetItems} />
                   </div>
                 </div>
                 <div className="flex flex-col h-[300px] sm:h-[400px]">
-                  <div className="flex items-center gap-2 mb-3 px-1">
-                    <div className="p-1.5 rounded-md bg-sky-500/20 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400">
-                      <Microscope className="w-4 h-4" />
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <div className="p-1 rounded-md bg-sky-500/20 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400">
+                      <Microscope className="w-3.5 h-3.5" />
                     </div>
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Choose Annotation Schemas</h3>
+                    <h3 className="text-xs font-semibold text-gray-900 dark:text-gray-100">Choose Annotation Schemas</h3>
                   </div>
                   <div className="flex-1 min-h-0">
                     <SchemeSelectorForRun allSchemes={allSchemes} selectedSchemeIds={Array.from(selectedSchemeIds)} onToggleScheme={handleSchemeToggle} onPreviewScheme={handlePreviewSchemeClick} onOpenSchemeEditor={() => setIsSchemeEditorOpen(true)} />

@@ -89,7 +89,7 @@ const FavoriteRunCard: React.FC<{
   return (
     <div 
       className={cn(
-        "group relative p-6 rounded-xl cursor-pointer transition-all duration-200 border",
+        "group relative p-3 sm:p-6 rounded-xl cursor-pointer transition-all duration-200 border",
         "bg-gradient-to-br from-blue-50/60 via-blue-50/40 to-blue-50/30 dark:from-blue-950/40 dark:via-blue-950/30 dark:to-blue-950/20",
         "hover:from-blue-100/50 hover:via-blue-100/30 hover:to-blue-100/40 dark:hover:from-blue-900/30 dark:hover:via-blue-900/20 dark:hover:to-blue-900/25",
         "hover:shadow-lg hover:scale-[1.02] border-blue-200 dark:border-blue-700",
@@ -101,7 +101,7 @@ const FavoriteRunCard: React.FC<{
       onClick={() => onSelectRun(run.id)}
     >
       {/* Action Buttons - Positioned absolutely */}
-      <div className="absolute top-4 right-4 flex gap-1">
+      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 flex gap-1">
         <Button
           variant="ghost"
           size="icon"
@@ -138,18 +138,18 @@ const FavoriteRunCard: React.FC<{
       </div>
 
       {/* Content */}
-      <div className="flex flex-col h-40 pr-14">
-        <div className="flex items-start gap-4 mb-4">
+      <div className="flex flex-col h-24 sm:h-40 pr-10 sm:pr-14">
+        <div className="flex items-start gap-2 sm:gap-4 mb-2 sm:mb-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-gray-900 dark:text-gray-100 truncate" title={run.name}>
+              <h3 className="font-semibold text-sm sm:text-base text-gray-900 dark:text-gray-100 truncate" title={run.name}>
                 {run.name}
               </h3>
               {isRecurring && (
                 <TooltipProvider delayDuration={100}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Repeat className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                      <Repeat className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Recurring Run (Task ID: {recurringTaskIdNumber})</p>
@@ -159,46 +159,43 @@ const FavoriteRunCard: React.FC<{
               )}
             </div>
             {/* Fixed height container for description to maintain consistent layout */}
-            <div className="h-12 mb-3">
+            <div className="h-6 sm:h-12 mb-1 sm:mb-3">
               {run.description && (
-                <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">{run.description}</p>
+                <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-1 sm:line-clamp-2">{run.description}</p>
               )}
             </div>
           </div>
         </div>
 
         {/* Bottom row - always positioned at the bottom */}
-        <div className="flex items-start justify-between mt-auto">
-          <div className="flex flex-col gap-3">
-            {/* Status badge with fixed height container */}
-            <div className="h-6 flex items-center">
-              <Badge 
-                variant="outline" 
-                className={cn("text-xs font-medium whitespace-nowrap", getStatusColor(run.status ?? ''))}
-              >
-                {(run.status ?? '').replace(/_/g, ' ')}
-              </Badge>
-            </div>
+        <div className="flex items-center justify-between mt-auto">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Status badge */}
+            <Badge 
+              variant="outline" 
+              className={cn("text-xs font-medium whitespace-nowrap h-5", getStatusColor(run.status ?? ''))}
+            >
+              {(run.status ?? '').replace(/_/g, ' ')}
+            </Badge>
             {/* Stats row */}
-            <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
-              <span className="flex items-center gap-1.5">
-                <div className="p-0.5 rounded bg-green-500/20 dark:bg-green-500/20">
-                  <FileText className="h-3 w-3 text-green-600 dark:text-green-400" />
-                </div>
-                {run.documentCount} assets
+            <div className="flex items-center gap-1 sm:gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <span className="flex items-center gap-0.5 sm:gap-1">
+                <FileText className="h-3 w-3 text-green-600 dark:text-green-400" />
+                <span className="hidden sm:inline">{run.documentCount}</span>
+                <span className="sm:hidden">{run.documentCount}</span>
               </span>
-              <span className="flex items-center gap-1.5">
-                <div className="p-0.5 rounded bg-sky-500/20 dark:bg-sky-500/20">
-                  <Microscope className="h-3 w-3 text-sky-600 dark:text-sky-400" />
-                </div>
-                {run.schemeCount} schemas
+              <span className="flex items-center gap-0.5 sm:gap-1">
+                <Microscope className="h-3 w-3 text-sky-600 dark:text-sky-400" />
+                <span className="hidden sm:inline">{run.schemeCount}</span>
+                <span className="sm:hidden">{run.schemeCount}</span>
               </span>
             </div>
           </div>
-          <div className="text-right text-xs text-gray-500 dark:text-gray-500 flex-shrink-0 self-end">
-            <div className="flex items-center gap-1 justify-end">
+          <div className="text-right text-xs text-gray-500 dark:text-gray-500 flex-shrink-0">
+            <div className="flex items-center gap-0.5 sm:gap-1 justify-end">
               <Calendar className="h-3 w-3" />
-              {format(parseISO(run.created_at), 'MMM d, yyyy')}
+              <span className="hidden sm:inline">{format(parseISO(run.created_at), 'MMM d, yyyy')}</span>
+              <span className="sm:hidden">{format(parseISO(run.created_at), 'MMM d')}</span>
             </div>
           </div>
         </div>
@@ -517,7 +514,7 @@ const RunHistoryPanel: React.FC<{
       <div className="flex-shrink-0 border-b border-border/20">
         <div className="p-4 pb-0">
           {/* Main Header Row */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
             {/* Left Side - Title and Icon */}
             <div className="flex items-center gap-4 pl-2">
               <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
@@ -534,59 +531,62 @@ const RunHistoryPanel: React.FC<{
             </div>
 
             {/* Right Side - Search and Settings */}
-            <div className="flex items-center gap-3">
-              <div className="relative">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="relative flex-1 sm:flex-initial">
                 <Input
                   placeholder="Search runs..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-96 h-10 bg-background/50 border-primary/50 focus:border-primary/50 focus:bg-background transition-colors"
+                  className="w-full sm:w-80 lg:w-96 h-10 bg-background/50 border-primary/50 focus:border-primary/50 focus:bg-background transition-colors"
                 />
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleImportClick}
-                disabled={isImporting}
-                className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
-              >
-                {isImporting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Upload className="h-4 w-4 mr-2" />
-                )}
-                {isImporting ? 'Importing...' : 'Import Run'}
-              </Button>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button 
-                    variant="outline" 
-                    size="icon"
-                    className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-56 p-3">
-                  <div className="space-y-3">
-                    <h4 className="font-medium text-sm">Sort Options</h4>
-                    <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">Sort by</Label>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant={sortBy === 'date' ? 'default' : 'outline'} onClick={() => setSortBy('date')} className="flex-1">Date</Button>
-                        <Button size="sm" variant={sortBy === 'name' ? 'default' : 'outline'} onClick={() => setSortBy('name')} className="flex-1">Name</Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleImportClick}
+                  disabled={isImporting}
+                  className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors flex-1 sm:flex-initial"
+                >
+                  {isImporting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4 mr-2" />
+                  )}
+                  <span className="hidden sm:inline">{isImporting ? 'Importing...' : 'Import Run'}</span>
+                  <span className="sm:hidden">{isImporting ? 'Importing...' : 'Import'}</span>
+                </Button>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button 
+                      variant="outline" 
+                      size="icon"
+                      className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-56 p-3">
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm">Sort Options</h4>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Sort by</Label>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant={sortBy === 'date' ? 'default' : 'outline'} onClick={() => setSortBy('date')} className="flex-1">Date</Button>
+                          <Button size="sm" variant={sortBy === 'name' ? 'default' : 'outline'} onClick={() => setSortBy('name')} className="flex-1">Name</Button>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Order</Label>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant={sortOrder === 'asc' ? 'default' : 'outline'} onClick={() => setSortOrder('asc')} className="flex-1">↑</Button>
+                          <Button size="sm" variant={sortOrder === 'desc' ? 'default' : 'outline'} onClick={() => setSortOrder('desc')} className="flex-1">↓</Button>
+                        </div>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">Order</Label>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant={sortOrder === 'asc' ? 'default' : 'outline'} onClick={() => setSortOrder('asc')} className="flex-1">↑</Button>
-                        <Button size="sm" variant={sortOrder === 'desc' ? 'default' : 'outline'} onClick={() => setSortOrder('desc')} className="flex-1">↓</Button>
-                      </div>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
           </div>
 
@@ -617,8 +617,8 @@ const RunHistoryPanel: React.FC<{
               
               <Collapsible open={isFavoritesExpanded}>
                 <CollapsibleContent>
-                  <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg p-4">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
+                  <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg p-2 sm:p-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-4 pb-2">
                       {favoriteRunsFromList.map((run) => (
                         <FavoriteRunCard
                           key={`favorite-${run.id}`}
@@ -643,82 +643,170 @@ const RunHistoryPanel: React.FC<{
       <div className="flex-1 flex flex-col min-h-0">
 
         {/* All Runs Table - Scrollable Content */}
-        <div className="flex-1 overflow-hidden p-8 backdrop-blur-sm scrollbar-hide ">
+        <div className="flex-1 overflow-hidden p-2 sm:p-8 backdrop-blur-sm scrollbar-hide ">
           {nonFavoriteRuns.length > 0 ? (
             <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-xl border border-border/60 overflow-hidden h-full flex flex-col">
-              {/* Sticky Header */}
-              <div className="flex-shrink-0 border-b border-border/20">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-gradient-to-r from-muted/80 via-muted/60 to-muted/80">
-                      <TableHead className="w-16 pl-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        <div className="flex items-center justify-center">
-                          <Star className="h-4 w-4 text-muted-foreground/50" />
-                        </div>
-                      </TableHead>
-                      <TableHead className="py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {/* Mobile Card Layout */}
+              <div className="sm:hidden flex-1 overflow-y-auto p-2 space-y-2 pb-20">
+                {nonFavoriteRuns.map((run) => {
+                  const getStatusColor = (status: string) => {
+                    switch (status?.toLowerCase()) {
+                      case 'completed': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                      case 'running': return 'bg-blue-100 text-blue-800 border-blue-300';
+                      case 'pending': return 'bg-amber-100 text-amber-600 border-amber-300';
+                      case 'failed': return 'bg-red-100 text-red-800 border-red-300';
+                      case 'completed_with_errors': return 'bg-orange-100 text-orange-800 border-orange-300';
+                      default: return 'bg-slate-100 text-slate-800 border-slate-300';
+                    }
+                  };
+
+                  return (
+                    <div
+                      key={run.id}
+                      className={cn(
+                        "p-3 rounded-lg border cursor-pointer transition-all duration-200",
+                        "bg-card hover:bg-muted/50",
+                        activeRunId === run.id 
+                          ? "border-primary ring-2 ring-primary/20 bg-primary/5" 
+                          : "border-border/60 hover:border-border"
+                      )}
+                      onClick={() => onSelectRun(run.id)}
+                    >
+                    <div className="flex items-start justify-between mb-2 gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 p-0 flex-shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleFavoriteRun(run);
+                          }}
+                        >
+                          <Star className={cn(
+                            "h-3 w-3",
+                            favoriteRunIds.includes(run.id) 
+                              ? "fill-amber-500 text-amber-600 dark:text-amber-400" 
+                              : "text-muted-foreground/50 hover:text-amber-500"
+                          )} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 p-0 flex-shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectRun(run.id);
+                          }}
+                        >
+                          <Play className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                        </Button>
+                        <h3 className="font-medium text-sm truncate min-w-0">{run.name}</h3>
+                      </div>
+                      <Badge 
+                        variant="outline" 
+                        className={cn("text-xs flex-shrink-0", getStatusColor(run.status ?? ''))}
+                      >
+                        {(run.status ?? '').replace(/_/g, ' ')}
+                      </Badge>
+                    </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-3">
-                          <div className="p-2.5 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800">
-                            <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
-                          </div>
-                          Name
+                          <span className="flex items-center gap-1">
+                            <FileText className="h-3 w-3" />
+                            {run.documentCount}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Microscope className="h-3 w-3" />
+                            {run.schemeCount}
+                          </span>
                         </div>
-                      </TableHead>
-                      <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/50 border border-emerald-100 dark:border-emerald-800">
-                            <div className="w-3.5 h-3.5 rounded-full bg-emerald-500"></div>
-                          </div>
-                          Status
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
-                            <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-                          </div>
-                          Assets
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-900/50 border border-sky-100 dark:border-sky-800">
-                            <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-                          </div>
-                          Schemas
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-40 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Calendar className="h-3.5 w-3.5 text-muted-foreground/70" />
-                          Created
-                        </div>
-                      </TableHead>
-                      <TableHead className="w-20 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Actions
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                </Table>
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          {format(parseISO(run.created_at), 'MMM d')}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              
-              {/* Scrollable Body */}
-              <div className="flex-1 overflow-y-auto">
-                <Table>
-                  <TableBody className="divide-y divide-border/60">
-                    {nonFavoriteRuns.map((run, index) => (
-                      <RunTableRow
-                        key={run.id}
-                        run={run}
-                        activeRunId={activeRunId}
-                        onSelectRun={onSelectRun}
-                        onToggleFavorite={handleToggleFavoriteRun}
-                        onShare={handleShareRun}
-                        onExport={handleExportRun}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
+
+              {/* Desktop Table Layout */}
+              <div className="hidden sm:block flex-1 flex flex-col">
+                {/* Sticky Header */}
+                <div className="flex-shrink-0 border-b border-border/20">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-gradient-to-r from-muted/80 via-muted/60 to-muted/80">
+                        <TableHead className="w-16 pl-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          <div className="flex items-center justify-center">
+                            <Star className="h-4 w-4 text-muted-foreground/50" />
+                          </div>
+                        </TableHead>
+                        <TableHead className="py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800">
+                              <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
+                            </div>
+                            Name
+                          </div>
+                        </TableHead>
+                        <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/50 border border-emerald-100 dark:border-emerald-800">
+                              <div className="w-3.5 h-3.5 rounded-full bg-emerald-500"></div>
+                            </div>
+                            Status
+                          </div>
+                        </TableHead>
+                        <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
+                              <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+                            </div>
+                            Assets
+                          </div>
+                        </TableHead>
+                        <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-900/50 border border-sky-100 dark:border-sky-800">
+                              <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                            </div>
+                            Schemas
+                          </div>
+                        </TableHead>
+                        <TableHead className="w-40 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-muted-foreground/70" />
+                            Created
+                          </div>
+                        </TableHead>
+                        <TableHead className="w-20 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Actions
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                  </Table>
+                </div>
+                
+                {/* Scrollable Body */}
+                <div className="flex-1 overflow-y-auto">
+                  <Table>
+                    <TableBody className="divide-y divide-border/60">
+                      {nonFavoriteRuns.map((run, index) => (
+                        <RunTableRow
+                          key={run.id}
+                          run={run}
+                          activeRunId={activeRunId}
+                          onSelectRun={onSelectRun}
+                          onToggleFavorite={handleToggleFavoriteRun}
+                          onShare={handleShareRun}
+                          onExport={handleExportRun}
+                        />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </div>
           ) : (

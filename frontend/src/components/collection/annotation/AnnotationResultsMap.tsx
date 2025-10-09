@@ -1042,23 +1042,25 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       />
       
       {/* Projection Toggle Button */}
-      <div className="absolute top-4 right-4 z-10">
+      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-10">
         <Button
           onClick={toggleProjection}
           variant="secondary"
           size="sm"
-          className="bg-background/80 backdrop-blur-sm border shadow-lg hover:bg-background/90"
+          className="bg-background/80 backdrop-blur-sm border shadow-lg hover:bg-background/90 h-8 sm:h-9 px-2 sm:px-3"
           disabled={!mapLoaded}
         >
           {isGlobeView ? (
             <>
-              <MapIcon className="h-4 w-4 mr-2" />
-              Flat View
+              <MapIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">Flat View</span>
+              <span className="sm:hidden">Flat</span>
             </>
           ) : (
             <>
-              <Globe className="h-4 w-4 mr-2" />
-              Globe View
+              <Globe className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">Globe View</span>
+              <span className="sm:hidden">Globe</span>
             </>
           )}
         </Button>
@@ -1067,12 +1069,13 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       {/* Label Indicator Badge */}
       {labelConfigInfo && (
         <div className="absolute bottom-1 left-1 z-10">
-          <div className="bg-background/90 backdrop-blur-sm border border-blue-500 shadow-lg rounded-lg px-3 py-2">
-            <div className="flex items-center gap-2 ">
-              <Eye className="h-4 w-4 text-blue-500" />
-              <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">
-                  {labelConfigInfo.fieldName} ({labelConfigInfo.fieldType})
+          <div className="bg-background/90 backdrop-blur-sm border border-blue-500 shadow-lg rounded-lg px-2 sm:px-3 py-1 sm:py-2">
+            <div className="flex items-center gap-1 sm:gap-2">
+              <Eye className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500 flex-shrink-0" />
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs text-muted-foreground truncate">
+                  <span className="hidden sm:inline">{labelConfigInfo.fieldName} ({labelConfigInfo.fieldType})</span>
+                  <span className="sm:hidden">{labelConfigInfo.fieldName}</span>
                 </span>
               </div>
             </div>
@@ -1082,21 +1085,22 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       
       {/* Points Counter with Location List */}
       {processedPoints.length > 0 && (
-        <div className="absolute top-4 left-4 z-10">
+        <div className="absolute top-2 left-2 sm:top-4 sm:left-4 z-10">
           <Popover>
             <PopoverTrigger asChild>
               <Button 
                 variant="ghost" 
-                className="bg-background/80 backdrop-blur-sm border shadow-lg hover:bg-background/90 px-3 py-2 h-auto"
+                className="bg-background/80 backdrop-blur-sm border shadow-lg hover:bg-background/90 px-2 sm:px-3 py-1 sm:py-2 h-auto"
               >
-                <div className="flex items-center gap-2 text-sm">
-                  <MapPin className="h-4 w-4 text-primary" />
+                <div className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                  <MapPin className="h-3 w-3 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
                   <span className="font-medium">{processedPoints.length}</span>
-                  <span className="text-muted-foreground">location{processedPoints.length === 1 ? '' : 's'}</span>
+                  <span className="text-muted-foreground hidden sm:inline">location{processedPoints.length === 1 ? '' : 's'}</span>
+                  <span className="text-muted-foreground sm:hidden">loc{processedPoints.length === 1 ? '' : 's'}</span>
                   {variableSplittingConfig?.enabled && (
-                    <Badge variant="secondary" className="text-xs">Split View</Badge>
+                    <Badge variant="secondary" className="text-xs hidden sm:inline-flex">Split View</Badge>
                   )}
-                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                  <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                 </div>
               </Button>
             </PopoverTrigger>

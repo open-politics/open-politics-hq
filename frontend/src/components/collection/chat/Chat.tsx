@@ -34,6 +34,7 @@ import AssetDetailOverlay from '@/components/collection/assets/Views/AssetDetail
 import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext'
 import { formatDistanceToNow } from 'date-fns'
 import { MemoizedMarkdown } from '@/components/ui/memoized-markdown'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 
 interface IntelligenceChatProps {
   className?: string
@@ -196,11 +197,17 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
         e.preventDefault()
         handleStartNewChat()
       }
+      
+      // "Ctrl+H" or "Cmd+H" to toggle conversations sidebar
+      if (e.key === 'h' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault()
+        setShowConversations(!showConversations)
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showConversations]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Conversation management handlers
   const handleLoadConversation = async (conversationId: number) => {
@@ -553,18 +560,33 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
             <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
               <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 {!showConversations && (
-                  <div className="flex items-center gap-1 rounded-md border border-border">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setShowConversations(true)}
-                    className="w-14 sm:w-16 h-8"
-                    title="Show conversations"
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                    <History className="h-4 w-4" />
-                  </Button>
-                  </div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1 rounded-md border border-border">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setShowConversations(true)}
+                            className="w-14 sm:w-16 h-8"
+                            title="Show conversations"
+                          >
+                            <MessageSquare className="h-4 w-4" />
+                            <History className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="flex items-center gap-1.5">
+                          <span>Conversations</span>
+                          <KbdGroup>
+                            <Kbd>Ctrl</Kbd>
+                            <Kbd>H</Kbd>
+                          </KbdGroup>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
                 <TooltipProvider>
                   <Tooltip>
@@ -584,7 +606,13 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       </div>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>New Chat (Ctrl+N)</p>
+                      <div className="flex items-center gap-1.5">
+                        <span>New Chat</span>
+                        <KbdGroup>
+                          <Kbd>Ctrl</Kbd>
+                          <Kbd>N</Kbd>
+                        </KbdGroup>
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -768,20 +796,34 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
 
           <div className="flex-none p-2 sm:p-4 border-t">
             <form ref={formRef} onSubmit={handleSubmit} className="flex gap-1.5 sm:gap-2">
-              <Textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about your data... (Shift+Enter for newline)"
-                disabled={isLoadingModels || !selectedModel}
-                className="flex-1 min-h-[80px] sm:min-h-[100px] max-h-[200px] resize-y text-xs sm:text-sm"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    formRef.current?.requestSubmit()
-                  }
-                }}
-              />
+              <div className="flex-1 relative">
+                <Textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ask about your data..."
+                  disabled={isLoadingModels || !selectedModel}
+                  className="flex-1 min-h-[80px] sm:min-h-[100px] max-h-[200px] resize-y text-xs sm:text-sm w-full"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      formRef.current?.requestSubmit()
+                    }
+                  }}
+                />
+                <div className="absolute bottom-2 right-2 flex items-center gap-1 text-[10px] text-muted-foreground pointer-events-none">
+                  <KbdGroup>
+                    <Kbd className="text-[9px] h-4 min-w-4 px-0.5">/</Kbd>
+                  </KbdGroup>
+                  <span>to focus</span>
+                  <span className="mx-0.5">•</span>
+                  <KbdGroup>
+                    <Kbd className="text-[9px] h-4 min-w-4 px-0.5">⇧</Kbd>
+                    <Kbd className="text-[9px] h-4 min-w-4 px-0.5">⏎</Kbd>
+                  </KbdGroup>
+                  <span>new line</span>
+                </div>
+              </div>
               <Button
                 type="submit"
                 disabled={!input.trim() || isLoading || isLoadingModels || !selectedModel}

@@ -185,7 +185,7 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                        size="icon"
                        variant="outline"
                        className="h-8 w-8 flex-shrink-0 bg-red-400"
-                       aria-label="Run Geocoding"ˇ
+                       aria-label="Run Geocoding"
                      >
                        {isLoadingGeocoding ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
                        <span className="sr-only">Geocode</span>

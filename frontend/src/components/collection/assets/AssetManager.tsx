@@ -836,39 +836,39 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
   return (
     <TextSpanHighlightProvider>
-      <div className="flex flex-col h-full w-full min-w-0 px-1 sm:px-2 overflow-hidden">
+      <div className="flex flex-col h-full w-full min-w-0 px-1 sm:px-2 overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3"> 
-            <div className="p-2.5 flex items-center gap-2 rounded-xl bg-green-50/20 dark:bg-green-950/10 border border-green-200 dark:border-green-800 shadow-sm">
-              <Folder className="h-6 w-6 text-green-700 dark:text-green-400" />
-              <FileText className="h-6 w-6 text-green-700 dark:text-green-400" />
+          <div className="flex items-center gap-2 sm:gap-3"> 
+            <div className="p-1.5 sm:p-2.5 flex items-center gap-1.5 sm:gap-2 rounded-lg sm:rounded-xl bg-green-50/20 dark:bg-green-950/10 border border-green-200 dark:border-green-800 shadow-sm">
+              <Folder className="h-4 w-4 sm:h-6 sm:w-6 text-green-700 dark:text-green-400" />
+              <FileText className="h-4 w-4 sm:h-6 sm:w-6 text-green-700 dark:text-green-400" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Asset Manager</h1>
-              <p className="text-gray-600 dark:text-gray-400 text-sm">
+              <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-gray-100">Asset Manager</h1>
+              <p className="text-gray-600 dark:text-gray-400 text-xs sm:text-sm hidden sm:block">
                 Manage your collection of documents, articles, images, and more
               </p>
             </div>
           </div>
         </div>
         <div className="flex-none mb-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex flex-wrap gap-2">
-              {/* Mobile file list button moved to left side */}
-              {isMobile && (
-                <>
-                  <Sheet open={showMobileSelector} onOpenChange={setShowMobileSelector}>
-                    <SheetTrigger asChild>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-9 px-3 text-xs bg-blue-600 hover:bg-blue-700 text-white border-0 rounded-md shadow-sm"
-                      >
-                        <Menu className="h-4 w-4 mr-1" />
-                        All Files
-                      </Button>
-                    </SheetTrigger>
+          {isMobile ? (
+            /* Mobile Layout - Organized in rows */
+            <div className="space-y-3">
+              {/* Primary Actions Row */}
+              <div className="flex items-center gap-2">
+                <Sheet open={showMobileSelector} onOpenChange={setShowMobileSelector}>
+                  <SheetTrigger asChild>
+                    <Button 
+                      variant="default" 
+                      size="sm" 
+                      className="h-8 px-3 text-xs bg-sky-600 hover:bg-blue-700 text-white"
+                    >
+                      <Menu className="h-4 w-4 mr-1" />
+                      All Files
+                    </Button>
+                  </SheetTrigger>
                   <SheetContent side="left" className="w-full sm:w-full flex flex-col">
                     <SheetHeader className="flex-shrink-0">
                       <SheetTitle>Assets & Bundles</SheetTitle>
@@ -923,93 +923,170 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                     </div>
                   </SheetContent>
                 </Sheet>
-                {/* Separator after file list button */}
-                <div className="w-px h-6 bg-border/60 mx-1"></div>
-              </>
+                <Button 
+                  variant="default" 
+                  onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} 
+                  className="h-8 px-3 text-xs flex-1"
+                >
+                  <Upload className="h-4 w-4 mr-1" /> 
+                  Upload
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} 
+                  className="h-8 px-3 text-xs"
+                >
+                  <LinkIcon className="h-4 w-4 mr-1" /> 
+                  URL
+                </Button>
+              </div>
+              
+              {/* Secondary Actions Row */}
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  onClick={handleCreateEmptyBundle} 
+                  className="h-8 px-3 text-xs flex-1"
+                >
+                  <FolderPlus className="h-4 w-4 mr-1" /> 
+                  Folder
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCreateArticle} 
+                  className="h-8 px-3 text-xs flex-1"
+                >
+                  <FileText className="h-4 w-4 mr-1" /> 
+                  Article
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowDataSourceManager(true)} 
+                  className="h-8 px-3 text-xs flex-1"
+                >
+                  <RadioTower className="h-4 w-4 mr-1" /> 
+                  Sources
+                </Button>
+              </div>
+              
+              {/* Selection Actions */}
+              {selectedItems.size > 0 && (
+                <div className="flex items-center justify-between gap-2 p-2 bg-muted/50 rounded-md">
+                  <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/30">
+                    {selectedItems.size} selected
+                  </Badge>
+                  <div className="flex items-center gap-1">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleBulkDelete} 
+                      className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" /> 
+                      Delete
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleBulkExport} 
+                      className="h-7 px-2"
+                    >
+                      <Download className="h-3 w-3 mr-1" /> 
+                      Export
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedItems(new Set())} className="h-7 w-7 p-0">
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
               )}
-              <Button 
-                variant="default" 
-                onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} 
-                className={cn("h-9", isMobile && "text-xs px-2")}
-              >
-                <Upload className="h-4 w-4 mr-1" /> 
-                {isMobile ? "Upload" : "Upload Assets"}
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} 
-                className={cn("h-9", isMobile && "text-xs px-2")}
-              >
-                <LinkIcon className="h-4 w-4 mr-1" /> 
-                {isMobile ? "URL" : "Add from URL"}
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={handleCreateEmptyBundle} 
-                className={cn("h-9", isMobile && "text-xs px-2")}
-              >
-                <FolderPlus className="h-4 w-4 mr-1" /> 
-                {isMobile ? "Folder" : "Create Folder"}
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={handleCreateArticle} 
-                className={cn("h-9", isMobile && "text-xs px-2")}
-              >
-                <FileText className="h-4 w-4 mr-1" /> 
-                {isMobile ? "Article" : "Create Article"}
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => setShowDataSourceManager(true)} 
-                className={cn("h-9", isMobile && "text-xs px-2")}
-              >
-                <RadioTower className="h-4 w-4 mr-1" /> 
-                {isMobile ? "Sources" : "Data Sources"}
-              </Button>
-              {!isMobile && (
+            </div>
+          ) : (
+            /* Desktop Layout - Original */
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex flex-wrap gap-2">
+                <Button 
+                  variant="default" 
+                  onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} 
+                  className="h-9"
+                >
+                  <Upload className="h-4 w-4 mr-1" /> 
+                  Upload Assets
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} 
+                  className="h-9"
+                >
+                  <LinkIcon className="h-4 w-4 mr-1" /> 
+                  Add from URL
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCreateEmptyBundle} 
+                  className="h-9"
+                >
+                  <FolderPlus className="h-4 w-4 mr-1" /> 
+                  Create Folder
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCreateArticle} 
+                  className="h-9"
+                >
+                  <FileText className="h-4 w-4 mr-1" /> 
+                  Create Article
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowDataSourceManager(true)} 
+                  className="h-9"
+                >
+                  <RadioTower className="h-4 w-4 mr-1" /> 
+                  Data Sources
+                </Button>
                 <Button variant="outline" onClick={() => document.getElementById('import-file-input')?.click()} className="h-9">
                   <Download className="h-4 w-4 mr-2" /> Import
                 </Button>
-              )}
-              <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
+                <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedItems.size > 0 && (
+                  <>
+                    <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/30">
+                      {selectedItems.size} selected
+                    </Badge>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleBulkDelete} 
+                      className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" /> 
+                      Delete
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleBulkExport} 
+                      className="h-7 px-2"
+                    >
+                      <Download className="h-3 w-3 mr-1" /> 
+                      Export
+                    </Button>
+                    <AssetTransferPopover selectedItems={transferItems} onComplete={() => setSelectedItems(new Set())} />
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedItems(new Set())} className="h-6 w-6 p-0">
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {selectedItems.size > 0 && (
-                <>
-                  <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/30">
-                    {selectedItems.size} {isMobile ? "" : "selected"}
-                  </Badge>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleBulkDelete} 
-                    className={cn("h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50", isMobile && "px-1")}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1" /> 
-                    {!isMobile && "Delete"}
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleBulkExport} 
-                    className={cn("h-7 px-2", isMobile && "px-1")}
-                  >
-                    <Download className="h-3 w-3 mr-1" /> 
-                    {!isMobile && "Export"}
-                  </Button>
-                  {!isMobile && <AssetTransferPopover selectedItems={transferItems} onComplete={() => setSelectedItems(new Set())} />}
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedItems(new Set())} className="h-6 w-6 p-0">
-                    <X className="h-3 w-3" />
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 min-h-0 overflow-hidden p-1 pb-3 backdrop-blur">
+        <div className="flex-1 min-h-0 overflow-y-auto p-1 pb-3 backdrop-blur">
           {isMobile ? (
             /* Mobile Layout - Single panel with sheet for selector */
             <div className="h-full w-full rounded-lg border border-primary/60">

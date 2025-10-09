@@ -133,7 +133,7 @@
   --schemes-border-color: #facc15;     /* yellow-400 */
   --results-border-color: #4ade80;     /* green-400 */
   --metadata-border-color: #60a5fa;    /* blue-400 */
-  --sidebar: hsl(240 5.9% 10%);
+  --sidebar: lab(4.3% -1.31 -3.73);
   --sidebar-foreground: hsl(240 4.8% 95.9%);
   --sidebar-primary: hsl(224.3 76.3% 48%);
   --sidebar-primary-foreground: hsl(0 0% 100%);

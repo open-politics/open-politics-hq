@@ -31,6 +31,7 @@ export function InfospaceSwitcher() {
   const { theme } = useTheme()
   const [isEditOverlayOpen, setIsEditOverlayOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const { user } = useAuth()
 
   const {
@@ -67,6 +68,19 @@ export function InfospaceSwitcher() {
     setIsCreating(false);
   };
 
+  // Keyboard shortcut to open infospace switcher (Ctrl+I)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'i' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setIsDropdownOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Add null guard for initial render
   if (!activeInfospace && infospaces.length > 0) {
     return <div className="h-12 animate-pulse bg-muted rounded-md" />;
@@ -83,9 +97,22 @@ export function InfospaceSwitcher() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
+        <DropdownMenu open={isDropdownOpen} onOpenChange={setIsDropdownOpen}>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton size="lg" className="bg-sidebar text-sidebar-foreground">
+            <SidebarMenuButton 
+              size="lg" 
+              className="bg-sidebar text-sidebar-foreground group relative"
+              tooltip={{
+                children: (
+                  <div className="flex items-center gap-2">
+                    <span>Switch Infospace</span>
+                    <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
+                      Ctrl+I
+                    </kbd>
+                  </div>
+                ),
+              }}
+            >
               <div className="flex items-center justify-start w-full gap-1 text-sm leading-tight rounded-lg p-2 pl-1">
                 <div className={`flex aspect-square size-6 items-center justify-center rounded-md flex-shrink-0 ${theme === "dark" ? "text-white" : "text-black"}`}>
                   <ChevronsUpDown className="size-4" />
@@ -147,6 +174,12 @@ export function InfospaceSwitcher() {
                 </div>
               </Link>
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1.5">
+              <p className="text-[10px] text-muted-foreground text-center">
+                Use <kbd className="px-1 py-0.5 rounded bg-muted text-[9px] font-mono">↑↓</kbd> to navigate • <kbd className="px-1 py-0.5 rounded bg-muted text-[9px] font-mono">⏎</kbd> to select • <kbd className="px-1 py-0.5 rounded bg-muted text-[9px] font-mono">Esc</kbd> to close
+              </p>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

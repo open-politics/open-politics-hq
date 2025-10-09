@@ -32,7 +32,8 @@ import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getT
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle } from 'lucide-react';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -51,6 +52,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { AnnotationResultStatus, FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Separator } from "@/components/ui/separator";
 import { AlertCircle } from 'lucide-react';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
 import GuidedRetryModal from './GuidedRetryModal';
@@ -215,10 +217,10 @@ export function AnnotationResultsTable({
     if (initialTableConfig?.columnVisibility) {
       return initialTableConfig.columnVisibility;
     }
-    // Initially hide timestamp and source name for better space utilization
+    // Initially hide timestamp and source name (now integrated into asset column)
     return {
       'resultsMap': false, // Hide timestamp by default
-      'sourceName': false, // Hide source name by default
+      'sourceName': false, // Hide source name column (shown in asset column)
       'splitValue': false, // Hide split value by default
     };
   });
@@ -235,6 +237,7 @@ export function AnnotationResultsTable({
   const [globalFilter, setGlobalFilter] = useState(initialTableConfig?.globalFilter || '');
   const [expanded, setExpanded] = useState<Record<string, boolean>>(initialTableConfig?.expanded || {});
   const [expandAllAnnotations, setExpandAllAnnotations] = useState(false); // NEW: Global expand state for annotation cards
+  const [unfoldFields, setUnfoldFields] = useState(false); // NEW: Toggle for unfolding schema fields into separate columns
   const { activeInfospace } = useInfospaceStore();
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
 
@@ -272,6 +275,7 @@ export function AnnotationResultsTable({
           const keys = targetKeys.map(tk => tk.key);
           newState[schema.id] = prev[schema.id] ?? keys;
         });
+        console.log('[AnnotationResultsTable] Updated selectedFieldsPerScheme:', newState);
         return newState;
       });
     });
@@ -568,8 +572,11 @@ export function AnnotationResultsTable({
 
   const tableData = useMemo((): EnrichedAssetRecord[] => {
     if (!assets || !resultsForTable) {
+      console.log('[AnnotationResultsTable] tableData: No assets or results', { assets: assets?.length, results: resultsForTable?.length });
       return [];
     }
+
+    console.log('[AnnotationResultsTable] tableData: Processing', resultsForTable.length, 'results for', assets.length, 'assets');
 
     const sourceInfoMap = new Map<number, { name: string }>();
     sources.forEach(ds => {
@@ -584,6 +591,8 @@ export function AnnotationResultsTable({
         acc[assetId].push(result);
         return acc;
     }, {} as Record<number, ResultWithSourceInfo[]>);
+    
+    console.log('[AnnotationResultsTable] resultsByAssetId:', resultsByAssetId);
 
     // Get all assets that have results OR are CSV parents with children that have results
     const assetsWithResults = new Set<number>();
@@ -612,10 +621,17 @@ export function AnnotationResultsTable({
           ? sourceInfoMap.get(asset.source_id)
           : null;
         const assetResults = resultsByAssetId[asset.id] || [];
+        
+        // For now, just take the first result per schema
+        // TODO: Handle multiple results per schema properly
         const resultsMap: Record<number, ResultWithSourceInfo> = {};
         assetResults.forEach(res => {
-          resultsMap[res.schema_id] = res;
+          if (!resultsMap[res.schema_id]) {
+            resultsMap[res.schema_id] = res;
+          }
         });
+        
+        console.log('[AnnotationResultsTable] Asset', asset.id, 'has', assetResults.length, 'results, resultsMap:', resultsMap);
 
         const isCSVParent = asset.kind === 'csv' && csvParentsWithChildren.has(asset.id);
         const isCSVChild = asset.kind === 'csv_row';
@@ -665,6 +681,8 @@ export function AnnotationResultsTable({
         record.children.sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
       }
     });
+
+    console.log('[AnnotationResultsTable] topLevelRecords:', topLevelRecords.map(r => ({ id: r.id, title: r.title, resultsMap: Object.keys(r.resultsMap) })));
 
     // Apply filters to top-level records
     // FIXED: Only apply filter logic if there are ACTIVE filters
@@ -725,9 +743,9 @@ export function AnnotationResultsTable({
   const columns = useMemo((): ColumnDef<EnrichedAssetRecord>[] => {
     const staticColumns: ColumnDef<EnrichedAssetRecord>[] = [
       {
-        id: 'select',
+        id: 'asset',
         header: ({ table }) => (
-          <div className="flex items-center justify-center w-full h-full" title="Select for Bulk Actions">
+          <div className="flex items-center gap-2 w-full">
             <Checkbox
               checked={
                 table.getIsAllPageRowsSelected() ||
@@ -737,160 +755,100 @@ export function AnnotationResultsTable({
               aria-label="Select all for bulk actions"
               onClick={(e) => e.stopPropagation()}
             />
+            <span className="text-xs font-medium">Asset</span>
           </div>
         ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label="Select row for bulk actions"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        enableSorting: false,
-        enableHiding: false,
-      },
-      {
-        id: 'expander',
-        header: '',
         cell: ({ row }) => {
           const record = row.original;
-          if (record.hasChildren && record.children && record.children.length > 0) {
-            const isExpanded = expanded[record.id.toString()];
-            return (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // Use startTransition for state updates
-                  startTransition(() => {
-                    setExpanded(prev => {
-                      const newExpanded = Object.assign({}, prev);
-                      newExpanded[record.id.toString()] = !prev[record.id.toString()];
-                      return newExpanded;
-                    });
-                  });
-                }}
-              >
-                {isExpanded ? (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            );
-          }
-          return null;
-        },
-        maxSize: 40,
-        minSize: 40,
-        size: 40,
-        enableSorting: false,
-        enableHiding: false,
-        enableResizing: false,
-      },
-      {
-        id: 'exclude',
-        header: ({ table }) => (
-            <TooltipProvider delayDuration={100}>
-                <Tooltip>
-                    <TooltipTrigger className="flex items-center justify-center w-full h-full cursor-help">
-                        <Ban className="h-3.5 w-3.5 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        <p className="text-xs">Exclude from Analysis</p>
-                    </TooltipContent>
-                </Tooltip>
-            </TooltipProvider>
-        ),
-        cell: ({ row }) => {
-          const record = row.original;
-          // Only show exclude checkbox for records that have annotations (child rows)
-          if (record.isChildRow || (!record.hasChildren && Object.keys(record.resultsMap).length > 0)) {
-            return (
-              <Checkbox
-                  checked={!!excludedRecordIds && excludedRecordIds.has(record.id)}
-                  onCheckedChange={(checked) => {
-                    // Use queueMicrotask to defer this update
-                    queueMicrotask(() => {
-                      onToggleRecordExclusion(record.id);
+          const isExpanded = expanded[record.id.toString()];
+          const hasChildren = record.hasChildren && record.children && record.children.length > 0;
+          
+          return (
+            <div className="flex items-start gap-2 min-w-0 py-1">
+              {/* Expander (only render when needed) */}
+              {hasChildren && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 hover:bg-accent rounded-md flex-shrink-0 mt-1 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startTransition(() => {
+                      setExpanded(prev => {
+                        const newExpanded = Object.assign({}, prev);
+                        newExpanded[record.id.toString()] = !prev[record.id.toString()];
+                        return newExpanded;
+                      });
                     });
                   }}
-                  aria-label="Exclude this record from analysis"
-                  className="ml-1 data-[state=checked]:bg-orange-600 data-[state=checked]:border-orange-700"
-                  onClick={(e) => e.stopPropagation()}
-              />
-            );
-          }
-          return null;
-        },
-        maxSize: 40,
-        minSize: 40,
-        size: 40,
-        enableSorting: false,
-        enableHiding: false,
-        enableResizing: false,
-      },
-      {
-        accessorKey: 'id',
-        header: ({ column }) => (
-          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="px-2 h-full w-full justify-start">
-            <span className="truncate">Asset ID</span>
-            <ArrowUpDown className="ml-1 h-3.5 w-3.5 flex-shrink-0" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const record = row.original;
-          return (
-            <div className={cn("flex items-center min-w-0", record.isChildRow && "ml-2")}>
-              {record.isChildRow && (
-                <div className="w-2 h-2 rounded-full bg-muted-foreground/40 mr-2 flex-shrink-0"></div>
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                </Button>
               )}
-              <AssetLink assetId={record.id}>
-                <div className="hover:underline cursor-pointer truncate min-w-0">{record.id}</div>
-              </AssetLink>
+              
+              {/* Child row indicator */}
+              {record.isChildRow && (
+                <div className="flex items-center justify-center w-6 flex-shrink-0 mt-1">
+                  <div className="w-2 h-2 rounded-full bg-primary/30 border-2 border-primary/50" />
+                </div>
+              )}
+              
+              {/* Content: Checkbox, Title, ID, Source */}
+              <div className="flex-1 min-w-0 flex gap-2.5 p-2.5 rounded-lg border border-border bg-gradient-to-b from-card to-card/80 hover:border-border/80 hover:shadow-sm transition-all duration-200 group">
+                {/* Checkbox */}
+                <div className="flex items-start pt-0.5">
+                  <Checkbox
+                    checked={row.getIsSelected()}
+                    onCheckedChange={(value) => row.toggleSelected(!!value)}
+                    aria-label="Select row"
+                    className="h-4 w-4 flex-shrink-0 mt-0.5"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+                
+                {/* Content area */}
+                <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                  {/* Title */}
+                  <AssetLink 
+                    assetId={record.id} 
+                    className="font-medium text-sm truncate hover:text-primary transition-colors block leading-tight group-hover:underline decoration-primary/30"
+                  >
+                    {record.title || <span className="italic text-muted-foreground/70">No Title</span>}
+                  </AssetLink>
+                  
+                  {/* Metadata */}
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 min-w-0">
+                    <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90">
+                      #{record.id}
+                    </span>
+                    {record.sourceName && (
+                      <>
+                        <span className="text-muted-foreground/30">•</span>
+                        <span className="truncate text-[11px]">{record.sourceName}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           );
         },
-        maxSize: 120,
-        minSize: 80,
-        size: 100,
-        enableResizing: true,
-        enableHiding: true,
-      },
-      {
-        accessorKey: 'title',
-        header: ({ column }) => (
-          <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')} className="h-full w-full justify-start px-2">
-            <span className="truncate">Title</span>
-            <ArrowUpDown className="ml-1 h-4 w-4 flex-shrink-0" />
-          </Button>
-        ),
-        cell: ({ row }) => {
-          const record = row.original;
-          return (
-            <AssetLink assetId={record.id}>
-              <div className={cn(
-                "font-medium hover:underline cursor-pointer flex items-center min-w-0",
-                record.isChildRow && "ml-2 text-sm"
-              )} title={record.title || 'No Title'}>
-                {record.isChildRow && (
-                  <div className="w-2 h-2 rounded-full bg-muted-foreground/40 mr-2 flex-shrink-0"></div>
-                )}
-                <span className="truncate min-w-0">
-                  {record.title || <span className="italic text-muted-foreground">No Title</span>}
-                </span>
-              </div>
-            </AssetLink>
-          );
-        },
-        maxSize: 300,
+        maxSize: 200,
         minSize: 120,
-        size: 180,
+        size: 140,
+        enableSorting: true,
+        sortingFn: (rowA, rowB) => {
+          // Sort by title
+          const titleA = rowA.original.title || '';
+          const titleB = rowB.original.title || '';
+          return titleA.localeCompare(titleB);
+        },
+        enableHiding: false,
         enableResizing: true,
-        enableHiding: true,
       },
       {
          accessorKey: 'sourceName',
@@ -948,7 +906,185 @@ export function AnnotationResultsTable({
       });
     }
 
-    const dynamicSchemaColumns: ColumnDef<EnrichedAssetRecord>[] = schemas.map((schema, index) => ({
+    // NEW: Generate unfolded field columns when unfoldFields is true
+    const unfoldedFieldColumns: ColumnDef<EnrichedAssetRecord>[] = unfoldFields ? schemas.flatMap((schema, schemaIndex) => {
+      const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+      const selectedKeys = selectedFieldsPerScheme[schema.id] || [];
+      const fieldsToShow = targetKeys.filter(tk => selectedKeys.includes(tk.key));
+      
+      return fieldsToShow.map((field, fieldIndex) => ({
+        id: `field_${schema.id}_${field.key}`,
+        meta: {
+          displayName: `${schema.name} › ${field.name}`,
+          schemaId: schema.id,
+          schemaIndex,
+          fieldKey: field.key,
+          isFirstFieldInSchema: fieldIndex === 0,
+        },
+        header: ({ column }) => (
+          <div className={cn(
+            "flex flex-col space-y-1 min-w-0",
+            fieldIndex === 0 && schemaIndex > 0 && "border-l-2 border-primary/30 pl-2"
+          )}>
+            {fieldIndex === 0 && (
+              <div className="text-[10px] text-primary/60 uppercase tracking-wider font-semibold truncate">
+                {schema.name}
+              </div>
+            )}
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1 min-w-0 cursor-help">
+                    <span className="font-medium text-xs truncate">
+                      {field.name}
+                    </span>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start" className="max-w-sm">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-xs">{field.name}</span>
+                      <Badge className="px-1 py-0">
+                        {field.type}
+                      </Badge>
+                    </div>
+                    <p className="">
+                      Field path: <code className="px-1 rounded">{field.key}</code>
+                    </p>
+                    <div className="pt-1 border-t">
+                      Schema: <span className="font-medium">{schema.name}</span>
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        ),
+        cell: ({ row }) => {
+          const resultForThisCell = row.original.resultsMap[schema.id];
+          
+          if (!resultForThisCell) {
+            return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">N/A</div>;
+          }
+          
+          const fieldValue = getAnnotationFieldValue(resultForThisCell.value, field.key);
+          const isFailed = resultForThisCell.status === 'failure';
+          
+          // Check if this field has a justification
+          const justificationFieldPath = `${field.key}_justification`;
+          const justificationValue = resultForThisCell.value && typeof resultForThisCell.value === 'object'
+            ? getAnnotationFieldValue(resultForThisCell.value, justificationFieldPath)
+            : undefined;
+          
+          return (
+            <div className={cn(
+              "relative h-full min-w-0 p-2",
+              isFailed && "border-l-2 border-destructive pl-1",
+              fieldIndex === 0 && schemaIndex > 0 && "border-l-2 border-primary/20"
+            )}>
+              {isFailed && fieldIndex === 0 && (
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertCircle 
+                        className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help" 
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="end">
+                      <p className="text-xs max-w-xs break-words">
+                        Failed: {(resultForThisCell as any).error_message || 'Unknown error'}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              
+              {/* Justification indicator */}
+              {justificationValue && (
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle 
+                        className="h-3 w-3 text-primary/60 absolute top-1.5 right-1.5 opacity-70 hover:opacity-100 cursor-help transition-opacity" 
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="end" className="max-w-sm z-[1001]">
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-semibold">Justification:</p>
+                        </div>
+                        {(() => {
+                          // Handle structured justification objects
+                          if (typeof justificationValue === 'object' && justificationValue !== null) {
+                            return (
+                              <div className="space-y-1">
+                                {justificationValue.reasoning && (
+                                  <p className="text-xs">{justificationValue.reasoning}</p>
+                                )}
+                                {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
+                                  <div className="space-y-2">
+                                    <p className="text-xs">
+                                      📝 {justificationValue.text_spans.length} text span{justificationValue.text_spans.length > 1 ? 's' : ''}
+                                    </p>
+                                    <Separator className="my-2" />
+                                    <div className="text-xs">
+                                      {justificationValue.text_spans.slice(0, 3).map((span: any, idx: number) => (
+                                        <div key={idx} className="italic border border-border p-1 rounded text-wrap break-words mb-1">
+                                          "{span.text_snippet}"
+                                        </div>
+                                      ))}
+                                      {justificationValue.text_spans.length > 3 && (
+                                        <p className="text-muted-foreground">...and {justificationValue.text_spans.length - 3} more</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                {justificationValue.image_regions && justificationValue.image_regions.length > 0 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    🖼️ {justificationValue.image_regions.length} image region{justificationValue.image_regions.length > 1 ? 's' : ''}
+                                  </p>
+                                )}
+                                {justificationValue.audio_segments && justificationValue.audio_segments.length > 0 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    🎵 {justificationValue.audio_segments.length} audio segment{justificationValue.audio_segments.length > 1 ? 's' : ''}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          }
+                          // Handle string justifications
+                          return <p className="text-xs">{String(justificationValue)}</p>;
+                        })()}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              
+              <AnnotationResultDisplay
+                result={resultForThisCell}
+                schema={schema}
+                compact={true}
+                targetFieldKey={field.key}
+                renderContext="table"
+                onResultSelect={onResultSelect}
+                forceExpanded={false}
+              />
+            </div>
+          );
+        },
+        maxSize: 250,
+        minSize: 100,
+        size: 150,
+        enableResizing: true,
+        enableHiding: true,
+      }));
+    }) : [];
+
+    const dynamicSchemaColumns: ColumnDef<EnrichedAssetRecord>[] = !unfoldFields ? schemas.map((schema, index) => ({
       id: `schema_${schema.id}`,
       meta: {
         displayName: schema.name,
@@ -1011,6 +1147,13 @@ export function AnnotationResultsTable({
         const resultForThisCell = row.original.resultsMap[schema.id];
         const fieldKeysToShow = selectedFieldsPerScheme[schema.id] || [];
 
+        // Debug logging
+        if (!resultForThisCell) {
+          console.log('[AnnotationResultsTable] No result for schema', schema.id, 'in row', row.original.id, 'resultsMap:', row.original.resultsMap);
+        } else {
+          console.log('[AnnotationResultsTable] Found result for schema', schema.id, 'with', fieldKeysToShow.length, 'fields to show');
+        }
+
         // FIXED: Hide cell content when zero fields are selected
         if (fieldKeysToShow.length === 0) {
           return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">Hidden</div>;
@@ -1048,7 +1191,7 @@ export function AnnotationResultsTable({
                 compact={false}
                 selectedFieldKeys={fieldKeysToShow}
                 maxFieldsToShow={undefined}
-                renderContext="default"
+                renderContext="table"
                 onResultSelect={onResultSelect}
                 forceExpanded={expandAllAnnotations}
               />
@@ -1062,7 +1205,7 @@ export function AnnotationResultsTable({
       size: 200,
       enableResizing: true,
       enableHiding: true,
-    }));
+    })) : [];
 
     const staticEndColumns: ColumnDef<EnrichedAssetRecord>[] = [
         {
@@ -1117,7 +1260,7 @@ export function AnnotationResultsTable({
                   )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => handleCurationClick('single', recordContext)}>
-                    <Sparkles className="mr-2 h-4 w-4" /> Curate...
+                    <ArrowUpToLine className="mr-2 h-4 w-4" /> Curate...
                   </DropdownMenuItem>
                   {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
                    {onRetrySingleResult && (
@@ -1144,7 +1287,7 @@ export function AnnotationResultsTable({
                          disabled={isCurrentlyRetryingThis}
                          className="text-blue-600 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-800"
                        >
-                         <Sparkles className="mr-2 h-4 w-4" /> Guided Retry
+                         <Wand2 className="mr-2 h-4 w-4" /> Guided Retry
                        </DropdownMenuItem>
                      </>
                    )}
@@ -1166,10 +1309,13 @@ export function AnnotationResultsTable({
         },
     ];
 
+    // Choose between unfolded field columns or grouped schema columns
+    const dataColumns = unfoldFields ? unfoldedFieldColumns : dynamicSchemaColumns;
+    
     return [
         ...staticColumns,
         ...conditionalColumns,
-        ...dynamicSchemaColumns,
+        ...dataColumns,
         ...staticEndColumns
     ];
   }, [
@@ -1178,11 +1324,11 @@ export function AnnotationResultsTable({
       // FIXED: Don't depend on function props - they should be stable from parent or memoized
       // onResultSelect, onResultAction, onResultDelete, onRetrySingleResult,
       retryingResultId,
-      excludedRecordIds ? Array.from(excludedRecordIds).sort().join(',') : '', // FIXED: Use stable representation of Set
       // onToggleRecordExclusion,
       Object.keys(expanded).sort().join(','), // FIXED: Use stable representation of expanded state
       variableSplittingConfig?.enabled, // Only track enabled state for column changes
-      expandAllAnnotations // NEW: Track expand all state for annotation display
+      expandAllAnnotations, // NEW: Track expand all state for annotation display
+      unfoldFields, // NEW: Track unfold fields state for column generation
   ]);
   
   // Optimize table configuration to prevent automatic resets
@@ -1230,8 +1376,8 @@ export function AnnotationResultsTable({
 
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
-      <div className="flex items-center justify-between py-3 flex-shrink-0 gap-4">
-         <div className="relative w-full max-w-sm">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between py-3 flex-shrink-0 gap-3 sm:gap-4">
+         <div className="relative w-full sm:max-w-sm">
            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
            <Input
              placeholder="Search assets (ID, Title...)"
@@ -1241,44 +1387,75 @@ export function AnnotationResultsTable({
            />
          </div>
          
-         <div className="flex items-center gap-2">
-           {/* Expand/Collapse All Annotations - moved next to column controls */}
-           <TooltipProvider delayDuration={100}>
-             <Tooltip>
-               <TooltipTrigger asChild>
-                 <Button 
-                   variant="outline" 
-                   size="sm" 
-                   className="h-9"
-                   onClick={() => setExpandAllAnnotations(!expandAllAnnotations)}
-                 >
-                   {expandAllAnnotations ? (
-                     <>
-                       <Minimize2 className="h-4 w-4 mr-2" />
-                       <span className="hidden sm:inline">Collapse All</span>
-                     </>
-                   ) : (
-                     <>
-                       <Maximize2 className="h-4 w-4 mr-2" />
-                       <span className="hidden sm:inline">Expand All</span>
-                     </>
-                   )}
+         <div className="flex items-center gap-2 flex-wrap">
+           {/* VIEW CONTROLS GROUP */}
+           <div className="flex items-center gap-1.5 px-1 py-0.5 rounded-md bg-muted/30">
+             {/* Unfold Fields Toggle */}
+             <TooltipProvider delayDuration={100}>
+               <Tooltip>
+                 <TooltipTrigger asChild>
+                   <Button 
+                     variant={unfoldFields ? "default" : "ghost"}
+                     size="sm" 
+                     className="h-8 px-2"
+                     onClick={() => setUnfoldFields(!unfoldFields)}
+                   >
+                     {unfoldFields ? (
+                       <Columns className="h-4 w-4 sm:mr-1.5" />
+                     ) : (
+                       <Columns3 className="h-4 w-4 sm:mr-1.5" />
+                     )}
+                     <span className="hidden sm:inline text-xs">
+                       {unfoldFields ? 'Unfolded' : 'Grouped'}
+                     </span>
+                   </Button>
+                 </TooltipTrigger>
+                 <TooltipContent side="bottom">
+                   <p className="text-xs">
+                     {unfoldFields 
+                       ? 'Showing individual field columns. Click to group by schema.' 
+                       : 'Showing grouped schemas. Click to unfold into field columns.'}
+                   </p>
+                 </TooltipContent>
+               </Tooltip>
+             </TooltipProvider>
+             
+             {/* Expand/Collapse All Annotations - only show when grouped */}
+             {!unfoldFields && (
+               <TooltipProvider delayDuration={100}>
+                 <Tooltip>
+                   <TooltipTrigger asChild>
+                     <Button 
+                       variant="ghost"
+                       size="sm" 
+                       className="h-8 px-2"
+                       onClick={() => setExpandAllAnnotations(!expandAllAnnotations)}
+                     >
+                       {expandAllAnnotations ? (
+                         <FoldVertical className="h-4 w-4 sm:mr-1.5" />
+                       ) : (
+                         <UnfoldVertical className="h-4 w-4 sm:mr-1.5" />
+                       )}
+                       <span className="hidden sm:inline text-xs">
+                         {expandAllAnnotations ? 'Collapse' : 'Expand'}
+                       </span>
+                     </Button>
+                   </TooltipTrigger>
+                   <TooltipContent side="bottom">
+                     <p className="text-xs">{expandAllAnnotations ? 'Collapse' : 'Expand'} all annotation fields</p>
+                   </TooltipContent>
+                 </Tooltip>
+               </TooltipProvider>
+             )}
+             
+             {/* Column Visibility Controls */}
+             <DropdownMenu>
+               <DropdownMenuTrigger asChild>
+                 <Button variant="ghost" size="sm" className="h-8 px-2">
+                   <SlidersHorizontal className="h-4 w-4 sm:mr-1.5" />
+                   <span className="hidden sm:inline text-xs">Columns</span>
                  </Button>
-               </TooltipTrigger>
-               <TooltipContent side="bottom">
-                 <p className="text-xs">{expandAllAnnotations ? 'Collapse' : 'Expand'} All Annotation Fields</p>
-               </TooltipContent>
-             </Tooltip>
-           </TooltipProvider>
-           
-           {/* Column Visibility Controls */}
-           <DropdownMenu>
-             <DropdownMenuTrigger asChild>
-               <Button variant="outline" size="sm" className="h-9">
-                 <SlidersHorizontal className="h-4 w-4 mr-2" />
-                 Columns
-               </Button>
-             </DropdownMenuTrigger>
+               </DropdownMenuTrigger>
              <DropdownMenuContent align="end" className="w-[200px]">
                <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
                <DropdownMenuSeparator />
@@ -1297,11 +1474,20 @@ export function AnnotationResultsTable({
                       }
                       // Format column IDs to be more readable
                       const id = column.id;
-                      if (id === 'id') return 'Asset ID';
-                      if (id === 'title') return 'Asset Title';
-                                              if (id === 'sourceName') return 'Source Name';
-                        if (id === 'splitValue') return 'Split Value';
-                        if (id === 'resultsMap') return 'Timestamp';
+                      if (id === 'asset') return 'Asset';
+                      if (id === 'sourceName') return 'Source Name';
+                      if (id === 'splitValue') return 'Split Value';
+                      if (id === 'resultsMap') return 'Timestamp';
+                      if (id.startsWith('field_')) {
+                        // Parse field column ID: field_<schemaId>_<fieldKey>
+                        const parts = id.split('_');
+                        if (parts.length >= 3) {
+                          const schemaId = parseInt(parts[1]);
+                          const fieldKey = parts.slice(2).join('_');
+                          const schema = schemas.find(s => s.id === schemaId);
+                          return schema ? `${schema.name} › ${fieldKey}` : id;
+                        }
+                      }
                       if (id.startsWith('schema_')) return schemas.find(s => s.id === parseInt(id.replace('schema_', '')))?.name || id;
                       return id.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
                     };
@@ -1320,19 +1506,27 @@ export function AnnotationResultsTable({
               </ScrollArea>
            </DropdownMenuContent>
          </DropdownMenu>
+           </div>
 
+           {/* ACTION BUTTONS GROUP */}
            <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9">
-                <Sparkles className="h-4 w-4 mr-2" />
-                Curate
+              <Button variant="outline" size="sm" className="h-9 border-primary/20 hover:border-primary/40 hover:bg-primary/5">
+                <ArrowUpToLine className="h-4 w-4 mr-2" />
+                <span className="font-medium">Curate</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Preserve data to features
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => handleCurationClick('visible')} disabled={table.getFilteredRowModel().rows.length === 0}>
+                <ArrowUpToLine className="h-4 w-4 mr-2" />
                 Curate Visible Data...
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleCurationClick('selected')} disabled={table.getSelectedRowModel().rows.length === 0}>
+                <ArrowUpToLine className="h-4 w-4 mr-2" />
                 Curate Selected Rows...
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1371,7 +1565,6 @@ export function AnnotationResultsTable({
                     data-state={row.getIsSelected() && "selected"}
                     className={cn(
                       "cursor-pointer hover:bg-muted/30 transition-opacity", 
-                      !!excludedRecordIds && excludedRecordIds.has(row.original.id) && "opacity-50 bg-muted/10 hover:bg-muted/20",
                       row.original.isChildRow && "bg-muted/5",
                       row.original.hasChildren && "font-medium"
                     )}
@@ -1425,7 +1618,7 @@ export function AnnotationResultsTable({
         </div>
       </div>
       
-      <div className="flex items-center justify-between space-x-2 py-4 flex-wrap gap-y-2 flex-shrink-0">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between space-x-2 py-4 flex-wrap gap-y-2 flex-shrink-0">
          <div className="flex items-center space-x-2">
            <p className="text-sm font-medium text-muted-foreground whitespace-nowrap">Rows per page</p>
            <Select
@@ -1444,9 +1637,11 @@ export function AnnotationResultsTable({
              </SelectContent>
            </Select>
          </div>
-        <div className="flex-1 text-sm text-muted-foreground text-center">
-          {table.getFilteredRowModel().rows.length} Asset(s) matching filters.
-          Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}.
+        <div className="flex-1 text-sm text-muted-foreground text-center sm:text-left">
+          <span className="hidden sm:inline">{table.getFilteredRowModel().rows.length} Asset(s) matching filters.</span>
+          <span className="sm:hidden">{table.getFilteredRowModel().rows.length} assets</span>
+          <br className="sm:hidden" />
+          <span>Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}.</span>
         </div>
         <div className="flex items-center space-x-2">
            <Button variant="outline" className="hidden h-8 w-8 p-0 lg:flex" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>

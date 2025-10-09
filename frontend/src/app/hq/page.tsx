@@ -159,7 +159,7 @@ function DesksPage() {
                       <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
                         Infospaces
                       </CardTitle>
-                      <CardDescription className="text-sm text-gray-600 dark:text-gray-400">
+                      <CardDescription className="text-sm text-gray-600 dark:text-blue-200">
                         {activeInfospace ? `Active: ${activeInfospace.name}` : 'No active infospace'}
                       </CardDescription>
                     </div>
@@ -179,12 +179,11 @@ function DesksPage() {
                     {infospaces.slice(0, 3).map((infospace) => (
                       <div 
                         key={infospace.id}
-                        className={`group flex items-center justify-between p-2 rounded text-sm cursor-pointer transition-colors ${
+                        className={`group flex items-center justify-between p-2 rounded text-sm transition-colors ${
                           infospace.id === activeInfospace?.id 
                             ? 'bg-gray-50/20 dark:bg-gray-800/30 border border-gray-200 dark:border-gray-600' 
-                            : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                            : ''
                         }`}
-                        onClick={() => handleSwitchInfospace(infospace.id)}
                       >
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${infospace.id === activeInfospace?.id ? 'bg-gray-600 dark:bg-gray-400' : 'bg-gray-400 dark:bg-gray-500'}`}></div>
@@ -196,7 +195,7 @@ function DesksPage() {
                           )}
                         </div>
                         {infospace.id === activeInfospace?.id ? (
-                          <Badge variant="outline" className="text-xs">Active</Badge>
+                          ""
                         ) : (
                           <Button 
                             variant="ghost" 

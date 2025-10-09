@@ -425,137 +425,148 @@ export default function AnnotationRunner({
   return (
     <div className="flex-1 flex flex-col overflow-auto">
       <div className="p-4 flex-1 space-y-4">
-        <div className="p-3 rounded-md bg-muted/10 flex items-center justify-between sticky top-0 bg-background/95 backdrop-blur z-10 flex-wrap gap-2">
-          <div className="flex flex-col flex-1 min-w-0 mr-4">
-            <div className="flex items-center gap-1">
-              <span
-                  id="run-name-editable"
-                  className={`font-medium text-base px-1 truncate ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
-                  contentEditable={isEditingName ? 'true' : 'false'}
-                  suppressContentEditableWarning={true}
-                  onBlur={(e) => handleUpdate('name', e.currentTarget.innerText)}
-                  onKeyDown={(e) => handleKeyDown(e, 'name')}
-                  onClick={() => !isEditingName && handleEditClick('name')}
-                  title={activeRun.name}
-              >
-                  {activeRun.name}
-              </span>
-              <TooltipProvider delayDuration={100}>
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
-                    </TooltipTrigger>
-                    <TooltipContent><p>Edit Run Name</p></TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            <div className="flex items-center gap-1 mt-1">
-               <span
-                  id="run-description-editable"
-                  className={`text-sm px-1 truncate ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
-                  contentEditable={isEditingDescription ? 'true' : 'false'}
-                  suppressContentEditableWarning={true}
-                  onBlur={(e) => handleUpdate('description', e.currentTarget.innerText)}
-                  onKeyDown={(e) => handleKeyDown(e, 'description')}
-                  onClick={() => !isEditingDescription && handleEditClick('description')}
-                  title={activeRun.description || 'Add a description...'}
-              >
-                  {activeRun.description || 'Add a description...'}
-              </span>
-               <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                      <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
-                      </TooltipTrigger>
-                      <TooltipContent><p>Edit Description</p></TooltipContent>
-                  </Tooltip>
-              </TooltipProvider>
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <Badge variant={
-                 activeRun?.status === 'completed' ? 'default'
-                 : activeRun?.status === 'failed' ? 'destructive'
-                 : activeRun?.status === 'running' ? 'secondary'
-                 : activeRun?.status === 'pending' ? 'secondary'
-                 : activeRun?.status === 'completed_with_errors' ? 'outline'
-                 : 'outline'
-              } className="capitalize">
-                {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                {(activeRun?.status ?? '').replace(/_/g, ' ')}
-              </Badge>
-              {(activeRun?.status === 'failed' || activeRun?.status === 'completed_with_errors') && (
+        <div className="p-3 rounded-md bg-muted/10 sticky top-0 bg-background/95 backdrop-blur z-10">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="flex flex-col flex-1 min-w-0">
+              <div className="flex items-center gap-1">
+                <span
+                    id="run-name-editable"
+                    className={`font-medium text-base px-1 truncate ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
+                    contentEditable={isEditingName ? 'true' : 'false'}
+                    suppressContentEditableWarning={true}
+                    onBlur={(e) => handleUpdate('name', e.currentTarget.innerText)}
+                    onKeyDown={(e) => handleKeyDown(e, 'name')}
+                    onClick={() => !isEditingName && handleEditClick('name')}
+                    title={activeRun.name}
+                >
+                    {activeRun.name}
+                </span>
                 <TooltipProvider delayDuration={100}>
                   <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          if (activeRun?.id) {
-                              retryJobFailures(activeRun.id);
-                          }
-                        }}
-                        disabled={isActuallyProcessing || !activeRun?.id}
-                        className="h-6 px-2"
-                      >
-                        <RefreshCw className={`h-3 w-3 mr-1 ${isRetryingJob ? 'animate-spin' : ''}`} />
-                        {activeRun?.status === 'failed' ? 'Retry Run' : 'Retry Failed Items'}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{activeRun?.status === 'failed' ? 'Restart the entire run from the beginning.' : 'Attempt to re-run only the annotations that failed.'}</p>
-                    </TooltipContent>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleEditClick('name')}><Pencil className="h-3 w-3" /></Button>
+                      </TooltipTrigger>
+                      <TooltipContent><p>Edit Run Name</p></TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+              </div>
+              <div className="flex items-center gap-1 mt-1">
+                 <span
+                    id="run-description-editable"
+                    className={`text-sm px-1 truncate ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
+                    contentEditable={isEditingDescription ? 'true' : 'false'}
+                    suppressContentEditableWarning={true}
+                    onBlur={(e) => handleUpdate('description', e.currentTarget.innerText)}
+                    onKeyDown={(e) => handleKeyDown(e, 'description')}
+                    onClick={() => !isEditingDescription && handleEditClick('description')}
+                    title={activeRun.description || 'Add a description...'}
+                >
+                    {activeRun.description || 'Add a description...'}
+                </span>
+                 <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => handleEditClick('description')}><Pencil className="h-3 w-3" /></Button>
+                        </TooltipTrigger>
+                        <TooltipContent><p>Edit Description</p></TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
+              </div>
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <Badge variant={
+                   activeRun?.status === 'completed' ? 'default'
+                   : activeRun?.status === 'failed' ? 'destructive'
+                   : activeRun?.status === 'running' ? 'secondary'
+                   : activeRun?.status === 'pending' ? 'secondary'
+                   : activeRun?.status === 'completed_with_errors' ? 'outline'
+                   : 'outline'
+                } className="capitalize">
+                  {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                  {(activeRun?.status ?? '').replace(/_/g, ' ')}
+                </Badge>
+                {(activeRun?.status === 'failed' || activeRun?.status === 'completed_with_errors') && (
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (activeRun?.id) {
+                                retryJobFailures(activeRun.id);
+                            }
+                          }}
+                          disabled={isActuallyProcessing || !activeRun?.id}
+                          className="h-6 px-2"
+                        >
+                          <RefreshCw className={`h-3 w-3 mr-1 ${isRetryingJob ? 'animate-spin' : ''}`} />
+                          <span className="hidden sm:inline">{activeRun?.status === 'failed' ? 'Retry Run' : 'Retry Failed Items'}</span>
+                          <span className="sm:hidden">Retry</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{activeRun?.status === 'failed' ? 'Restart the entire run from the beginning.' : 'Attempt to re-run only the annotations that failed.'}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
+              {activeRun?.status === 'failed' && activeRun.error_message && (
+                 <Alert variant="destructive" className="mt-2 text-xs p-2">
+                   <AlertCircle className="h-4 w-4" />
+                   <AlertTitle>Run Failed</AlertTitle>
+                   <AlertDescription>{activeRun.error_message}</AlertDescription>
+                 </Alert>
+              )}
+               {activeRun?.status === 'completed_with_errors' && (
+                 <Alert variant="default" className="mt-2 text-xs p-2 bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
+                   <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                   <AlertTitle className="text-yellow-800 dark:text-yellow-200">Completed with Errors</AlertTitle>
+                   <AlertDescription className="text-yellow-700 dark:text-yellow-300">
+                     Some annotations may have failed. {activeRun.error_message && `Error: ${activeRun.error_message}`}
+                   </AlertDescription>
+                 </Alert>
               )}
             </div>
-            {activeRun?.status === 'failed' && activeRun.error_message && (
-               <Alert variant="destructive" className="mt-2 text-xs p-2">
-                 <AlertCircle className="h-4 w-4" />
-                 <AlertTitle>Run Failed</AlertTitle>
-                 <AlertDescription>{activeRun.error_message}</AlertDescription>
-               </Alert>
-            )}
-             {activeRun?.status === 'completed_with_errors' && (
-               <Alert variant="default" className="mt-2 text-xs p-2 bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700">
-                 <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
-                 <AlertTitle className="text-yellow-800 dark:text-yellow-200">Completed with Errors</AlertTitle>
-                 <AlertDescription className="text-yellow-700 dark:text-yellow-300">
-                   Some annotations may have failed. {activeRun.error_message && `Error: ${activeRun.error_message}`}
-                 </AlertDescription>
-               </Alert>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => setIsSchemasDialogOpen(true)}
-              disabled={!activeRun?.id || runSchemes.length === 0}
-              className="border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10 text-sky-700 dark:text-sky-400 hover:bg-sky-100/50 dark:hover:bg-sky-900/20"
-            >
-              <Microscope className="h-4 w-4 mr-1" /> View Schemas ({runSchemes.length})
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => setIsAssetsDialogOpen(true)}
-              disabled={!activeRun?.id || currentRunAssets.length === 0}
-              className="border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 text-green-700 dark:text-green-400 hover:bg-green-100/50 dark:hover:bg-green-900/20"
-            >
-              <FileText className="h-4 w-4 mr-1" /> View Assets ({currentRunAssets.length})
-            </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => setIsDeleteDialogOpen(true)}
-              disabled={!activeRun?.id || isActuallyProcessing}
-            >
-              <Trash2 className="h-4 w-4 mr-1" /> Delete Run
-            </Button>
-            <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRun?.id}>
-              <XCircle className="h-4 w-4 mr-1" /> Clear Loaded Run
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setIsSchemasDialogOpen(true)}
+                disabled={!activeRun?.id || runSchemes.length === 0}
+                className="border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10 text-sky-700 dark:text-sky-400 hover:bg-sky-100/50 dark:hover:bg-sky-900/20"
+              >
+                <Microscope className="h-4 w-4 mr-1" /> 
+                <span className="hidden sm:inline">View Schemas ({runSchemes.length})</span>
+                <span className="sm:hidden">Schemas ({runSchemes.length})</span>
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setIsAssetsDialogOpen(true)}
+                disabled={!activeRun?.id || currentRunAssets.length === 0}
+                className="border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 text-green-700 dark:text-green-400 hover:bg-green-100/50 dark:hover:bg-green-900/20"
+              >
+                <FileText className="h-4 w-4 mr-1" /> 
+                <span className="hidden sm:inline">View Assets ({currentRunAssets.length})</span>
+                <span className="sm:hidden">Assets ({currentRunAssets.length})</span>
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => setIsDeleteDialogOpen(true)}
+                disabled={!activeRun?.id || isActuallyProcessing}
+              >
+                <Trash2 className="h-4 w-4 mr-1" /> 
+                <span className="hidden sm:inline">Delete Run</span>
+                <span className="sm:hidden">Delete</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={onClearRun} disabled={!activeRun?.id}>
+                <XCircle className="h-4 w-4 mr-1" /> 
+                <span className="hidden sm:inline">Clear Loaded Run</span>
+                <span className="sm:hidden">Clear</span>
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -582,13 +593,29 @@ export default function AnnotationRunner({
             <div className="flex items-center justify-center h-64 text-muted-foreground">Loading dashboard configuration...</div>
           ) : (
             /* Dynamic Grid Layout with Proper Positioning */
-            <div 
-              className="relative w-full overflow-hidden"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', // Use minmax for better responsive behavior
-                gap: 'clamp(0.5rem, 2vw, 1rem)', // Responsive gap
-                gridAutoRows: '150px', // Fixed height per grid unit - NO AUTO GROWTH!
+            <>
+      <style jsx>{`
+        @media (min-width: 768px) {
+          .dashboard-panel {
+            grid-column: calc(var(--grid-x) + 1) / span var(--grid-w);
+            grid-row: calc(var(--grid-y) + 1) / span var(--grid-h);
+            height: calc(var(--grid-h) * 150px) !important;
+            max-height: calc(var(--grid-h) * 150px) !important;
+          }
+        }
+        @media (max-width: 767px) {
+          .dashboard-panel {
+            grid-column: 1 !important;
+            grid-row: auto !important;
+            margin-bottom: 1rem;
+            height: auto !important;
+            max-height: none !important;
+          }
+        }
+      `}</style>
+              <div 
+                className="relative w-full overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 md:auto-rows-[150px]"
+                style={{
                 minHeight: (() => {
                   try {
                     if (!dashboardConfig?.panels || dashboardConfig.panels.length === 0) {
@@ -641,20 +668,22 @@ export default function AnnotationRunner({
                     <div 
                       key={panel.id}
                       className={cn(
-                        "relative transition-all duration-200 ease-in-out overflow-hidden",
+                        "dashboard-panel relative transition-all duration-200 ease-in-out overflow-hidden",
                         // Responsive behavior for smaller screens
                         "min-w-0 w-full h-full",
-                        // Stack panels on very small screens
-                        "max-sm:col-span-12"
+                        // Stack panels on mobile and small screens
+                        "max-md:col-span-12 max-md:row-span-1"
                       )}
                       style={{
-                        gridColumn: `${safeX + 1} / span ${safeW}`,
-                        gridRow: `${safeY + 1} / span ${safeH}`,
+                        // Mobile: Flexible height, Desktop: Fixed height based on grid
                         minHeight: `${safeH * 150}px`,
-                        maxHeight: `${safeH * 150}px`, // ENFORCE maximum height!
-                        height: `${safeH * 150}px`, // Explicit height constraint
-                        zIndex: 1
-                      }}
+                        zIndex: 1,
+                        // CSS custom properties for responsive behavior
+                        '--grid-x': safeX,
+                        '--grid-y': safeY,
+                        '--grid-w': safeW,
+                        '--grid-h': safeH,
+                      } as React.CSSProperties}
                     >
                       <PanelRenderer 
                         panel={panel}
@@ -696,7 +725,8 @@ export default function AnnotationRunner({
                   </div>
                 </div>
               )}
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>

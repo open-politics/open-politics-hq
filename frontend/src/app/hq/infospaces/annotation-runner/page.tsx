@@ -228,7 +228,9 @@ export default function AnnotationRunnerPage() {
       <AnnotationRunnerDock 
         allAssets={assets}
         allSchemes={schemas}
+        allRuns={runs}
         onCreateRun={handleCreateRun}
+        onSelectRun={handleSelectRunFromHistory}
         activeRunId={activeRun?.id || null}
         isCreatingRun={isCreatingRun}
         onClearRun={clearActiveRun}

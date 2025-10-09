@@ -418,21 +418,41 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
         </div>
 
         {/* Dashboard Grid */}
-        <div 
-          className="grid gap-6 auto-rows-[150px]"
-          style={{ 
-            gridTemplateColumns: `repeat(12, minmax(0, 1fr))`,
-          }}
-        >
-          {dashboardPanels.map((panel) => (
-            <div
-              key={panel.id}
-              className="transition-all duration-200 ease-in-out"
-              style={{
-                gridColumn: `span ${panel.gridPos.w}`,
-                gridRow: `span ${panel.gridPos.h}`,
-              }}
-            >
+        <>
+          <style jsx>{`
+            @media (min-width: 768px) {
+              .shared-dashboard-panel {
+                grid-column: calc(var(--grid-x) + 1) / span var(--grid-w);
+                grid-row: calc(var(--grid-y) + 1) / span var(--grid-h);
+                height: calc(var(--grid-h) * 150px) !important;
+                max-height: calc(var(--grid-h) * 150px) !important;
+              }
+            }
+            @media (max-width: 767px) {
+              .shared-dashboard-panel {
+                grid-column: 1 !important;
+                grid-row: auto !important;
+                margin-bottom: 1rem;
+                height: auto !important;
+                max-height: none !important;
+              }
+            }
+          `}</style>
+          <div 
+            className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 md:auto-rows-[150px]"
+          >
+            {dashboardPanels.map((panel) => (
+              <div
+                key={panel.id}
+                className="shared-dashboard-panel transition-all duration-200 ease-in-out"
+                style={{
+                  // CSS custom properties for responsive behavior
+                  '--grid-x': panel.gridPos.x,
+                  '--grid-y': panel.gridPos.y,
+                  '--grid-w': panel.gridPos.w,
+                  '--grid-h': panel.gridPos.h,
+                } as React.CSSProperties}
+              >
               <PanelRenderer
                 panel={panel}
                 allResults={formattedResults}
@@ -446,9 +466,10 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
                 onRetrySingleResult={undefined}
                 retryingResultId={undefined}
               />
-            </div>
-          ))}
-        </div>
+              </div>
+            ))}
+          </div>
+        </>
 
         {/* Footer */}
         <div className="mt-8 pt-6 border-t border-border/50">

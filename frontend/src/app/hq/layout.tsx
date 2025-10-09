@@ -12,7 +12,7 @@ import {
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
 import useAuth from "@/hooks/useAuth"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
-import { ArrowLeft, Menu as MenuIcon, ExternalLink } from "lucide-react"
+import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
 import { useEffect, useState, useRef } from 'react';
 // import createGlobe from "cobe";
 import { useTheme } from "next-themes"; 
@@ -67,6 +67,32 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
   // const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const breadcrumbs = useBreadcrumbs(activeInfospace);
+  const [isMobileBannerDismissed, setIsMobileBannerDismissed] = useState(false);
+  const mainContentRef = useRef<HTMLDivElement>(null);
+
+  // Keyboard shortcut to focus main content (Ctrl+F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'f' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        // Only prevent default if not in a search input context
+        const activeElement = document.activeElement as HTMLElement;
+        const isInSearchContext = activeElement?.tagName === 'INPUT' && 
+                                  (activeElement as HTMLInputElement).type === 'search';
+        
+        if (!isInSearchContext) {
+          e.preventDefault();
+          // Blur any focused element and focus the main content area
+          if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+          }
+          mainContentRef.current?.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Shift is now handled purely via CSS using peer state and CSS variables.
 
@@ -104,19 +130,21 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
         <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-2 px-4 relative z-10">
           <SidebarTrigger className="-ml-1" />
           <div className="h-4 w-[1px] mx-2 bg-border" />
-          <Breadcrumb>
-            <BreadcrumbList>
-              {breadcrumbs.map((item, idx) => (
-                <span key={item.href} className="flex items-center">
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href={item.href}>{item.label}</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  {idx < breadcrumbs.length - 1 && <BreadcrumbSeparator />}
-                </span>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
-          <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md">
+          <div className="flex-1 min-w-0">
+            <Breadcrumb>
+              <BreadcrumbList className="flex-wrap">
+                {breadcrumbs.map((item, idx) => (
+                  <span key={item.href} className="flex items-center">
+                    <BreadcrumbItem>
+                      <BreadcrumbLink href={item.href}>{item.label}</BreadcrumbLink>
+                    </BreadcrumbItem>
+                    {idx < breadcrumbs.length - 1 && <BreadcrumbSeparator />}
+                  </span>
+                ))}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md flex-shrink-0">
             <Link 
               href="https://docs.open-politics.org" 
               target="_blank" 
@@ -132,7 +160,39 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
             </span>
           </div>
         </header>
-        <main className="flex-1 h-full overflow-hidden relative z-10">
+        
+        {/* Mobile Info Banner */}
+        {isMobile && !isMobileBannerDismissed && (
+          <div className="sm:hidden mx-4 mb-2 relative">
+            <div className="flex items-center justify-between gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md">
+              <Link 
+                href="https://docs.open-politics.org" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-200 transition-colors font-medium flex-1 min-w-0"
+              >
+                <span className="text-xs truncate">📚 Updated docs</span>
+                <ExternalLink className="h-3 w-3 flex-shrink-0" />
+              </Link>
+              <span className="text-blue-400 text-xs">•</span>
+              <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">
+                v0.9.9
+              </span>
+              <button
+                onClick={() => setIsMobileBannerDismissed(true)}
+                className="ml-1 p-0.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200 transition-colors flex-shrink-0"
+                aria-label="Dismiss banner"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
+        <main 
+          ref={mainContentRef}
+          className="flex-1 h-full overflow-y-auto relative z-10 focus:outline-none" 
+          tabIndex={-1}
+        >
           {children}
         </main>
       </SidebarInset>

@@ -302,7 +302,7 @@ function SingleAnnotationResult({
   
   const isFailed = result.status === "failure";
 
-  const formatFieldValue = (rawValueObject: any, field: SchemaField, highlightValue: string | null): React.ReactNode => {
+  const formatFieldValue = (rawValueObject: any, field: SchemaField, highlightValue: string | null, context: string = 'default'): React.ReactNode => {
       // Use hierarchical field access with the full path (e.g., "document.topics")
       const valueForField = getAnnotationFieldValue(rawValueObject, field.name);
 
@@ -310,23 +310,29 @@ function SingleAnnotationResult({
            return <span className="text-gray-400 italic">N/A</span>;
       }
 
+      // Determine if we're in table context for compact rendering
+      const isTableContext = context === 'table';
+      
       // This switch logic needs to be updated to handle JSON schema types
       switch ((field as any).type) {
           case "integer":
-              return <Badge variant="outline" className="bg-green-200/40 text-black">{String(valueForField)}</Badge>; 
+              return <Badge variant="outline" className="bg-green-200/40 text-black text-[11px] px-1.5 py-0">{String(valueForField)}</Badge>; 
           case "string":
           case "boolean":
-              return <span>{String(valueForField)}</span>;
+              return <span className="text-xs">{String(valueForField)}</span>;
           case "array":
               if (Array.isArray(valueForField)) {
                   if (valueForField.length === 0) return <span className="text-gray-400 italic"></span>;
                   return (
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap gap-1 items-center">
                           {valueForField.map((item, i) => (
                               <Badge 
                                 key={i} 
                                 variant="secondary" 
-                                className={cn(highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background")}
+                                className={cn(
+                                  "text-[11px] px-2 py-0.5 whitespace-nowrap",
+                                  highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background"
+                                )}
                               >
                                   {typeof item === 'object' ? JSON.stringify(item) : String(item)}
                               </Badge>
@@ -334,12 +340,12 @@ function SingleAnnotationResult({
                       </div>
                   );
               }
-              return <span className="text-red-500 italic">Expected Array, got: {typeof valueForField}</span>;
+              return <span className="text-red-500 italic text-xs">Expected Array, got: {typeof valueForField}</span>;
           default:
               if (typeof valueForField === 'object' && valueForField !== null) {
-                  return <pre className="text-xs overflow-auto bg-muted/10 p-1 rounded">{JSON.stringify(valueForField, null, 2)}</pre>;
+                  return <pre className="text-[10px] overflow-auto bg-muted/10 p-1 rounded max-h-20">{JSON.stringify(valueForField, null, 2)}</pre>;
               }
-              return <span>{String(valueForField)}</span>;
+              return <span className="text-xs">{String(valueForField)}</span>;
       }
   };
 
@@ -414,12 +420,12 @@ function SingleAnnotationResult({
   }
 
   const containerClasses = cn(
-    'space-y-0 h-full flex flex-col',
+    'flex flex-col relative min-w-0',
     (renderContext === 'table') 
-      ? 'border-2 border-results p-2 rounded-md'
-      : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md'),
+      ? 'p-3 rounded-md min-h-[4rem] justify-start gap-1.5 bg-card/30 border border-border/30 hover:bg-card/50 hover:border-border/50 transition-all'
+      : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md h-full space-y-0'),
     // NEW: Add cursor pointer when clickable
-    onResultSelect && (renderContext === 'table' || renderContext === 'default') && 'cursor-pointer hover:bg-muted/30 transition-colors'
+    onResultSelect && (renderContext === 'table' || renderContext === 'default') && 'cursor-pointer'
   );
 
   const handleResultClick = (e: React.MouseEvent) => {
@@ -460,16 +466,18 @@ function SingleAnnotationResult({
           
           <div
             className={cn(
-              'transition-all duration-300 ease-in-out',
+              'transition-all duration-200 ease-in-out min-w-0',
               // Apply height restriction only when NOT expanded
               !effectiveExpanded && isPotentiallyLong && (
-                compact ? 'max-h-16 overflow-hidden' : 
-                renderContext === 'dialog' ? 'max-h-40 overflow-hidden' : 
-                renderContext === 'table' ? 'max-h-20 overflow-hidden' :
-                'max-h-24 overflow-hidden'
+                compact ? '' : // No max-height for compact mode (used in unfolded columns)
+                renderContext === 'dialog' ? 'max-h-32 overflow-hidden' : 
+                renderContext === 'table' ? 'max-h-[12rem] overflow-hidden' : // Generous height for grouped table view
+                ''
               ),
               // When expanded (either manually or via forceExpanded), allow much larger height with scrolling
-              effectiveExpanded && isPotentiallyLong && 'max-h-96 overflow-y-auto'
+              effectiveExpanded && isPotentiallyLong && 'max-h-[500px] overflow-y-auto',
+              // Add bottom padding in table context when potentially expandable to make room for expand bar
+              renderContext === 'table' && isPotentiallyLong && !forceExpanded && 'pb-4'
             )}
           >
             <div className={'space-y-0'}>
@@ -515,26 +523,37 @@ function SingleAnnotationResult({
                   })();
                   
                   return (
-                      <div key={idx} className={ 'space-y-1 border-b border-dashed border-border/30 last:border-b-0'}>
-                          <div>
-                            <div className="font-medium text-blue-400 italic inline-flex items-center mr-2">
-                              {formatFieldNameForDisplay(schemaField.name)}
-                              {justificationValue && (
+                      <div key={idx} className={cn(
+                        renderContext === 'table' ? 'space-y-1' : 'space-y-1',
+                        renderContext !== 'table' && 'border-b border-dashed border-border/30 last:border-b-0',
+                        renderContext === 'table' && idx > 0 && 'mt-3 pt-3 border-t border-dashed border-border/20'
+                      )}>
+                          <div className={cn(
+                            renderContext === 'table' ? 'flex flex-col gap-1.5' : ''
+                          )}>
+                            <div className={cn(
+                              "font-medium flex items-center gap-1",
+                              renderContext === 'table' ? 'text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold' : 'text-blue-400 italic inline-flex mr-2'
+                            )}>
+                              <span className={cn(renderContext === 'table' && 'break-all leading-tight')}>
+                                {formatFieldNameForDisplay(schemaField.name)}
+                              </span>
+                              {/* Only show justification tooltip in non-table contexts */}
+                              {justificationValue && renderContext !== 'table' && (
                                   <TooltipProvider delayDuration={100}>
                                     <Tooltip>
                                       <TooltipTrigger asChild>
                                           <HelpCircle 
-                                            className="h-3.5 w-3.5 ml-1.5 cursor-help opacity-70 hover:opacity-100 hover:text-primary transition-colors" 
+                                            className="ml-1 cursor-help opacity-60 hover:opacity-100 hover:text-primary transition-colors h-3.5 w-3.5" 
                                             onClick={(e) => {
                                               e.stopPropagation();
-                                              // NEW: Priority 1 - Call onFieldInteraction if available (for enhanced dialog with specific field)
+                                              // Priority 1: Call onFieldInteraction if available (for enhanced dialog with specific field)
                                               if (onFieldInteraction) {
                                                 onFieldInteraction(schemaField.name, justificationValue);
                                                 return;
                                               }
-                                              // NEW: Priority 2 - Fall back to onResultSelect with field context if available
-                                              if (onResultSelect && renderContext !== 'dialog' && renderContext !== 'table' && renderContext !== 'default') {
-                                                // Create a result object with field selection context
+                                              // Priority 2: Fall back to onResultSelect with field context
+                                              if (onResultSelect) {
                                                 const resultWithContext = {
                                                   ...result,
                                                   _selectedField: schemaField.name // Add field context
@@ -597,13 +616,34 @@ function SingleAnnotationResult({
                                   </TooltipProvider>
                               )}
                             </div>
-                            <div className="inline-block">{formatFieldValue(result.value, schemaField, highlightValue)}</div>
+                            <div className={cn(
+                              "leading-tight",
+                              renderContext === 'table' ? "block text-xs w-full" : "inline-block"
+                            )}>
+                              {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
+                            </div>
                           </div>
                       </div>
                   );
               })}
             </div>
           </div>
+          
+          {/* Sleek invisible expand/collapse area at the bottom */}
+          {isPotentiallyLong && !compact && !forceExpanded && renderContext === 'table' && (
+            <div 
+              className="absolute bottom-0 left-0 right-0 h-3 cursor-pointer group flex items-center justify-center hover:bg-accent/20 transition-colors rounded-b"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(!isExpanded);
+              }}
+              title={effectiveExpanded ? "Click to collapse" : "Click to expand"}
+            >
+              <div className="w-8 h-0.5 bg-muted-foreground/20 group-hover:bg-muted-foreground/40 rounded-full transition-colors" />
+            </div>
+          )}
+          
+          {/* Non-table contexts: show button or message */}
           {isPotentiallyLong && !compact && !forceExpanded && renderContext !== 'table' && (
             <Button
               variant="ghost"

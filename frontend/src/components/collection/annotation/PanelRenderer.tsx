@@ -982,8 +982,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     switch(panel.type) {
       case 'table':
         return (
-          <div className="h-full flex flex-col overflow-hidden">
-            <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="h-full flex flex-col overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <AssetDetailProvider>
                 <AnnotationResultsTable 
                   results={filteredResults as any} 
@@ -1021,8 +1021,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       
       case 'chart':
         return (
-          <div className="h-full flex flex-col overflow-hidden">
-            <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="h-full flex flex-col overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <AssetDetailProvider>
                 <AnnotationResultsChart
                   results={filteredResults}
@@ -1050,13 +1050,13 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       
       case 'pie':
         return (
-          <div className="h-full flex flex-col space-y-2 overflow-hidden">
+          <div className="h-full flex flex-col space-y-2 overflow-y-auto">
             {!isCollapsed && (
               <div className="flex-shrink-0">
                 {/* Removed embedded VariableSplittingControls */}
               </div>
             )}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <AssetDetailProvider>
                 <AnnotationResultsPieChart
                 results={filteredResults}
@@ -1082,7 +1082,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       
       case 'map':
         return (
-          <div className="h-full flex flex-col space-y-2 overflow-hidden">
+          <div className="h-full flex flex-col space-y-2 overflow-y-auto">
             {!isCollapsed && (
               <div className="flex-shrink-0 space-y-2">
                 <AnnotationMapControls
@@ -1105,7 +1105,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                 />
               </div>
             )}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <AssetDetailProvider>
                 <AnnotationResultsMap
                   points={geocodedPoints}
@@ -1140,13 +1140,13 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       
       case 'graph':
         return (
-          <div className="h-full flex flex-col space-y-2 overflow-hidden">
+          <div className="h-full flex flex-col space-y-2 overflow-y-auto">
             {!isCollapsed && (
               <div className="flex-shrink-0">
                 {/* Removed embedded VariableSplittingControls */}
               </div>
             )}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <AssetDetailProvider>
                 <AnnotationResultsGraph
                   results={filteredResults}
@@ -1178,7 +1178,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   return (
     <Card 
       className={cn(
-        "flex flex-col relative group transition-all duration-200 h-full w-full overflow-hidden",
+        "flex flex-col relative group transition-all duration-200 h-full w-full overflow-y-auto",
         // Remove min-height constraints - let grid system control height
         isDragging && "opacity-50 scale-95 rotate-1",
         "hover:shadow-md transition-shadow"
@@ -1287,7 +1287,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       )}
 
-      <CardHeader className="flex flex-row items-start justify-between border-b p-3 space-y-0 flex-shrink-0">
+      <CardHeader className="flex flex-row items-start justify-between border-b p-2 sm:p-3 space-y-0 flex-shrink-0">
         <div className="flex-1 space-y-2 min-w-0">
           {/* Editable Name */}
           <div className="flex items-center gap-2 min-w-0">
@@ -1297,7 +1297,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   value={editingName}
                   onChange={(e) => setEditingName(e.target.value)}
                   onKeyDown={handleNameKeyDown}
-                  className="text-base font-semibold h-8 flex-1 min-w-0"
+                  className="text-sm sm:text-base font-semibold h-7 sm:h-8 flex-1 min-w-0"
                   placeholder="Panel name"
                   autoFocus
                 />
@@ -1310,7 +1310,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             ) : (
               <div className="flex items-center gap-2 flex-1 group min-w-0">
-                <CardTitle className="text-base flex-1 truncate">{panel.name}</CardTitle>
+                  <CardTitle className="text-sm sm:text-base flex-1 truncate">{panel.name}</CardTitle>
                 <Button 
                   size="icon" 
                   variant="ghost" 
@@ -1376,7 +1376,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
 
         {/* Panel Controls */}
-        <div className="flex items-start gap-1 ml-2 flex-shrink-0">
+        <div className="flex items-start gap-1 ml-1 sm:ml-2 flex-shrink-0">
           {/* Collapse/Expand Toggle */}
           <Button 
             variant="ghost" 
@@ -1394,7 +1394,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                 <Settings className="h-3 w-3" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 p-3" align="end">
+            <PopoverContent className="w-80 p-3" align="end" side="bottom">
               <div className="space-y-4">
                 <h4 className="font-medium text-sm">Panel Layout</h4>
                 
@@ -1472,10 +1472,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       </CardHeader>
       
-      <CardContent className="flex-1 flex flex-col gap-4 p-3 min-h-0 overflow-hidden">
+      <CardContent className="flex-1 flex flex-col gap-2 sm:gap-4 p-2 sm:p-3 min-h-0 overflow-y-auto">
         {/* Unified Filters & Settings Section - Only this collapses */}
         {!isCollapsed && (
-          <div className="border-b pb-4 flex-shrink-0">
+          <div className="border-b pb-2 sm:pb-4 flex-shrink-0">
             <UnifiedFilterControls 
               filterSet={panel.filters || { logic: 'and', rules: [] }}
               onFilterSetChange={handleFilterChange}
@@ -1490,7 +1490,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         )}
         
         {/* Main Content - Always visible with proper overflow handling */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {renderPanelContent()}
         </div>
       </CardContent>

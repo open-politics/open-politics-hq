@@ -59,8 +59,12 @@ export const useAssetStore = create<AssetState>((set, get) => ({
 
   fetchAssets: async () => {
     const { activeInfospace } = useInfospaceStore.getState();
-    if (!activeInfospace?.id) return;
+    if (!activeInfospace?.id) {
+      console.log('[AssetStore] No active infospace, skipping asset fetch');
+      return;
+    }
 
+    console.log('[AssetStore] Fetching assets for infospace:', activeInfospace.id);
     set({ isLoading: true, error: null });
     try {
       const response: AssetsOut = await AssetsService.listAssets({
@@ -68,9 +72,15 @@ export const useAssetStore = create<AssetState>((set, get) => ({
         limit: 1000,
       });
 
+      console.log('[AssetStore] Assets fetched successfully:', {
+        count: response.data.length,
+        assetIds: response.data.map(a => a.id),
+        infospaceId: activeInfospace.id
+      });
+
       set({ assets: response.data, isLoading: false });
     } catch (err: any) {
-      console.error("Error fetching assets:", err);
+      console.error("[AssetStore] Error fetching assets:", err);
       const errorMsg = err.body?.detail || err.message || "Failed to fetch assets";
       set({ error: errorMsg, isLoading: false, assets: [] });
       toast.error(errorMsg);

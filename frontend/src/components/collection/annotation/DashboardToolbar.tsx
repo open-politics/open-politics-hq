@@ -178,34 +178,35 @@ export function DashboardToolbar({
   }
 
   return (
-    <div className="flex items-center justify-between p-4 bg-card rounded-lg border shadow-sm">
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Grid3X3 className="h-5 w-5 text-muted-foreground" />
-          <div>
-            <h3 className="font-semibold text-sm">{dashboardConfig.name}</h3>
+    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 p-4 bg-card rounded-lg border shadow-sm">
+      <div className="flex items-center gap-4 min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <Grid3X3 className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+          <div className="min-w-0 flex-1">
+            <h3 className="font-semibold text-sm truncate">{dashboardConfig.name}</h3>
             {dashboardConfig.description && (
-              <p className="text-xs text-muted-foreground">{dashboardConfig.description}</p>
+              <p className="text-xs text-muted-foreground truncate">{dashboardConfig.description}</p>
             )}
           </div>
         </div>
         
         {isDirty && (
-          <div className="flex items-center gap-2 text-amber-600">
+          <div className="flex items-center gap-2 text-amber-600 flex-shrink-0">
             <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-            <span className="text-xs font-medium">Unsaved changes</span>
+            <span className="text-xs font-medium whitespace-nowrap">Unsaved changes</span>
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
 
         {/* Add Individual Panels */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Panel
+              <Plus className="h-4 w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">Add Panel</span>
+              <span className="sm:hidden">Add</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
@@ -245,10 +246,11 @@ export function DashboardToolbar({
             onClick={onCompactLayout}
             variant="outline" 
             size="sm"
-            className="min-w-[100px]"
+            className="min-w-[80px] sm:min-w-[100px]"
           >
-            <Layers className="h-4 w-4 mr-2" />
-            Compact
+            <Layers className="h-4 w-4 mr-1 sm:mr-2" />
+            <span className="hidden sm:inline">Compact</span>
+            <span className="sm:hidden">Compact</span>
           </Button>
         )}
 
@@ -259,17 +261,19 @@ export function DashboardToolbar({
           onClick={handleSave} 
           disabled={!isDirty || isSaving}
           size="sm"
-          className="min-w-[80px]"
+          className="min-w-[70px] sm:min-w-[80px]"
         >
           {isSaving ? (
-            <span className="flex items-center gap-2">
+            <span className="flex items-center gap-1 sm:gap-2">
               <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              Saving...
+              <span className="hidden sm:inline">Saving...</span>
+              <span className="sm:hidden">Save...</span>
             </span>
           ) : (
-            <span className="flex items-center gap-2">
+            <span className="flex items-center gap-1 sm:gap-2">
               <Save className="h-4 w-4" />
-              Save
+              <span className="hidden sm:inline">Save</span>
+              <span className="sm:hidden">Save</span>
             </span>
           )}
         </Button>
