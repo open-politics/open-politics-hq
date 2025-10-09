@@ -27,13 +27,13 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
     
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
         except ImportError:
             raise ImportError("OpenAI SDK not installed. Run: pip install openai")
         
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url
         )
@@ -202,7 +202,7 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             
             # Otherwise, do a simple single-shot generation
             logger.info("No tool executor or tools - doing single-shot generation")
-            response = self.client.responses.create(**request_params)
+            response = await self.client.responses.create(**request_params)
             
             # Check response status and handle errors
             logger.info(f"Response status: {response.status}")
@@ -302,7 +302,7 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             logger.debug(f"Request has {len(conversation_input)} input items")
             
             # Make the API call
-            response = self.client.responses.create(**loop_params)
+            response = await self.client.responses.create(**loop_params)
             
             # Check response status and handle errors
             logger.info(f"Tool loop iteration {iteration}: Response id={response.id}, status: {response.status}")
@@ -480,7 +480,7 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
         """Handle streaming generation using the Responses API."""
         try:
             logger.debug(f"Creating streaming response with params: {request_params}")
-            response_stream = self.client.responses.create(**request_params)
+            response_stream = await self.client.responses.create(**request_params)
             
             accumulated_content = ""
             model_used = request_params["model"]
@@ -543,7 +543,7 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                     del fallback_params["reasoning"]
                 
                 try:
-                    response_stream = self.client.responses.create(**fallback_params)
+                    response_stream = await self.client.responses.create(**fallback_params)
                     
                     accumulated_content = ""
                     model_used = fallback_params["model"]

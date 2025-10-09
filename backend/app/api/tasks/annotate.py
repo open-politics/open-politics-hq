@@ -520,49 +520,53 @@ async def process_single_asset_schema(
     Returns:
         Dict with processing results including success status, annotations, justifications, and errors
     """
-    if semaphore:
-        await semaphore.acquire()
+    schema = schema_info["schema"]
+    schema_structure = schema_info["schema_structure"]
+    OutputModelClass = schema_info["output_model_class"]
+    final_schema_instructions = schema_info["final_instructions"]
+    
+    result = {
+        "success": False,
+        "asset_id": asset.id,
+        "schema_id": schema.id,
+        "annotations": [],
+        "justifications": [],
+        "error": None
+    }
     
     try:
-        schema = schema_info["schema"]
-        schema_structure = schema_info["schema_structure"]
-        OutputModelClass = schema_info["output_model_class"]
-        final_schema_instructions = schema_info["final_instructions"]
+        logger.debug(f"Task: Processing Asset {asset.id} with Schema {schema.id} for Run {run.id}")
         
-        result = {
-            "success": False,
-            "asset_id": asset.id,
-            "schema_id": schema.id,
-            "annotations": [],
-            "justifications": [],
-            "error": None
-        }
+        # Assemble multimodal context for this asset (no semaphore needed - this is just local processing)
+        text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
+            asset, run_config, session, storage_provider_instance
+        )
+        
+        full_provider_config_for_classify = {**run_config, **provider_specific_config}
+        # Pass thinking_config from run_config to provider_specific_config if not already there.
+        if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
+            provider_specific_config["thinking_config"] = run_config["thinking_config"]
+
+        logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
+
+        # Call the model registry for structured classification
+        # Get the model name from run config (frontend sends as ai_model) or use default
+        model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+        thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
+        
+        # Extract runtime API keys from run configuration (passed from frontend)
+        runtime_api_keys = run_config.get("api_keys")
+        
+        logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
+        
+        # Acquire semaphore ONLY for the actual API call to limit concurrent external requests.
+        # Critical optimization: We hold the semaphore ONLY during the API call, not during
+        # pre-processing (context assembly) or post-processing (result parsing, DB operations).
+        # This allows many tasks to prep/process simultaneously while rate-limiting actual API calls.
+        if semaphore:
+            await semaphore.acquire()
         
         try:
-            logger.debug(f"Task: Processing Asset {asset.id} with Schema {schema.id} for Run {run.id}")
-            
-            # Assemble multimodal context for this asset
-            text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
-                asset, run_config, session, storage_provider_instance
-            )
-            
-            full_provider_config_for_classify = {**run_config, **provider_specific_config}
-            # Pass thinking_config from run_config to provider_specific_config if not already there.
-            if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
-                provider_specific_config["thinking_config"] = run_config["thinking_config"]
-
-            logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
-
-            # Call the model registry for structured classification
-            # Get the model name from run config (frontend sends as ai_model) or use default
-            model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
-            thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
-            
-            # Extract runtime API keys from run configuration (passed from frontend)
-            runtime_api_keys = run_config.get("api_keys")
-            
-            logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
-            
             provider_response = await model_registry.classify(
                 text_content=text_content_for_provider,
                 schema=OutputModelClass.model_json_schema(),
@@ -573,90 +577,90 @@ async def process_single_asset_schema(
                 **{k: v for k, v in full_provider_config_for_classify.items() 
                    if k not in ['thinking_config', 'model_name', 'api_keys']}
             )
+        finally:
+            # Release semaphore immediately after API call completes
+            if semaphore:
+                semaphore.release()
+        
+        # Convert to envelope format for compatibility (after semaphore is released)
+        try:
+            parsed_data = json.loads(provider_response.content) if provider_response.content else {}
             
-            # Convert to envelope format for compatibility
-            try:
-                parsed_data = json.loads(provider_response.content) if provider_response.content else {}
+            # Check if we got empty content but a successful response
+            if not provider_response.content or provider_response.content.strip() == "":
+                logger.warning(f"Provider returned empty content for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
+                logger.warning(f"Model used: {provider_response.model_used}")
+                logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
                 
-                # Check if we got empty content but a successful response
-                if not provider_response.content or provider_response.content.strip() == "":
-                    logger.warning(f"Provider returned empty content for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
-                    logger.warning(f"Model used: {provider_response.model_used}")
-                    logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
-                    
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse provider response JSON for Asset {asset.id}, Schema {schema.id}, Run {run.id}: {e}")
-                logger.error(f"Raw response content: {provider_response.content}")
-                raise Exception(f"Invalid JSON response from provider: {str(e)}")
-            
-            provider_response_envelope = {
-                "data": parsed_data,
-                "_model_name": provider_response.model_used,
-                "_thinking_trace": provider_response.thinking_trace
-            }
-            
-            # DEBUG: Log provider response details
-            logger.info(f"DEBUG: Provider response for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
-            logger.info(f"DEBUG: Raw provider response content: {provider_response.content}")
-            logger.info(f"DEBUG: Parsed envelope data: {provider_response_envelope.get('data')}")
-            logger.info(f"DEBUG: Schema structure being used: {schema_structure}")
-            
-            # Demultiplex results to create annotations
-            created_annotations_for_asset = await demultiplex_results(
-                result=provider_response_envelope.get("data", provider_response_envelope),
-                schema_structure=schema_structure,
-                parent_asset=asset,
-                schema=schema,
-                run=run,
-                db=session
-            )
-            
-            result["annotations"] = created_annotations_for_asset
-            
-            # Handle _thinking_trace if present
-            thinking_trace_content = provider_response_envelope.get("_thinking_trace")
-            include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse provider response JSON for Asset {asset.id}, Schema {schema.id}, Run {run.id}: {e}")
+            logger.error(f"Raw response content: {provider_response.content}")
+            raise Exception(f"Invalid JSON response from provider: {str(e)}")
+        
+        provider_response_envelope = {
+            "data": parsed_data,
+            "_model_name": provider_response.model_used,
+            "_thinking_trace": provider_response.thinking_trace
+        }
+        
+        # DEBUG: Log provider response details
+        logger.info(f"DEBUG: Provider response for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
+        logger.info(f"DEBUG: Raw provider response content: {provider_response.content}")
+        logger.info(f"DEBUG: Parsed envelope data: {provider_response_envelope.get('data')}")
+        logger.info(f"DEBUG: Schema structure being used: {schema_structure}")
+        
+        # Demultiplex results to create annotations
+        created_annotations_for_asset = await demultiplex_results(
+            result=provider_response_envelope.get("data", provider_response_envelope),
+            schema_structure=schema_structure,
+            parent_asset=asset,
+            schema=schema,
+            run=run,
+            db=session
+        )
+        
+        result["annotations"] = created_annotations_for_asset
+        
+        # Handle _thinking_trace if present
+        thinking_trace_content = provider_response_envelope.get("_thinking_trace")
+        include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
 
-            if include_thoughts and thinking_trace_content:
-                # Find the parent document annotation
-                parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == asset.id), None)
-                if parent_doc_annotation:
-                    thinking_justification = Justification(
-                        annotation_id=None,  # Will be set after annotation is saved
-                        field_name="_thinking_trace",
-                        reasoning=thinking_trace_content,
-                        model_name=provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
-                        evidence_payload={"trace_type": "provider_summary"}
-                    )
-                    result["justifications"] = [thinking_justification]
-                    result["parent_annotation_ref"] = parent_doc_annotation  # Reference for later ID assignment
-            
-            result["success"] = True
-            logger.debug(f"Task: Successfully processed Asset {asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
-            
-        except Exception as e_classify:
-            error_msg = f"Asset {asset.id}/Schema {schema.id} classification error: {str(e_classify)}"
-            logger.error(f"Task: Error classifying Asset {asset.id} with Schema {schema.id} for Run {run.id}: {e_classify}", exc_info=True)
-            
-            # Create a FAILED annotation for tracking
-            failed_ann = Annotation(
-                asset_id=asset.id,
-                schema_id=schema.id,
-                run_id=run.id,
-                value={"error": str(e_classify), "details": traceback.format_exc()},
-                status=ResultStatus.FAILED,
-                infospace_id=run.infospace_id,
-                user_id=run.user_id
-            )
-            result["annotations"] = [failed_ann]
-            result["error"] = error_msg
-            result["success"] = False
+        if include_thoughts and thinking_trace_content:
+            # Find the parent document annotation
+            parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == asset.id), None)
+            if parent_doc_annotation:
+                thinking_justification = Justification(
+                    annotation_id=None,  # Will be set after annotation is saved
+                    field_name="_thinking_trace",
+                    reasoning=thinking_trace_content,
+                    model_name=provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
+                    evidence_payload={"trace_type": "provider_summary"}
+                )
+                result["justifications"] = [thinking_justification]
+                result["parent_annotation_ref"] = parent_doc_annotation  # Reference for later ID assignment
         
-        return result
+        result["success"] = True
+        logger.debug(f"Task: Successfully processed Asset {asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
         
-    finally:
-        if semaphore:
-            semaphore.release()
+    except Exception as e_classify:
+        error_msg = f"Asset {asset.id}/Schema {schema.id} classification error: {str(e_classify)}"
+        logger.error(f"Task: Error classifying Asset {asset.id} with Schema {schema.id} for Run {run.id}: {e_classify}", exc_info=True)
+        
+        # Create a FAILED annotation for tracking
+        failed_ann = Annotation(
+            asset_id=asset.id,
+            schema_id=schema.id,
+            run_id=run.id,
+            value={"error": str(e_classify), "details": traceback.format_exc()},
+            status=ResultStatus.FAILED,
+            infospace_id=run.infospace_id,
+            user_id=run.user_id
+        )
+        result["annotations"] = [failed_ann]
+        result["error"] = error_msg
+        result["success"] = False
+    
+    return result
 
 async def process_assets_parallel(
     assets_map: Dict[int, Asset],
