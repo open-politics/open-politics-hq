@@ -551,6 +551,42 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                                 return { w: 6, h: 4 }; // Default medium size
                         }
                     };
+                    
+                    // Determine default settings based on panel type
+                    const getDefaultSettings = (type: string) => {
+                        switch (type) {
+                            case 'chart':
+                                return {
+                                    selectedTimeInterval: 'day',
+                                    aggregateSources: true,
+                                    selectedSourceIds: [],
+                                    timeAxisConfig: {
+                                        type: 'default' as const,
+                                        schemaId: null,
+                                        fieldKey: null,
+                                        timeFrame: {
+                                            enabled: false
+                                        }
+                                    }
+                                };
+                            case 'pie':
+                                return {
+                                    aggregateSources: true,
+                                    selectedSourceIds: []
+                                };
+                            case 'table':
+                                return {};
+                            case 'map':
+                                return {
+                                    aggregateSources: true,
+                                    selectedSourceIds: []
+                                };
+                            case 'graph':
+                                return {};
+                            default:
+                                return {};
+                        }
+                    };
 
                     const defaultSize = getDefaultSize(panelData.type);
                     const position = findBestPosition(defaultSize.w, defaultSize.h);
@@ -562,7 +598,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                         description: panelData.description,
                         type: panelData.type,
                         collapsed: false,
-                        settings: {},
+                        settings: getDefaultSettings(panelData.type),
                         filters: {
                             logic: 'and',
                             rules: [],

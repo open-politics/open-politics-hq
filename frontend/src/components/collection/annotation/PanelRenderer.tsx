@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, ChevronUp, ChevronDown, Grip, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, GripVertical } from 'lucide-react';
+import { X, ChevronsUp, ChevronsDownUp, ChevronsUpDown, Grip, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, GripVertical } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1287,7 +1287,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       )}
 
-      <CardHeader className="flex flex-row items-start justify-between border-b p-2 sm:p-3 space-y-0 flex-shrink-0">
+      <CardHeader className="flex flex-row items-start justify-between border-b p-2 pb-0 space-y-0 flex-shrink-0">
         <div className="flex-1 space-y-2 min-w-0">
           {/* Editable Name */}
           <div className="flex items-center gap-2 min-w-0">
@@ -1384,7 +1384,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             className="h-6 w-6 opacity-60 hover:opacity-100" 
             onClick={handleToggleCollapse}
           >
-            {isCollapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+            {isCollapsed ? <ChevronsDownUp className="h-3 w-3" /> : <ChevronsUpDown className="h-3 w-3" />}
           </Button>
 
           {/* Layout Controls */}
@@ -1472,10 +1472,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       </CardHeader>
       
-      <CardContent className="flex-1 flex flex-col gap-2 sm:gap-4 p-2 sm:p-3 min-h-0 overflow-y-auto">
+      <CardContent className="flex-1 flex flex-col gap-2 p-2 min-h-0 overflow-y-auto">
         {/* Unified Filters & Settings Section - Only this collapses */}
         {!isCollapsed && (
-          <div className="border-b pb-2 sm:pb-4 flex-shrink-0">
+          <div className="border-b pb-2 flex-shrink-0">
             <UnifiedFilterControls 
               filterSet={panel.filters || { logic: 'and', rules: [] }}
               onFilterSetChange={handleFilterChange}

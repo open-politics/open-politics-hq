@@ -607,14 +607,14 @@ export default function AnnotationRunner({
           .dashboard-panel {
             grid-column: 1 !important;
             grid-row: auto !important;
-            margin-bottom: 1rem;
             height: auto !important;
-            max-height: none !important;
+            max-height: 400px !important;
+            min-height: 250px !important;
           }
         }
       `}</style>
               <div 
-                className="relative w-full overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 md:auto-rows-[150px]"
+                className="relative w-full overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-2 md:auto-rows-[150px]"
                 style={{
                 minHeight: (() => {
                   try {

@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal, Minimize2 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -127,6 +127,7 @@ export default function AnnotationRunnerDock({
 }: AnnotationRunnerDockProps) {
   
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [selectedAssetItems, setSelectedAssetItems] = useState<Set<string>>(new Set());
   const [selectedSchemeIds, setSelectedSchemeIds] = useState<Set<number>>(new Set());
   const [newRunName, setNewRunName] = useState<string>('');
@@ -350,6 +351,12 @@ export default function AnnotationRunnerDock({
         setIsExpanded(!isExpanded);
       }
       
+      // Ctrl+M to minimize/restore dock
+      if (e.key === 'm' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setIsMinimized(!isMinimized);
+      }
+      
       // Ctrl+N to clear/new run
       if (e.key === 'n' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
         // Only trigger if we're not in an input/textarea
@@ -407,120 +414,157 @@ export default function AnnotationRunnerDock({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded, activeRunId, onClearRun, sortedRuns, onSelectRun]);
+  }, [isExpanded, isMinimized, activeRunId, onClearRun, sortedRuns, onSelectRun]);
 
   return (
     <TooltipProvider>
       <div className={cn(
-        "fixed bottom-4 left-1/2 transform -translate-x-1/2 flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-xl border",
-        isExpanded 
-          ? "w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
-          : "w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[400px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20" 
+        "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-xl border",
+        isMinimized 
+          ? "bottom-4 right-4 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
+          : isExpanded 
+            ? "bottom-4 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
+            : "bottom-4 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[400px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
       )}>
-        <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-2.5 sm:py-3 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl border-b" onClick={() => setIsExpanded(!isExpanded)}>
-          {/* Mobile: Just show icon */}
-          <div className="sm:hidden flex items-center justify-center w-full h-full">
+        <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-2.5 sm:py-3 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl border-b" onClick={() => {
+          if (isMinimized) {
+            setIsMinimized(false);
+          } else {
+            setIsExpanded(!isExpanded);
+          }
+        }}>
+          {/* Mobile or Minimized: Just show icon */}
+          <div className={cn(
+            "flex items-center justify-center w-full h-full",
+            isMinimized ? "sm:flex" : "sm:hidden"
+          )}>
             <div className="p-1.5 flex items-center justify-center rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
               <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
             </div>
           </div>
           
-          {/* Desktop: Full layout */}
-          <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0">
-            <div className="p-2 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
-              <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
-              <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate mb-0.5">Annotation Runner</h3>
-              <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
-              </p>
-            </div>
-            
-            {/* Keyboard shortcuts section - only show when expanded */}
-            {isExpanded && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border/50">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-muted-foreground font-medium">Toggle</span>
-                  <KbdGroup>
-                    <Kbd className="h-5 px-1.5">Ctrl</Kbd>
-                    <Kbd className="h-5 px-1.5">O</Kbd>
-                  </KbdGroup>
+          {/* Desktop: Full layout (when not minimized) */}
+          {!isMinimized && (
+            <>
+              <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0">
+                <div className="p-2 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+                  <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
+                  <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
                 </div>
-                <div className="w-px h-4 bg-border"></div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-muted-foreground font-medium">New</span>
-                  <KbdGroup>
-                    <Kbd className="h-5 px-1.5">Ctrl</Kbd>
-                    <Kbd className="h-5 px-1.5">N</Kbd>
-                  </KbdGroup>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate mb-0.5">Annotation Runner</h3>
+                  <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                    {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
+                  </p>
                 </div>
-                <div className="w-px h-4 bg-border"></div>
+                
+                {/* Keyboard shortcuts section - only show when expanded */}
+                {isExpanded && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border/50">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground font-medium">Toggle</span>
+                      <KbdGroup>
+                        <Kbd className="h-5 px-1.5">Ctrl</Kbd>
+                        <Kbd className="h-5 px-1.5">O</Kbd>
+                      </KbdGroup>
+                    </div>
+                    <div className="w-px h-4 bg-border"></div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground font-medium">New</span>
+                      <KbdGroup>
+                        <Kbd className="h-5 px-1.5">Ctrl</Kbd>
+                        <Kbd className="h-5 px-1.5">N</Kbd>
+                      </KbdGroup>
+                    </div>
+                    <div className="w-px h-4 bg-border"></div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted">
+                          <span className="font-medium">More...</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="p-3">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground w-20">Minimize</span>
+                            <KbdGroup>
+                              <Kbd>Ctrl</Kbd>
+                              <Kbd>M</Kbd>
+                            </KbdGroup>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground w-20">Prev Run</span>
+                            <KbdGroup>
+                              <Kbd>Ctrl</Kbd>
+                              <Kbd>[</Kbd>
+                            </KbdGroup>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground w-20">Next Run</span>
+                            <KbdGroup>
+                              <Kbd>Ctrl</Kbd>
+                              <Kbd>]</Kbd>
+                            </KbdGroup>
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
+                
+                {activeRunId && (
+                  <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800">
+                    Run #{activeRunId}
+                  </Badge>
+                )}
+              </div>
+              
+              {/* Desktop: Action buttons */}
+              <div className="hidden sm:flex items-center gap-2">
+                {activeRunId && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={(e) => { e.stopPropagation(); onClearRun(); }}
+                    className="h-8 px-3 hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                    Clear
+                  </Button>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded hover:bg-muted">
-                      <span className="font-medium">More...</span>
-                    </button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-8 w-8 p-0 hover:bg-muted/50" 
+                      onClick={(e) => { e.stopPropagation(); setIsMinimized(true); }}
+                    >
+                      <Minimize2 className="h-4 w-4" />
+                    </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom" className="p-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-muted-foreground w-20">Prev Run</span>
-                        <KbdGroup>
-                          <Kbd>Ctrl</Kbd>
-                          <Kbd>[</Kbd>
-                        </KbdGroup>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-muted-foreground w-20">Next Run</span>
-                        <KbdGroup>
-                          <Kbd>Ctrl</Kbd>
-                          <Kbd>]</Kbd>
-                        </KbdGroup>
-                      </div>
-                    </div>
+                  <TooltipContent side="top">
+                    <p className="text-xs">Minimize (Ctrl+M)</p>
                   </TooltipContent>
                 </Tooltip>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8 p-0 hover:bg-muted/50" 
+                  onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronUp className="h-4 w-4" />
+                  )}
+                </Button>
               </div>
-            )}
-            
-            {activeRunId && (
-              <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800">
-                Run #{activeRunId}
-              </Badge>
-            )}
-          </div>
-          
-          {/* Desktop: Action buttons */}
-          <div className="hidden sm:flex items-center gap-2">
-            {activeRunId && (
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={(e) => { e.stopPropagation(); onClearRun(); }}
-                className="h-8 px-3 hover:bg-destructive/10 hover:text-destructive"
-              >
-                <XCircle className="h-3.5 w-3.5 mr-1.5" />
-                Clear
-              </Button>
-            )}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8 p-0 hover:bg-muted/50" 
-              onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
-            >
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronUp className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
+            </>
+          )}
         </div>
 
-        {isExpanded && (
+        {isExpanded && !isMinimized && (
           <div className="p-3 sm:p-4 max-h-[70vh] sm:max-h-[75vh] overflow-y-auto">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
                                     <div className="space-y-3">

@@ -255,19 +255,19 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
 
   return (
     <div className="absolute top-0 right-0 w-1/2 h-full bg-background/25 backdrop-blur border-l border-border z-10 flex flex-col">
-      <div className="flex-shrink-0 border-b border-border p-3">
-        <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <MapPin className="h-4 w-4 text-primary flex-shrink-0" />
-              <h3 className="font-medium text-sm truncate">{point.locationString}</h3>
-            </div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <FileText className="h-3 w-3" />
-              <span>{point.documentIds.length} document{point.documentIds.length === 1 ? '' : 's'}</span>
+      <div className="flex-shrink-0 border-b border-border px-2 py-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <MapPin className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h3 className="font-medium text-xs truncate">{point.locationString}</h3>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <FileText className="h-3 w-3" />
+                <span>{point.documentIds.length} doc{point.documentIds.length === 1 ? '' : 's'}</span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0">
             {/* NEW: Field Configuration Button */}
             <Popover>
               <PopoverTrigger asChild>
@@ -325,9 +325,9 @@ const InlineSidePanel: React.FC<InlineSidePanelProps> = ({
         </div>
       </div>
       
-      <div className="flex-1 overflow-auto p-3">
+      <div className="flex-1 overflow-auto p-2">
         {assetGroups.size > 0 ? (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {Array.from(assetGroups.values()).map((assetGroup, index) => {
               if (index > 0) {
                 return (
@@ -1169,17 +1169,19 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       )}
 
       {/* Inline Side Panel */}
-      <InlineSidePanel
-        point={selectedPoint}
-        results={resultsForMap}
-        schemas={schemas}
-        onClose={handleClosePopup}
-        onPointClick={onPointClick}
-        assets={assets}
-        selectedFieldsPerScheme={selectedFieldsPerScheme}
-        onSelectedFieldsChange={onSelectedFieldsChange}
-        onResultSelect={onResultSelect}
-      />
+      {selectedPoint && (
+        <InlineSidePanel
+          point={selectedPoint}
+          results={resultsForMap}
+          schemas={schemas}
+          onClose={handleClosePopup}
+          onPointClick={onPointClick}
+          assets={assets}
+          selectedFieldsPerScheme={selectedFieldsPerScheme}
+          onSelectedFieldsChange={onSelectedFieldsChange}
+          onResultSelect={onResultSelect}
+        />
+      )}
     </div>
   );
 };

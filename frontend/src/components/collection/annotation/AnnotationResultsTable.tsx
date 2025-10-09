@@ -1376,90 +1376,81 @@ export function AnnotationResultsTable({
 
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between py-3 flex-shrink-0 gap-3 sm:gap-4">
-         <div className="relative w-full sm:max-w-sm">
-           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="flex items-center justify-between py-2 flex-shrink-0 gap-2">
+         <div className="relative flex-1 max-w-xs">
+           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
            <Input
-             placeholder="Search assets (ID, Title...)"
+             placeholder="Search assets..."
              value={globalFilter ?? ''}
              onChange={(event) => setGlobalFilter(event.target.value)}
-             className="pl-9 h-9"
+             className="pl-8 h-8 text-sm"
            />
          </div>
          
-         <div className="flex items-center gap-2 flex-wrap">
-           {/* VIEW CONTROLS GROUP */}
-           <div className="flex items-center gap-1.5 px-1 py-0.5 rounded-md bg-muted/30">
-             {/* Unfold Fields Toggle */}
+         <div className="flex items-center gap-1">
+           {/* Unfold Fields Toggle */}
+           <TooltipProvider delayDuration={100}>
+             <Tooltip>
+               <TooltipTrigger asChild>
+                 <Button 
+                   variant={unfoldFields ? "default" : "ghost"}
+                   size="sm" 
+                   className="h-7 w-7 p-0"
+                   onClick={() => setUnfoldFields(!unfoldFields)}
+                 >
+                   {unfoldFields ? (
+                     <Columns className="h-3.5 w-3.5" />
+                   ) : (
+                     <Columns3 className="h-3.5 w-3.5" />
+                   )}
+                 </Button>
+               </TooltipTrigger>
+               <TooltipContent side="bottom">
+                 <p className="text-xs">
+                   {unfoldFields 
+                     ? 'Showing individual field columns. Click to group by schema.' 
+                     : 'Showing grouped schemas. Click to unfold into field columns.'}
+                 </p>
+               </TooltipContent>
+             </Tooltip>
+           </TooltipProvider>
+           
+           {/* Expand/Collapse All Annotations - only show when grouped */}
+           {!unfoldFields && (
              <TooltipProvider delayDuration={100}>
                <Tooltip>
                  <TooltipTrigger asChild>
                    <Button 
-                     variant={unfoldFields ? "default" : "ghost"}
+                     variant="ghost"
                      size="sm" 
-                     className="h-8 px-2"
-                     onClick={() => setUnfoldFields(!unfoldFields)}
+                     className="h-7 w-7 p-0"
+                     onClick={() => setExpandAllAnnotations(!expandAllAnnotations)}
                    >
-                     {unfoldFields ? (
-                       <Columns className="h-4 w-4 sm:mr-1.5" />
+                     {expandAllAnnotations ? (
+                       <FoldVertical className="h-3.5 w-3.5" />
                      ) : (
-                       <Columns3 className="h-4 w-4 sm:mr-1.5" />
+                       <UnfoldVertical className="h-3.5 w-3.5" />
                      )}
-                     <span className="hidden sm:inline text-xs">
-                       {unfoldFields ? 'Unfolded' : 'Grouped'}
-                     </span>
                    </Button>
                  </TooltipTrigger>
                  <TooltipContent side="bottom">
-                   <p className="text-xs">
-                     {unfoldFields 
-                       ? 'Showing individual field columns. Click to group by schema.' 
-                       : 'Showing grouped schemas. Click to unfold into field columns.'}
-                   </p>
+                   <p className="text-xs">{expandAllAnnotations ? 'Collapse' : 'Expand'} all annotation fields</p>
                  </TooltipContent>
                </Tooltip>
              </TooltipProvider>
-             
-             {/* Expand/Collapse All Annotations - only show when grouped */}
-             {!unfoldFields && (
-               <TooltipProvider delayDuration={100}>
-                 <Tooltip>
-                   <TooltipTrigger asChild>
-                     <Button 
-                       variant="ghost"
-                       size="sm" 
-                       className="h-8 px-2"
-                       onClick={() => setExpandAllAnnotations(!expandAllAnnotations)}
-                     >
-                       {expandAllAnnotations ? (
-                         <FoldVertical className="h-4 w-4 sm:mr-1.5" />
-                       ) : (
-                         <UnfoldVertical className="h-4 w-4 sm:mr-1.5" />
-                       )}
-                       <span className="hidden sm:inline text-xs">
-                         {expandAllAnnotations ? 'Collapse' : 'Expand'}
-                       </span>
-                     </Button>
-                   </TooltipTrigger>
-                   <TooltipContent side="bottom">
-                     <p className="text-xs">{expandAllAnnotations ? 'Collapse' : 'Expand'} all annotation fields</p>
-                   </TooltipContent>
-                 </Tooltip>
-               </TooltipProvider>
-             )}
-             
-             {/* Column Visibility Controls */}
-             <DropdownMenu>
-               <DropdownMenuTrigger asChild>
-                 <Button variant="ghost" size="sm" className="h-8 px-2">
-                   <SlidersHorizontal className="h-4 w-4 sm:mr-1.5" />
-                   <span className="hidden sm:inline text-xs">Columns</span>
-                 </Button>
-               </DropdownMenuTrigger>
+           )}
+           
+           {/* Column Visibility Controls */}
+           <DropdownMenu>
+             <DropdownMenuTrigger asChild>
+               <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                 <SlidersHorizontal className="h-3.5 w-3.5" />
+               </Button>
+             </DropdownMenuTrigger>
              <DropdownMenuContent align="end" className="w-[200px]">
                <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
                <DropdownMenuSeparator />
-                              <ScrollArea className="max-h-[300px]">
+               <ScrollArea className="max-h-[300px]">
                 {table
                   .getAllColumns()
                   .filter(
@@ -1506,14 +1497,13 @@ export function AnnotationResultsTable({
               </ScrollArea>
            </DropdownMenuContent>
          </DropdownMenu>
-           </div>
 
-           {/* ACTION BUTTONS GROUP */}
+           {/* Curate Button */}
            <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9 border-primary/20 hover:border-primary/40 hover:bg-primary/5">
-                <ArrowUpToLine className="h-4 w-4 mr-2" />
-                <span className="font-medium">Curate</span>
+              <Button variant="outline" size="sm" className="h-7 px-2">
+                <ArrowUpToLine className="h-3.5 w-3.5 mr-1.5" />
+                <span className="text-xs">Curate</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -1618,14 +1608,14 @@ export function AnnotationResultsTable({
         </div>
       </div>
       
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between space-x-2 py-4 flex-wrap gap-y-2 flex-shrink-0">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between py-2 flex-wrap gap-2 flex-shrink-0 border-t">
          <div className="flex items-center space-x-2">
-           <p className="text-sm font-medium text-muted-foreground whitespace-nowrap">Rows per page</p>
+           <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">Rows</p>
            <Select
              value={`${table.getState().pagination.pageSize}`}
              onValueChange={(value) => { table.setPageSize(Number(value)) }}
            >
-             <SelectTrigger className="h-8 w-[70px] text-xs">
+             <SelectTrigger className="h-7 w-[60px] text-xs">
                <SelectValue placeholder={table.getState().pagination.pageSize} />
              </SelectTrigger>
              <SelectContent side="top">
@@ -1637,26 +1627,23 @@ export function AnnotationResultsTable({
              </SelectContent>
            </Select>
          </div>
-        <div className="flex-1 text-sm text-muted-foreground text-center sm:text-left">
-          <span className="hidden sm:inline">{table.getFilteredRowModel().rows.length} Asset(s) matching filters.</span>
-          <span className="sm:hidden">{table.getFilteredRowModel().rows.length} assets</span>
-          <br className="sm:hidden" />
-          <span>Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}.</span>
+        <div className="flex-1 text-xs text-muted-foreground text-center sm:text-left">
+          <span>{table.getFilteredRowModel().rows.length} assets · Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}</span>
         </div>
-        <div className="flex items-center space-x-2">
-           <Button variant="outline" className="hidden h-8 w-8 p-0 lg:flex" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
+        <div className="flex items-center gap-1">
+           <Button variant="outline" className="hidden h-7 w-7 p-0 lg:flex" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
              <span className="sr-only">Go to first page</span>
-             <ChevronsLeft className="h-4 w-4" />
+             <ChevronsLeft className="h-3.5 w-3.5" />
            </Button>
-           <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
-              Previous
+           <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+              Prev
             </Button>
-           <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+           <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
              Next
            </Button>
-           <Button variant="outline" className="hidden h-8 w-8 p-0 lg:flex" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
+           <Button variant="outline" className="hidden h-7 w-7 p-0 lg:flex" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
              <span className="sr-only">Go to last page</span>
-             <ChevronsRight className="h-4 w-4" />
+             <ChevronsRight className="h-3.5 w-3.5" />
            </Button>
          </div>
       </div>

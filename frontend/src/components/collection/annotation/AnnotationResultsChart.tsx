@@ -17,7 +17,7 @@ import {
 import { format, startOfDay, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns';
 import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client';
 import { TimeAxisConfig, FormattedAnnotation, TimeFrameFilter } from '@/lib/annotations/types';
-import { getTargetKeysForScheme, checkFilterMatch, formatDisplayValue, getAnnotationFieldValue } from '@/lib/annotations/utils';
+import { getTargetKeysForScheme, checkFilterMatch, formatDisplayValue, getAnnotationFieldValue, getDateFieldsForScheme } from '@/lib/annotations/utils';
 import { VariableSplittingConfig, applySplittingToResults, applyAmbiguityResolution } from './VariableSplittingControls';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -686,7 +686,7 @@ const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap }: Cu
   });
 
   return (
-    <div className="bg-card/90 dark:bg-popover p-3 border border-border rounded-lg shadow-xl text-sm text-popover-foreground backdrop-blur-sm">
+    <div className="bg-card/95 bg-background/90 dark:bg-popover p-3 max-h-80 overflow-y-auto overflow-x-hidden border border-border rounded-lg shadow-xl text-sm text-popover-foreground pointer-events-auto">
       <p className="font-bold text-base mb-2">{formattedDate}</p>
       
       {Array.from(groups.entries()).map(([groupName, items]) => (
@@ -766,7 +766,15 @@ const AnnotationResultsChart: React.FC<Props> = ({
     const initialId = schemas.length > 0 ? schemas[0].id : null;
     return initialId;
   });
-  const [groupingFieldKey, setGroupingFieldKey] = useState<string | null>(null);
+  const [groupingFieldKey, setGroupingFieldKey] = useState<string | null>(() => {
+    // Initialize with first available field if schema is selected
+    if (schemas.length > 0) {
+      const firstSchema = schemas[0];
+      const availableFields = getTargetKeysForScheme(firstSchema.id, schemas);
+      return availableFields.length > 0 ? availableFields[0].key : null;
+    }
+    return null;
+  });
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [groupedSortOrder, setGroupedSortOrder] = useState<'count-desc' | 'value-asc' | 'value-desc'>('count-desc');
@@ -785,6 +793,43 @@ const AnnotationResultsChart: React.FC<Props> = ({
 
   const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
   const sourceNameMap = useMemo(() => new Map(sources.map(s => [s.id, s.name || `Source ${s.id}`])), [sources]);
+  
+  // Auto-select first field when grouping schema changes
+  useEffect(() => {
+    if (groupingSchemeId) {
+      const availableFields = getTargetKeysForScheme(groupingSchemeId, schemas);
+      // Only update if current field is not valid for this schema
+      if (!groupingFieldKey || !availableFields.some(f => f.key === groupingFieldKey)) {
+        setGroupingFieldKey(availableFields.length > 0 ? availableFields[0].key : null);
+      }
+    }
+  }, [groupingSchemeId, schemas]);
+  
+  // Smart date field detection: If using 'default' timestamp but schemas have date fields, auto-switch
+  useEffect(() => {
+    if (!timeAxisConfig || timeAxisConfig.type !== 'default' || schemas.length === 0) return;
+    
+    // Try to find a date field in any schema
+    for (const schema of schemas) {
+      const dateFields = getDateFieldsForScheme(schema.id, schemas);
+      if (dateFields.length > 0) {
+        // Found a date field - update timeAxisConfig to use it
+        const firstDateField = dateFields[0];
+        if (onSettingsChange) {
+          console.log(`[Chart] Auto-detected date field: ${firstDateField.name} (${firstDateField.key}) in schema ${schema.name}`);
+          onSettingsChange({
+            timeAxisConfig: {
+              type: 'schema' as const,
+              schemaId: schema.id,
+              fieldKey: firstDateField.key,
+              timeFrame: timeAxisConfig.timeFrame || { enabled: false }
+            }
+          });
+        }
+        break; // Use first schema with date fields
+      }
+    }
+  }, [timeAxisConfig?.type, schemas, onSettingsChange]);
 
   const resultsForChart = useMemo(() => {
     let filteredResults = results;
@@ -1674,7 +1719,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
             ) : (
               <ComposedChart
                 data={processedData.chartData as ChartDataPoint[]}
-                margin={{ top: 20, right: 60, left: 20, bottom: 5 }}
+                margin={{ top: 20, right: 60, left: 20, bottom: 100 }}
                 onClick={handleTimelinePointClick}
               >
                 <XAxis 
@@ -1691,16 +1736,27 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   content={<CustomTooltipContent keyToSplitValueMap={new Map()} />} 
                 />
                 
-                {/* Add Legend component for timeline charts */}
+                {/* Add Legend component for timeline charts - at bottom with wrapping and compact layout */}
                 {fieldsToRender.length > 0 && (
                   <Legend 
-                    verticalAlign="top" 
-                    height={Math.min(120, Math.ceil(fieldsToRender.length / 4) * 18)} // Dynamic height based on items
+                    verticalAlign="bottom" 
+                    align="center"
+                    height={fieldsToRender.length <= 3 ? 40 : fieldsToRender.length <= 6 ? 60 : 80}
                     wrapperStyle={{ 
+                      paddingTop: '20px',
                       paddingBottom: '10px',
-                      maxHeight: '120px',
-                      overflowY: 'auto',
-                      overflowX: 'hidden'
+                      fontSize: '11px',
+                      lineHeight: '1.4'
+                    }}
+                    iconSize={8}
+                    iconType="line"
+                    layout="horizontal"
+                    formatter={(value: string) => {
+                      // Truncate long names for better space usage
+                      if (value.length > 35) {
+                        return value.substring(0, 32) + '...';
+                      }
+                      return value;
                     }}
                   />
                 )}

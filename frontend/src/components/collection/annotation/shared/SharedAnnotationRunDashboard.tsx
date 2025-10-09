@@ -339,6 +339,14 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
           selectedTimeInterval: 'day',
           aggregateSources: true,
           selectedSourceIds: [],
+          timeAxisConfig: {
+            type: 'default' as const,
+            schemaId: null,
+            fieldKey: null,
+            timeFrame: {
+              enabled: false
+            }
+          }
         },
         collapsed: false,
       },
@@ -432,14 +440,14 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
               .shared-dashboard-panel {
                 grid-column: 1 !important;
                 grid-row: auto !important;
-                margin-bottom: 1rem;
                 height: auto !important;
-                max-height: none !important;
+                max-height: 400px !important;
+                min-height: 250px !important;
               }
             }
           `}</style>
           <div 
-            className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 md:auto-rows-[150px]"
+            className="grid grid-cols-1 md:grid-cols-12 gap-2 md:auto-rows-[150px]"
           >
             {dashboardPanels.map((panel) => (
               <div

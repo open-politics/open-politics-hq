@@ -124,6 +124,77 @@ export const getTargetFieldDefinition = (
     return { type: null, definition: null };
 };
 
+// Helper to detect date/timestamp fields in a schema
+export const getDateFieldsForScheme = (schemeId: number, schemes: AnnotationSchemaRead[]): { key: string, name: string, type: string }[] => {
+    const scheme = schemes.find(s => s.id === schemeId);
+    if (!scheme || !scheme.output_contract || !(scheme.output_contract as any).properties) return [];
+
+    const properties = (scheme.output_contract as any).properties;
+    const dateFields: { key: string, name: string, type: string }[] = [];
+    
+    // Helper function to check if a field is likely a date field
+    const isDateField = (fieldName: string, fieldDef: any): boolean => {
+        const name = fieldName.toLowerCase();
+        const title = (fieldDef.title || '').toLowerCase();
+        const format = fieldDef.format || '';
+        
+        // Check for date formats
+        if (format === 'date' || format === 'date-time') return true;
+        
+        // Check for date-related field names
+        const dateKeywords = ['date', 'timestamp', 'time', 'created', 'updated', 'published', 'event'];
+        return dateKeywords.some(keyword => name.includes(keyword) || title.includes(keyword));
+    };
+    
+    // Extract date fields from schema
+    const extractDateFields = (props: any, prefix: string = '') => {
+        if (!props || typeof props !== 'object') return;
+        
+        Object.entries(props).forEach(([key, value]: [string, any]) => {
+            const fullKey = prefix ? `${prefix}.${key}` : key;
+            
+            // Only string fields can be dates in JSON Schema
+            if (value.type === 'string' && isDateField(key, value)) {
+                dateFields.push({
+                    key: fullKey,
+                    name: value.title || key,
+                    type: value.format || 'date-string'
+                });
+            }
+            
+            // Recursively extract from nested objects
+            if (value.type === 'object' && value.properties) {
+                extractDateFields(value.properties, fullKey);
+            }
+            
+            // Handle array of objects
+            if (value.type === 'array' && value.items?.type === 'object' && value.items.properties) {
+                extractDateFields(value.items.properties, fullKey);
+            }
+        });
+    };
+    
+    // Check if hierarchical
+    const isHierarchical = Object.keys(properties).some(key => 
+        key === 'document' || key.startsWith('per_')
+    );
+    
+    if (isHierarchical) {
+        Object.entries(properties).forEach(([topKey, topValue]: [string, any]) => {
+            if (topKey === 'document' && topValue.type === 'object' && topValue.properties) {
+                extractDateFields(topValue.properties, 'document');
+            } else if (topKey.startsWith('per_') && topValue.type === 'array' && 
+                       topValue.items?.type === 'object' && topValue.items.properties) {
+                extractDateFields(topValue.items.properties, topKey);
+            }
+        });
+    } else {
+        extractDateFields(properties);
+    }
+    
+    return dateFields;
+};
+
 export const getTargetKeysForScheme = (schemeId: number, schemes: AnnotationSchemaRead[]): { key: string, name: string, type: string }[] => {
     const scheme = schemes.find(s => s.id === schemeId);
     if (!scheme || !scheme.output_contract || !(scheme.output_contract as any).properties) return [];
