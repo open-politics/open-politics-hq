@@ -9950,7 +9950,7 @@
         ]
       }
     },
-    "/api/v1/sharing/{infospace_id}/links": {
+    "/api/v1/shareables/{infospace_id}/links": {
       "post": {
         "tags": [
           "sharing"
@@ -10086,7 +10086,7 @@
         }
       }
     },
-    "/api/v1/sharing/links/{token}": {
+    "/api/v1/shareables/links/{token}": {
       "get": {
         "tags": [
           "sharing"
@@ -10129,7 +10129,7 @@
         }
       }
     },
-    "/api/v1/sharing/links/{link_id}": {
+    "/api/v1/shareables/links/{link_id}": {
       "put": {
         "tags": [
           "sharing"
@@ -10226,7 +10226,7 @@
         }
       }
     },
-    "/api/v1/sharing/access/{token}": {
+    "/api/v1/shareables/access/{token}": {
       "get": {
         "tags": [
           "sharing"
@@ -10276,7 +10276,7 @@
         }
       }
     },
-    "/api/v1/sharing/view/{token}": {
+    "/api/v1/shareables/view/{token}": {
       "get": {
         "tags": [
           "sharing"
@@ -10319,7 +10319,7 @@
         }
       }
     },
-    "/api/v1/sharing/{infospace_id}/stats": {
+    "/api/v1/shareables/{infospace_id}/stats": {
       "get": {
         "tags": [
           "sharing"
@@ -10367,7 +10367,7 @@
         }
       }
     },
-    "/api/v1/sharing/{infospace_id}/export": {
+    "/api/v1/shareables/{infospace_id}/export": {
       "post": {
         "tags": [
           "sharing"
@@ -10418,7 +10418,7 @@
         }
       }
     },
-    "/api/v1/sharing/import/{target_infospace_id}": {
+    "/api/v1/shareables/import/{target_infospace_id}": {
       "post": {
         "tags": [
           "sharing"
@@ -10474,7 +10474,7 @@
         }
       }
     },
-    "/api/v1/sharing/export-batch/{infospace_id}": {
+    "/api/v1/shareables/export-batch/{infospace_id}": {
       "post": {
         "tags": [
           "sharing"
@@ -10535,7 +10535,7 @@
         }
       }
     },
-    "/api/v1/sharing/export-mixed-batch/{infospace_id}": {
+    "/api/v1/shareables/export-mixed-batch/{infospace_id}": {
       "post": {
         "tags": [
           "sharing"
@@ -10586,7 +10586,7 @@
         }
       }
     },
-    "/api/v1/sharing/stream/{token}/{asset_id}": {
+    "/api/v1/shareables/stream/{token}/{asset_id}": {
       "get": {
         "tags": [
           "sharing"
@@ -10636,7 +10636,7 @@
         }
       }
     },
-    "/api/v1/sharing/download-bundle/{token}": {
+    "/api/v1/shareables/download-bundle/{token}": {
       "get": {
         "tags": [
           "sharing"
@@ -10672,7 +10672,7 @@
         }
       }
     },
-    "/api/v1/sharing/download/{token}/{asset_id}": {
+    "/api/v1/shareables/download/{token}/{asset_id}": {
       "get": {
         "tags": [
           "sharing"
@@ -10717,7 +10717,7 @@
         }
       }
     },
-    "/api/v1/sharing/view_dataset_package_summary/{token}": {
+    "/api/v1/shareables/view_dataset_package_summary/{token}": {
       "get": {
         "tags": [
           "sharing"
@@ -10765,7 +10765,7 @@
         }
       }
     },
-    "/api/v1/sharing/import-from-token/{token}": {
+    "/api/v1/shareables/import-from-token/{token}": {
       "post": {
         "tags": [
           "sharing"

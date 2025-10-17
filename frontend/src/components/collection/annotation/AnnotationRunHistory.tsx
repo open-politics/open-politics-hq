@@ -516,8 +516,8 @@ const RunHistoryPanel: React.FC<{
           {/* Main Header Row */}
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
             {/* Left Side - Title and Icon */}
-            <div className="flex items-center gap-4 pl-2">
-              <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+            <div className="flex items-center gap-4 pl-0">
+              <div className="p-3 flex items-center gap-2 rounded-md bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
                 <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
                 <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
                 <History className="h-6 w-6 text-blue-700 dark:text-blue-400" />
@@ -546,7 +546,7 @@ const RunHistoryPanel: React.FC<{
                   size="sm"
                   onClick={handleImportClick}
                   disabled={isImporting}
-                  className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors flex-1 sm:flex-initial"
+                  className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors flex-1 sm:flex-initial max-w-32"
                 >
                   {isImporting ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -617,7 +617,7 @@ const RunHistoryPanel: React.FC<{
               
               <Collapsible open={isFavoritesExpanded}>
                 <CollapsibleContent>
-                  <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg p-2 sm:p-4">
+                  <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg p-0 sm:p-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-4 pb-2">
                       {favoriteRunsFromList.map((run) => (
                         <FavoriteRunCard

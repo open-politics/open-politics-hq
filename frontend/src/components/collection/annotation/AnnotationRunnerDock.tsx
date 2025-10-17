@@ -419,14 +419,14 @@ export default function AnnotationRunnerDock({
   return (
     <TooltipProvider>
       <div className={cn(
-        "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-xl border",
+        "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-md border",
         isMinimized 
           ? "bottom-4 right-4 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
           : isExpanded 
             ? "bottom-4 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
             : "bottom-4 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[400px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
       )}>
-        <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-2.5 sm:py-3 cursor-pointer hover:bg-muted/30 transition-colors rounded-t-xl border-b" onClick={() => {
+        <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-0.5 cursor-pointer hover:bg-muted/30 transition-colors rounded-none " onClick={() => {
           if (isMinimized) {
             setIsMinimized(false);
           } else {
@@ -438,16 +438,16 @@ export default function AnnotationRunnerDock({
             "flex items-center justify-center w-full h-full",
             isMinimized ? "sm:flex" : "sm:hidden"
           )}>
-            <div className="p-1.5 flex items-center justify-center rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
-              <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
+            <div className="p-1.5 flex items-center justify-center rounded bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+              <Terminal className="h-7 w-7 text-blue-700 dark:text-blue-400" />
             </div>
           </div>
           
           {/* Desktop: Full layout (when not minimized) */}
           {!isMinimized && (
             <>
-              <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0">
-                <div className="p-2 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+              <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0 md:pt-1">
+                <div className="p-2 flex items-center gap-2 bg-blue-50/20">
                   <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
                   <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
                 </div>

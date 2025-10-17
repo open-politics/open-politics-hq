@@ -17,15 +17,61 @@ export interface ToolResultRenderProps {
   onBundleClick?: (bundleId: number) => void;
 }
 
+export interface TreeNode {
+  id: string;
+  type: 'bundle' | 'asset';
+  name: string;
+  kind?: string;
+  has_children?: boolean;
+  children_count?: number;
+  is_container?: boolean;
+  parent_id?: string;
+  updated_at?: string;
+  created_at?: string;
+  source_metadata?: {
+    original_row_data?: Record<string, any>;
+    [key: string]: any;
+  };
+  preview?: {
+    columns?: string[];
+    row_count?: number;
+    sample_rows?: any[];
+    page_count?: number;
+    excerpt?: string;
+    kinds?: Record<string, number>;
+    date_range?: { earliest: string; latest: string };
+    sample_titles?: string[];
+    [key: string]: any;
+  };
+}
+
 export interface NavigateResult {
-  resource: 'assets' | 'bundles' | 'schemas' | 'runs';
-  mode: 'list' | 'search' | 'load';
-  depth: 'ids' | 'titles' | 'previews' | 'full';
+  resource: 'assets' | 'bundles' | 'schemas' | 'runs' | 'files';
+  mode: 'list' | 'search' | 'load' | 'tree' | 'view' | 'expand';  // 'view' is the new term, 'expand' kept for backward compat
+  depth?: 'ids' | 'titles' | 'previews' | 'full' | 'tree';
   items?: any[];
   bundle_data?: Record<string, BundleData>;
-  total: number;
+  // New tree structure fields
+  nodes?: TreeNode[];
+  children?: TreeNode[];
+  parent_id?: string;
+  parent_name?: string;
+  parent_type?: 'bundle' | 'asset';
+  parent_kind?: string;
+  parent_preview?: {
+    columns?: string[];
+    row_count?: number;
+    sample_rows?: any[];
+    sample_count?: number;
+    asset_count?: number;
+    [key: string]: any;
+  };
+  total_nodes?: number;
+  // Legacy/common fields
+  total?: number;
   query?: string;
   message: string;
+  summary?: string;  // Backend summary text (may contain ASCII tables)
 }
 
 export interface BundleData {

@@ -30,6 +30,12 @@ export interface ChatMessage {
   tool_calls?: Array<Record<string, unknown>>
   tool_executions?: ToolExecution[]
   thinking_trace?: string
+  context_assets?: Array<{
+    id: number
+    title: string
+    kind?: string
+  }>  // Documents that were attached as context
+  context_depth?: 'titles' | 'previews' | 'full'  // Depth level used
 }
 
 export interface UseIntelligenceChatOptions {
@@ -53,18 +59,25 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
 
   const sendMessage = useCallback(async (
     content: string,
-    customOptions?: Partial<UseIntelligenceChatOptions>
+    customOptions?: Partial<UseIntelligenceChatOptions> & {
+      displayContent?: string  // Original user input for UI display
+      contextAssets?: Array<{ id: number; title: string; kind?: string }>  // Context metadata
+      contextDepth?: 'titles' | 'previews' | 'full'  // Depth level
+    }
   ): Promise<ChatMessage | null> => {
     if (!activeInfospace?.id) {
       toast.error('Please select an active infospace')
       return null
     }
 
+    // Use displayContent for UI if provided, otherwise use content
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content,
-      timestamp: new Date()
+      content: customOptions?.displayContent || content,  // Display original input
+      timestamp: new Date(),
+      context_assets: customOptions?.contextAssets,  // Store context metadata
+      context_depth: customOptions?.contextDepth  // Store depth level
     }
 
     setMessages(prev => [...prev, userMessage])
@@ -85,8 +98,13 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         thinking_enabled: customOptions?.thinking_enabled || options.thinking_enabled || false,
         api_keys: apiKeys && Object.keys(apiKeys).length > 0 ? apiKeys : undefined,
         conversation_id: customOptions?.conversation_id ?? options.conversation_id,
-        auto_save: customOptions?.auto_save ?? options.auto_save ?? false
+        auto_save: customOptions?.auto_save ?? options.auto_save ?? false,
+        // UI-specific fields for preserving display state
+        display_content: customOptions?.displayContent,
+        context_assets: customOptions?.contextAssets,
+        context_depth: customOptions?.contextDepth
       }
+      
       if (chatRequest.stream) {
         // Manual streaming using fetch to handle SSE-like responses
         const controller = new AbortController()
@@ -386,22 +404,32 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
     tool_calls?: Array<Record<string, unknown>>
     tool_executions?: Array<Record<string, unknown>>
     thinking_trace?: string
+    message_metadata?: Record<string, any>
   }>) => {
-    const chatMessages: ChatMessage[] = conversationMessages.map(msg => ({
-      id: `msg-${msg.id}`,
-      role: msg.role as 'user' | 'assistant' | 'tool',
-      content: msg.content,
-      timestamp: new Date(msg.created_at),
-      tool_calls: msg.tool_calls,
-      tool_executions: msg.tool_executions as any,
-      thinking_trace: msg.thinking_trace
-    }))
+    const chatMessages: ChatMessage[] = conversationMessages.map(msg => {
+      // Extract metadata for proper display
+      const metadata = msg.message_metadata || {}
+      
+      return {
+        id: `msg-${msg.id}`,
+        role: msg.role as 'user' | 'assistant' | 'tool',
+        // Use display_content from metadata if available (original user input), otherwise use raw content
+        content: metadata.display_content || msg.content,
+        timestamp: new Date(msg.created_at),
+        tool_calls: msg.tool_calls,
+        tool_executions: msg.tool_executions as any,
+        thinking_trace: msg.thinking_trace,
+        context_assets: metadata.context_assets,
+        context_depth: metadata.context_depth
+      }
+    })
     setMessages(chatMessages)
     setError(null)
   }, [])
 
   return {
     messages,
+    setMessages,
     isLoading,
     error,
     activeToolExecutions,

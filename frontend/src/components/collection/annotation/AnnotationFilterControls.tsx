@@ -182,23 +182,23 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
             case 'float':
                 if (filter.operator === 'range') {
                     return (
-                        <div className="flex items-center gap-2">
-                            <Input type="number" placeholder="Min" value={filter.value[0] ?? ''} onChange={(e) => updateFilter(index, { value: [e.target.value, filter.value[1]] })} className="h-8"/>
-                            <span className="text-muted-foreground">-</span>
-                            <Input type="number" placeholder="Max" value={filter.value[1] ?? ''} onChange={(e) => updateFilter(index, { value: [filter.value[0], e.target.value] })} className="h-8"/>
+                        <div className="flex items-center gap-1.5">
+                            <Input type="number" placeholder="Min" value={filter.value[0] ?? ''} onChange={(e) => updateFilter(index, { value: [e.target.value, filter.value[1]] })} className="h-7 text-xs"/>
+                            <span className="text-muted-foreground text-xs">-</span>
+                            <Input type="number" placeholder="Max" value={filter.value[1] ?? ''} onChange={(e) => updateFilter(index, { value: [filter.value[0], e.target.value] })} className="h-7 text-xs"/>
                         </div>
                     );
                 }
-                return <Input type="number" value={filter.value} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-8"/>;
+                return <Input type="number" value={filter.value} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-7 text-xs"/>;
             case 'bool':
                 return (
                     <Select value={filter.value} onValueChange={(v) => updateFilter(index, { value: v })}>
-                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectItem value="True">True</SelectItem><SelectItem value="False">False</SelectItem></SelectContent>
+                        <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="True" className="text-xs">True</SelectItem><SelectItem value="False" className="text-xs">False</SelectItem></SelectContent>
                     </Select>
                 );
             default:
-                return <Input value={filter.value} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-8"/>;
+                return <Input value={filter.value} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-7 text-xs"/>;
         }
     };
     // --- End of logic from AnnotationResultFilters ---
@@ -272,134 +272,171 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     };
     // --- End of logic from AnnotationTimeAxisControls ---
 
+    const hasActiveFilters = activeFilterCount > 0 || timeAxisConfig?.timeFrame?.enabled;
+    
+    const handleClearAll = (e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent collapsible toggle
+        // Clear all filters
+        onFilterSetChange({ logic: 'and', rules: [] });
+        // Clear time range filter
+        if (timeAxisConfig?.timeFrame?.enabled) {
+            onTimeAxisConfigChange({
+                ...timeAxisConfig,
+                timeFrame: { enabled: false }
+            });
+        }
+    };
+
     return (
         <Collapsible open={isOpen} onOpenChange={setIsOpen} className="rounded-lg border">
             <CollapsibleTrigger asChild>
-                <div className="flex items-center justify-between p-2 cursor-pointer bg-muted/30 hover:bg-muted/60">
-                    <div className="flex items-center gap-2">
-                        <SlidersHorizontal className="h-4 w-4" />
-                        <span className="font-medium text-sm">Filters</span>
-                        {activeFilterCount > 0 && (<span className="text-xs bg-primary text-primary-foreground rounded-full h-5 w-5 flex items-center justify-center">{activeFilterCount}</span>)}
-                        {timeAxisConfig?.timeFrame?.enabled && (<span className="text-xs bg-secondary text-secondary-foreground rounded-md px-2 py-0.5">Time Range</span>)}
+                <div className="flex items-center justify-between p-1.5 cursor-pointer bg-muted/30 hover:bg-muted/60">
+                    <div className="flex items-center gap-1.5">
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        <span className="font-medium text-xs">Filters</span>
+                        {activeFilterCount > 0 && (<span className="text-[10px] bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center">{activeFilterCount}</span>)}
+                        {timeAxisConfig?.timeFrame?.enabled && (<span className="text-[10px] bg-secondary text-secondary-foreground rounded-md px-1.5 py-0.5">Time</span>)}
                     </div>
-                    <Button variant="ghost" size="sm" className="w-9 p-0">{isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}<span className="sr-only">Toggle Filters</span></Button>
+                    <div className="flex items-center gap-1">
+                        {hasActiveFilters && (
+                            <TooltipProvider delayDuration={100}>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            className="h-6 px-2 hover:bg-destructive/10 hover:text-destructive"
+                                            onClick={handleClearAll}
+                                        >
+                                            <X className="h-3 w-3" />
+                                            <span className="sr-only">Clear all filters</span>
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p className="text-xs">Clear all filters</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            </TooltipProvider>
+                        )}
+                        <Button variant="ghost" size="sm" className="w-7 h-6 p-0">{isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}<span className="sr-only">Toggle Filters</span></Button>
+                    </div>
                 </div>
             </CollapsibleTrigger>
-            <CollapsibleContent className="p-4 space-y-4">
+            <CollapsibleContent className="p-2 space-y-3">
                 {/* --- Start of JSX from AnnotationResultFilters --- */}
-                <div className="space-y-3">
+                <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                            <Label className="text-sm font-medium">Filter Logic</Label>
-                            <ToggleGroup type="single" value={logicMode} onValueChange={(value) => { if (value) setLogicMode(value as FilterLogicMode); }} size="sm">
-                                <ToggleGroupItem value="and">AND</ToggleGroupItem>
-                                <ToggleGroupItem value="or">OR</ToggleGroupItem>
+                        <div className="flex items-center gap-1.5">
+                            <Label className="text-xs font-medium">Logic</Label>
+                            <ToggleGroup type="single" value={logicMode} onValueChange={(value) => { if (value) setLogicMode(value as FilterLogicMode); }} size="sm" className="h-6">
+                                <ToggleGroupItem value="and" className="h-6 px-2 text-xs">AND</ToggleGroupItem>
+                                <ToggleGroupItem value="or" className="h-6 px-2 text-xs">OR</ToggleGroupItem>
                             </ToggleGroup>
                             <TooltipProvider>
                                 <Tooltip>
-                                    <TooltipTrigger><HelpCircle className="h-4 w-4 text-muted-foreground" /></TooltipTrigger>
+                                    <TooltipTrigger><HelpCircle className="h-3 w-3 text-muted-foreground" /></TooltipTrigger>
                                     <TooltipContent>
-                                        <p>AND: all filters must match.<br />OR: any filter can match.</p>
+                                        <p className="text-xs">AND: all filters must match.<br />OR: any filter can match.</p>
                                     </TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                         </div>
-                        <Button onClick={addFilter} size="sm"><Plus className="mr-2 h-4 w-4" /> Add Filter</Button>
+                        <Button onClick={addFilter} size="sm" className="h-6 px-2 text-xs"><Plus className="mr-1 h-3 w-3" /> Add</Button>
                     </div>
-                    <ScrollArea className="max-h-60 pr-3">
-                        <div className="space-y-3">
+                    <ScrollArea className="max-h-60 pr-2">
+                        <div className="space-y-2">
                             {filters.map((filter, index) => {
                                 const { type, definition } = getTargetFieldDefinition(filter, allSchemas);
                                 const operators = getOperatorsForType(type);
                                 const targetKeys = getTargetKeysForScheme(filter.schemaId, allSchemas);
                                 return (
-                                    <div key={filter.id} className={cn("flex items-start gap-2 p-3 rounded-lg border", !filter.isActive && "bg-muted/50")}>
-                                        <div className="flex-1 space-y-2">
-                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                    <div key={filter.id} className={cn("flex items-start gap-1.5 p-2 rounded-lg border", !filter.isActive && "bg-muted/50")}>
+                                        <div className="flex-1 space-y-1.5">
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5">
                                                 <Select value={filter.schemaId.toString()} onValueChange={(v) => updateFilter(index, { schemaId: parseInt(v) })}>
-                                                    <SelectTrigger><SelectValue placeholder="Select Schema" /></SelectTrigger>
-                                                    <SelectContent>{allSchemas.map(s => <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>)}</SelectContent>
+                                                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Schema" /></SelectTrigger>
+                                                    <SelectContent>{allSchemas.map(s => <SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>)}</SelectContent>
                                                 </Select>
                                                 <Select value={filter.fieldKey} onValueChange={(v) => updateFilter(index, { fieldKey: v })} disabled={targetKeys.length === 0}>
-                                                    <SelectTrigger><SelectValue placeholder="Select Field" /></SelectTrigger>
-                                                    <SelectContent>{targetKeys.map(tk => <SelectItem key={tk.key} value={tk.key}>{tk.name} ({tk.type})</SelectItem>)}</SelectContent>
+                                                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Field" /></SelectTrigger>
+                                                    <SelectContent>{targetKeys.map(tk => <SelectItem key={tk.key} value={tk.key} className="text-xs">{tk.name} ({tk.type})</SelectItem>)}</SelectContent>
                                                 </Select>
                                                 <Select value={filter.operator} onValueChange={(v) => updateFilter(index, { operator: v as any })}>
-                                                    <SelectTrigger><SelectValue placeholder="Select Operator" /></SelectTrigger>
-                                                    <SelectContent>{operators.map(op => <SelectItem key={op} value={op}>{op.replace(/_/g, ' ')}</SelectItem>)}</SelectContent>
+                                                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Operator" /></SelectTrigger>
+                                                    <SelectContent>{operators.map(op => <SelectItem key={op} value={op} className="text-xs">{op.replace(/_/g, ' ')}</SelectItem>)}</SelectContent>
                                                 </Select>
                                             </div>
                                             <div>{renderValueInput(filter, index, type)}</div>
                                         </div>
-                                        <div className="flex flex-col items-center gap-2">
+                                        <div className="flex flex-col items-center gap-1">
                                             <TooltipProvider>
                                                 <Tooltip>
-                                                    <TooltipTrigger><Info className="h-4 w-4 text-muted-foreground" /></TooltipTrigger>
-                                                    <TooltipContent><p>{getFilterTooltip(filter)}</p></TooltipContent>
+                                                    <TooltipTrigger><Info className="h-3 w-3 text-muted-foreground" /></TooltipTrigger>
+                                                    <TooltipContent><p className="text-xs">{getFilterTooltip(filter)}</p></TooltipContent>
                                                 </Tooltip>
                                             </TooltipProvider>
-                                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeFilter(index)}><X className="h-4 w-4" /></Button>
+                                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeFilter(index)}><X className="h-3 w-3" /></Button>
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
                     </ScrollArea>
-                    {filters.length === 0 && <p className="text-sm text-center text-muted-foreground py-4">No filters added.</p>}
+                    {filters.length === 0 && <p className="text-xs text-center text-muted-foreground py-3">No filters added.</p>}
                 </div>
                 {/* --- End of JSX from AnnotationResultFilters --- */}
                 {showTimeControls && (
                     <>
                         <Separator />
                         {/* --- Start of JSX from AnnotationTimeAxisControls --- */}
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                             <div>
-                                <Label className="text-xs text-muted-foreground mb-2 block">Time Source</Label>
-                                <RadioGroup value={sourceType} onValueChange={(v) => handleSourceTypeChange(v as TimeAxisSourceType)} className="text-xs">
-                                    <div className="flex items-center space-x-2"><RadioGroupItem value="default" id="time-default" /><Label htmlFor="time-default" className="font-normal flex items-center"><Clock className="h-3.5 w-3.5 mr-1.5 text-muted-foreground"/>Annotation Time</Label></div>
-                                    <div className="flex items-center space-x-2"><RadioGroupItem value="event" id="time-event" /><Label htmlFor="time-event" className="font-normal flex items-center"><Database className="h-3.5 w-3.5 mr-1.5 text-muted-foreground"/>Original Event Time (from Asset)</Label></div>
-                                    <div className="flex items-center space-x-2"><RadioGroupItem value="schema" id="time-schema" /><Label htmlFor="time-schema" className="font-normal flex items-center"><FileJson className="h-3.5 w-3.5 mr-1.5 text-muted-foreground"/>Annotation Schema Field</Label></div>
+                                <Label className="text-[10px] text-muted-foreground mb-1.5 block font-semibold uppercase tracking-wide">Time Source</Label>
+                                <RadioGroup value={sourceType} onValueChange={(v) => handleSourceTypeChange(v as TimeAxisSourceType)} className="text-xs space-y-1">
+                                    <div className="flex items-center space-x-1.5"><RadioGroupItem value="default" id="time-default" className="h-3.5 w-3.5" /><Label htmlFor="time-default" className="font-normal flex items-center text-xs"><Clock className="h-3 w-3 mr-1 text-muted-foreground"/>Annotation Time</Label></div>
+                                    <div className="flex items-center space-x-1.5"><RadioGroupItem value="event" id="time-event" className="h-3.5 w-3.5" /><Label htmlFor="time-event" className="font-normal flex items-center text-xs"><Database className="h-3 w-3 mr-1 text-muted-foreground"/>Event Time</Label></div>
+                                    <div className="flex items-center space-x-1.5"><RadioGroupItem value="schema" id="time-schema" className="h-3.5 w-3.5" /><Label htmlFor="time-schema" className="font-normal flex items-center text-xs"><FileJson className="h-3 w-3 mr-1 text-muted-foreground"/>Schema Field</Label></div>
                                 </RadioGroup>
                             </div>
                             {sourceType === 'schema' && (
-                                <div className="pl-6 space-y-2 border-l ml-2 pt-2 border-border/60">
-                                    <div className="grid grid-cols-2 gap-2">
+                                <div className="pl-4 space-y-1.5 border-l ml-2 pt-1.5 border-border/60">
+                                    <div className="grid grid-cols-2 gap-1.5">
                                         <div>
-                                            <Label htmlFor="time-schema-select" className="text-xs mb-1 block text-muted-foreground">Schema</Label>
+                                            <Label htmlFor="time-schema-select" className="text-[10px] mb-1 block text-muted-foreground">Schema</Label>
                                             <Select value={selectedSchemaId?.toString() ?? ""} onValueChange={handleSchemaChange} disabled={allSchemas.length === 0}>
-                                                <SelectTrigger id="time-schema-select" className="h-8 text-xs w-full"><SelectValue placeholder="Select schema..." /></SelectTrigger>
+                                                <SelectTrigger id="time-schema-select" className="h-7 text-xs w-full"><SelectValue placeholder="Schema..." /></SelectTrigger>
                                                 <SelectContent><ScrollArea className="max-h-60 w-full">{allSchemas.map(s => (<SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>))}{allSchemas.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No schemas</div>}</ScrollArea></SelectContent>
                                             </Select>
                                         </div>
                                         <div>
-                                            <Label htmlFor="time-field-select" className="text-xs mb-1 block text-muted-foreground">Field</Label>
+                                            <Label htmlFor="time-field-select" className="text-[10px] mb-1 block text-muted-foreground">Field</Label>
                                             <Select value={selectedFieldKey ?? ""} onValueChange={handleFieldChange} disabled={!selectedSchemaId || fieldOptions.length === 0}>
-                                                <SelectTrigger id="time-field-select" className="h-8 text-xs w-full"><SelectValue placeholder="Select field..." /></SelectTrigger>
+                                                <SelectTrigger id="time-field-select" className="h-7 text-xs w-full"><SelectValue placeholder="Field..." /></SelectTrigger>
                                                 <SelectContent><ScrollArea className="max-h-60 w-full">{fieldOptions.map(opt => (<SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>))}{fieldOptions.length === 0 && selectedSchemaId && <div className="p-2 text-xs text-center italic">No text/number fields</div>}{!selectedSchemaId && <div className="p-2 text-xs text-center italic">Select schema first</div>}</ScrollArea></SelectContent>
                                             </Select>
                                         </div>
                                     </div>
-                                    {selectedSchemaId && fieldOptions.length === 0 && (<p className="text-xs text-muted-foreground italic pt-1">No text or number fields in schema.</p>)}
+                                    {selectedSchemaId && fieldOptions.length === 0 && (<p className="text-[10px] text-muted-foreground italic pt-1">No text or number fields in schema.</p>)}
                                 </div>
                             )}
-                            <div className="border-t pt-3">
-                                <div className="flex items-center justify-between mb-2">
-                                    <Label className="text-xs text-muted-foreground flex items-center"><Filter className="h-3.5 w-3.5 mr-1.5"/>Time Range Filter</Label>
-                                    <Button variant={timeFrame.enabled ? "default" : "outline"} size="sm" onClick={handleTimeFrameToggle} className="h-6 px-2 text-xs">{timeFrame.enabled ? "Enabled" : "Disabled"}</Button>
+                            <div className="border-t pt-2">
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <Label className="text-[10px] text-muted-foreground flex items-center font-semibold uppercase tracking-wide"><Filter className="h-3 w-3 mr-1"/>Time Range</Label>
+                                    <Button variant={timeFrame.enabled ? "default" : "outline"} size="sm" onClick={handleTimeFrameToggle} className="h-6 px-2 text-xs">{timeFrame.enabled ? "On" : "Off"}</Button>
                                 </div>
                                 {timeFrame.enabled && (
-                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <div className="grid grid-cols-2 gap-1.5 mt-1.5">
                                         <div>
-                                            <Label className="text-xs text-muted-foreground mb-1 block">Start Date</Label>
+                                            <Label className="text-[10px] text-muted-foreground mb-1 block">Start</Label>
                                             <Popover open={startDatePickerOpen} onOpenChange={setStartDatePickerOpen}>
-                                                <PopoverTrigger asChild><Button variant="outline" className="w-full h-8 px-2 text-xs justify-start font-normal"><Calendar className="h-3.5 w-3.5 mr-1.5"/>{timeFrame.startDate ? format(timeFrame.startDate, 'MMM dd, yyyy') : 'Select date'}</Button></PopoverTrigger>
+                                                <PopoverTrigger asChild><Button variant="outline" className="w-full h-7 px-2 text-xs justify-start font-normal"><Calendar className="h-3 w-3 mr-1"/>{timeFrame.startDate ? format(timeFrame.startDate, 'MMM dd') : 'Date'}</Button></PopoverTrigger>
                                                 <PopoverContent className="w-auto p-0"><CalendarComponent mode="single" selected={timeFrame.startDate} onSelect={handleStartDateChange} initialFocus/></PopoverContent>
                                             </Popover>
                                         </div>
                                         <div>
-                                            <Label className="text-xs text-muted-foreground mb-1 block">End Date</Label>
+                                            <Label className="text-[10px] text-muted-foreground mb-1 block">End</Label>
                                             <Popover open={endDatePickerOpen} onOpenChange={setEndDatePickerOpen}>
-                                                <PopoverTrigger asChild><Button variant="outline" className="w-full h-8 px-2 text-xs justify-start font-normal"><Calendar className="h-3.5 w-3.5 mr-1.5"/>{timeFrame.endDate ? format(timeFrame.endDate, 'MMM dd, yyyy') : 'Select date'}</Button></PopoverTrigger>
+                                                <PopoverTrigger asChild><Button variant="outline" className="w-full h-7 px-2 text-xs justify-start font-normal"><Calendar className="h-3 w-3 mr-1"/>{timeFrame.endDate ? format(timeFrame.endDate, 'MMM dd') : 'Date'}</Button></PopoverTrigger>
                                                 <PopoverContent className="w-auto p-0"><CalendarComponent mode="single" selected={timeFrame.endDate} onSelect={handleEndDateChange} initialFocus/></PopoverContent>
                                             </Popover>
                                         </div>

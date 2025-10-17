@@ -6101,7 +6101,7 @@ export class SharingService {
     public static createShareableLink(data: CreateShareableLinkData): CancelablePromise<CreateShareableLinkResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/sharing/{infospace_id}/links',
+            url: '/api/v1/shareables/{infospace_id}/links',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -6126,7 +6126,7 @@ export class SharingService {
     public static getShareableLinks(data: GetShareableLinksData): CancelablePromise<GetShareableLinksResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/{infospace_id}/links',
+            url: '/api/v1/shareables/{infospace_id}/links',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -6151,7 +6151,7 @@ export class SharingService {
     public static getShareableLinkByToken(data: GetShareableLinkByTokenData): CancelablePromise<GetShareableLinkByTokenResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/links/{token}',
+            url: '/api/v1/shareables/links/{token}',
             path: {
                 token: data.token
             },
@@ -6173,7 +6173,7 @@ export class SharingService {
     public static updateShareableLink(data: UpdateShareableLinkData): CancelablePromise<UpdateShareableLinkResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
-            url: '/api/v1/sharing/links/{link_id}',
+            url: '/api/v1/shareables/links/{link_id}',
             path: {
                 link_id: data.linkId
             },
@@ -6196,7 +6196,7 @@ export class SharingService {
     public static deleteShareableLink(data: DeleteShareableLinkData): CancelablePromise<DeleteShareableLinkResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/sharing/links/{link_id}',
+            url: '/api/v1/shareables/links/{link_id}',
             path: {
                 link_id: data.linkId
             },
@@ -6217,7 +6217,7 @@ export class SharingService {
     public static accessSharedResource(data: AccessSharedResourceData): CancelablePromise<AccessSharedResourceResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/access/{token}',
+            url: '/api/v1/shareables/access/{token}',
             path: {
                 token: data.token
             },
@@ -6239,7 +6239,7 @@ export class SharingService {
     public static viewSharedResource(data: ViewSharedResourceData): CancelablePromise<ViewSharedResourceResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/view/{token}',
+            url: '/api/v1/shareables/view/{token}',
             path: {
                 token: data.token
             },
@@ -6260,7 +6260,7 @@ export class SharingService {
     public static getSharingStats(data: GetSharingStatsData): CancelablePromise<GetSharingStatsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/{infospace_id}/stats',
+            url: '/api/v1/shareables/{infospace_id}/stats',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -6283,7 +6283,7 @@ export class SharingService {
     public static exportResource(data: ExportResourceData): CancelablePromise<ExportResourceResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/sharing/{infospace_id}/export',
+            url: '/api/v1/shareables/{infospace_id}/export',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -6307,7 +6307,7 @@ export class SharingService {
     public static importResource(data: ImportResourceData): CancelablePromise<ImportResourceResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/sharing/import/{target_infospace_id}',
+            url: '/api/v1/shareables/import/{target_infospace_id}',
             path: {
                 target_infospace_id: data.targetInfospaceId
             },
@@ -6331,7 +6331,7 @@ export class SharingService {
     public static exportResourcesBatch(data: ExportResourcesBatchData): CancelablePromise<ExportResourcesBatchResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/sharing/export-batch/{infospace_id}',
+            url: '/api/v1/shareables/export-batch/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -6358,7 +6358,7 @@ export class SharingService {
     public static exportMixedBatch(data: ExportMixedBatchData): CancelablePromise<ExportMixedBatchResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/sharing/export-mixed-batch/{infospace_id}',
+            url: '/api/v1/shareables/export-mixed-batch/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -6383,7 +6383,7 @@ export class SharingService {
     public static streamSharedAssetFile(data: StreamSharedAssetFileData): CancelablePromise<StreamSharedAssetFileResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/stream/{token}/{asset_id}',
+            url: '/api/v1/shareables/stream/{token}/{asset_id}',
             path: {
                 token: data.token,
                 asset_id: data.assetId
@@ -6406,7 +6406,7 @@ export class SharingService {
     public static downloadSharedBundle(data: DownloadSharedBundleData): CancelablePromise<DownloadSharedBundleResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/download-bundle/{token}',
+            url: '/api/v1/shareables/download-bundle/{token}',
             path: {
                 token: data.token
             },
@@ -6429,7 +6429,7 @@ export class SharingService {
     public static downloadSharedAssetFile(data: DownloadSharedAssetFileData): CancelablePromise<DownloadSharedAssetFileResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/download/{token}/{asset_id}',
+            url: '/api/v1/shareables/download/{token}/{asset_id}',
             path: {
                 token: data.token,
                 asset_id: data.assetId
@@ -6452,7 +6452,7 @@ export class SharingService {
     public static viewDatasetPackageSummary(data: ViewDatasetPackageSummaryData): CancelablePromise<ViewDatasetPackageSummaryResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/sharing/view_dataset_package_summary/{token}',
+            url: '/api/v1/shareables/view_dataset_package_summary/{token}',
             path: {
                 token: data.token
             },
@@ -6474,7 +6474,7 @@ export class SharingService {
     public static importResourceFromToken(data: ImportResourceFromTokenData): CancelablePromise<ImportResourceFromTokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/sharing/import-from-token/{token}',
+            url: '/api/v1/shareables/import-from-token/{token}',
             path: {
                 token: data.token
             },

@@ -129,14 +129,14 @@ const getStatusIcon = (status?: string) => {
 const getStatusColor = (status?: string) => {
   switch (status) {
     case 'complete':
-      return 'bg-green-100 border-green-200 text-green-800';
+      return 'bg-green-100/20 border-green-200';
     case 'uploading':
     case 'processing':
-      return 'bg-blue-100 border-blue-200 text-blue-800';
+      return 'bg-blue-300/30 border-blue-200';
     case 'error':
-      return 'bg-red-100 border-red-200 text-red-800';
+      return 'bg-red-300/30 border-red-200';
     default:
-      return 'bg-muted border-muted-foreground/20';
+      return 'bg-muted/0 border-muted-foreground/0';
   }
 };
 
@@ -1298,10 +1298,10 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
       <DialogContent className={cn(
-        "max-h-screen overflow-y-auto flex flex-col",
-        isMobile ? "w-[95vw] max-w-[95vw] h-[90vh]" : "sm:max-w-4xl"
+        "flex flex-col",
+        isMobile ? "w-[95vw] max-w-[95vw] h-[90vh] max-h-[90vh] p-4" : "sm:max-w-4xl max-h-[90vh]"
       )}>
-        <DialogHeader>
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className={cn(isMobile && "text-lg")}>
             {destination === 'existing_bundle'
               ? `Upload to Bundle: ${bundles.find(b => b.id === (typeof selectedBundleId === 'string' ? parseInt(selectedBundleId) : selectedBundleId))?.name || '...'}`
@@ -1331,128 +1331,130 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
           </DialogDescription>
         </DialogHeader>
         
-        <form onSubmit={handleSubmit} className="space-y-4 flex-1 overflow-hidden flex flex-col">
-          {uploadProgress && renderUploadProgress()}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto flex flex-col min-h-0">
+          <div className="space-y-4 flex-1 overflow-y-auto">
+            {uploadProgress && renderUploadProgress()}
 
-          {!uploadProgress && (
-            <div className={cn(
-              "grid gap-4",
-              isMobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2 xl:grid-cols-4"
-            )}>
-              {renderFileDropZone()}
-              {renderUrlInput()}
-              {renderTextInput()}
-              {renderRssBrowser()}
-              {renderSearchInput()}
-            </div>
-          )}
+            {!uploadProgress && (
+              <div className={cn(
+                "grid gap-4",
+                isMobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2 xl:grid-cols-4"
+              )}>
+                {renderFileDropZone()}
+                {renderUrlInput()}
+                {renderTextInput()}
+                {renderRssBrowser()}
+                {renderSearchInput()}
+              </div>
+            )}
 
-          <div className="space-y-3 flex-1 overflow-y-auto flex flex-col">
-            <div className="flex items-center justify-between">
-              <Label>
-                Items to Upload ({items.length} items)
-              </Label>
-              {itemTypeCounts.length > 0 && (
-                <div className="flex gap-1">
-                  {itemTypeCounts.map(({ kind, count, info }) => {
-                    const Icon = info?.icon || FileText;
-                    return (
-                      <Badge key={kind} variant="secondary" className="text-xs">
-                        <Icon className="h-3 w-3 mr-1" />
-                        {count} {info?.label || kind}
-                      </Badge>
-                    );
-                  })}
-                </div>
-              )}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>
+                  Items to Upload ({items.length} items)
+                </Label>
+                {itemTypeCounts.length > 0 && (
+                  <div className="flex gap-1 flex-wrap">
+                    {itemTypeCounts.map(({ kind, count, info }) => {
+                      const Icon = info?.icon || FileText;
+                      return (
+                        <Badge key={kind} variant="secondary" className="text-xs">
+                          <Icon className="h-3 w-3 mr-1" />
+                          {count} {info?.label || kind}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              
+              <div className="border rounded-lg p-4">
+                {renderItemsList()}
+              </div>
             </div>
-            
-            <div className="border rounded-lg p-4 flex-1 overflow-y-auto">
-              {renderItemsList()}
-            </div>
+
+            {/* Destination Selector */}
+            {!uploadProgress && items.length > 0 && (
+              <div className="space-y-3 pt-4 border-t">
+                <Label className="font-semibold">Destination</Label>
+                <RadioGroup value={destination} onValueChange={(value) => setDestination(value as any)} className="space-y-2">
+                  <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
+                    <RadioGroupItem value="individual" id="dest-individual" />
+                    <Label htmlFor="dest-individual" className="font-normal cursor-pointer">
+                      Create individual assets
+                      <p className="text-xs text-muted-foreground">Each item will be a separate asset in the infospace.</p>
+                    </Label>
+                  </div>
+                  
+                  <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
+                    <RadioGroupItem value="new_bundle" id="dest-new" />
+                    <Label htmlFor="dest-new" className="font-normal cursor-pointer">
+                      Create a new bundle
+                      <p className="text-xs text-muted-foreground">Group all items together in a new bundle.</p>
+                    </Label>
+                  </div>
+                  {destination === 'new_bundle' && (
+                    <div className="pl-8 pb-2">
+                      <Label htmlFor="bundle-title" className="text-xs font-medium text-muted-foreground">Bundle Title</Label>
+                      <Input
+                        id="bundle-title"
+                        value={bundleTitle}
+                        onChange={(e) => setBundleTitle(e.target.value)}
+                        placeholder={items.length > 0 ? generateBundleTitle(items) : "e.g., Research Documents Collection"}
+                        disabled={storeIsLoading || isUploading}
+                        className="mt-1"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
+                    <RadioGroupItem value="existing_bundle" id="dest-existing" disabled={!bundles || bundles.length === 0} />
+                    <Label htmlFor="dest-existing" className={cn("font-normal cursor-pointer", (!bundles || bundles.length === 0) && "text-muted-foreground cursor-not-allowed")}>
+                      Add to existing bundle
+                      <p className="text-xs text-muted-foreground">Add all items to a bundle that already exists.</p>
+                    </Label>
+                  </div>
+                  {destination === 'existing_bundle' && (
+                    <div className="pl-8 pb-2">
+                      <Select
+                        value={selectedBundleId?.toString()}
+                        onValueChange={(value) => setSelectedBundleId(parseInt(value))}
+                        disabled={!bundles || bundles.length === 0}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={bundles.length > 0 ? "Select a bundle" : "No bundles available"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {bundles.map((bundle) => (
+                            <SelectItem key={bundle.id} value={bundle.id.toString()}>
+                              {bundle.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </RadioGroup>
+              </div>
+            )}
+
+            {formError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Validation Error</AlertTitle>
+                <AlertDescription>{formError}</AlertDescription>
+              </Alert>
+            )}
+            {storeError && !formError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Creation Error</AlertTitle>
+                <AlertDescription>{storeError}</AlertDescription>
+              </Alert>
+            )}
           </div>
 
-          {/* Destination Selector */}
-          {!uploadProgress && items.length > 0 && (
-            <div className="space-y-3 pt-4 border-t">
-              <Label className="font-semibold">Destination</Label>
-              <RadioGroup value={destination} onValueChange={(value) => setDestination(value as any)} className="space-y-2">
-                <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
-                  <RadioGroupItem value="individual" id="dest-individual" />
-                  <Label htmlFor="dest-individual" className="font-normal cursor-pointer">
-                    Create individual assets
-                    <p className="text-xs text-muted-foreground">Each item will be a separate asset in the infospace.</p>
-                  </Label>
-                </div>
-                
-                <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
-                  <RadioGroupItem value="new_bundle" id="dest-new" />
-                  <Label htmlFor="dest-new" className="font-normal cursor-pointer">
-                    Create a new bundle
-                    <p className="text-xs text-muted-foreground">Group all items together in a new bundle.</p>
-                  </Label>
-                </div>
-                {destination === 'new_bundle' && (
-                  <div className="pl-8 pb-2">
-                    <Label htmlFor="bundle-title" className="text-xs font-medium text-muted-foreground">Bundle Title</Label>
-                    <Input
-                      id="bundle-title"
-                      value={bundleTitle}
-                      onChange={(e) => setBundleTitle(e.target.value)}
-                      placeholder={items.length > 0 ? generateBundleTitle(items) : "e.g., Research Documents Collection"}
-                      disabled={storeIsLoading || isUploading}
-                      className="mt-1"
-                    />
-                  </div>
-                )}
-
-                <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
-                  <RadioGroupItem value="existing_bundle" id="dest-existing" disabled={!bundles || bundles.length === 0} />
-                  <Label htmlFor="dest-existing" className={cn("font-normal cursor-pointer", (!bundles || bundles.length === 0) && "text-muted-foreground cursor-not-allowed")}>
-                    Add to existing bundle
-                    <p className="text-xs text-muted-foreground">Add all items to a bundle that already exists.</p>
-                  </Label>
-                </div>
-                {destination === 'existing_bundle' && (
-                  <div className="pl-8 pb-2">
-                    <Select
-                      value={selectedBundleId?.toString()}
-                      onValueChange={(value) => setSelectedBundleId(parseInt(value))}
-                      disabled={!bundles || bundles.length === 0}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={bundles.length > 0 ? "Select a bundle" : "No bundles available"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {bundles.map((bundle) => (
-                          <SelectItem key={bundle.id} value={bundle.id.toString()}>
-                            {bundle.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </RadioGroup>
-            </div>
-          )}
-
-          {formError && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Validation Error</AlertTitle>
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
-          {storeError && !formError && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Creation Error</AlertTitle>
-              <AlertDescription>{storeError}</AlertDescription>
-            </Alert>
-          )}
-
-          <DialogFooter className={cn(isMobile && "flex-col-reverse gap-2")}>
+          <DialogFooter className={cn("flex-shrink-0 mt-4 pt-4 border-t", isMobile && "flex-col-reverse gap-2")}>
             <Button 
               type="button" 
               variant="outline" 

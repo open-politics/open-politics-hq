@@ -383,7 +383,7 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
       )}
 
       {/* Data Table */}
-      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[50vh]" : "flex-1")}>
+      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[45vh]" : "flex-1")}>
         <div className="min-w-full inline-block align-middle">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-muted/50 sticky top-0 z-10">

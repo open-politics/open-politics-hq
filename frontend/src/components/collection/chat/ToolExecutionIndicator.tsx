@@ -39,7 +39,7 @@ interface ToolExecutionIndicatorProps {
   execution: ToolExecution
   compact?: boolean
   onAssetClick?: (assetId: number) => void
-  onBundleClick?: () => void
+  onBundleClick?: (bundleId: number) => void
 }
 
 /**
@@ -61,20 +61,20 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
 
   if (compact) {
     return (
-      <div className="rounded-md border bg-background/50 overflow-hidden">
+      <div className=" border bg-background/50 overflow-hidden">
         <div
           className={cn(
             "flex items-center gap-2 p-2",
-            hasResult && "cursor-pointer hover:bg-accent/40 transition"
+            hasResult && "cursor-pointer  transition"
           )}
           onClick={hasResult ? () => setIsExpanded(!isExpanded) : undefined}
           role={hasResult ? "button" : undefined}
           tabIndex={hasResult ? 0 : undefined}
           aria-expanded={isExpanded}
         >
-          <div className="flex items-center gap-2 flex-1">
+          <div className="flex items-center gap-2 flex-1 ml-3">
             {getStatusIcon(execution.status, 'h-4 w-4')}
-            <span className="text-sm font-medium">{formatToolName(execution.tool_name)}</span>
+            <span className="text-xs font-medium">{formatToolName(execution.tool_name)}</span>
           </div>
           
           {execution.status === 'running' && (
@@ -140,7 +140,7 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
   }
 
   return (
-    <div className={cn("rounded border-l-2 bg-card transition-all duration-200", getStatusColorClass(execution.status))}>
+    <div className={cn(" border-l-2 bg-card transition-all duration-200", getStatusColorClass(execution.status))}>
       <div>
         <div
           className={cn(
@@ -152,31 +152,32 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
           tabIndex={hasResult ? 0 : undefined}
           aria-expanded={isExpanded}
         >
-          {getStatusIcon(execution.status, 'h-3 w-3 shrink-0')}
-          <span className="text-xs font-medium truncate">{formatToolName(execution.tool_name)}</span>
-          {execution.timestamp && (
-            <span className="text-[9px] text-muted-foreground ml-auto shrink-0">
-              {execution.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
           {hasResult && (
             <ChevronDown className={cn(
               "h-3 w-3 shrink-0 transition-transform",
               isExpanded && "rotate-180"
             )} />
           )}
+          {getStatusIcon(execution.status, 'h-3 w-3 shrink-0')}
+          <span className="text-xs font-medium">{formatToolName(execution.tool_name)}</span>
+          
+          {/* Arguments - inline on same row */}
+          {Object.keys(execution.arguments).length > 0 && (
+            <span className="text-[9px] text-muted-foreground truncate flex-1">
+              {formatArgumentsInline(execution.arguments)}
+            </span>
+          )}
+          
+          {execution.timestamp && (
+            <span className="text-[9px] text-muted-foreground ml-auto shrink-0">
+              {execution.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
         </div>
-        
-        {/* Arguments - inline, minimal */}
-        {Object.keys(execution.arguments).length > 0 && (
-          <div className="text-[9px] text-muted-foreground mb-1 truncate px-1.5">
-            {formatArgumentsInline(execution.arguments)}
-          </div>
-        )}
         
         {/* Results - with max height constraint */}
         {hasResult && isExpanded && (
-          <div className="mt-1 max-h-[350px] overflow-y-auto px-1.5">
+          <div className="mt-1 px-1.5">
             {useRegistryRenderer ? (
               // Use new registry system
               <ToolResultDisplay
@@ -231,7 +232,7 @@ interface ToolExecutionListProps {
   executions: ToolExecution[]
   compact?: boolean
   onAssetClick?: (assetId: number) => void
-  onBundleClick?: () => void
+  onBundleClick?: (bundleId: number) => void
 }
 
 export function ToolExecutionList({ executions, compact = false, onAssetClick, onBundleClick }: ToolExecutionListProps) {

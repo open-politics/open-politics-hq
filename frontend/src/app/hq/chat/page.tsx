@@ -6,7 +6,7 @@ export const maxDuration = 60
 
 export default function Page() {
   return (
-    <div className="h-full p-2 sm:pr-4 flex flex-col w-full min-h-[calc(100vh-3em)]">
+    <div className="p-2 sm:pr-4 pt-0">
       <IntelligenceChat />
     </div>
   )

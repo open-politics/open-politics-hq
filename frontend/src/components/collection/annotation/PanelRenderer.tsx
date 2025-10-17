@@ -56,6 +56,12 @@ interface PanelRendererProps {
   retryingResultId?: number | null;
   // NEW: Field interaction callback for enhanced dialog
   onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
+  // NEW: Cross-panel navigation callbacks
+  onTimestampClick?: (timestamp: Date, fieldKey: string, sourcePanelId: string) => void;
+  onLocationClick?: (location: string, fieldKey: string, sourcePanelId: string) => void;
+  // NEW: Cross-panel state (passed from parent to enable highlighting)
+  mapHighlightLocation?: { location: string; fieldKey: string } | null;
+  chartHighlightTimestamp?: { timestamp: Date; fieldKey: string } | null;
 }
 
 export const PanelRenderer: React.FC<PanelRendererProps> = ({ 
@@ -74,6 +80,12 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   retryingResultId,
   // NEW: Field interaction callback for enhanced dialog
   onFieldInteraction,
+  // NEW: Cross-panel navigation callbacks
+  onTimestampClick,
+  onLocationClick,
+  // NEW: Cross-panel state
+  mapHighlightLocation,
+  chartHighlightTimestamp,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -90,6 +102,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const [geocodingError, setGeocodingError] = useState<string | null>(null);
   const { geocodeLocation } = useGeocode();
   const { getCache, setCache } = useGeocodingCacheStore();
+  
+  // Use cross-panel highlight state for appropriate panel types
+  const highlightLocation = panel.type === 'map' ? mapHighlightLocation : null;
+  const highlightTimestamp = panel.type === 'chart' ? chartHighlightTimestamp : null;
   
   // Get run-wide global variable splitting settings from Zustand store
   const { getGlobalVariableSplitting } = useAnnotationRunStore();
@@ -1013,6 +1029,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   // NEW: Time frame filtering and variable splitting
                   timeAxisConfig={panel.settings?.timeAxisConfig || null}
                   variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
+                  // NEW: Cross-panel navigation
+                  onTimestampClick={onTimestampClick ? (timestamp, fieldKey) => onTimestampClick(timestamp, fieldKey, panel.id) : undefined}
+                  onLocationClick={onLocationClick ? (location, fieldKey) => onLocationClick(location, fieldKey, panel.id) : undefined}
                 />
               </AssetDetailProvider>
             </div>
@@ -1042,6 +1061,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   // NEW: Result selection callback
                   onResultSelect={onResultSelect}
                   onFieldInteraction={onFieldInteraction}
+                  // NEW: Cross-panel timestamp highlighting
+                  highlightedTimestamp={highlightTimestamp}
                 />
               </AssetDetailProvider>
             </div>
@@ -1090,13 +1111,15 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   value={{
                     geocodeSource: panel.settings?.geocodeSource || null,
                     labelSource: panel.settings?.labelSource || null,
-                    showLabels: panel.settings?.showLabels ?? false
+                    showLabels: panel.settings?.showLabels ?? false,
+                    showAreas: panel.settings?.showAreas ?? false
                   }}
                   onChange={(config) => {
                     handlePanelSettingsUpdate({
                       geocodeSource: config.geocodeSource ?? undefined,
                       labelSource: config.labelSource ?? undefined,
-                      showLabels: config.showLabels
+                      showLabels: config.showLabels,
+                      showAreas: config.showAreas
                     });
                   }}
                   onGeocodeRequest={handleGeocodeRequest}
@@ -1111,7 +1134,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   points={geocodedPoints}
                   results={filteredResults}
                   schemas={allSchemas}
-                  labelConfig={panel.settings?.labelSource ? {
+                  labelConfig={panel.settings?.showLabels && panel.settings?.labelSource ? {
                     schemaId: panel.settings.labelSource.schemaId,
                     fieldKey: panel.settings.labelSource.fieldKey
                   } : undefined}
@@ -1132,6 +1155,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   }}
                   // NEW: Result selection callback
                   onResultSelect={onResultSelect}
+                  // NEW: Show areas toggle
+                  showAreas={panel.settings?.showAreas ?? false}
+                  // NEW: External location highlighting (to be wired up by parent)
+                  highlightLocation={highlightLocation}
                 />
               </AssetDetailProvider>
             </div>
@@ -1287,8 +1314,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       )}
 
-      <CardHeader className="flex flex-row items-start justify-between border-b p-2 pb-0 space-y-0 flex-shrink-0">
-        <div className="flex-1 space-y-2 min-w-0">
+      <CardHeader className="flex flex-row items-start justify-between border-b p-2 pb-1 space-y-0 flex-shrink-0">
+        <div className="flex-1 space-y-1 min-w-0">
           {/* Editable Name */}
           <div className="flex items-center gap-2 min-w-0">
             {isEditingName ? (
@@ -1297,7 +1324,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   value={editingName}
                   onChange={(e) => setEditingName(e.target.value)}
                   onKeyDown={handleNameKeyDown}
-                  className="text-sm sm:text-base font-semibold h-7 sm:h-8 flex-1 min-w-0"
+                  className="text-sm font-semibold h-7 flex-1 min-w-0"
                   placeholder="Panel name"
                   autoFocus
                 />
@@ -1310,7 +1337,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             ) : (
               <div className="flex items-center gap-2 flex-1 group min-w-0">
-                  <CardTitle className="text-sm sm:text-base flex-1 truncate">{panel.name}</CardTitle>
+                  <CardTitle className="text-sm flex-1 truncate">{panel.name}</CardTitle>
                 <Button 
                   size="icon" 
                   variant="ghost" 
@@ -1323,56 +1350,43 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             )}
           </div>
 
-          {/* Editable Description */}
-          <div className="flex items-start gap-2 min-w-0">
-            {isEditingDescription ? (
-              <div className="flex items-start gap-2 flex-1 min-w-0">
-                <Textarea
-                  value={editingDescription}
-                  onChange={(e) => setEditingDescription(e.target.value)}
-                  onKeyDown={handleDescriptionKeyDown}
-                  className="text-xs min-h-[60px] flex-1 min-w-0"
-                  placeholder="Panel description (optional)"
-                  autoFocus
-                />
-                <div className="flex flex-col gap-1 flex-shrink-0">
-                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
-                    <Check className="h-3 w-3" />
-                  </Button>
-                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
-                    <XCircle className="h-3 w-3" />
+          {/* Editable Description - ONLY show if has content or is editing */}
+          {(panel.description || isEditingDescription) && (
+            <div className="flex items-start gap-2 min-w-0">
+              {isEditingDescription ? (
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <Textarea
+                    value={editingDescription}
+                    onChange={(e) => setEditingDescription(e.target.value)}
+                    onKeyDown={handleDescriptionKeyDown}
+                    className="text-xs min-h-[50px] flex-1 min-w-0"
+                    placeholder="Panel description (optional)"
+                    autoFocus
+                  />
+                  <div className="flex flex-col gap-1 flex-shrink-0">
+                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
+                      <Check className="h-3 w-3" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
+                      <XCircle className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 flex-1 group min-w-0">
+                  <CardDescription className="text-xs flex-1 truncate">{panel.description}</CardDescription>
+                  <Button 
+                    size="icon" 
+                    variant="ghost" 
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" 
+                    onClick={() => setIsEditingDescription(true)}
+                  >
+                    <Edit2 className="h-3 w-3" />
                   </Button>
                 </div>
-              </div>
-            ) : (
-              <div className={cn("flex items-start gap-2 flex-1 group min-w-0", !panel.description && "min-h-[20px]")}>
-                {panel.description ? (
-                  <CardDescription className="text-xs flex-1 truncate">{panel.description}</CardDescription>
-                ) : (
-                  <CardDescription className="text-xs flex-1 italic text-muted-foreground/60 truncate">
-                    Click to add description
-                  </CardDescription>
-                )}
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" 
-                  onClick={() => setIsEditingDescription(true)}
-                >
-                  <Edit2 className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Panel Size Info / Type Info */}
-          <div className="text-xs text-muted-foreground">
-            {isCollapsed ? (
-              <span></span>
-            ) : (
-              <span>Size: {panel.gridPos.w} × {panel.gridPos.h} grid units</span>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Panel Controls */}
@@ -1396,7 +1410,12 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             </PopoverTrigger>
             <PopoverContent className="w-80 p-3" align="end" side="bottom">
               <div className="space-y-4">
-                <h4 className="font-medium text-sm">Panel Layout</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-sm">Panel Layout</h4>
+                  <span className="text-xs text-muted-foreground">
+                    {panel.gridPos.w} × {panel.gridPos.h} grid units
+                  </span>
+                </div>
                 
                 {/* Quick Size Buttons */}
                 <div>
@@ -1472,10 +1491,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       </CardHeader>
       
-      <CardContent className="flex-1 flex flex-col gap-2 p-2 min-h-0 overflow-y-auto">
+      <CardContent className="flex-1 flex flex-col gap-1.5 p-1.5 min-h-0 overflow-y-auto">
         {/* Unified Filters & Settings Section - Only this collapses */}
         {!isCollapsed && (
-          <div className="border-b pb-2 flex-shrink-0">
+          <div className="border-b pb-1.5 flex-shrink-0">
             <UnifiedFilterControls 
               filterSet={panel.filters || { logic: 'and', rules: [] }}
               onFilterSetChange={handleFilterChange}

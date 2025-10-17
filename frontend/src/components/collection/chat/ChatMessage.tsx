@@ -3,7 +3,7 @@
 import React from 'react'
 import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { ToolExecutionIndicator } from './ToolExecutionIndicator'
-import { MemoizedMarkdown } from '@/components/ui/memoized-markdown'
+import { Response } from '@/components/ai-elements/response'
 import { Badge } from '@/components/ui/badge'
 import { Wrench } from 'lucide-react'
 
@@ -12,7 +12,7 @@ interface MessageContentWithToolResultsProps {
   messageId: string
   toolExecutions?: ToolExecution[]
   onAssetClick?: (assetId: number) => void
-  onBundleClick?: () => void
+  onBundleClick?: (bundleId: number) => void
 }
 
 /**
@@ -42,12 +42,16 @@ export function MessageContentWithToolResults({
   // Parse content for XML markers
   const parseContentWithMarkers = () => {
     // Decode any HTML entities first (in case XML is escaped)
-    const decodedContent = decodeHtmlEntities(content);
+    let decodedContent = decodeHtmlEntities(content);
     
-    // Regex to match both formats:
-    // - New: <tool_results tool="navigate" />
+    // First, remove all closing tags (they're just noise for parsing)
+    decodedContent = decodedContent.replace(/<\/tool_results>/g, '');
+    
+    // Regex to match three formats:
+    // - Self-closing: <tool_results tool="navigate" />
+    // - Opening: <tool_results tool="navigate">
     // - Legacy: <tool_results id="something" tool="something" />
-    const markerRegex = /<tool_results\s+(?:id=["']([^"']+)["']\s+)?tool=["']([^"']+)["']\s*\/>/g
+    const markerRegex = /<tool_results\s+(?:id=["']([^"']+)["']\s+)?tool=["']([^"']+)["']\s*\/?>/g
     
     const parts: Array<{ type: 'text' | 'marker', content: string, executionId?: string, toolName?: string, markerIndex?: number }> = []
     let lastIndex = 0
@@ -155,10 +159,9 @@ export function MessageContentWithToolResults({
             // Render markdown text
             return (
               <div key={`text-${index}`} className="prose prose-sm dark:prose-invert max-w-none">
-                <MemoizedMarkdown 
-                  content={part.content}
-                  id={`${messageId}-part-${index}`}
-                />
+                <Response parseIncompleteMarkdown={true}>
+                  {part.content}
+                </Response>
               </div>
             )
           } else if (part.type === 'marker') {

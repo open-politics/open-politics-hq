@@ -9,7 +9,7 @@ export default function AssetManagerPage() {
   }, []);
 
   return (
-    <div className="h-full flex flex-col min-h-[calc(100vh-3em)] w-full max-w-full overflow-y-auto">
+    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto">
       <AssetManager onLoadIntoRunner={handleLoadIntoRunner} />
     </div>
   );

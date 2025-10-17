@@ -13,6 +13,10 @@ import {
   Legend,
   TooltipProps,
   Cell,
+  LegendProps,
+  ReferenceLine,
+  ReferenceArea,
+  Dot,
 } from 'recharts';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns';
 import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client';
@@ -99,6 +103,8 @@ interface Props {
   onResultSelect?: (result: FormattedAnnotation) => void;
   // NEW: Field interaction callback for opening enhanced dialog
   onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
+  // NEW: Cross-panel timestamp highlighting (similar to map's highlightLocation)
+  highlightedTimestamp?: { timestamp: Date; fieldKey: string } | null;
 }
 
 // NEW: Interface for group selection in timeline charts
@@ -660,16 +666,74 @@ const processLineChartData = (
 
 interface CustomTooltipProps extends TooltipProps<number, string> {
   keyToSplitValueMap: Map<string, string>;
+  coordinate?: { x: number; y: number };
+  viewBox?: { width: number; height: number; x: number; y: number };
 }
 
-const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap }: CustomTooltipProps) => {
-  if (!active || !payload || payload.length === 0) return null;
+// State to keep tooltip locked when user is interacting with it
+let isTooltipLocked = false;
+let lockedPayload: any = null;
+
+const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap, coordinate, viewBox }: CustomTooltipProps) => {
+  const [viewMode, setViewMode] = React.useState<'chart' | 'list'>('chart');
+  const tooltipRef = React.useRef<HTMLDivElement>(null);
+  const [isHovering, setIsHovering] = React.useState(false);
+  
+  // Calculate if we're near the right edge of the chart
+  const isNearRightEdge = React.useMemo(() => {
+    if (!coordinate || !viewBox) return false;
+    const chartWidth = viewBox.width || 0;
+    const cursorX = coordinate.x || 0;
+    // Consider "near right edge" if we're in the last 25% of the chart
+    return cursorX > (chartWidth * 0.75);
+  }, [coordinate, viewBox]);
+  
+  // Store payload when we have it
+  React.useEffect(() => {
+    if (active && payload && payload.length > 0) {
+      lockedPayload = payload;
+    }
+  }, [active, payload]);
+  
+  // Prevent tooltip from closing when interacting with it
+  const handleMouseEnter = React.useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsHovering(true);
+    isTooltipLocked = true;
+  }, []);
+  
+  const handleMouseLeave = React.useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsHovering(false);
+    // Small delay before unlocking to prevent flickering
+    setTimeout(() => {
+      isTooltipLocked = false;
+    }, 100);
+  }, []);
+  
+  // Keep tooltip open when clicking inside
+  const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+  
+  // Use locked payload if we're hovering over the tooltip
+  const displayPayload = (isHovering && lockedPayload) || payload;
+  
+  if (!active && !isHovering) return null;
+  if (!displayPayload || displayPayload.length === 0) return null;
     
-  const pointData = payload[0].payload;
+  const pointData = displayPayload[0].payload;
   const formattedDate = format(new Date(pointData.timestamp), 'yyyy-MM-dd');
   const groups = new Map<string, any[]>();
 
-  payload.forEach(pld => {
+  // Filter out annotation count and min/max statistical lines for cleaner display
+  const filteredPayload = displayPayload.filter(pld => 
+    pld.dataKey !== 'count' && 
+    !String(pld.dataKey).endsWith('_min') && 
+    !String(pld.dataKey).endsWith('_max')
+  );
+
+  filteredPayload.forEach(pld => {
       const splitValue = (pld.dataKey && keyToSplitValueMap.get(String(pld.dataKey))) || 'General';
       
       if (!groups.has(splitValue)) {
@@ -681,34 +745,258 @@ const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap }: Cu
       groups.get(splitValue)!.push({
           color: pld.color,
           name: cleanName,
-          value: pld.value
+          value: pld.value,
+          dataKey: pld.dataKey
       });
   });
 
+  // Calculate max value for bar chart scaling
+  const allValues = Array.from(groups.values()).flat().map(item => Number(item.value) || 0);
+  const maxValue = Math.max(...allValues, 1);
+
   return (
-    <div className="bg-card/95 bg-background/90 dark:bg-popover p-3 max-h-80 overflow-y-auto overflow-x-hidden border border-border rounded-lg shadow-xl text-sm text-popover-foreground pointer-events-auto">
-      <p className="font-bold text-base mb-2">{formattedDate}</p>
-      
-      {Array.from(groups.entries()).map(([groupName, items]) => (
-        <div key={groupName} className="mb-2 last:mb-0">
-          <p className="font-semibold text-sm text-foreground">{groupName}</p>
-          <div className="pl-2 mt-1 space-y-1">
-            {items.map((item, index) => (
-              <div key={`tooltip-item-${index}`} className="flex items-center space-x-2">
-                <div style={{width: 8, height: 8, backgroundColor: item.color, borderRadius: '50%', flexShrink: 0}} />
-                <span className="flex-1 truncate text-muted-foreground" title={item.name}>{item.name}</span>
-                <span className="font-bold">{item.value}</span>
-              </div>
-            ))}
-          </div>
+    <div 
+      ref={tooltipRef}
+      className="bg-card/95 bg-background/90 dark:bg-popover p-3 max-h-full overflow-y-auto overflow-x-hidden border-2 border-primary/20 rounded-lg shadow-xl text-sm text-popover-foreground pointer-events-auto "
+      style={{ 
+        position: 'relative',
+        zIndex: 9999,
+        // Shift left for most points, but shift right for rightmost points to prevent cutoff
+        marginLeft: isNearRightEdge ? '-220px' : '-80px',
+      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onMouseDown={handleMouseDown}
+    >
+      <div className="flex items-center justify-between mb-2 gap-3">
+        <div className="flex gap-1 flex-shrink-0">
+          <button
+            onMouseDown={(e) => { 
+              e.preventDefault();
+              e.stopPropagation(); 
+            }}
+            onClick={(e) => { 
+              e.preventDefault();
+              e.stopPropagation(); 
+              setViewMode('chart'); 
+            }}
+            className={cn(
+              "px-2 py-0.5 text-[10px] rounded transition-colors cursor-pointer",
+              viewMode === 'chart' 
+                ? "bg-primary text-primary-foreground" 
+                : "bg-muted hover:bg-muted/80"
+            )}
+            title="Bar chart view"
+          >
+            Chart
+          </button>
+          <button
+            onMouseDown={(e) => { 
+              e.preventDefault();
+              e.stopPropagation(); 
+            }}
+            onClick={(e) => { 
+              e.preventDefault();
+              e.stopPropagation(); 
+              setViewMode('list'); 
+            }}
+            className={cn(
+              "px-2 py-0.5 text-[10px] rounded transition-colors cursor-pointer",
+              viewMode === 'list' 
+                ? "bg-primary text-primary-foreground" 
+                : "bg-muted hover:bg-muted/80"
+            )}
+            title="List view"
+          >
+            List
+          </button>
         </div>
-      ))}
+        <p className="font-bold text-base flex-1 text-right">{formattedDate}</p>
+      </div>
+      
+      {viewMode === 'chart' ? (
+        // Bar chart visualization
+        <div className="space-y-3">
+          {Array.from(groups.entries()).map(([groupName, items]) => (
+            <div key={groupName} className="space-y-1">
+              {groups.size > 1 && <p className="font-semibold text-xs text-foreground mb-1">{groupName}</p>}
+              {items.map((item, index) => {
+                const percentage = maxValue > 0 ? (Number(item.value) / maxValue) * 100 : 0;
+                return (
+                  <div key={`bar-${index}`} className="space-y-0.5">
+                    <div className="flex items-baseline justify-between text-xs">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <div 
+                          style={{width: 8, height: 8, backgroundColor: item.color, flexShrink: 0}} 
+                          className="rounded-sm"
+                        />
+                        <span className="truncate text-muted-foreground text-[11px]" title={item.name}>
+                          {item.name}
+                        </span>
+                      </div>
+                      <span className="font-bold ml-2 flex-shrink-0">{item.value}</span>
+                    </div>
+                    <div className="w-full bg-muted/30 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.max(percentage, 2)}%`,
+                          backgroundColor: item.color
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : (
+        // Traditional list view
+        <div className="space-y-2">
+          {Array.from(groups.entries()).map(([groupName, items]) => (
+            <div key={groupName} className="mb-2 last:mb-0">
+              {groups.size > 1 && <p className="font-semibold text-sm text-foreground">{groupName}</p>}
+              <div className="pl-2 mt-1 space-y-1">
+                {items.map((item, index) => (
+                  <div key={`tooltip-item-${index}`} className="flex items-center space-x-2">
+                    <div style={{width: 8, height: 8, backgroundColor: item.color, borderRadius: '50%', flexShrink: 0}} />
+                    <span className="flex-1 truncate text-muted-foreground text-xs" title={item.name}>{item.name}</span>
+                    <span className="font-bold text-xs">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {pointData.documents && pointData.documents.length > 0 && (
-        <p className="mt-2 pt-2 border-t border-border/50 text-xs text-muted-foreground">
+        <p className="mt-2 pt-2 border-t border-border/50 text-[10px] text-muted-foreground">
           Based on {pointData.documents.length} document{pointData.documents.length > 1 ? 's' : ''} in this period.
         </p>
       )}
+    </div>
+  );
+};
+
+// === CUSTOM LEGEND COMPONENT ===
+// Elegant legend that groups statistical variants (min/max/avg) with their base field
+
+interface CustomLegendProps {
+  payload?: any[];
+  showStatistics: boolean;
+}
+
+const CustomLegend: React.FC<CustomLegendProps> = ({ payload, showStatistics }) => {
+  if (!payload || payload.length === 0) return null;
+
+  // Group fields by their base name (without _min/_max/_avg suffix)
+  const fieldGroups = new Map<string, { 
+    base: any; 
+    stats: { min?: any; max?: any; avg?: any } 
+  }>();
+
+  payload.forEach(item => {
+    const dataKey = String(item.dataKey || '');
+    
+    // Skip annotation count
+    if (dataKey === 'count') return;
+    
+    // Check if this is a statistical variant
+    const minMatch = dataKey.match(/^(.+)_min$/);
+    const maxMatch = dataKey.match(/^(.+)_max$/);
+    const avgMatch = dataKey.match(/^(.+)_avg$/);
+    
+    if (showStatistics && minMatch) {
+      const baseKey = minMatch[1];
+      if (!fieldGroups.has(baseKey)) {
+        fieldGroups.set(baseKey, { base: null, stats: {} });
+      }
+      fieldGroups.get(baseKey)!.stats.min = item;
+    } else if (showStatistics && maxMatch) {
+      const baseKey = maxMatch[1];
+      if (!fieldGroups.has(baseKey)) {
+        fieldGroups.set(baseKey, { base: null, stats: {} });
+      }
+      fieldGroups.get(baseKey)!.stats.max = item;
+    } else if (showStatistics && avgMatch) {
+      const baseKey = avgMatch[1];
+      if (!fieldGroups.has(baseKey)) {
+        fieldGroups.set(baseKey, { base: null, stats: {} });
+      }
+      fieldGroups.get(baseKey)!.stats.avg = item;
+    } else {
+      // Base field
+      if (!fieldGroups.has(dataKey)) {
+        fieldGroups.set(dataKey, { base: item, stats: {} });
+      } else {
+        fieldGroups.get(dataKey)!.base = item;
+      }
+    }
+  });
+
+  return (
+    <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 px-4 py-3">
+      {Array.from(fieldGroups.entries()).map(([baseKey, group]) => {
+        if (!group.base) return null;
+        
+        const hasStats = showStatistics && (group.stats.min || group.stats.max || group.stats.avg);
+        const displayName = group.base.value?.length > 35 
+          ? group.base.value.substring(0, 32) + '...' 
+          : group.base.value;
+
+        return (
+          <div key={baseKey} className="flex items-center gap-2">
+            {/* Main field indicator */}
+            <div className="flex items-center gap-1.5">
+              <div
+                className="w-4 h-[3px] rounded-sm"
+                style={{ backgroundColor: group.base.color }}
+              />
+              <span className="text-xs font-medium leading-tight">{displayName}</span>
+            </div>
+            
+            {/* Statistical variants indicator - elegant grouped display */}
+            {hasStats && (
+              <div className="flex items-center gap-1 ml-0.5 pl-2 border-l border-border/50">
+                <div className="flex flex-col gap-[2px] items-center">
+                  {/* Visual bars for min/avg/max */}
+                  <div className="flex items-end gap-[3px] h-4">
+                    {group.stats.min && (
+                      <div 
+                        className="w-[4px] h-[8px] rounded-sm"
+                        style={{ backgroundColor: group.base.color, opacity: 0.45 }}
+                        title="Minimum value line"
+                      />
+                    )}
+                    {group.stats.avg && (
+                      <div 
+                        className="w-[4px] h-[14px] rounded-sm"
+                        style={{ backgroundColor: group.base.color, opacity: 0.75 }}
+                        title="Average value line"
+                      />
+                    )}
+                    {group.stats.max && (
+                      <div 
+                        className="w-[4px] h-[8px] rounded-sm"
+                        style={{ backgroundColor: group.base.color, opacity: 0.45 }}
+                        title="Maximum value line"
+                      />
+                    )}
+                  </div>
+                  {/* Connecting line */}
+                  <div 
+                    className="w-full h-[1.5px] opacity-35"
+                    style={{ backgroundColor: group.base.color }}
+                  />
+                </div>
+                <span className="text-[9px] text-muted-foreground ml-0.5 leading-none font-medium">range</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -759,6 +1047,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
   onResultSelect,
   // NEW: Field interaction callback for opening enhanced dialog
   onFieldInteraction,
+  // NEW: Cross-panel timestamp highlighting
+  highlightedTimestamp = null,
 }) => {
   const [isGrouped, setIsGrouped] = useState(false);
   const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
@@ -1067,7 +1357,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     groupName,
                     schemaName,
                     fieldName,
-                    displayName: `${groupName} (${fieldName})`,
+                    displayName: fieldName, // Show just the field name, schema/group context is implicit
                     type: 'number', // TODO: Could extract from schema if needed
                     hasData: true
                   });
@@ -1140,7 +1430,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
                 key,
                 schemaName: schema.name,
                 fieldName,
-                displayName: `${schema.name}.${fieldName}`,
+                displayName: fieldName, // Show just the field name, schema context is implicit
                 type: 'number',
                 hasData: true
               });
@@ -1209,6 +1499,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
        }
        return false;
      })();
+
 
   // === SIMPLIFIED FIELD VISIBILITY CONTROLS ===
   const handleFieldVisibilityToggle = (fieldKey: string) => {
@@ -1719,7 +2010,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
             ) : (
               <ComposedChart
                 data={processedData.chartData as ChartDataPoint[]}
-                margin={{ top: 20, right: 60, left: 20, bottom: 100 }}
+                margin={{ top: 10, right: 60, left: 10, bottom: 20 }}
                 onClick={handleTimelinePointClick}
               >
                 <XAxis 
@@ -1733,30 +2024,75 @@ const AnnotationResultsChart: React.FC<Props> = ({
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
                 <RechartsTooltip 
                   cursor={{ fill: 'rgba(255, 255, 255, 0.1)' }}
-                  content={<CustomTooltipContent keyToSplitValueMap={new Map()} />} 
+                  content={<CustomTooltipContent keyToSplitValueMap={new Map()} />}
+                  allowEscapeViewBox={{ x: true, y: true }}
+                  wrapperStyle={{ pointerEvents: 'auto', zIndex: 9999, outline: 'none' }}
+                  isAnimationActive={false}
+                  position={{ y: 10 }}
+                  offset={15}
+                  shared={false}
                 />
                 
-                {/* Add Legend component for timeline charts - at bottom with wrapping and compact layout */}
+                {/* Timestamp highlighting from cross-panel navigation */}
+                {highlightedTimestamp && (() => {
+                  console.log('[Chart] Received highlightedTimestamp:', highlightedTimestamp);
+                  const chartData = processedData.chartData as ChartDataPoint[];
+                  console.log('[Chart] Chart data points:', chartData.length, chartData.map(p => p.dateString));
+                  const highlightedDate = highlightedTimestamp.timestamp;
+                  
+                  // Find the matching data point based on the timestamp
+                  // Match by date (ignore time) since charts group by day/week/month etc
+                  const matchingPoint = chartData.find(point => {
+                    const pointDate = new Date(point.timestamp);
+                    // Compare dates at the interval level (day, week, month etc)
+                    return point.dateString === format(highlightedDate, selectedTimeInterval === 'day' ? 'MMM d, yyyy' : 
+                                                                        selectedTimeInterval === 'week' ? 'MMM d, yyyy' :
+                                                                        selectedTimeInterval === 'month' ? 'MMM yyyy' :
+                                                                        selectedTimeInterval === 'quarter' ? 'QQQ yyyy' : 'yyyy');
+                  });
+                  
+                  if (matchingPoint) {
+                    console.log('[Chart] Found matching point, rendering highlight:', matchingPoint.dateString);
+                    return (
+                      <>
+                        {/* Subtle background highlight area */}
+                        <ReferenceArea
+                          yAxisId="left"
+                          x1={matchingPoint.dateString}
+                          x2={matchingPoint.dateString}
+                          strokeOpacity={0.3}
+                          fill="#3b82f6"
+                          fillOpacity={0.1}
+                        />
+                        {/* Vertical reference line at the highlighted timestamp */}
+                        <ReferenceLine
+                          yAxisId="left"
+                          x={matchingPoint.dateString}
+                          stroke="#3b82f6"
+                          strokeWidth={2}
+                          strokeDasharray="3 3"
+                          label={{
+                            value: '📅',
+                            position: 'top',
+                            fontSize: 16,
+                            fill: '#3b82f6',
+                          }}
+                        />
+                      </>
+                    );
+                  }
+                  return null;
+                })()}
+                
+                {/* Custom legend component that elegantly groups statistical variants */}
                 {fieldsToRender.length > 0 && (
                   <Legend 
+                    content={<CustomLegend showStatistics={showStatistics} />}
                     verticalAlign="bottom" 
                     align="center"
-                    height={fieldsToRender.length <= 3 ? 40 : fieldsToRender.length <= 6 ? 60 : 80}
                     wrapperStyle={{ 
-                      paddingTop: '20px',
-                      paddingBottom: '10px',
-                      fontSize: '11px',
-                      lineHeight: '1.4'
-                    }}
-                    iconSize={8}
-                    iconType="line"
-                    layout="horizontal"
-                    formatter={(value: string) => {
-                      // Truncate long names for better space usage
-                      if (value.length > 35) {
-                        return value.substring(0, 32) + '...';
-                      }
-                      return value;
+                      paddingTop: '12px',
+                      paddingBottom: '8px',
                     }}
                   />
                 )}
@@ -1772,6 +2108,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     strokeWidth={1}
                     name="Annotation Count"
                     isAnimationActive={false}
+                    barSize={20}
+                    maxBarSize={30}
                   />
                 )}
                 
@@ -1796,6 +2134,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
                        stroke={fieldColor}
                        strokeWidth={2}
                        dot={{ fill: fieldColor, strokeWidth: 0, r: 4 }}
+                       activeDot={{ 
+                         r: 8, 
+                         strokeWidth: 0,
+                         fill: fieldColor,
+                         style: { cursor: 'pointer' }
+                       }}
                        name={field.displayName}
                        connectNulls={true}
                        isAnimationActive={false}

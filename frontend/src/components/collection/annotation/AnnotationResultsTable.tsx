@@ -146,6 +146,9 @@ interface AnnotationResultsTableProps {
   // NEW: Variable splitting
   variableSplittingConfig?: VariableSplittingConfig | null;
   onVariableSplittingChange?: (config: VariableSplittingConfig | null) => void;
+  // NEW: Cross-panel navigation
+  onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
+  onLocationClick?: (location: string, fieldKey: string) => void;
 }
 
 // --- UTILITY FUNCTIONS (Keep existing helpers like getHeaderClassName) --- //
@@ -205,6 +208,9 @@ export function AnnotationResultsTable({
   timeAxisConfig = null,
   variableSplittingConfig = null,
   onVariableSplittingChange,
+  // NEW: Cross-panel navigation
+  onTimestampClick,
+  onLocationClick,
 }: AnnotationResultsTableProps) {
   const [sorting, setSorting] = useState<SortingState>(() => {
     if (initialTableConfig?.sorting) {
@@ -793,53 +799,54 @@ export function AnnotationResultsTable({
               {/* Child row indicator */}
               {record.isChildRow && (
                 <div className="flex items-center justify-center w-6 flex-shrink-0 mt-1">
-                  <div className="w-2 h-2 rounded-full bg-primary/30 border-2 border-primary/50" />
+                  {/* Indicator for child rows from CSV expansion */}
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center justify-center w-6 flex-shrink-0 mt-1">
+                          <span className="text-[10px] text-muted-foreground/50">↳</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" align="start">
+                        <p className="text-xs">Child Asset of a larger Parent Asset (like a CSV row)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
               )}
               
-              {/* Content: Checkbox, Title, ID, Source */}
-              <div className="flex-1 min-w-0 flex gap-2.5 p-2.5 rounded-lg border border-border bg-gradient-to-b from-card to-card/80 hover:border-border/80 hover:shadow-sm transition-all duration-200 group">
-                {/* Checkbox */}
-                <div className="flex items-start pt-0.5">
+              {/* Compact Asset Cell - Fully vertical stack */}
+              <div className="flex-1 min-w-0 flex flex-col gap-0.5 py-1">
+                {/* Row 1: Checkbox */}
+                <div className="flex items-center">
                   <Checkbox
                     checked={row.getIsSelected()}
                     onCheckedChange={(value) => row.toggleSelected(!!value)}
                     aria-label="Select row"
-                    className="h-4 w-4 flex-shrink-0 mt-0.5"
+                    className="h-3.5 w-3.5 flex-shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
                 
-                {/* Content area */}
-                <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                  {/* Title */}
-                  <AssetLink 
-                    assetId={record.id} 
-                    className="font-medium text-sm truncate hover:text-primary transition-colors block leading-tight group-hover:underline decoration-primary/30"
-                  >
-                    {record.title || <span className="italic text-muted-foreground/70">No Title</span>}
-                  </AssetLink>
-                  
-                  {/* Metadata */}
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground/80 min-w-0">
-                    <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90">
-                      #{record.id}
-                    </span>
-                    {record.sourceName && (
-                      <>
-                        <span className="text-muted-foreground/30">•</span>
-                        <span className="truncate text-[11px]">{record.sourceName}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
+                {/* Row 2: Title */}
+                <AssetLink 
+                  assetId={record.id} 
+                  className="text-xs truncate hover:text-primary transition-colors"
+                >
+                  {record.title || <span className="italic text-muted-foreground/70">No Title</span>}
+                </AssetLink>
+                
+                {/* Row 3: ID Badge */}
+                <span className="text-[10px] text-muted-foreground/70 font-mono">
+                  #{record.id}
+                </span>
               </div>
             </div>
           );
         },
-        maxSize: 200,
-        minSize: 120,
-        size: 140,
+        maxSize: 140,
+        minSize: 80,
+        size: 100,
         enableSorting: true,
         sortingFn: (rowA, rowB) => {
           // Sort by title
@@ -971,12 +978,6 @@ export function AnnotationResultsTable({
           const fieldValue = getAnnotationFieldValue(resultForThisCell.value, field.key);
           const isFailed = resultForThisCell.status === 'failure';
           
-          // Check if this field has a justification
-          const justificationFieldPath = `${field.key}_justification`;
-          const justificationValue = resultForThisCell.value && typeof resultForThisCell.value === 'object'
-            ? getAnnotationFieldValue(resultForThisCell.value, justificationFieldPath)
-            : undefined;
-          
           return (
             <div className={cn(
               "relative h-full min-w-0 p-2",
@@ -1001,69 +1002,6 @@ export function AnnotationResultsTable({
                 </TooltipProvider>
               )}
               
-              {/* Justification indicator */}
-              {justificationValue && (
-                <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle 
-                        className="h-3 w-3 text-primary/60 absolute top-1.5 right-1.5 opacity-70 hover:opacity-100 cursor-help transition-opacity" 
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </TooltipTrigger>
-                    <TooltipContent side="top" align="end" className="max-w-sm z-[1001]">
-                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs font-semibold">Justification:</p>
-                        </div>
-                        {(() => {
-                          // Handle structured justification objects
-                          if (typeof justificationValue === 'object' && justificationValue !== null) {
-                            return (
-                              <div className="space-y-1">
-                                {justificationValue.reasoning && (
-                                  <p className="text-xs">{justificationValue.reasoning}</p>
-                                )}
-                                {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
-                                  <div className="space-y-2">
-                                    <p className="text-xs">
-                                      📝 {justificationValue.text_spans.length} text span{justificationValue.text_spans.length > 1 ? 's' : ''}
-                                    </p>
-                                    <Separator className="my-2" />
-                                    <div className="text-xs">
-                                      {justificationValue.text_spans.slice(0, 3).map((span: any, idx: number) => (
-                                        <div key={idx} className="italic border border-border p-1 rounded text-wrap break-words mb-1">
-                                          "{span.text_snippet}"
-                                        </div>
-                                      ))}
-                                      {justificationValue.text_spans.length > 3 && (
-                                        <p className="text-muted-foreground">...and {justificationValue.text_spans.length - 3} more</p>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                                {justificationValue.image_regions && justificationValue.image_regions.length > 0 && (
-                                  <p className="text-xs text-muted-foreground">
-                                    🖼️ {justificationValue.image_regions.length} image region{justificationValue.image_regions.length > 1 ? 's' : ''}
-                                  </p>
-                                )}
-                                {justificationValue.audio_segments && justificationValue.audio_segments.length > 0 && (
-                                  <p className="text-xs text-muted-foreground">
-                                    🎵 {justificationValue.audio_segments.length} audio segment{justificationValue.audio_segments.length > 1 ? 's' : ''}
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          }
-                          // Handle string justifications
-                          return <p className="text-xs">{String(justificationValue)}</p>;
-                        })()}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-              
               <AnnotationResultDisplay
                 result={resultForThisCell}
                 schema={schema}
@@ -1072,6 +1010,8 @@ export function AnnotationResultsTable({
                 renderContext="table"
                 onResultSelect={onResultSelect}
                 forceExpanded={false}
+                onTimestampClick={onTimestampClick}
+                onLocationClick={onLocationClick}
               />
             </div>
           );
@@ -1184,18 +1124,18 @@ export function AnnotationResultsTable({
                 </Tooltip>
               </TooltipProvider>
             )}
-            <div className="min-w-0 w-full">
-              <AnnotationResultDisplay
-                result={resultForThisCell}
-                schema={schema}
-                compact={false}
-                selectedFieldKeys={fieldKeysToShow}
-                maxFieldsToShow={undefined}
-                renderContext="table"
-                onResultSelect={onResultSelect}
-                forceExpanded={expandAllAnnotations}
-              />
-            </div>
+            <AnnotationResultDisplay
+              result={resultForThisCell}
+              schema={schema}
+              compact={false}
+              selectedFieldKeys={fieldKeysToShow}
+              maxFieldsToShow={undefined}
+              renderContext="table"
+              onResultSelect={onResultSelect}
+              forceExpanded={expandAllAnnotations}
+              onTimestampClick={onTimestampClick}
+              onLocationClick={onLocationClick}
+            />
           </div>
         );
       },
@@ -1376,18 +1316,18 @@ export function AnnotationResultsTable({
 
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
-      <div className="flex items-center justify-between py-2 flex-shrink-0 gap-2">
+      <div className="flex items-center justify-between py-1.5 flex-shrink-0 gap-2">
          <div className="relative flex-1 max-w-xs">
            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
            <Input
-             placeholder="Search assets..."
+             placeholder="Search..."
              value={globalFilter ?? ''}
              onChange={(event) => setGlobalFilter(event.target.value)}
-             className="pl-8 h-8 text-sm"
+             className="pl-8 h-7 text-xs"
            />
          </div>
          
-         <div className="flex items-center gap-1">
+         <div className="flex items-center gap-0.5">
            {/* Unfold Fields Toggle */}
            <TooltipProvider delayDuration={100}>
              <Tooltip>
@@ -1395,21 +1335,19 @@ export function AnnotationResultsTable({
                  <Button 
                    variant={unfoldFields ? "default" : "ghost"}
                    size="sm" 
-                   className="h-7 w-7 p-0"
+                   className="h-6 w-6 p-0"
                    onClick={() => setUnfoldFields(!unfoldFields)}
                  >
                    {unfoldFields ? (
-                     <Columns className="h-3.5 w-3.5" />
+                     <Columns className="h-3 w-3" />
                    ) : (
-                     <Columns3 className="h-3.5 w-3.5" />
+                     <Columns3 className="h-3 w-3" />
                    )}
                  </Button>
                </TooltipTrigger>
                <TooltipContent side="bottom">
                  <p className="text-xs">
-                   {unfoldFields 
-                     ? 'Showing individual field columns. Click to group by schema.' 
-                     : 'Showing grouped schemas. Click to unfold into field columns.'}
+                   {unfoldFields ? 'Group by schema' : 'Unfold fields'}
                  </p>
                </TooltipContent>
              </Tooltip>
@@ -1423,18 +1361,18 @@ export function AnnotationResultsTable({
                    <Button 
                      variant="ghost"
                      size="sm" 
-                     className="h-7 w-7 p-0"
+                     className="h-6 w-6 p-0"
                      onClick={() => setExpandAllAnnotations(!expandAllAnnotations)}
                    >
                      {expandAllAnnotations ? (
-                       <FoldVertical className="h-3.5 w-3.5" />
+                       <FoldVertical className="h-3 w-3" />
                      ) : (
-                       <UnfoldVertical className="h-3.5 w-3.5" />
+                       <UnfoldVertical className="h-3 w-3" />
                      )}
                    </Button>
                  </TooltipTrigger>
                  <TooltipContent side="bottom">
-                   <p className="text-xs">{expandAllAnnotations ? 'Collapse' : 'Expand'} all annotation fields</p>
+                   <p className="text-xs">{expandAllAnnotations ? 'Collapse all' : 'Expand all'}</p>
                  </TooltipContent>
                </Tooltip>
              </TooltipProvider>
@@ -1443,8 +1381,8 @@ export function AnnotationResultsTable({
            {/* Column Visibility Controls */}
            <DropdownMenu>
              <DropdownMenuTrigger asChild>
-               <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                 <SlidersHorizontal className="h-3.5 w-3.5" />
+               <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                 <SlidersHorizontal className="h-3 w-3" />
                </Button>
              </DropdownMenuTrigger>
              <DropdownMenuContent align="end" className="w-[200px]">
@@ -1499,28 +1437,36 @@ export function AnnotationResultsTable({
          </DropdownMenu>
 
            {/* Curate Button */}
-           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 px-2">
-                <ArrowUpToLine className="h-3.5 w-3.5 mr-1.5" />
-                <span className="text-xs">Curate</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Preserve data to features
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handleCurationClick('visible')} disabled={table.getFilteredRowModel().rows.length === 0}>
-                <ArrowUpToLine className="h-4 w-4 mr-2" />
-                Curate Visible Data...
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleCurationClick('selected')} disabled={table.getSelectedRowModel().rows.length === 0}>
-                <ArrowUpToLine className="h-4 w-4 mr-2" />
-                Curate Selected Rows...
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+           <TooltipProvider delayDuration={100}>
+             <Tooltip>
+               <DropdownMenu>
+                 <DropdownMenuTrigger asChild>
+                   <TooltipTrigger asChild>
+                     <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                       <ArrowUpToLine className="h-3 w-3" />
+                     </Button>
+                   </TooltipTrigger>
+                 </DropdownMenuTrigger>
+                 <DropdownMenuContent align="end">
+                   <DropdownMenuLabel className="text-xs text-muted-foreground">
+                     Preserve data to features
+                   </DropdownMenuLabel>
+                   <DropdownMenuSeparator />
+                   <DropdownMenuItem onClick={() => handleCurationClick('visible')} disabled={table.getFilteredRowModel().rows.length === 0}>
+                     <ArrowUpToLine className="h-4 w-4 mr-2" />
+                     Curate Visible Data...
+                   </DropdownMenuItem>
+                   <DropdownMenuItem onClick={() => handleCurationClick('selected')} disabled={table.getSelectedRowModel().rows.length === 0}>
+                     <ArrowUpToLine className="h-4 w-4 mr-2" />
+                     Curate Selected Rows...
+                   </DropdownMenuItem>
+                 </DropdownMenuContent>
+               </DropdownMenu>
+               <TooltipContent side="bottom">
+                 <p className="text-xs">Curate data</p>
+               </TooltipContent>
+             </Tooltip>
+           </TooltipProvider>
          </div>
 
       </div>
@@ -1534,7 +1480,7 @@ export function AnnotationResultsTable({
                   {headerGroup.headers.map((header) => (
                     <TableHead 
                       key={header.id} 
-                      className="whitespace-nowrap p-2"
+                      className="whitespace-nowrap p-1.5 text-xs"
                       style={{ 
                         width: header.getSize() > 0 ? `${header.getSize()}px` : undefined,
                         minWidth: header.column.columnDef.minSize ? `${header.column.columnDef.minSize}px` : undefined,
@@ -1582,16 +1528,18 @@ export function AnnotationResultsTable({
                     {row.getVisibleCells().map((cell) => (
                       <TableCell 
                         key={cell.id} 
-                        className="h-full align-top p-2 min-w-0"
+                        className={cn(
+                          "h-full align-top min-w-0",
+                          // Minimal padding for schema result cells, slightly more for asset cell
+                          cell.column.id === 'asset' ? 'p-1.5' : 'px-2 py-1'
+                        )}
                         style={{ 
                           width: cell.column.getSize() > 0 ? `${cell.column.getSize()}px` : undefined,
                           minWidth: cell.column.columnDef.minSize ? `${cell.column.columnDef.minSize}px` : undefined,
                           maxWidth: cell.column.columnDef.maxSize ? `${cell.column.columnDef.maxSize}px` : undefined
                         }}
                       >
-                        <div className="h-full flex flex-col min-w-0">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </div>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>
                     ))}
                   </TableRow>
@@ -1608,42 +1556,36 @@ export function AnnotationResultsTable({
         </div>
       </div>
       
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between py-2 flex-wrap gap-2 flex-shrink-0 border-t">
-         <div className="flex items-center space-x-2">
-           <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">Rows</p>
+      <div className="flex items-center justify-between py-1.5 flex-shrink-0 border-t text-xs">
+         <div className="flex items-center gap-1.5">
            <Select
              value={`${table.getState().pagination.pageSize}`}
              onValueChange={(value) => { table.setPageSize(Number(value)) }}
            >
-             <SelectTrigger className="h-7 w-[60px] text-xs">
-               <SelectValue placeholder={table.getState().pagination.pageSize} />
+             <SelectTrigger className="h-6 w-[68px] text-xs">
+               <SelectValue />
              </SelectTrigger>
              <SelectContent side="top">
-               {[5, 10, 25, 50].map((pageSize) => (
+               {[5, 10, 25, 50, 100, 500].map((pageSize) => (
                  <SelectItem key={pageSize} value={`${pageSize}`} className="text-xs">
                    {pageSize}
                  </SelectItem>
                ))}
              </SelectContent>
            </Select>
+           <span className="text-xs text-muted-foreground whitespace-nowrap">
+             of {table.getFilteredRowModel().rows.length}
+           </span>
          </div>
-        <div className="flex-1 text-xs text-muted-foreground text-center sm:text-left">
-          <span>{table.getFilteredRowModel().rows.length} assets · Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}</span>
-        </div>
         <div className="flex items-center gap-1">
-           <Button variant="outline" className="hidden h-7 w-7 p-0 lg:flex" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
-             <span className="sr-only">Go to first page</span>
-             <ChevronsLeft className="h-3.5 w-3.5" />
+           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+             <ChevronDown className="h-3 w-3 rotate-90" />
            </Button>
-           <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
-              Prev
-            </Button>
-           <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
-             Next
-           </Button>
-           <Button variant="outline" className="hidden h-7 w-7 p-0 lg:flex" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
-             <span className="sr-only">Go to last page</span>
-             <ChevronsRight className="h-3.5 w-3.5" />
+           <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+             {table.getState().pagination.pageIndex + 1}/{table.getPageCount()}
+           </span>
+           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+             <ChevronDown className="h-3 w-3 -rotate-90" />
            </Button>
          </div>
       </div>

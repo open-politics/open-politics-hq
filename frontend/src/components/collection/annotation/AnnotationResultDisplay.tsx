@@ -30,6 +30,14 @@ import { Separator } from '@/components/ui/separator';
 import AnnotationFieldsPanel from './AnnotationFieldsPanel';
 import AssetContentPanel from './AssetContentPanel';
 import JustificationSidebar from './JustificationSidebar';
+// NEW: Field detection for cross-panel linking
+import { 
+  isTimestampField, 
+  isLocationField, 
+  parseTimestampValue, 
+  parseLocationValue 
+} from '@/lib/annotations/fieldDetection';
+import { Calendar, MapPin } from 'lucide-react';
 
 // Local interface for schema fields
 interface SchemaField {
@@ -80,6 +88,10 @@ interface AnnotationResultDisplayProps {
   onResultSelect?: (result: FormattedAnnotation) => void;
   /** NEW: Force expanded state from parent (for global expand/collapse) */
   forceExpanded?: boolean;
+  /** NEW: Callback when a timestamp field is clicked for cross-panel navigation */
+  onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
+  /** NEW: Callback when a location field is clicked for cross-panel navigation */
+  onLocationClick?: (location: string, fieldKey: string) => void;
 }
 
 interface SingleAnnotationResultProps {
@@ -97,6 +109,8 @@ interface SingleAnnotationResultProps {
   activeField?: string | null;
   onResultSelect?: (result: FormattedAnnotation) => void;
   forceExpanded?: boolean;
+  onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
+  onLocationClick?: (location: string, fieldKey: string) => void;
 }
 
 interface ConsolidatedSchemasViewProps {
@@ -115,6 +129,8 @@ interface ConsolidatedSchemasViewProps {
   activeField?: string | null;
   onResultSelect?: (result: FormattedAnnotation) => void;
   forceExpanded?: boolean;
+  onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
+  onLocationClick?: (location: string, fieldKey: string) => void;
 }
 
 /**
@@ -134,7 +150,9 @@ function SingleAnnotationResult({
   onFieldInteraction,
   activeField = null,
   onResultSelect,
-  forceExpanded = false
+  forceExpanded = false,
+  onTimestampClick,
+  onLocationClick
 }: SingleAnnotationResultProps) {
   const { extractTextSpansFromJustification } = useAnnotationTextSpans();
   const [highlightedSpans, setHighlightedSpans] = useState<Set<string>>(new Set());
@@ -307,30 +325,165 @@ function SingleAnnotationResult({
       const valueForField = getAnnotationFieldValue(rawValueObject, field.name);
 
       if (valueForField === null || valueForField === undefined) {
-           return <span className="text-gray-400 italic">N/A</span>;
+           return <span className="text-muted-foreground italic text-xs">N/A</span>;
+      }
+
+      // Check if this is a timestamp field for cross-panel linking
+      const isClickableTimestamp = onTimestampClick && isTimestampField(field.name, valueForField);
+      const isClickableLocation = onLocationClick && isLocationField(field.name, valueForField);
+      
+      // Handle timestamp fields with click support
+      if (isClickableTimestamp) {
+        const timestamp = parseTimestampValue(valueForField);
+        if (timestamp) {
+          return (
+            <div className="inline-flex items-center gap-1.5">
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTimestampClick(timestamp, field.name);
+                      }}
+                      className={cn(
+                        "cursor-pointer inline-flex items-center justify-center transition-all",
+                        "bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:hover:bg-blue-900",
+                        "border border-blue-200 dark:border-blue-800 rounded-md p-1",
+                        "hover:border-blue-400 dark:hover:border-blue-600",
+                        "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1",
+                        "group"
+                      )}
+                    >
+                      <Calendar className="h-3 w-3 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-blue-600 text-white border-blue-700">
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="h-3 w-3" />
+                      <p className="text-xs font-medium">Jump to time in chart</p>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <span className="text-xs tabular-nums">{String(valueForField)}</span>
+            </div>
+          );
+        }
+      }
+      
+      // Handle location fields with click support
+      if (isClickableLocation) {
+        const locations = parseLocationValue(valueForField);
+        
+        if (Array.isArray(valueForField) && locations.length > 0) {
+          return (
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {locations.map((location, i) => (
+                <div key={i} className="inline-flex items-center gap-1.5">
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            onLocationClick?.(location, field.name);
+                          }}
+                          className={cn(
+                            "cursor-pointer inline-flex items-center justify-center transition-all",
+                            "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950 dark:hover:bg-emerald-900",
+                            "border border-emerald-200 dark:border-emerald-800 rounded-md p-1",
+                            "hover:border-emerald-400 dark:hover:border-emerald-600",
+                            "focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1",
+                            "group",
+                            highlightValue === location && "ring-2 ring-offset-2 ring-emerald-500 ring-offset-background"
+                          )}
+                        >
+                          <MapPin className="h-3 w-3 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="bg-emerald-600 text-white border-emerald-700">
+                        <div className="flex items-center gap-1.5">
+                          <MapPin className="h-3 w-3" />
+                          <p className="text-xs font-medium">Jump to location on map</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <Badge 
+                    variant="outline" 
+                    className={cn(
+                      "text-[10px] px-1.5 py-0 whitespace-nowrap font-normal border-border/40",
+                      highlightValue === location && "ring-2 ring-offset-2 ring-primary ring-offset-background"
+                    )}
+                  >
+                    {location}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          );
+        } else if (typeof valueForField === 'string' && locations.length > 0) {
+          return (
+            <div className="inline-flex items-center gap-1.5">
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        onLocationClick?.(locations[0], field.name);
+                      }}
+                      className={cn(
+                        "cursor-pointer inline-flex items-center justify-center transition-all",
+                        "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950 dark:hover:bg-emerald-900",
+                        "border border-emerald-200 dark:border-emerald-800 rounded-md p-1",
+                        "hover:border-emerald-400 dark:hover:border-emerald-600",
+                        "focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1",
+                        "group"
+                      )}
+                    >
+                      <MapPin className="h-3 w-3 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-emerald-600 text-white border-emerald-700">
+                    <div className="flex items-center gap-1.5">
+                      <MapPin className="h-3 w-3" />
+                      <p className="text-xs font-medium">Jump to location on map</p>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <span className="text-xs">{String(valueForField)}</span>
+            </div>
+          );
+        }
       }
 
       // Determine if we're in table context for compact rendering
       const isTableContext = context === 'table';
       
-      // This switch logic needs to be updated to handle JSON schema types
+      // Clean, consistent value rendering - lighter weight, smaller text
       switch ((field as any).type) {
           case "integer":
-              return <Badge variant="outline" className="bg-green-200/40 text-black text-[11px] px-1.5 py-0">{String(valueForField)}</Badge>; 
+          case "number":
+              return <span className="text-xs tabular-nums">{String(valueForField)}</span>; 
           case "string":
           case "boolean":
               return <span className="text-xs">{String(valueForField)}</span>;
           case "array":
               if (Array.isArray(valueForField)) {
-                  if (valueForField.length === 0) return <span className="text-gray-400 italic"></span>;
+                  if (valueForField.length === 0) return <span className="text-muted-foreground italic text-xs">empty</span>;
                   return (
                       <div className="flex flex-wrap gap-1 items-center">
                           {valueForField.map((item, i) => (
                               <Badge 
                                 key={i} 
-                                variant="secondary" 
+                                variant="outline" 
                                 className={cn(
-                                  "text-[11px] px-2 py-0.5 whitespace-nowrap",
+                                  "text-[10px] px-1.5 py-0 whitespace-nowrap font-normal border-border/40",
                                   highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background"
                                 )}
                               >
@@ -340,20 +493,20 @@ function SingleAnnotationResult({
                       </div>
                   );
               }
-              return <span className="text-red-500 italic text-xs">Expected Array, got: {typeof valueForField}</span>;
+              return <span className="text-destructive italic text-xs">Expected Array, got: {typeof valueForField}</span>;
           default:
               if (typeof valueForField === 'object' && valueForField !== null) {
-                  return <pre className="text-[10px] overflow-auto bg-muted/10 p-1 rounded max-h-20">{JSON.stringify(valueForField, null, 2)}</pre>;
+                  return <pre className="text-[10px] overflow-auto bg-muted/30 p-1.5 rounded max-h-20 border border-border/30">{JSON.stringify(valueForField, null, 2)}</pre>;
               }
               return <span className="text-xs">{String(valueForField)}</span>;
       }
   };
 
   if (!schema || !schema.output_contract) {
-      return <div className="text-sm text-red-500 italic">Invalid schema provided.</div>;
+      return <div className="text-sm text-destructive italic">Invalid schema provided.</div>;
   }
   if (result.value === null || result.value === undefined) {
-       return <div className="text-sm text-gray-500 italic">No annotation value available.</div>;
+       return <div className="text-sm text-muted-foreground italic">No annotation value available.</div>;
   }
 
 
@@ -420,10 +573,11 @@ function SingleAnnotationResult({
   }
 
   const containerClasses = cn(
-    'flex flex-col relative min-w-0',
+    'relative min-w-0',
     (renderContext === 'table') 
-      ? 'p-3 rounded-md min-h-[4rem] justify-start gap-1.5 bg-card/30 border border-border/30 hover:bg-card/50 hover:border-border/50 transition-all'
-      : (!compact && renderContext !== 'dialog' && 'border-2 border-results p-2 rounded-md h-full space-y-0'),
+      ? 'leading-relaxed'
+      : 'flex flex-col',
+    (!compact && renderContext !== 'dialog' && renderContext !== 'table') && 'border-2 border-results p-2 rounded-md h-full space-y-0',
     // NEW: Add cursor pointer when clickable
     onResultSelect && (renderContext === 'table' || renderContext === 'default') && 'cursor-pointer'
   );
@@ -464,23 +618,22 @@ function SingleAnnotationResult({
             )}
           </div>
           
-          <div
+          <div 
             className={cn(
               'transition-all duration-200 ease-in-out min-w-0',
-              // Apply height restriction only when NOT expanded
-              !effectiveExpanded && isPotentiallyLong && (
-                compact ? '' : // No max-height for compact mode (used in unfolded columns)
-                renderContext === 'dialog' ? 'max-h-32 overflow-hidden' : 
-                renderContext === 'table' ? 'max-h-[12rem] overflow-hidden' : // Generous height for grouped table view
-                ''
+              renderContext === 'table' ? '' : (
+                // Apply height restriction only when NOT expanded in non-table contexts
+                !effectiveExpanded && isPotentiallyLong && (
+                  compact ? '' : // No max-height for compact mode (used in unfolded columns)
+                  renderContext === 'dialog' ? 'max-h-32 overflow-hidden' : 
+                  ''
+                )
               ),
               // When expanded (either manually or via forceExpanded), allow much larger height with scrolling
-              effectiveExpanded && isPotentiallyLong && 'max-h-[500px] overflow-y-auto',
-              // Add bottom padding in table context when potentially expandable to make room for expand bar
-              renderContext === 'table' && isPotentiallyLong && !forceExpanded && 'pb-4'
+              effectiveExpanded && isPotentiallyLong && renderContext !== 'table' && 'max-h-[500px] overflow-y-auto'
             )}
           >
-            <div className={'space-y-0'}>
+            <div className={cn(renderContext === 'table' ? '' : 'space-y-0')}>
               {fieldsToDisplay.map((schemaField, idx) => {
                   if (targetFieldKey) {
                       if (schemaField.name !== targetFieldKey) return null;
@@ -522,29 +675,37 @@ function SingleAnnotationResult({
                     return undefined;
                   })();
                   
+                  // Check if field is array type for special layout
+                  const fieldValue = getAnnotationFieldValue(result.value, schemaField.name);
+                  const isArrayField = (schemaField as any).type === 'array' || Array.isArray(fieldValue);
+                  
                   return (
                       <div key={idx} className={cn(
-                        renderContext === 'table' ? 'space-y-1' : 'space-y-1',
+                        renderContext === 'table' ? 'mb-1' : 'space-y-1',
                         renderContext !== 'table' && 'border-b border-dashed border-border/30 last:border-b-0',
-                        renderContext === 'table' && idx > 0 && 'mt-3 pt-3 border-t border-dashed border-border/20'
+                        // Arrays get block layout in table context, single values use flex-wrap for proper wrapping
+                        renderContext === 'table' && isArrayField ? 'flex flex-col gap-0.5' : renderContext === 'table' ? 'flex flex-wrap items-start gap-x-1' : ''
                       )}>
                           <div className={cn(
-                            renderContext === 'table' ? 'flex flex-col gap-1.5' : ''
+                            renderContext === 'table' ? 'inline-flex items-center gap-0.5 flex-shrink-0' : ''
                           )}>
                             <div className={cn(
-                              "font-medium flex items-center gap-1",
-                              renderContext === 'table' ? 'text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold' : 'text-blue-400 italic inline-flex mr-2'
+                              "flex items-center gap-1",
+                              renderContext === 'table' ? 'text-xs text-muted-foreground whitespace-nowrap' : 'text-xs text-muted-foreground font-medium inline-flex mr-2'
                             )}>
-                              <span className={cn(renderContext === 'table' && 'break-all leading-tight')}>
-                                {formatFieldNameForDisplay(schemaField.name)}
+                              <span className={cn(renderContext === 'table' && 'leading-tight')}>
+                                {formatFieldNameForDisplay(schemaField.name)}:
                               </span>
-                              {/* Only show justification tooltip in non-table contexts */}
-                              {justificationValue && renderContext !== 'table' && (
+                              {/* Show justification tooltip - in table context only for compact/column mode */}
+                              {justificationValue && (renderContext !== 'table' || compact) && (
                                   <TooltipProvider delayDuration={100}>
                                     <Tooltip>
                                       <TooltipTrigger asChild>
                                           <HelpCircle 
-                                            className="ml-1 cursor-help opacity-60 hover:opacity-100 hover:text-primary transition-colors h-3.5 w-3.5" 
+                                            className={cn(
+                                              "cursor-help opacity-60 hover:opacity-100 hover:text-primary transition-colors",
+                                              renderContext === 'table' ? 'ml-0.5 h-3 w-3' : 'ml-1 h-3.5 w-3.5'
+                                            )} 
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               // Priority 1: Call onFieldInteraction if available (for enhanced dialog with specific field)
@@ -616,34 +777,31 @@ function SingleAnnotationResult({
                                   </TooltipProvider>
                               )}
                             </div>
-                            <div className={cn(
-                              "leading-tight",
-                              renderContext === 'table' ? "block text-xs w-full" : "inline-block"
-                            )}>
+                            {/* For non-array single values in table context, keep inline */}
+                            {renderContext === 'table' && !isArrayField && (
+                              <div className="leading-snug break-words min-w-0">
+                                {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
+                              </div>
+                            )}
+                            {renderContext !== 'table' && (
+                              <div className="leading-snug inline-block text-xs">
+                                {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
+                              </div>
+                            )}
+                          </div>
+                          {/* For array fields in table context, display values on new line with indent */}
+                          {renderContext === 'table' && isArrayField && (
+                            <div className="pl-2 leading-snug">
                               {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
                             </div>
-                          </div>
+                          )}
                       </div>
                   );
               })}
             </div>
           </div>
           
-          {/* Sleek invisible expand/collapse area at the bottom */}
-          {isPotentiallyLong && !compact && !forceExpanded && renderContext === 'table' && (
-            <div 
-              className="absolute bottom-0 left-0 right-0 h-3 cursor-pointer group flex items-center justify-center hover:bg-accent/20 transition-colors rounded-b"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsExpanded(!isExpanded);
-              }}
-              title={effectiveExpanded ? "Click to collapse" : "Click to expand"}
-            >
-              <div className="w-8 h-0.5 bg-muted-foreground/20 group-hover:bg-muted-foreground/40 rounded-full transition-colors" />
-            </div>
-          )}
-          
-          {/* Non-table contexts: show button or message */}
+          {/* Expand/collapse button for non-table contexts */}
           {isPotentiallyLong && !compact && !forceExpanded && renderContext !== 'table' && (
             <Button
               variant="ghost"
@@ -688,7 +846,9 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
     onFieldInteraction,
     activeField,
     onResultSelect,
-    forceExpanded = false
+    forceExpanded = false,
+    onTimestampClick,
+    onLocationClick
 }) => {
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
 
@@ -723,6 +883,8 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
                   activeField={activeField}
                   onResultSelect={onResultSelect}
                   forceExpanded={forceExpanded}
+                  onTimestampClick={onTimestampClick}
+                  onLocationClick={onLocationClick}
                 />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this schema</div>
@@ -757,6 +919,8 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
             activeField={activeField}
             onResultSelect={onResultSelect}
             forceExpanded={forceExpanded}
+            onTimestampClick={onTimestampClick}
+            onLocationClick={onLocationClick}
           />
         );
       })}
@@ -784,7 +948,9 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
     onFieldInteraction,
     activeField,
     onResultSelect,
-    forceExpanded = false
+    forceExpanded = false,
+    onTimestampClick,
+    onLocationClick
 }) => {
     
   const findSchemaForResult = (res: FormattedAnnotation, sch: AnnotationSchemaRead | AnnotationSchemaRead[]): AnnotationSchemaRead | null => {
@@ -822,6 +988,8 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           activeField={activeField}
           onResultSelect={onResultSelect}
           forceExpanded={forceExpanded}
+          onTimestampClick={onTimestampClick}
+          onLocationClick={onLocationClick}
         />
       );
     }
@@ -843,6 +1011,8 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
         activeField={activeField}
         onResultSelect={onResultSelect}
         forceExpanded={forceExpanded}
+        onTimestampClick={onTimestampClick}
+        onLocationClick={onLocationClick}
       />
     );
   }
@@ -866,6 +1036,8 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           activeField={activeField}
           onResultSelect={onResultSelect}
           forceExpanded={forceExpanded}
+          onTimestampClick={onTimestampClick}
+          onLocationClick={onLocationClick}
         />
       );
     }

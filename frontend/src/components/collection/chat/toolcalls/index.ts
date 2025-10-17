@@ -24,16 +24,29 @@ export type {
 
 // Renderers (for direct access if needed)
 export { NavigateRenderer } from './renderers/NavigateRenderer';
-export { OrganizeRenderer } from './renderers/OrganizeRenderer';
+export { OrganizeRenderer, AssetCrudRenderer, IngestRenderer } from './renderers/OperationRenderer';
 export { SearchWebRenderer } from './renderers/SearchWebRenderer';
 export { SemanticSearchRenderer } from './renderers/SemanticSearchRenderer';
+export { GetRunDashboardRenderer } from './renderers/GetRunDashboardRenderer';
+export { WorkingMemoryRenderer } from './renderers/WorkingMemoryRenderer';
+export { TasksRenderer } from './renderers/TasksRenderer';
 export { GenericRenderer } from './renderers/GenericRenderer';
 
-// Viewers (for advanced use cases)
-export { AssetTreeViewer } from './viewers/AssetTreeViewer';
+// Advanced components (used by renderers, exported for custom use)
+export { ConversationalAssetExplorer } from './renderers/ConversationalAssetExplorer';
+
 
 // Shared components
 export { ToolResultCard } from './shared/ToolResultCard';
+export {
+  ResultHeader,
+  StatusIndicator,
+  EmptyResult,
+  CompactResult,
+  ResultContainer,
+  MetadataList,
+  ResultFooter,
+} from './shared/ResultComponents';
 
 // Shared utilities (for custom renderers)
 export {

@@ -35,7 +35,6 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getAssetIcon, formatAssetKind, getAssetBadgeClass } from '@/components/collection/assets/AssetSelector'
-import { ToolResultAssetBrowser } from './ToolResultAssetBrowser'
 import { SearchResultViewer, SearchResultData } from './SearchResultViewer'
 import { SearchResultIngestor } from './SearchResultIngestor'
 
@@ -44,7 +43,7 @@ interface StructuredToolResponseProps {
   result: any
   compact?: boolean
   onAssetClick?: (assetId: number) => void
-  onBundleClick?: () => void
+  onBundleClick?: (bundleId: number) => void
 }
 
 export function StructuredToolResponse({ 
@@ -90,27 +89,8 @@ export function StructuredToolResponse({
       .filter(Boolean)
   }
 
-  // Check if this tool result should use the asset browser view
-  const shouldUseBrowserView = (toolName: string, result: any): boolean => {
-    // search_assets with assets
-    if (toolName === 'search_assets' && result.assets && Array.isArray(result.assets)) {
-      return true
-    }
-    // explore_bundles with bundle_data
-    if (toolName === 'explore_bundles' && result.bundle_data) {
-      return true
-    }
-    // list_bundles with bundles array
-    if (toolName === 'list_bundles' && result.bundles && Array.isArray(result.bundles)) {
-      return true
-    }
-    return false
-  }
-
-  // Use the browser view for supported tools
-  if (shouldUseBrowserView(toolName, result)) {
-    return <ToolResultAssetBrowser toolName={toolName} result={result} compact={compact} />
-  }
+  // NOTE: Legacy tools (search_assets, explore_bundles, list_bundles) have been replaced
+  // by navigate() with the ConversationalAssetExplorer renderer
 
   const getToolIcon = (toolName: string) => {
     switch (toolName) {
@@ -368,7 +348,7 @@ export function StructuredToolResponse({
               <Button
                 variant="link"
                 className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => onBundleClick?.()}
+                onClick={() => onBundleClick?.(result.bundle_id)}
               >
                 Added to bundle #{result.bundle_id}
               </Button>
@@ -494,41 +474,6 @@ export function StructuredToolResponse({
     </div>
   )
 
-  const renderListBundlesResponse = (result: any[]) => (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-          <span className="text-sm font-medium">Found {result.length} bundles</span>
-        </div>
-        
-        <div className="space-y-2">
-          {result.map((bundle: any) => (
-            <div key={bundle.id} className="flex items-center justify-between p-2 bg-muted/50 rounded hover:bg-muted transition-colors">
-              <div className="flex items-center gap-2 flex-1">
-                <Database className="h-3 w-3 text-muted-foreground" />
-                <Button
-                  variant="link"
-                  className="h-auto p-0 text-xs font-medium"
-                  onClick={() => onBundleClick?.()}
-                >
-                  {bundle.name}
-                </Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">
-                  {bundle.asset_count} assets
-                </Badge>
-                {bundle.description && (
-                  <span className="text-xs text-muted-foreground max-w-xs truncate">
-                    {bundle.description}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-  )
 
   const renderListSchemasResponse = (result: any[]) => (
     <div className="space-y-3">
@@ -560,66 +505,6 @@ export function StructuredToolResponse({
     </div>
   )
 
-  const renderExploreBundlesResponse = (result: any) => (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        {getStatusIcon(result.status || 'success')}
-        <span className="text-sm font-medium">{result.message || `Explored ${result.bundles_explored} bundles`}</span>
-      </div>
-      
-      {result.bundle_data && Object.keys(result.bundle_data).length > 0 && (
-        <div className="space-y-3">
-          {Object.entries(result.bundle_data).map(([bundleId, data]: [string, any]) => (
-            <div key={bundleId} className="border rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <Button
-                  variant="link"
-                  className="h-auto p-0 text-sm font-medium"
-                  onClick={() => onBundleClick?.()}
-                >
-                  {data.bundle_name || `Bundle #${bundleId}`}
-                </Button>
-                <Badge variant="secondary" className="text-xs">
-                  {data.total_assets} assets
-                </Badge>
-              </div>
-              
-              {data.bundle_description && (
-                <p className="text-xs text-muted-foreground">{data.bundle_description}</p>
-              )}
-              
-              {data.assets && data.assets.length > 0 && (
-                <div className="space-y-1">
-                  {data.assets.slice(0, compact ? 3 : 10).map((asset: any) => (
-                    <div
-                      key={asset.id}
-                      className="flex items-center gap-2.5 py-1.5 px-3 hover:bg-muted/50 cursor-pointer transition-colors"
-                      onClick={() => onAssetClick?.(asset.id)}
-                    >
-                      <div className="w-4 h-4 flex items-center justify-center">
-                        {getAssetIcon(asset.kind)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium truncate block">{asset.title || `Asset ${asset.id}`}</span>
-                      </div>
-                      <Badge variant="outline" className={cn("text-xs", getAssetBadgeClass(asset.kind))}>
-                        {formatAssetKind(asset.kind)}
-                      </Badge>
-                    </div>
-                  ))}
-                  {data.assets.length > (compact ? 3 : 10) && (
-                    <div className="text-xs text-muted-foreground text-center py-1 px-3">
-                      +{data.assets.length - (compact ? 3 : 10)} more assets
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
 
   const renderGenericResponse = (result: any) => (
     <div className="space-y-3">
@@ -669,18 +554,13 @@ export function StructuredToolResponse({
       case 'discover_rss_feeds':
       case 'ingest_rss_feeds':
         return renderRSSFeedsResponse(result)
-      case 'list_bundles':
-        // Use new structured format with bundles array
-        return renderListBundlesResponse(result.bundles || [])
-      case 'explore_bundles':
-        return renderExploreBundlesResponse(result)
       default:
         return renderGenericResponse(result)
     }
   }
 
   return (
-    <Card className={cn("w-full", compact && "text-xs")}>
+    <Card className={cn("w-full max-h-96 max-w-[80vw] md:max-w-[70vw] lg:max-w-[55vw]", compact && "text-xs")}>
       <CardHeader className={cn("pb-2", compact && "pb-1")}>
         <CardTitle className={cn("flex items-center gap-2", compact && "text-sm")}>
           {getToolIcon(toolName)}

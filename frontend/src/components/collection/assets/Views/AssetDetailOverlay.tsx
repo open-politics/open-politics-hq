@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import AssetDetailView from './AssetDetailView';
 import { Button } from '@/components/ui/button';
-import { Maximize, Loader2, AlertCircle } from 'lucide-react';
+import { Maximize, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
@@ -16,6 +16,7 @@ import AnnotationResultDisplay from '../../annotation/AnnotationResultDisplay';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 
 interface AssetDetailOverlayProps {
   open: boolean;
@@ -46,6 +47,9 @@ export default function AssetDetailOverlay({
   const [loadError, setLoadError] = useState<string | null>(null);
   const { getAssetById } = useAssetStore();
   const [asset, setAsset] = useState<AssetRead | null>(null);
+  
+  // Mobile: track which panel is visible (asset or annotations)
+  const [mobileView, setMobileView] = useState<'asset' | 'annotations'>('asset');
 
   // Fetch the asset details
   const fetchAssetDetails = useCallback(async (id: number) => {
@@ -95,6 +99,7 @@ export default function AssetDetailOverlay({
       setDataFetched(false);
       setAsset(null);
       setLoadError(null);
+      setMobileView('asset'); // Reset to asset view when closing
     }
   }, [open]);
 
@@ -153,9 +158,16 @@ export default function AssetDetailOverlay({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className={showAnnotations ? "max-w-[95vw] max-h-[90vh] flex flex-col p-0" : "max-w-4xl max-h-[90vh] flex flex-col p-0"}>
-        <DialogHeader className="flex flex-row items-center justify-between p-4 border-b flex-shrink-0">
-          <DialogTitle>
+      <DialogContent className={cn(
+        "flex flex-col p-0",
+        // Desktop: wider when showing annotations
+        showAnnotations ? "max-w-[95vw]" : "max-w-4xl",
+        // Mobile: full screen
+        "max-h-[90vh] sm:max-h-[90vh]",
+        "w-[100vw] sm:w-auto"
+      )}>
+        <DialogHeader className="flex flex-row items-center justify-between p-3 sm:p-4 border-b flex-shrink-0">
+          <DialogTitle className="text-sm sm:text-base">
             Asset Details {assetId ? `(ID: ${assetId})` : ''}
             {showAnnotations && ` • ${assetResults.length} Annotation${assetResults.length !== 1 ? 's' : ''}`}
           </DialogTitle>
@@ -165,26 +177,61 @@ export default function AssetDetailOverlay({
               size="icon"
               onClick={handleOpenInManager}
               title="Open in Asset Manager"
-              className="h-8 w-8"
+              className="h-7 w-7 -mt-4 mr-8"
             >
-              <Maximize className="h-4 w-4" />
+              <Maximize className="size-4" />
             </Button>
           )}
         </DialogHeader>
         
+        {/* Mobile: Toggle buttons when annotations exist */}
+        {showAnnotations && (
+          <div className="flex sm:hidden border-b bg-muted/30">
+            <button
+              onClick={() => setMobileView('asset')}
+              className={cn(
+                "flex-1 py-2 text-xs font-medium transition-colors",
+                mobileView === 'asset' 
+                  ? "bg-background border-b-2 border-primary" 
+                  : "text-muted-foreground"
+              )}
+            >
+              Asset Details
+            </button>
+            <button
+              onClick={() => setMobileView('annotations')}
+              className={cn(
+                "flex-1 py-2 text-xs font-medium transition-colors",
+                mobileView === 'annotations' 
+                  ? "bg-background border-b-2 border-primary" 
+                  : "text-muted-foreground"
+              )}
+            >
+              Annotations ({assetResults.length})
+            </button>
+          </div>
+        )}
+        
         <div className="flex-1 min-h-0 flex">
           {/* Left Panel: Asset Detail */}
-          <div className={showAnnotations ? "flex-1 overflow-y-auto border-r" : "flex-1 overflow-y-auto"}>
-            <div className="p-4">
+          <div className={cn(
+            "overflow-y-auto",
+            // Desktop: flex layout with border when annotations present
+            showAnnotations ? "hidden sm:flex sm:flex-1 sm:border-r" : "flex-1",
+            // Mobile: show/hide based on toggle
+            showAnnotations && mobileView === 'asset' && "flex flex-1",
+            showAnnotations && mobileView === 'annotations' && "hidden"
+          )}>
+            <div className="p-3 sm:p-4 w-full">
               {isLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                  <p>Loading details...</p>
+                  <Loader2 className="h-5 w-5 sm:h-6 sm:w-6 animate-spin mr-2" />
+                  <p className="text-sm">Loading details...</p>
                 </div>
               ) : loadError ? (
                 <div className="flex flex-col items-center justify-center h-full text-destructive">
-                  <AlertCircle className="h-10 w-10 mb-4" />
-                  <p className="text-center">{loadError}</p>
+                  <AlertCircle className="h-8 w-8 sm:h-10 sm:w-10 mb-4" />
+                  <p className="text-center text-sm">{loadError}</p>
                 </div>
               ) : asset ? (
                 <TextSpanHighlightProvider>
@@ -198,23 +245,29 @@ export default function AssetDetailOverlay({
                 </TextSpanHighlightProvider>
               ) : (
                 <div className="flex items-center justify-center h-full">
-                  <p>No asset found or item does not exist.</p>
+                  <p className="text-sm">No asset found or item does not exist.</p>
                 </div>
               )}
             </div>
           </div>
           
-          {/* Right Panel: Annotation Results (only shown if we have results) */}
+          {/* Right Panel: Annotation Results */}
           {showAnnotations && (
-            <div className="w-[500px] flex flex-col overflow-hidden bg-muted/20">
-              <div className="p-3 border-b bg-card flex-shrink-0">
-                <h3 className="font-semibold text-sm">Annotation Results</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
+            <div className={cn(
+              "flex flex-col overflow-hidden bg-muted/20",
+              // Desktop: fixed width sidebar
+              "hidden sm:flex sm:w-[500px]",
+              // Mobile: full width when active
+              mobileView === 'annotations' && "flex flex-1"
+            )}>
+              <div className="p-2.5 sm:p-3 border-b bg-card flex-shrink-0">
+                <h3 className="font-semibold text-xs sm:text-sm">Annotation Results</h3>
+                <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
                   {assetResults.length} result{assetResults.length !== 1 ? 's' : ''} for this asset
                 </p>
               </div>
               <ScrollArea className="flex-1">
-                <div className="p-3 space-y-3">
+                <div className="p-2.5 sm:p-3 space-y-2.5 sm:space-y-3">
                   {assetResults.map((result) => {
                     const schema = schemas.find(s => s.id === result.schema_id);
                     if (!schema) {
@@ -227,7 +280,7 @@ export default function AssetDetailOverlay({
                     }
                     
                     return (
-                      <Card key={result.id} className="p-3">
+                      <Card key={result.id} className="p-2.5 sm:p-3">
                         <AnnotationResultDisplay
                           result={result}
                           schema={schema}
@@ -244,15 +297,15 @@ export default function AssetDetailOverlay({
           
           {/* Debug Panel - temporarily show when annotations should be there but aren't */}
           {!showAnnotations && assetId && annotationResults && annotationResults.length > 0 && (
-            <div className="w-[300px] flex flex-col overflow-hidden bg-yellow-50 dark:bg-yellow-950/20 border-l-2 border-yellow-500">
-              <div className="p-3 border-b bg-yellow-100 dark:bg-yellow-900/20">
-                <h3 className="font-semibold text-sm text-yellow-900 dark:text-yellow-100">Debug Info</h3>
-                <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-0.5">
+            <div className="w-full sm:w-[300px] flex flex-col overflow-hidden bg-yellow-50 dark:bg-yellow-950/20 border-l-2 border-yellow-500">
+              <div className="p-2.5 sm:p-3 border-b bg-yellow-100 dark:bg-yellow-900/20">
+                <h3 className="font-semibold text-xs sm:text-sm text-yellow-900 dark:text-yellow-100">Debug Info</h3>
+                <p className="text-[10px] sm:text-xs text-yellow-700 dark:text-yellow-300 mt-0.5">
                   Why aren't annotations showing?
                 </p>
               </div>
               <ScrollArea className="flex-1">
-                <div className="p-3 space-y-2 text-xs">
+                <div className="p-2.5 sm:p-3 space-y-2 text-[10px] sm:text-xs">
                   <div><strong>Asset ID:</strong> {assetId}</div>
                   <div><strong>Total Results:</strong> {annotationResults.length}</div>
                   <div><strong>Filtered Results:</strong> {assetResults.length}</div>
@@ -262,7 +315,7 @@ export default function AssetDetailOverlay({
                   <div className="space-y-1">
                     <strong>Sample Results Asset IDs:</strong>
                     {annotationResults.slice(0, 5).map(r => (
-                      <div key={r.id} className="font-mono text-[10px]">
+                      <div key={r.id} className="font-mono text-[9px] sm:text-[10px]">
                         Result {r.id}: asset_id={r.asset_id} {r.asset_id === assetId ? '✓' : '✗'}
                       </div>
                     ))}

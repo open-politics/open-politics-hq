@@ -452,6 +452,7 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
             {dashboardPanels.map((panel) => (
               <div
                 key={panel.id}
+                data-panel-id={panel.id}
                 className="shared-dashboard-panel transition-all duration-200 ease-in-out"
                 style={{
                   // CSS custom properties for responsive behavior
@@ -469,10 +470,38 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
                 allAssets={formattedAssets}
                 onUpdatePanel={handleUpdatePanel}
                 onRemovePanel={handleRemovePanel}
-                // Note: Shared dashboard has limited interactivity by design
+                // Shared dashboard is read-only: disable all interactive features
+                // Assets don't exist in viewer's infospace, so navigation would fail
                 onResultSelect={undefined}
                 onRetrySingleResult={undefined}
                 retryingResultId={undefined}
+                // Cross-panel navigation for shared dashboards (read-only, just scrolls to panel)
+                onTimestampClick={(timestamp, fieldKey, sourcePanelId) => {
+                  const chartPanel = dashboardPanels.find(p => p.type === 'chart');
+                  if (chartPanel) {
+                    const panelElement = document.querySelector(`[data-panel-id="${chartPanel.id}"]`);
+                    if (panelElement) {
+                      panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      panelElement.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+                      setTimeout(() => {
+                        panelElement.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
+                      }, 2000);
+                    }
+                  }
+                }}
+                onLocationClick={(location, fieldKey, sourcePanelId) => {
+                  const mapPanel = dashboardPanels.find(p => p.type === 'map');
+                  if (mapPanel) {
+                    const panelElement = document.querySelector(`[data-panel-id="${mapPanel.id}"]`);
+                    if (panelElement) {
+                      panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      panelElement.classList.add('ring-2', 'ring-emerald-500', 'ring-offset-2');
+                      setTimeout(() => {
+                        panelElement.classList.remove('ring-2', 'ring-emerald-500', 'ring-offset-2');
+                      }, 2000);
+                    }
+                  }
+                }}
               />
               </div>
             ))}

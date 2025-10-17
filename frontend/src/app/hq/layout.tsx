@@ -163,7 +163,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
         
         {/* Mobile Info Banner */}
         {isMobile && !isMobileBannerDismissed && (
-          <div className="sm:hidden mx-4 mb-2 relative">
+          <div className="sm:hidden mx-3 mb-2 relative">
             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md">
               <Link 
                 href="https://docs.open-politics.org" 

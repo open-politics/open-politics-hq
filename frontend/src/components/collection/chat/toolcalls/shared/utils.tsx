@@ -20,6 +20,8 @@ import {
   XCircle,
   Clock,
   Loader2,
+  ListTodo,
+  StickyNote,
 } from 'lucide-react';
 
 /**
@@ -75,6 +77,14 @@ export function getToolIcon(toolName: string, className: string = 'h-4 w-4'): Re
     case 'list_bundles':
     case 'explore_bundles':
       return <Database {...iconProps} />;
+    case 'tasks':
+    case 'add_task':
+    case 'start_task':
+    case 'finish_task':
+    case 'cancel_task':
+      return <ListTodo {...iconProps} />;
+    case 'working_memory':
+      return <StickyNote {...iconProps} />;
     default:
       return <Bot {...iconProps} />;
   }
@@ -113,7 +123,7 @@ export function getStatusColorClass(status: 'pending' | 'running' | 'completed' 
     case 'running':
       return 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800';
     case 'completed':
-      return 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800';
+      return 'bg-green-50 dark:bg-emerald-900/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800';
     case 'failed':
       return 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800';
   }

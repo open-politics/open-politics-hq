@@ -9,15 +9,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, MapPin, AlertCircle, Tag, Settings2, Type, Text } from 'lucide-react';
+import { Loader2, MapPin, AlertCircle, Tag, Settings2, Type, Text, Square } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { isLocationField } from '@/lib/annotations/fieldDetection';
 
 export interface MapControlsConfig {
   geocodeSource: { schemaId: number; fieldKey: string } | null;
   labelSource: { schemaId: number; fieldKey: string } | null;
   showLabels: boolean;
+  showAreas: boolean; // NEW: Toggle for showing location areas
 }
 
 interface AnnotationMapControlsProps {
@@ -37,12 +39,13 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
   isLoadingGeocoding,
   geocodingError,
 }) => {
-  const { geocodeSource, labelSource, showLabels } = value;
+  const { geocodeSource, labelSource, showLabels, showAreas } = value;
 
   // Local state to track current selections for better responsiveness
   const [localGeocodeSource, setLocalGeocodeSource] = useState(geocodeSource);
   const [localLabelSource, setLocalLabelSource] = useState(labelSource);
   const [localShowLabels, setLocalShowLabels] = useState(showLabels);
+  const [localShowAreas, setLocalShowAreas] = useState(showAreas);
 
   // Update local state when value prop changes (important for shared/restored dashboards)
   useEffect(() => {
@@ -57,6 +60,10 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
     setLocalShowLabels(showLabels);
   }, [showLabels]);
 
+  useEffect(() => {
+    setLocalShowAreas(showAreas);
+  }, [showAreas]);
+
   const geocodeSchemeOptions = useMemo(() => {
     return schemas.map(schema => ({
       value: schema.id.toString(),
@@ -67,8 +74,25 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
   const geocodeFieldOptions = useMemo(() => {
     if (!localGeocodeSource?.schemaId) return [];
     const targetKeys = getTargetKeysForScheme(localGeocodeSource.schemaId, schemas);
+    
+    // Filter for fields that look like they contain locations
+    const locationNamePatterns = [
+      /location/i, /place/i, /address/i, /city/i, /country/i, 
+      /region/i, /geo/i, /coordinates?/i, /where/i, /venue/i
+    ];
+    
     return targetKeys
-      .filter(tk => tk.type === 'string' || (tk.type === 'array' && tk.key.toLowerCase().includes('location')))
+      .filter(tk => {
+        // Must be string or array type
+        if (tk.type !== 'string' && tk.type !== 'array') return false;
+        
+        // Check if field name suggests it contains locations
+        const hasLocationName = locationNamePatterns.some(pattern => 
+          pattern.test(tk.key) || pattern.test(tk.name)
+        );
+        
+        return hasLocationName;
+      })
       .map(tk => ({ value: tk.key, label: `${tk.name} (${tk.type})` }));
   }, [localGeocodeSource?.schemaId, schemas]);
 
@@ -125,21 +149,26 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
     setLocalShowLabels(checked);
     onChange({ ...value, showLabels: checked });
   };
+
+  const handleShowAreasChange = (checked: boolean) => {
+    setLocalShowAreas(checked);
+    onChange({ ...value, showAreas: checked });
+  };
   
   return (
-    <div className="mb-0 p-3 rounded-t-md bg-muted/20 backdrop-blur supports-[backdrop-filter]:bg-background/40 border border-border/50">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold flex items-center text-muted-foreground">
-            <MapPin className="h-3.5 w-3.5 mr-1.5" />
-            Geocoding Source
+    <div className="mb-0 p-2 rounded-t-md bg-muted/20 backdrop-blur supports-[backdrop-filter]:bg-background/40 border border-border/50">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-3 gap-y-2">
+        <div className="space-y-1">
+          <Label className="text-[10px] font-semibold flex items-center text-muted-foreground uppercase tracking-wide">
+            <MapPin className="h-3 w-3 mr-1" />
+            Geocode
           </Label>
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
+          <div className="flex flex-wrap items-end gap-1.5">
+            <div className="flex-1 min-w-[80px]">
               <Label htmlFor="geocode-schema-select" className="text-xs mb-1 block sr-only">Schema</Label>
               <Select value={localGeocodeSource?.schemaId?.toString() ?? ""} onValueChange={handleGeocodeSchemaChange}>
-                <SelectTrigger id="geocode-schema-select" className="h-8 text-xs w-full" aria-label="Geocode Source Schema">
-                  <SelectValue placeholder="Select schema..." />
+                <SelectTrigger id="geocode-schema-select" className="h-7 text-xs w-full min-w-0" aria-label="Geocode Source Schema">
+                  <SelectValue placeholder="Schema..." />
                 </SelectTrigger>
                 <SelectContent>
                   <ScrollArea className="max-h-60 w-full">
@@ -152,15 +181,15 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-[80px]">
                <Label htmlFor="geocode-field-select" className="text-xs mb-1 block sr-only">Field</Label>
                <Select
                   value={localGeocodeSource?.fieldKey ?? ""}
                   onValueChange={handleGeocodeFieldChange}
                   disabled={!localGeocodeSource?.schemaId}
                >
-                  <SelectTrigger id="geocode-field-select" className="h-8 text-xs w-full" aria-label="Geocode Source Field">
-                     <SelectValue placeholder="Select field..." />
+                  <SelectTrigger id="geocode-field-select" className="h-7 text-xs w-full min-w-0" aria-label="Geocode Source Field">
+                     <SelectValue placeholder="Field..." />
                   </SelectTrigger>
                   <SelectContent>
                     <ScrollArea className="max-h-60 w-full">
@@ -184,18 +213,18 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                        disabled={!localGeocodeSource?.schemaId || !localGeocodeSource?.fieldKey || isLoadingGeocoding}
                        size="icon"
                        variant="outline"
-                       className="h-8 w-8 flex-shrink-0 bg-red-400"
+                       className="h-7 w-7 flex-shrink-0"
                        aria-label="Run Geocoding"
                      >
-                       {isLoadingGeocoding ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
+                       {isLoadingGeocoding ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />}
                        <span className="sr-only">Geocode</span>
                      </Button>
                    </div>
                 </TooltipTrigger>
                 <TooltipContent>
                    {!localGeocodeSource?.schemaId || !localGeocodeSource?.fieldKey
-                      ? "Select a schema and field first"
-                      : isLoadingGeocoding ? "Geocoding..." : "Geocode selected locations"}
+                      ? "Select schema & field"
+                      : isLoadingGeocoding ? "Geocoding..." : "Run geocoding"}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -203,17 +232,17 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
         </div>
 
         {/* Label Configuration Section */}
-        <div className="space-y-1.5">
-           <Label className="text-xs font-semibold flex items-center text-muted-foreground">
-              <Type className="h-3.5 w-3.5 mr-1.5" />
-              Map Labels
+        <div className="space-y-1">
+           <Label className="text-[10px] font-semibold flex items-center text-muted-foreground uppercase tracking-wide">
+              <Type className="h-3 w-3 mr-1" />
+              Labels
            </Label>
-           <div className="flex items-end gap-2">
-              <div className="flex flex-col items-center">
+           <div className="flex flex-wrap items-end gap-1.5">
+              <div className="flex flex-col items-center flex-shrink-0">
                  <TooltipProvider delayDuration={100}>
                    <Tooltip>
                      <TooltipTrigger asChild>
-                       <div className="h-8 flex items-center">
+                       <div className="h-7 flex items-center">
                           <Switch
                             id="map-label-switch"
                             checked={localShowLabels}
@@ -223,19 +252,19 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                           />
                        </div>
                      </TooltipTrigger>
-                     <TooltipContent><p>{showLabels ? 'Hide' : 'Show'} map labels</p></TooltipContent>
+                     <TooltipContent><p>{showLabels ? 'Hide' : 'Show'} labels</p></TooltipContent>
                    </Tooltip>
                  </TooltipProvider>
               </div>
-              <div className={cn("flex-1", !localShowLabels && "opacity-50 pointer-events-none transition-opacity")}>
+              <div className={cn("flex-1 min-w-[80px]", !localShowLabels && "opacity-50 pointer-events-none transition-opacity")}>
                  <Label htmlFor="map-label-schema-select" className="text-xs mb-1 block sr-only">Label Schema</Label>
                  <Select
                    value={localLabelSource?.schemaId?.toString() ?? ""}
                    onValueChange={handleLabelSchemaChange}
                    disabled={!localShowLabels || schemas.length === 0}
                  >
-                   <SelectTrigger id="map-label-schema-select" className="h-8 text-xs w-full" aria-label="Map Label Schema">
-                     <SelectValue placeholder="Select schema..." />
+                   <SelectTrigger id="map-label-schema-select" className="h-7 text-xs w-full min-w-0" aria-label="Map Label Schema">
+                     <SelectValue placeholder="Schema..." />
                    </SelectTrigger>
                    <SelectContent>
                      <ScrollArea className="max-h-60 w-full">
@@ -247,15 +276,15 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                    </SelectContent>
                  </Select>
               </div>
-              <div className={cn("flex-1", !localShowLabels && "opacity-50 pointer-events-none transition-opacity")}>
+              <div className={cn("flex-1 min-w-[80px]", !localShowLabels && "opacity-50 pointer-events-none transition-opacity")}>
                  <Label htmlFor="map-label-key-select" className="text-xs mb-1 block sr-only">Label Field</Label>
                  <Select
                    value={localLabelSource?.fieldKey ?? ""}
                    onValueChange={handleLabelFieldChange}
                    disabled={!localShowLabels || labelFieldOptions.length === 0}
                  >
-                   <SelectTrigger id="map-label-key-select" className="h-8 text-xs w-full" aria-label="Map Label Field">
-                     <SelectValue placeholder="Select field..." />
+                   <SelectTrigger id="map-label-key-select" className="h-7 text-xs w-full min-w-0" aria-label="Map Label Field">
+                     <SelectValue placeholder="Field..." />
                    </SelectTrigger>
                    <SelectContent>
                      <ScrollArea className="max-h-60 w-full">
@@ -277,6 +306,38 @@ export const AnnotationMapControls: React.FC<AnnotationMapControlsProps> = ({
                     Selected schema has no text-based fields for labels.
                 </div>
             )}
+        </div>
+
+        {/* Areas Toggle Section */}
+        <div className="space-y-1">
+           <Label className="text-[10px] font-semibold flex items-center text-muted-foreground uppercase tracking-wide">
+              <Square className="h-3 w-3 mr-1" />
+              Areas
+           </Label>
+           <div className="flex items-center gap-2 h-7">
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-2">
+                       <Switch
+                         id="map-areas-switch"
+                         checked={localShowAreas}
+                         onCheckedChange={handleShowAreasChange}
+                         className="data-[state=checked]:bg-primary"
+                         aria-label="Show location areas toggle"
+                       />
+                       <Label htmlFor="map-areas-switch" className="text-xs cursor-pointer">
+                         Show regions
+                       </Label>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent><p>{localShowAreas ? 'Hide' : 'Show'} location areas</p></TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+           </div>
+           <div className="text-xs text-muted-foreground italic">
+              Display bounding boxes for regions
+           </div>
         </div>
 
       </div>

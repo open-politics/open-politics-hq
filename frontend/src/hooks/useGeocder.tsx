@@ -29,10 +29,15 @@ const useGeocode = () => {
       const longitude = coordinates?.[0];
       const latitude = coordinates?.[1];
       
+      // Convert bbox strings to numbers (backend returns strings)
+      const convertedBbox = bbox && Array.isArray(bbox) && bbox.length === 4
+        ? [parseFloat(bbox[0]), parseFloat(bbox[1]), parseFloat(bbox[2]), parseFloat(bbox[3])] as [number, number, number, number]
+        : undefined;
+      
       return {
         longitude,
         latitude,
-        bbox: bbox || undefined,
+        bbox: convertedBbox,
         type: location_type
       };
     } catch (err) {

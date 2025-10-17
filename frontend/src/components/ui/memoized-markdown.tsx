@@ -5,8 +5,17 @@ import { memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 function parseMarkdownIntoBlocks(markdown: string): string[] {
-  const tokens = marked.lexer(markdown)
-  return tokens.map(token => token.raw)
+  if (!markdown || markdown.trim() === '') {
+    return []
+  }
+  try {
+    const tokens = marked.lexer(markdown)
+    return tokens.map(token => token.raw)
+  } catch (error) {
+    console.error('Error parsing markdown:', error)
+    // Fallback to returning the raw markdown as a single block
+    return [markdown]
+  }
 }
 
 const MemoizedMarkdownBlock = memo(
@@ -69,9 +78,18 @@ export const MemoizedMarkdown = memo(
   ({ content, id }: { content: string; id: string }) => {
     const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content])
 
-    return blocks.map((block, index) => (
-      <MemoizedMarkdownBlock content={block} key={`${id}-block_${index}`} />
-    ))
+    // If no blocks, render content as a single markdown block
+    if (blocks.length === 0) {
+      return content ? <MemoizedMarkdownBlock content={content} key={`${id}-fallback`} /> : null
+    }
+
+    return (
+      <>
+        {blocks.map((block, index) => (
+          <MemoizedMarkdownBlock content={block} key={`${id}-block_${index}`} />
+        ))}
+      </>
+    )
   }
 )
 

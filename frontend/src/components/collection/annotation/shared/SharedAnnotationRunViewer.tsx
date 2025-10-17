@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { SchemePreview } from '@/components/collection/annotation/schemaCreation/SchemePreview';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ChevronDown } from 'lucide-react';
 
 interface AnnotationRunPreview {
   id: number;
@@ -307,25 +310,28 @@ const SharedAnnotationRunViewer: React.FC<SharedAnnotationRunViewerProps> = ({ r
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {runData.target_schemas.map(schema => (
-                    <div key={schema.id} className="border rounded p-3">
-                      <div className="flex items-center gap-3 mb-2">
-                        <Settings className="h-4 w-4 text-purple-600" />
-                        <div>
-                          <h4 className="font-medium text-sm">{schema.name}</h4>
-                          <p className="text-xs text-muted-foreground">v{schema.version}</p>
+                  {runData.target_schemas.map((schema, index) => (
+                    <Collapsible key={schema.id} defaultOpen={index === 0}>
+                      <CollapsibleTrigger className="w-full">
+                        <div className="border rounded p-3 hover:bg-muted/30 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <Settings className="h-4 w-4 text-purple-600" />
+                              <div className="text-left">
+                                <h4 className="font-medium text-sm">{schema.name}</h4>
+                                <p className="text-xs text-muted-foreground">v{schema.version}</p>
+                              </div>
+                            </div>
+                            <ChevronDown className="h-4 w-4 transition-transform duration-200" />
+                          </div>
                         </div>
-                      </div>
-                      {schema.description && (
-                        <p className="text-xs text-muted-foreground mb-2">{schema.description}</p>
-                      )}
-                      {schema.instructions && (
-                        <details className="text-xs">
-                          <summary className="cursor-pointer font-medium">Instructions</summary>
-                          <p className="mt-1 p-2 bg-muted rounded">{schema.instructions}</p>
-                        </details>
-                      )}
-                    </div>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="mt-2 border rounded p-3 bg-muted/10">
+                          <SchemePreview scheme={schema as any} />
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
                   ))}
                 </div>
               </CardContent>

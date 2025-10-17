@@ -72,7 +72,7 @@ function ChunkCard({
   };
 
   return (
-    <div className="border rounded p-2 hover:bg-accent/20 transition-colors">
+    <div className="border rounded p-2 hover:bg-accent/20 transition-colors max-h-96 max-w-[20vw] overflow-y-auto">
       <div className="flex items-start justify-between gap-2">
         {/* Left: Content */}
         <div className="flex-1 min-w-0">
@@ -228,7 +228,7 @@ function SemanticSearchResultComponent({
       
       {/* Results */}
       <ScrollArea className="max-h-[300px]">
-        <div className="space-y-1.5 pr-2">
+        <div className="space-y-1">
           {typedResult.results.map((chunk) => (
             <ChunkCard
               key={`chunk-${chunk.chunk_id}`}

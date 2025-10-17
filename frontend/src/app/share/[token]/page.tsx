@@ -89,10 +89,19 @@ export default function ShareTokenPage() {
 
         if (result && result.imported_resource_id) {
             toast.success(`Successfully imported "${result.imported_resource_name}" into your active Infospace.`);
+            
             // Refresh assets and bundles in the background
             fetchAssets();
             fetchBundles(targetInfospaceId);
             
+            // Redirect based on resource type
+            if (resource.resource_type === 'run') {
+                // For annotation runs, redirect to the annotation runner with the imported run
+                router.push(`/infospace/${targetInfospaceId}/annotations?runId=${result.imported_resource_id}`);
+            } else {
+                // For assets/bundles, redirect to the assets page
+                router.push(`/infospace/${targetInfospaceId}/assets`);
+            }
         } else {
             toast.error(`Failed to import ${resource.resource_type}. You may need to log in or the import failed on the server.`);
         }

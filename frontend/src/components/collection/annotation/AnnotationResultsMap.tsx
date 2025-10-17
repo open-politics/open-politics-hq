@@ -93,6 +93,10 @@ interface AnnotationResultsMapProps {
   onSelectedFieldsChange?: (selectedFieldsPerScheme: Record<number, string[]>) => void;
   // NEW: Result selection callback
   onResultSelect?: (result: FormattedAnnotation) => void;
+  // NEW: Show location areas
+  showAreas?: boolean;
+  // NEW: External location highlighting (from cross-panel navigation)
+  highlightLocation?: { location: string; fieldKey: string } | null;
 }
 
 // Define a specific type for our label features
@@ -530,6 +534,10 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   onSelectedFieldsChange,
   // NEW: Result selection callback
   onResultSelect,
+  // NEW: Show location areas
+  showAreas = false,
+  // NEW: External location highlighting
+  highlightLocation,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -623,6 +631,23 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     return processedResults.all || timeFilteredResults;
   }, [processedResults, timeFilteredResults]);
 
+  // Filter points with meaningful bounding boxes (area > threshold)
+  const pointsWithMeaningfulAreas = useMemo(() => {
+    if (!showAreas) return [];
+    
+    const AREA_THRESHOLD = 0.001; // Minimum area in square degrees (~100km²)
+    
+    return processedPoints.filter(point => {
+      if (!point.bbox || point.bbox.length !== 4) return false;
+      
+      // bbox format: [south, north, west, east] or [lat_min, lat_max, lon_min, lon_max]
+      const [south, north, west, east] = point.bbox;
+      const area = Math.abs((north - south) * (east - west));
+      
+      return area >= AREA_THRESHOLD;
+    });
+  }, [processedPoints, showAreas]);
+
   const toggleProjection = useCallback(() => {
     if (mapRef.current && mapLoaded) {
       const newProjection = isGlobeView ? 'mercator' : 'globe';
@@ -651,7 +676,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: theme === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11',
-      center: [-98.5795, 39.8283], // Center of the US
+      center: [13.4050, 52.5200], // Center of Berlin
       zoom: 3,
       projection: 'mercator' as any // Start with flat view
     });
@@ -928,6 +953,122 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     };
   }, [mapLoaded, labelData]); // SIMPLIFIED: Only depend on mapLoaded and memoized labelData
 
+  // Add location area polygons when showAreas is enabled
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+
+    const map = mapRef.current;
+    const areaSourceId = 'location-areas';
+    const areaLayerId = 'location-areas-layer';
+    const areaBorderLayerId = 'location-areas-border-layer';
+
+    const addAreas = () => {
+      if (!mapRef.current || !mapRef.current.isStyleLoaded()) return;
+
+      try {
+        // Remove existing layers and source
+        if (map.getLayer(areaBorderLayerId)) {
+          map.removeLayer(areaBorderLayerId);
+        }
+        if (map.getLayer(areaLayerId)) {
+          map.removeLayer(areaLayerId);
+        }
+        if (map.getSource(areaSourceId)) {
+          map.removeSource(areaSourceId);
+        }
+
+        // Only add areas if enabled and we have points with meaningful bboxes
+        if (!showAreas || pointsWithMeaningfulAreas.length === 0) {
+          return;
+        }
+
+        // Convert points to GeoJSON polygons
+        const features = pointsWithMeaningfulAreas.map(point => {
+          const [south, north, west, east] = point.bbox!;
+          
+          return {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [west, south],
+                [east, south],
+                [east, north],
+                [west, north],
+                [west, south]
+              ]]
+            },
+            properties: {
+              locationString: point.locationString,
+              documentCount: point.documentIds.length,
+              pointId: point.id
+            }
+          };
+        });
+
+        // Add source
+        map.addSource(areaSourceId, {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: features as any
+          }
+        });
+
+        // Add fill layer with very transparent color so nested boxes are visible
+        map.addLayer({
+          id: areaLayerId,
+          type: 'fill',
+          source: areaSourceId,
+          paint: {
+            'fill-color': theme === 'dark' ? '#3b82f6' : '#2563eb', // Blue color
+            'fill-opacity': 0.08 // Very light so overlapping areas are visible
+          }
+        });
+
+        // Add border layer for better visibility - borders are the main visual cue
+        map.addLayer({
+          id: areaBorderLayerId,
+          type: 'line',
+          source: areaSourceId,
+          paint: {
+            'line-color': theme === 'dark' ? '#60a5fa' : '#3b82f6',
+            'line-width': 2.5, // Slightly thicker for better visibility
+            'line-opacity': 0.8 // More opaque so nested boxes stand out
+          }
+        });
+
+        console.log(`[Map Areas] Added ${pointsWithMeaningfulAreas.length} location areas`);
+      } catch (error) {
+        console.warn('Error adding map areas:', error);
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      addAreas();
+    } else {
+      map.once('style.load', addAreas);
+    }
+
+    return () => {
+      if (mapRef.current && mapRef.current.isStyleLoaded()) {
+        try {
+          if (map.getLayer(areaBorderLayerId)) {
+            map.removeLayer(areaBorderLayerId);
+          }
+          if (map.getLayer(areaLayerId)) {
+            map.removeLayer(areaLayerId);
+          }
+          if (map.getSource(areaSourceId)) {
+            map.removeSource(areaSourceId);
+          }
+        } catch (error) {
+          console.warn('Error cleaning up map areas:', error);
+        }
+      }
+    };
+  }, [mapLoaded, pointsWithMeaningfulAreas, showAreas, theme]);
+
   // --- Adjust map style based on theme ---
   useEffect(() => {
      if (mapRef.current && mapLoaded) {
@@ -984,51 +1125,65 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   // Handle location click from list
   const handleLocationClick = useCallback((point: MapPoint) => {
     if (mapRef.current) {
-      // Calculate offset to account for side panel (which takes up half the width)
-      // We want the marker to appear in the center of the visible (left) half
       const map = mapRef.current;
-      const container = map.getContainer();
-      const containerWidth = container.offsetWidth;
       
-      // Side panel takes up 50% of width, so we want to center in the left 50%
-      // This means shifting the center point to the left by 25% of total width
-      const offsetRatio = -0.05; // Shift left by 25% of total width
-      
-      // Convert the offset from screen coordinates to map coordinates
-      try {
-        const bounds = map.getBounds();
-        if (!bounds) {
-          throw new Error('Bounds not available');
-        }
-        
-        const longitudeRange = bounds.getEast() - bounds.getWest();
-        const longitudeOffset = longitudeRange * offsetRatio;
-        
-        // Calculate the adjusted center
-        const adjustedCenter: [number, number] = [
-          point.coordinates.longitude - longitudeOffset,
-          point.coordinates.latitude
-        ];
-        
-        // Fly to the adjusted position
-        map.flyTo({
-          center: adjustedCenter,
-          zoom: Math.max(map.getZoom(), 10), // Ensure minimum zoom level
-          duration: 1000
-        });
-      } catch (error) {
-        // Fallback to original coordinates if bounds calculation fails
-        map.flyTo({
-          center: [point.coordinates.longitude, point.coordinates.latitude],
-          zoom: Math.max(map.getZoom(), 10),
-          duration: 1000
-        });
-      }
-      
-      // Also trigger the point click to show details
+      // First, trigger the side panel to open (or update its content)
       handlePointClick(point);
+      
+      // Wait for side panel to render, then fly to adjusted position
+      // Using requestAnimationFrame twice to ensure DOM has updated
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!mapRef.current) return;
+          
+          try {
+            const container = map.getContainer();
+            const containerWidth = container.offsetWidth;
+            
+            // Side panel takes up 50% of width on the RIGHT, so visible map area is the left 50%
+            // We want to center the point in the visible (left) half
+            // The center of the left half is at 25% from the left edge
+            // The map's default center is at 50% from the left edge
+            // So we need to shift LEFT by 25% of container width (negative offset)
+            const offsetX = -containerWidth * 0.25; // Shift LEFT by 25% to center in left half
+            
+            // Use Mapbox's built-in offset parameter which correctly handles zoom changes
+            map.flyTo({
+              center: [point.coordinates.longitude, point.coordinates.latitude],
+              offset: [offsetX, 0], // Negative offset shifts the center to the left
+              zoom: Math.max(map.getZoom(), 4), // Ensure minimum zoom level
+              duration: 1000
+            });
+          } catch (error) {
+            console.warn('Error calculating map offset:', error);
+            // Fallback to original coordinates if calculation fails
+            map.flyTo({
+              center: [point.coordinates.longitude, point.coordinates.latitude],
+              zoom: Math.max(map.getZoom(), 4),
+              duration: 1000
+            });
+          }
+        });
+      });
     }
   }, [handlePointClick]);
+
+  // Handle external location highlighting (from cross-panel navigation)
+  useEffect(() => {
+    if (!highlightLocation || !mapLoaded) return;
+    
+    const { location, fieldKey } = highlightLocation;
+    
+    // Find matching point by location string (case-insensitive)
+    const matchingPoint = processedPoints.find(point => 
+      point.locationString.toLowerCase().includes(location.toLowerCase()) ||
+      location.toLowerCase().includes(point.locationString.toLowerCase())
+    );
+    
+    if (matchingPoint) {
+      handleLocationClick(matchingPoint);
+    }
+  }, [highlightLocation, processedPoints, mapLoaded, handleLocationClick]);
 
   return (
     <div className="w-full h-full relative">

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,11 +37,9 @@ import {
   Link as LinkIcon,
   EyeOff,
   View,
-  Settings,
-  LayoutGrid,
-  List,
-  ChevronLeft,
+  ArrowDown01,
   FileIcon,
+  Ellipsis,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
@@ -64,15 +63,15 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu';
-import AssetCardComponent from './Views/AssetCardComponent';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '@/components/ui/input-group';
 
 // Types
 type SortKey = 'name' | 'updated_at' | 'kind';
@@ -100,7 +99,7 @@ export const getAssetIcon = (kind: AssetKind, className?: string) => {
       case 'pdf': return <FileText className={cn(iconClass, "text-red-600")} />;
       case 'csv': return <FileSpreadsheet className={cn(iconClass, "text-green-600")} />;
       case 'article': return <FileText className={cn(iconClass, "text-blue-600")} />;
-      case 'csv_row': return <List className={cn(iconClass, "text-emerald-600")} />;
+      case 'csv_row': return <Ellipsis className={cn(iconClass, "text-emerald-600")} />;
       case 'image': return <ImageIcon className={cn(iconClass, "text-purple-600")} />;
       case 'video': return <Video className={cn(iconClass, "text-orange-600")} />;
       case 'audio': return <Music className={cn(iconClass, "text-teal-600")} />;
@@ -151,6 +150,13 @@ interface AssetSelectorProps {
     onItemDoubleClick?: (item: AssetTreeItem) => void;
     // Prop to allow parent component to provide actions for the dropdown menu
     renderItemActions?: (item: AssetTreeItem) => React.ReactNode;
+    // External search control
+    initialSearchTerm?: string;
+    autoFocusSearch?: boolean;
+    // Compact mode - hides header and reduces padding for inline usage
+    compact?: boolean;
+    // Filter to show only children of a specific bundle (for bundle detail view)
+    filterByBundleId?: number | null;
 }
 
 export default function AssetSelector({
@@ -159,6 +165,10 @@ export default function AssetSelector({
     onItemView,
     onItemDoubleClick,
     renderItemActions,
+    initialSearchTerm = '',
+    autoFocusSearch = false,
+    compact = false,
+    filterByBundleId = null,
 }: AssetSelectorProps) {
   const { activeInfospace } = useInfospaceStore();
   
@@ -186,7 +196,7 @@ export default function AssetSelector({
   } = useBundleStore();
 
   // UI State
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
@@ -194,6 +204,14 @@ export default function AssetSelector({
   
   // Inline editing state
   const [editingItem, setEditingItem] = useState<{ id: string; value: string } | null>(null);
+  
+  // Search input ref for auto-focus
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  // Keyboard navigation state
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const flattenedItemsRef = useRef<AssetTreeItem[]>([]);
   
   // Data fetching state - NOW REMOVED! Using tree store instead
   // const [bundleAssets, setBundleAssets] = useState<Map<number, AssetRead[]>>(new Map());
@@ -205,10 +223,6 @@ export default function AssetSelector({
   const [isDraggedOverTopLevel, setIsDraggedOverTopLevel] = useState(false);
   const [draggedOverAssetId, setDraggedOverAssetId] = useState<string | null>(null);
   const [dragOverTimeout, setDragOverTimeout] = useState<NodeJS.Timeout | null>(null);
-
-  // View mode state
-  const [viewMode, setViewMode] = useState<'list' | 'card'>('list');
-  const [cardViewFolder, setCardViewFolder] = useState<AssetTreeItem | null>(null);
 
   // Pull-to-refresh state
   const [pullDistance, setPullDistance] = useState(0);
@@ -232,6 +246,23 @@ export default function AssetSelector({
       }
     };
   }, [dragOverTimeout]);
+
+  // Sync initial search term and auto-focus
+  useEffect(() => {
+    setSearchTerm(initialSearchTerm);
+  }, [initialSearchTerm]);
+
+  useEffect(() => {
+    if (autoFocusSearch && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+    // In compact mode, set first item as focused for keyboard navigation
+    if (compact && flattenedItemsRef.current.length > 0) {
+      setFocusedIndex(0);
+    }
+  }, [autoFocusSearch, compact]);
+
+  // Note: flattenedItems will be computed after itemsForView is defined
 
   // Pull-to-refresh handlers
   const handleRefresh = useCallback(async () => {
@@ -369,15 +400,27 @@ export default function AssetSelector({
   }, [isRefreshing, handleRefresh]);
 
   // NEW: Fetch tree data when infospace changes (single efficient call!)
+  // If filterByBundleId is provided, fetch children of that bundle instead
   useEffect(() => {
     if (activeInfospace?.id && !fetchingRef.current) {
       fetchingRef.current = true;
-      console.log('[AssetSelector] Fetching tree for infospace:', activeInfospace.id);
-      fetchRootTree().finally(() => {
-        fetchingRef.current = false;
-      });
+      
+      if (filterByBundleId !== null) {
+        // Fetch children of specific bundle
+        const bundleNodeId = `bundle-${filterByBundleId}`;
+        console.log('[AssetSelector] Fetching children for bundle:', bundleNodeId);
+        fetchChildren(bundleNodeId).finally(() => {
+          fetchingRef.current = false;
+        });
+      } else {
+        // Fetch root tree
+        console.log('[AssetSelector] Fetching tree for infospace:', activeInfospace.id);
+        fetchRootTree().finally(() => {
+          fetchingRef.current = false;
+        });
+      }
     }
-  }, [activeInfospace?.id, fetchRootTree]);
+  }, [activeInfospace?.id, filterByBundleId, fetchRootTree, fetchChildren]);
 
   // Memoized asset kinds for filter dropdown (from tree nodes)
   const assetKinds = useMemo(() => {
@@ -434,7 +477,12 @@ export default function AssetSelector({
   // Generate hierarchical asset tree
   // NEW: Convert TreeNodes to AssetTreeItems (much simpler!)
   const assetTree = useMemo(() => {
-    console.log('[AssetSelector] Building tree from', rootNodes.length, 'root nodes');
+    // Use filtered bundle children if filterByBundleId is set, otherwise use root nodes
+    const nodesToRender = filterByBundleId !== null 
+      ? (childrenCache.get(`bundle-${filterByBundleId}`) || [])
+      : rootNodes;
+    
+    console.log('[AssetSelector] Building tree from', nodesToRender.length, filterByBundleId !== null ? 'bundle children' : 'root nodes');
     
     const convertToTreeItem = (node: any, level: number = 0): AssetTreeItem => {
       const isExpanded = expandedItems.has(node.id);
@@ -505,8 +553,8 @@ export default function AssetSelector({
       };
     };
     
-    const tree = rootNodes.map(node => convertToTreeItem(node, 0));
-    console.log('[AssetSelector] Generated', tree.length, 'root tree items');
+    const tree = nodesToRender.map(node => convertToTreeItem(node, 0));
+    console.log('[AssetSelector] Generated', tree.length, 'tree items');
 
     const [sortKey, sortDirection] = sortOption.split('-') as [SortKey, SortDirection];
     const sortItemsRecursively = (items: AssetTreeItem[]): AssetTreeItem[] => {
@@ -543,7 +591,7 @@ export default function AssetSelector({
         return sortedItems.map(item => ({ ...item, children: item.children ? sortItemsRecursively(item.children) : undefined }));
     };
     return sortItemsRecursively(tree);
-  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption]);
+  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId]);
 
   // Filter tree based on search and type
   const filteredTree = useMemo(() => {
@@ -623,10 +671,6 @@ export default function AssetSelector({
     }
   }, [selectedItems, onSelectionChange]);
 
-  const handleCardSelect = useCallback((item: AssetTreeItem, multiSelect?: boolean) => {
-    toggleSelected(item.id, multiSelect);
-  }, [toggleSelected]);
-
   const handleItemClick = useCallback(async (item: AssetTreeItem) => {
     if (!onItemView) return;
     
@@ -669,8 +713,8 @@ export default function AssetSelector({
       }
       onItemDoubleClick(item);
     } else if (item.type === 'folder') {
-      setCardViewFolder(item);
-      onSelectionChange(new Set());
+      // Expand/collapse folder on double-click
+      toggleExpanded(item.id);
     } else if (onItemView) {
       // Fetch full data for view
       if (item.type === 'asset' && item.asset) {
@@ -682,7 +726,7 @@ export default function AssetSelector({
       }
       onItemView(item);
     }
-  }, [onItemDoubleClick, onItemView, onSelectionChange]);
+  }, [onItemDoubleClick, onItemView, toggleExpanded]);
 
   // Helper to recursively collect all child IDs from tree
   const collectAllDescendantIds = useCallback((nodeId: string): string[] => {
@@ -899,7 +943,7 @@ export default function AssetSelector({
 
   const getIndentationStyle = (level: number) => ({ paddingLeft: `${level * 1.5}rem` });
 
-  const renderTreeItem = useCallback((item: AssetTreeItem) => {
+  const renderTreeItem = useCallback((item: AssetTreeItem, itemIndex?: number) => {
     const hasChildren = item.children && item.children.length > 0;
     const canExpand = hasChildren || item.isContainer;
     const isLoading = isLoadingChildren.has(item.id);
@@ -907,6 +951,7 @@ export default function AssetSelector({
     const isEditing = editingItem?.id === item.id;
     const isDragOver = draggedOverBundleId === item.id;
     const isDragOverAsset = draggedOverAssetId === item.id;
+    const isFocused = itemIndex !== undefined && itemIndex === focusedIndex;
     
     if (item.type === 'folder' && item.bundle) {
       const bundleId = item.bundle.id;
@@ -915,7 +960,8 @@ export default function AssetSelector({
       return (
         <div key={item.id}>
           <div
-            className={cn("group flex items-center justify-between gap-2 py-2 px-3 hover:bg-muted cursor-pointer transition-colors border-t border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-l-4 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500")}
+            data-item-index={itemIndex}
+            className={cn("group flex items-center mb-0.5 justify-between gap-2 hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", compact ? "py-1 px-2" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500", isFocused && "ring-2 ring-primary")}
             style={getIndentationStyle(item.level)}
             onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}
             onDragOver={(e) => { 
@@ -966,13 +1012,34 @@ export default function AssetSelector({
             }}
           >
             <div className="w-4 h-4 flex items-center justify-center">
-              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className={cn("h-3 w-3 transition-transform duration-200", item.isExpanded && "rotate-90")} />} </Button>}
+              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>} </Button>}
             </div>
-            <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
+            <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4 rounded-full", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
             <div className="w-4 h-4 flex items-center justify-center">
               <div className="relative">
-                <Folder className={cn("h-4 w-4 text-blue-600 transition-opacity duration-200", item.isExpanded && "opacity-0")} />
-                <FolderOpen className={cn("h-4 w-4 text-blue-600 absolute inset-0 transition-opacity duration-200", !item.isExpanded && "opacity-0")} />
+                <AnimatePresence mode="wait">
+                  {item.isExpanded ? (
+                    <motion.div
+                      key="open"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.15, ease: "easeInOut" }}
+                    >
+                      <FolderOpen className="h-4 w-4 text-blue-600" />
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="closed"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.15, ease: "easeInOut" }}
+                    >
+                      <Folder className="h-4 w-4 text-blue-600" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
             <div className="flex-1 min-w-0" onDoubleClick={(e) => { e.stopPropagation(); handleEditItem(item); }}>
@@ -986,7 +1053,6 @@ export default function AssetSelector({
                 ) : (
                   <>
                     <span className="text-sm font-semibold truncate">{item.name}</span>
-                    {hasChildren && <Badge variant="secondary" className="text-xs">{item.children?.length} items</Badge>}
                     <div className="md:hidden flex items-center gap-1">
                       {item.type === 'folder' && (
                         <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Bundle Details">
@@ -1012,18 +1078,39 @@ export default function AssetSelector({
               )}
             </div>
           </div>
-          <div
-            data-state={item.isExpanded ? "open" : "closed"}
-            className="overflow-hidden transition-all duration-800 ease-out data-[state=closed]:animate-slide-up data-[state=open]:animate-slide-down data-[state=closed]:h-0 data-[state=open]:h-auto max-h-72 overflow-y-auto"
-          >
-            {item.children && (
-              <div className="ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-0 space-y-0.5 pb-2 pt-1">
-                <div className="space-y-0.5">
-                  {item.children.map(child => renderTreeItem(child))}
+          <AnimatePresence initial={false}>
+            {item.isExpanded && item.children && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ 
+                  height: "auto", 
+                  opacity: 1,
+                  transition: {
+                    height: { type: "spring", stiffness: 300, damping: 30, mass: 0.8 },
+                    opacity: { duration: 0.2 }
+                  }
+                }}
+                exit={{ 
+                  height: 0, 
+                  opacity: 0,
+                  transition: {
+                    height: { type: "spring", stiffness: 300, damping: 30, mass: 0.8 },
+                    opacity: { duration: 0.15 }
+                  }
+                }}
+                className="overflow-hidden max-h-72 overflow-y-auto"
+              >
+                <div className="ml-0  pl-0 space-y-0.5 pb-2 pt-1">
+                  <div className="space-y-0.5">
+                    {item.children.map(child => {
+                      const childIndex = flattenedItemsRef.current.findIndex(fi => fi.id === child.id);
+                      return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
+                    })}
+                  </div>
                 </div>
-              </div>
+              </motion.div>
             )}
-          </div>
+          </AnimatePresence>
         </div>
       );
     }
@@ -1031,7 +1118,8 @@ export default function AssetSelector({
     return (
       <div key={item.id}>
         <div
-          className={cn("group flex items-center gap-2.5 py-1.5 px-3 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 border-l-4 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500")}
+          data-item-index={itemIndex}
+          className={cn("group flex items-center gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-2 ring-primary")}
           style={getIndentationStyle(item.level)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}
@@ -1092,8 +1180,8 @@ export default function AssetSelector({
             }
           }}
         >
-          <div className="w-4 h-4 flex items-center justify-center">{canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>{isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className={cn("h-3 w-3 transition-transform duration-200", item.isExpanded && "rotate-90")} />}</Button>}</div>
-          <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4" />
+          <div className="w-4 h-4 flex items-center justify-center">{canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>{isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>}</Button>}</div>
+          <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded-full" />
           <div className="w-4 h-4 flex items-center justify-center">{item.asset && getAssetIcon(item.asset.kind)}</div>
           <div className="flex-1 min-w-0 overflow-hidden" onDoubleClick={(e) => { e.stopPropagation(); handleEditItem(item); }}>
             <div className="flex items-center gap-1.5">
@@ -1124,69 +1212,299 @@ export default function AssetSelector({
             </div>
           </div>
         </div>
-        <div
-          data-state={item.isExpanded ? "open" : "closed"}
-          className="overflow-hidden transition-all duration-300 ease-out data-[state=closed]:animate-slide-up data-[state=open]:animate-slide-down data-[state=closed]:h-0 data-[state=open]:h-auto max-h-72 overflow-y-auto"
-        >
-          {item.children && (
-            <div className="ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-2 space-y-1 pb-2 pt-1">
-              <div className="space-y-1">
-                {item.children.map(child => renderTreeItem(child))}
+        <AnimatePresence initial={false}>
+          {item.isExpanded && item.children && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ 
+                height: "auto", 
+                opacity: 1,
+                transition: {
+                  height: { type: "spring", stiffness: 350, damping: 32, mass: 0.7 },
+                  opacity: { duration: 0.2 }
+                }
+              }}
+              exit={{ 
+                height: 0, 
+                opacity: 0,
+                transition: {
+                  height: { type: "spring", stiffness: 350, damping: 32, mass: 0.7 },
+                  opacity: { duration: 0.15 }
+                }
+              }}
+              className="overflow-hidden max-h-72 overflow-y-auto"
+            >
+              <div className="ml-0 border-l-2 border-slate-200 dark:border-slate-700 pl-2 space-y-1 pb-2 pt-1">
+                <div className="space-y-1">
+                  {item.children.map(child => {
+                    const childIndex = flattenedItemsRef.current.findIndex(fi => fi.id === child.id);
+                    return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
+                  })}
+                </div>
               </div>
-            </div>
+            </motion.div>
           )}
-        </div>
+        </AnimatePresence>
       </div>
     );
-  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions]);
+  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex]);
 
-  const itemsForView = useMemo(() => {
-    if (viewMode === 'card' && cardViewFolder) return cardViewFolder.children || [];
-    return filteredTree;
-  }, [viewMode, cardViewFolder, filteredTree]);
+  // Get flat list of visible items for keyboard navigation (respecting hierarchy/expansion)
+  const flattenedItems = useMemo(() => {
+    const flatten = (items: AssetTreeItem[]): AssetTreeItem[] => {
+      const result: AssetTreeItem[] = [];
+      items.forEach(item => {
+        result.push(item);
+        // Check if item is expanded and has children (handles both folders and asset containers)
+        if (item.isExpanded && item.children && item.children.length > 0) {
+          result.push(...flatten(item.children));
+        }
+      });
+      return result;
+    };
+    const flattened = flatten(filteredTree);
+    flattenedItemsRef.current = flattened;
+    return flattened;
+  }, [filteredTree, expandedItems]);
+
+  // Keyboard navigation handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if search input or container has focus
+      const activeElement = document.activeElement;
+      const isSearchFocused = activeElement === searchInputRef.current;
+      const isContainerFocused = containerRef.current?.contains(activeElement);
+      
+      if (!isSearchFocused && !isContainerFocused) return;
+      if (flattenedItems.length === 0) return;
+
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          setFocusedIndex(prev => {
+            const newIndex = prev + 1;
+            return newIndex >= flattenedItems.length ? 0 : newIndex;
+          });
+          break;
+        
+        case 'ArrowUp':
+          e.preventDefault();
+          setFocusedIndex(prev => {
+            const newIndex = prev - 1;
+            return newIndex < 0 ? flattenedItems.length - 1 : newIndex;
+          });
+          break;
+        
+        case 'ArrowRight':
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < flattenedItems.length) {
+            const item = flattenedItems[focusedIndex];
+            // Expand folders or asset containers
+            if ((item.type === 'folder' || item.isContainer) && !expandedItems.has(item.id)) {
+              // Use toggleExpanded which properly handles async child loading
+              toggleExpanded(item.id);
+            }
+          }
+          break;
+        
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < flattenedItems.length) {
+            const item = flattenedItems[focusedIndex];
+            // Collapse folders or asset containers
+            if ((item.type === 'folder' || item.isContainer) && expandedItems.has(item.id)) {
+              // Use toggleExpanded for consistency
+              toggleExpanded(item.id);
+            }
+          }
+          break;
+        
+        case 'Enter':
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < flattenedItems.length) {
+            const item = flattenedItems[focusedIndex];
+            handleItemDoubleClickInternal(item);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [focusedIndex, flattenedItems, expandedItems, toggleExpanded, handleItemDoubleClickInternal]);
+
+  // Scroll focused item into view (manually control scroll to prevent scrolling parent containers)
+  useEffect(() => {
+    if (focusedIndex >= 0 && containerRef.current && scrollContainerRef.current) {
+      // Find the element with the matching data-item-index attribute
+      const focusedElement = containerRef.current.querySelector(`[data-item-index="${focusedIndex}"]`) as HTMLElement;
+      
+      if (focusedElement) {
+        // Get the ScrollArea's viewport element (Radix UI wraps content in a viewport div)
+        const scrollViewport = scrollContainerRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+        
+        if (scrollViewport) {
+          // Calculate positions relative to the scroll container
+          const elementRect = focusedElement.getBoundingClientRect();
+          const containerRect = scrollViewport.getBoundingClientRect();
+          
+          // Calculate how far the element is from the visible area
+          const elementTop = elementRect.top - containerRect.top + scrollViewport.scrollTop;
+          const elementBottom = elementTop + elementRect.height;
+          const visibleTop = scrollViewport.scrollTop;
+          const visibleBottom = visibleTop + scrollViewport.clientHeight;
+          
+          // Scroll only if element is not fully visible
+          if (elementTop < visibleTop) {
+            // Element is above visible area - scroll up
+            scrollViewport.scrollTo({ top: elementTop - 10, behavior: 'smooth' });
+          } else if (elementBottom > visibleBottom) {
+            // Element is below visible area - scroll down
+            scrollViewport.scrollTo({ top: elementBottom - scrollViewport.clientHeight + 10, behavior: 'smooth' });
+          }
+        }
+      }
+    }
+  }, [focusedIndex]);
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden min-w-0">
-        {/* Search and Filter */}
-        <div className="flex-none p-3 border-b min-w-0 overflow-hidden">
-          <div className="flex items-center gap-2 min-w-0">
-            <Checkbox id="select-all" checked={isAllSelected} onCheckedChange={(checked) => handleSelectAll(Boolean(checked))} disabled={allVisibleItemIds.size === 0} aria-label="Select all visible items" />
-            <div className="relative flex-grow">
-              <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Search assets..." className="pl-8 h-9" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-            </div>
-            <Select value={assetTypeFilter} onValueChange={(value) => setAssetTypeFilter(value as AssetKind | 'all')}>
-              <SelectTrigger className="w-[180px] h-9"><SelectValue placeholder="Filter by type" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                {assetKinds.map(kind => <SelectItem key={kind} value={kind}>{kind.charAt(0).toUpperCase() + kind.slice(1).replace('_', ' ')}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={sortOption} onValueChange={setSortOption}>
-              <SelectTrigger className="w-[180px] h-9"><SelectValue placeholder="Sort by" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="updated_at-desc">Date Modified (Newest)</SelectItem>
-                <SelectItem value="updated_at-asc">Date Modified (Oldest)</SelectItem>
-                <SelectItem value="name-asc">Name (A-Z)</SelectItem>
-                <SelectItem value="name-desc">Name (Z-A)</SelectItem>
-                <SelectItem value="kind-asc">Kind (A-Z)</SelectItem>
-                <SelectItem value="kind-desc">Kind (Z-A)</SelectItem>
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-1 rounded-md bg-muted p-0.5">
-              <Button variant={viewMode === 'list' ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2" onClick={() => setViewMode('list')}><List className="h-4 w-4" /></Button>
-              <Button variant={viewMode === 'card' ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2" onClick={() => setViewMode('card')}><LayoutGrid className="h-4 w-4" /></Button>
+    <div 
+      className={cn("h-full w-full flex flex-col overflow-hidden min-w-0", compact && "gap-0")}
+    >
+        {/* Compact search bar - minimal design for inline usage */}
+        {compact && (
+          <div className="flex-none p-2 border-b">
+            <InputGroup>
+              <InputGroupAddon>
+                <Search className="h-3.5 w-3.5" />
+              </InputGroupAddon>
+              <InputGroupInput 
+                ref={searchInputRef}
+                placeholder="Search with @..." 
+                className="text-sm h-8" 
+                value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  // Handle navigation keys - let window handler take over once navigation starts
+                  if (e.key === 'ArrowDown' && focusedIndex === -1 && flattenedItemsRef.current.length > 0) {
+                    // First arrow down - move focus to first item
+                    e.preventDefault();
+                    setFocusedIndex(0);
+                  } else if (e.key === 'ArrowUp' && focusedIndex === -1) {
+                    // First arrow up - move focus to last item
+                    e.preventDefault();
+                    if (flattenedItemsRef.current.length > 0) {
+                      setFocusedIndex(flattenedItemsRef.current.length - 1);
+                    }
+                  }
+                  // For all other cases (including when focusedIndex >= 0), let the window handler manage it
+                }}
+              />
+            </InputGroup>
+          </div>
+        )}
+      
+        {/* Search and Filter - Full version for non-compact mode */}
+        {!compact && (
+          <div className="flex-none p-2 py-0 border-b min-w-0 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 pl-6 py-3">
+              <Checkbox 
+                id="select-all" 
+                checked={isAllSelected} 
+                onCheckedChange={(checked) => handleSelectAll(Boolean(checked))} 
+                disabled={allVisibleItemIds.size === 0} 
+                aria-label="Select all visible items" 
+                className="rounded-full"
+              />
+              <InputGroup className="flex-grow h-8 ml-6 mr-6">
+                <InputGroupAddon>
+                  <Search className="h-2 w-2" />
+                </InputGroupAddon>
+                <InputGroupInput 
+                  ref={searchInputRef} 
+                  placeholder="Search..." 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)} 
+                />
+              </InputGroup>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 gap-2 shrink-0">
+                    <ArrowDown01 className="h-4 w-4" />
+                    <span className="hidden sm:inline">Filters</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64 p-2">
+                  <div className="mb-3">
+                    <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 pb-2">
+                      Type Filter
+                    </DropdownMenuLabel>
+                    <div className="bg-muted/30 rounded-md p-1">
+                      <DropdownMenuRadioGroup value={assetTypeFilter} onValueChange={(value) => setAssetTypeFilter(value as AssetKind | 'all')}>
+                        <DropdownMenuRadioItem value="all" className="rounded-sm">
+                          All Types
+                        </DropdownMenuRadioItem>
+                        {assetKinds.map(kind => (
+                          <DropdownMenuRadioItem key={kind} value={kind} className="rounded-sm">
+                            {kind.charAt(0).toUpperCase() + kind.slice(1).replace('_', ' ')}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </div>
+                  </div>
+                  
+                  <DropdownMenuSeparator className="my-2" />
+                  
+                  <div>
+                    <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 pb-2">
+                      Sort By
+                    </DropdownMenuLabel>
+                    <div className="bg-muted/30 rounded-md p-1">
+                      <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                        <DropdownMenuRadioItem value="updated_at-desc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">↓</span>
+                            Recently Edited
+                          </span>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="updated_at-asc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">↑</span>
+                            Oldest First
+                          </span>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="name-asc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">A→Z</span>
+                            Name Ascending
+                          </span>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="name-desc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">Z→A</span>
+                            Name Descending
+                          </span>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="kind-asc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">A→Z</span>
+                            Type Ascending
+                          </span>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="kind-desc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">Z→A</span>
+                            Type Descending
+                          </span>
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </div>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
-          {cardViewFolder && viewMode === 'card' && (
-            <div className="mt-2">
-              <Button variant="outline" size="sm" onClick={() => { setCardViewFolder(null); onSelectionChange(new Set()); }}>
-                <ChevronLeft className="h-4 w-4 mr-2" /> Back to root
-              </Button>
-              <span className="ml-2 text-sm font-medium text-muted-foreground">/ {cardViewFolder.name}</span>
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Asset Tree */}
         <div 
@@ -1293,19 +1611,22 @@ export default function AssetSelector({
               }}
             >
             {isLoadingRoot ? (
-              <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /><span className="ml-2 text-muted-foreground">Loading...</span></div>
-            ) : itemsForView.length === 0 ? (
+              <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /><span className="ml-0 text-muted-foreground">Loading...</span></div>
+            ) : filteredTree.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                 <FolderOpen className="h-8 w-8 mb-2 opacity-50" />
                 <h3 className="text-lg font-medium mb-2">No items found</h3>
                 <p className="text-sm text-center">
-                  {debouncedSearchTerm ? `No items match "${debouncedSearchTerm}"` : cardViewFolder ? "This folder is empty." : "No items available."}
+                  {debouncedSearchTerm ? `No items match "${debouncedSearchTerm}"` : "No items available."}
                 </p>
               </div>
-            ) : viewMode === 'list' ? (
-              <div className="p-2 space-y-1 pb-4">{itemsForView.map(item => renderTreeItem(item))}</div>
             ) : (
-              <AssetCardComponent items={itemsForView} onItemSelect={handleCardSelect} onItemDoubleClick={handleItemDoubleClickInternal} onItemView={handleItemClick} selectedItemIds={selectedItems} />
+              <div ref={containerRef} className="px-2 mt-2 space-y-0.5">
+                {filteredTree.map(item => {
+                  const itemIndex = flattenedItemsRef.current.findIndex(fi => fi.id === item.id);
+                  return renderTreeItem(item, itemIndex >= 0 ? itemIndex : undefined);
+                })}
+              </div>
             )}
             </div>
             <ScrollBar />

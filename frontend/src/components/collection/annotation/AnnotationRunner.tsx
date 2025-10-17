@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2, Microscope, Image as ImageIcon, Video, Music, Globe, Type, Mail, Eye } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2, Microscope, Image as ImageIcon, Video, Music, Globe, Type, Mail, Eye, CheckCircle } from 'lucide-react';
 import {
   AnnotationSchemaRead,
   AssetRead,
@@ -284,6 +284,8 @@ export default function AnnotationRunner({
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [selectedMapPointForDialog, setSelectedMapPointForDialog] = useState<MapPoint | null>(null);
   const [previousAnnotationResult, setPreviousAnnotationResult] = useState<FormattedAnnotation | null>(null); // Track previous annotation when viewing asset
+  const [mapHighlightLocation, setMapHighlightLocation] = useState<{ location: string; fieldKey: string } | null>(null); // NEW: For cross-panel map navigation
+  const [chartHighlightTimestamp, setChartHighlightTimestamp] = useState<{ timestamp: Date; fieldKey: string } | null>(null); // NEW: For cross-panel chart highlighting
 
   // Asset detail overlay state - shows the normal asset view when clicking results
   const [isAssetDetailOpen, setIsAssetDetailOpen] = useState(false);
@@ -421,9 +423,9 @@ export default function AnnotationRunner({
 
   return (
     <div className="flex-1 flex flex-col overflow-auto">
-      <div className="p-4 flex-1 space-y-4">
-        <div className="p-3 rounded-md bg-muted/10 sticky top-0 bg-background/95 backdrop-blur z-10">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div className="p-1.5 md:p-4 flex-1 space-y-2">
+        <div className="rounded-md bg-muted/10 sticky top-0 bg-background/95 backdrop-blur z-10">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 md:gap-2">
             <div className="flex flex-col flex-1 min-w-0">
               <div className="flex items-center gap-1">
                 <span
@@ -469,7 +471,7 @@ export default function AnnotationRunner({
                     </Tooltip>
                 </TooltipProvider>
               </div>
-              <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <div className="fixed top-0 right-0 md:relative mt-2 flex items-center gap-2 flex-wrap">
                 <Badge variant={
                    activeRun?.status === 'completed' ? 'default'
                    : activeRun?.status === 'failed' ? 'destructive'
@@ -523,6 +525,14 @@ export default function AnnotationRunner({
                      Some annotations may have failed. {activeRun.error_message && `Error: ${activeRun.error_message}`}
                    </AlertDescription>
                  </Alert>
+              )}
+              {activeRun?.status === 'completed' && ( 
+                <div className="fixed top-0 right-0 md:relative mt-2">
+                  <Badge variant="default">
+                    <CheckCircle className="h-3 w-3 mr-1 text-green-600" />
+                    Completed
+                  </Badge>
+                </div>
               )}
             </div>
             <div className="flex flex-wrap gap-2">
@@ -583,7 +593,7 @@ export default function AnnotationRunner({
           allResults={currentRunResults}
         />
 
-        <div className="mt-2 flex-1 min-h-0">
+        <div className="flex-1 min-h-0">
           {isActuallyProcessing ? (
             <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Run is processing...</span></div>
           ) : !dashboardConfig ? (
@@ -605,13 +615,13 @@ export default function AnnotationRunner({
             grid-column: 1 !important;
             grid-row: auto !important;
             height: auto !important;
-            max-height: 400px !important;
-            min-height: 250px !important;
+            max-height: calc(var(--grid-h) * 150px) !important;
+            min-height: unset !important;
           }
         }
       `}</style>
               <div 
-                className="relative w-full overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-2 md:auto-rows-[150px]"
+                className="relative w-full overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-0.5 md:auto-rows-[150px]"
                 style={{
                 minHeight: (() => {
                   try {
@@ -659,11 +669,14 @@ export default function AnnotationRunner({
                   const safeX = Math.max(0, Math.min(11, gridPos.x || 0));
                   const safeY = Math.max(0, gridPos.y || 0);
                   const safeW = Math.max(1, Math.min(12 - safeX, gridPos.w || 6));
+                  // Desktop: full height, Mobile: max 4 units (600px)
                   const safeH = Math.max(1, gridPos.h || 4);
+                  const mobileH = Math.min(4, safeH);
 
                   return (
                     <div 
                       key={panel.id}
+                      data-panel-id={panel.id}
                       className={cn(
                         "dashboard-panel relative transition-all duration-200 ease-in-out overflow-hidden",
                         // Responsive behavior for smaller screens
@@ -672,8 +685,8 @@ export default function AnnotationRunner({
                         "max-md:col-span-12 max-md:row-span-1"
                       )}
                       style={{
-                        // Mobile: Flexible height, Desktop: Fixed height based on grid
-                        minHeight: `${safeH * 150}px`,
+                        // Desktop uses safeH, mobile clamped via CSS max-height
+                        minHeight: `${mobileH * 150}px`,
                         zIndex: 1,
                         // CSS custom properties for responsive behavior
                         '--grid-x': safeX,
@@ -695,6 +708,8 @@ export default function AnnotationRunner({
                           setIsResultDialogOpen(true);
                         }}
                         activeRunId={activeRun?.id}
+                        mapHighlightLocation={mapHighlightLocation}
+                        chartHighlightTimestamp={chartHighlightTimestamp}
                         // Result interaction callbacks - show normal asset detail view
                         onResultSelect={(result) => {
                           // Open the asset detail overlay for the result's asset
@@ -714,6 +729,84 @@ export default function AnnotationRunner({
                         onRetrySingleResult={retrySingleResult}
                         retryingResultId={isRetryingResultId}
                         onFieldInteraction={handleFieldInteraction}
+                        // NEW: Cross-panel navigation callbacks
+                        onTimestampClick={(timestamp, fieldKey, sourcePanelId) => {
+                          console.log('[Cross-Panel] Timestamp clicked:', { timestamp, fieldKey, sourcePanelId });
+                          // Find the first chart panel
+                          const chartPanel = dashboardConfig?.panels?.find(p => p.type === 'chart');
+                          if (chartPanel) {
+                            console.log('[Cross-Panel] Setting highlight timestamp (NOT time filter)');
+                            
+                            // IMPORTANT: Clear any existing time filter to show full context
+                            if (chartPanel.settings?.timeAxisConfig?.timeFrame?.enabled) {
+                              console.log('[Cross-Panel] Clearing existing time filter for full chart context');
+                              updatePanel(chartPanel.id, {
+                                settings: {
+                                  ...chartPanel.settings,
+                                  timeAxisConfig: {
+                                    ...chartPanel.settings.timeAxisConfig,
+                                    timeFrame: {
+                                      enabled: false,
+                                      startDate: undefined,
+                                      endDate: undefined,
+                                    }
+                                  }
+                                }
+                              });
+                            }
+                            
+                            // Set the highlight timestamp - this will visually highlight the point in the chart
+                            setChartHighlightTimestamp({ timestamp, fieldKey });
+                            
+                            // Clear the highlight after a delay to allow reselection
+                            setTimeout(() => {
+                              setChartHighlightTimestamp(null);
+                            }, 5000); // Keep highlight visible longer than map (5s vs 500ms)
+                            
+                            // Scroll to the chart panel
+                            setTimeout(() => {
+                              const panelElement = document.querySelector(`[data-panel-id="${chartPanel.id}"]`);
+                              if (panelElement) {
+                                panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                // Add a brief highlight effect to the panel border
+                                panelElement.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+                                setTimeout(() => {
+                                  panelElement.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
+                                }, 2000);
+                              }
+                            }, 100);
+                          } else {
+                            toast.info('No chart panel found. Add a chart panel to visualize time-based data.');
+                          }
+                        }}
+                        onLocationClick={(location, fieldKey, sourcePanelId) => {
+                          // Find the first map panel
+                          const mapPanel = dashboardConfig?.panels?.find(p => p.type === 'map');
+                          if (mapPanel) {
+                            // Set the highlight location - this will trigger the map to navigate and show side panel
+                            setMapHighlightLocation({ location, fieldKey });
+                            
+                            // Clear after a short delay to allow the map to process it
+                            setTimeout(() => {
+                              setMapHighlightLocation(null);
+                            }, 500);
+                            
+                            // Scroll to the map panel
+                            setTimeout(() => {
+                              const panelElement = document.querySelector(`[data-panel-id="${mapPanel.id}"]`);
+                              if (panelElement) {
+                                panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                // Add a brief highlight effect
+                                panelElement.classList.add('ring-2', 'ring-emerald-500', 'ring-offset-2');
+                                setTimeout(() => {
+                                  panelElement.classList.remove('ring-2', 'ring-emerald-500', 'ring-offset-2');
+                                }, 2000);
+                              }
+                            }, 100);
+                          } else {
+                            toast.info('No map panel found. Add a map panel and geocode your location data.');
+                          }
+                        }}
                       />
                     </div>
                   );
@@ -975,15 +1068,17 @@ export default function AnnotationRunner({
         activeRunId: activeRun?.id
       });
       return (
-        <AssetDetailOverlay
-          open={isAssetDetailOpen}
-          onClose={closeAssetDetail}
-          assetId={selectedAssetIdForDetail}
-          highlightAssetIdOnOpen={null}
-          annotationResults={currentRunResults}
-          schemas={runSchemes}
-          // Don't pass onLoadIntoRunner since we're already in the runner context
-        />
+        <TextSpanHighlightProvider>
+          <AssetDetailOverlay
+            open={isAssetDetailOpen}
+            onClose={closeAssetDetail}
+            assetId={selectedAssetIdForDetail}
+            highlightAssetIdOnOpen={null}
+            annotationResults={currentRunResults}
+            schemas={runSchemes}
+            // Don't pass onLoadIntoRunner since we're already in the runner context
+          />
+        </TextSpanHighlightProvider>
       );
     })()}
 

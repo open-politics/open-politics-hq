@@ -10,11 +10,16 @@
     "cssVariables": true,
     "prefix": ""
   },
+  "iconLibrary": "radix",
   "aliases": {
     "components": "@/components",
     "utils": "@/lib/utils/index.ts",
     "ui": "@/components/ui",
     "lib": "@/lib",
     "hooks": "@/hooks"
-}
+  },
+  "registries": {
+    "@magicui": "https://magicui.design/r/{name}.json",
+    "@ai-elements": "https://registry.ai-sdk.dev/{name}.json"
+  }
 }

@@ -208,6 +208,7 @@ export interface PanelViewConfig {
     geocodeSource?: { schemaId: number; fieldKey: string };
     labelSource?: { schemaId: number; fieldKey: string };
     showLabels?: boolean;
+    showAreas?: boolean; // NEW: Show location bounding boxes
     // NEW: Geocoded points cache for maps
     geocodedPointsCache?: GeocodedPointsCache;
     // For graphs

@@ -15,9 +15,10 @@
 import React, { useMemo } from 'react'
 import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { ToolExecutionIndicator } from './ToolExecutionIndicator'
-import { MemoizedMarkdown } from '@/components/ui/memoized-markdown'
+import { Response } from '@/components/ai-elements/response'
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
 import { Badge } from '@/components/ui/badge'
-import { Wrench, Brain, MessageSquare, ChevronRight } from 'lucide-react'
+import { Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface AssistantMessageRendererProps {
@@ -26,7 +27,7 @@ interface AssistantMessageRendererProps {
   toolExecutions?: ToolExecution[]
   thinkingTrace?: string
   onAssetClick?: (assetId: number) => void
-  onBundleClick?: () => void
+  onBundleClick?: (bundleId: number) => void
 }
 
 interface MessageSection {
@@ -51,19 +52,26 @@ function parseMessageSections(
 ): MessageSection[] {
   const sections: MessageSection[] = []
   let order = 0
+  
+  // Normalize null to empty array (default param only handles undefined)
+  const normalizedExecutions = toolExecutions || []
 
   // Check if we have segmented thinking (tool executions with thinking_before/after)
-  const hasSegmentedThinking = toolExecutions.some(
+  const hasSegmentedThinking = normalizedExecutions.some(
     exec => exec.thinking_before || exec.thinking_after
   )
 
+  // Remove closing tags first (they're just noise for parsing)
+  const contentWithoutClosingTags = content.replace(/<\/tool_results>/g, '')
+
   // Parse content for tool result markers to understand execution order
-  const markerRegex = /<tool_results\s+(?:id=["']([^"']+)["']\s+)?tool=["']([^"']+)["']\s*\/>/g
+  // Matches three formats: self-closing (/>), opening (>), and legacy with id
+  const markerRegex = /<tool_results\s+(?:id=["']([^"']+)["']\s+)?tool=["']([^"']+)["']\s*\/?>/g
   const markerCountByTool: Record<string, number> = {}
   const toolOrder: Array<{ toolName: string; index: number; position: number }> = []
   
   let match
-  while ((match = markerRegex.exec(content)) !== null) {
+  while ((match = markerRegex.exec(contentWithoutClosingTags)) !== null) {
     const toolName = match[2]
     if (!(toolName in markerCountByTool)) {
       markerCountByTool[toolName] = 0
@@ -78,7 +86,7 @@ function parseMessageSections(
   // Build ordered list of tool executions
   const orderedExecutions: ToolExecution[] = []
   toolOrder.forEach(({ toolName, index }) => {
-    const matchingExecutions = toolExecutions.filter(exec => exec.tool_name === toolName)
+    const matchingExecutions = normalizedExecutions.filter(exec => exec.tool_name === toolName)
     const execution = matchingExecutions[index]
     if (execution) {
       orderedExecutions.push(execution)
@@ -87,9 +95,9 @@ function parseMessageSections(
 
   if (hasSegmentedThinking) {
     // SEGMENTED MODE: Interleave thinking with tool executions
-    // CRITICAL: Use toolExecutions array directly (not orderedExecutions from markers)
+    // CRITICAL: Use normalizedExecutions array directly (not orderedExecutions from markers)
     // This ensures all tools show during streaming, even before markers appear in content
-    const executionsToShow = toolExecutions.length > 0 ? toolExecutions : orderedExecutions
+    const executionsToShow = normalizedExecutions.length > 0 ? normalizedExecutions : orderedExecutions
     
     executionsToShow.forEach((execution, idx) => {
       // Add thinking before this tool (if present)
@@ -147,7 +155,7 @@ function parseMessageSections(
   }
 
   // 3. Add final content (with markers stripped for clean display)
-  const cleanContent = content.replace(markerRegex, '').trim()
+  const cleanContent = contentWithoutClosingTags.replace(markerRegex, '').trim()
   if (cleanContent) {
     sections.push({
       type: 'content',
@@ -167,27 +175,30 @@ export function AssistantMessageRenderer({
   onAssetClick,
   onBundleClick
 }: AssistantMessageRendererProps) {
+  // Normalize null to empty array (default param only handles undefined)
+  const normalizedToolExecutions = toolExecutions || []
+  
   const sections = useMemo(
-    () => parseMessageSections(content, toolExecutions, thinkingTrace),
-    [content, toolExecutions, thinkingTrace]
+    () => parseMessageSections(content, normalizedToolExecutions, thinkingTrace),
+    [content, normalizedToolExecutions, thinkingTrace]
   )
 
   // Get unique tool names for summary
   const uniqueToolNames = useMemo(() => {
     const names: string[] = []
-    toolExecutions.forEach(exec => {
+    normalizedToolExecutions.forEach(exec => {
       if (!names.includes(exec.tool_name)) {
         names.push(exec.tool_name)
       }
     })
     return names
-  }, [toolExecutions])
+  }, [normalizedToolExecutions])
 
-  const hasTools = toolExecutions.length > 0
+  const hasTools = normalizedToolExecutions.length > 0
   const hasThinking = !!thinkingTrace
 
   // Check if any tool is currently running
-  const hasRunningTool = toolExecutions.some(exec => exec.status === 'running')
+  const hasRunningTool = normalizedToolExecutions.some(exec => exec.status === 'running')
 
   return (
     <div className="space-y-3">
@@ -195,7 +206,7 @@ export function AssistantMessageRenderer({
       {hasTools && (
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <Wrench className="h-3 w-3" />
-          <span>{toolExecutions.length} tool{toolExecutions.length !== 1 ? 's' : ''}:</span>
+          <span>{normalizedToolExecutions.length} tool{normalizedToolExecutions.length !== 1 ? 's' : ''}:</span>
           <div className="flex flex-wrap gap-1">
             {uniqueToolNames.map((toolName) => (
               <span key={toolName} className="text-foreground/70">
@@ -214,47 +225,35 @@ export function AssistantMessageRenderer({
         {sections.map((section, index) => {
           switch (section.type) {
             case 'thinking': {
-              // Generate label based on thinking position
-              let thinkingLabel = 'Reasoning'
-              let thinkingSubtext = ''
+              // Determine if this reasoning section is currently streaming
               let isRelatedToolRunning = false
               
               if (section.thinkingPosition === 'before-tool' && section.relatedToolId) {
-                const relatedTool = toolExecutions.find(exec => exec.id === section.relatedToolId)
+                const relatedTool = normalizedToolExecutions.find(exec => exec.id === section.relatedToolId)
                 if (relatedTool) {
-                  thinkingLabel = 'Planning'
-                  thinkingSubtext = relatedTool.tool_name
                   isRelatedToolRunning = relatedTool.status === 'running'
                 }
               } else if (section.thinkingPosition === 'after-tool' && section.relatedToolId) {
-                const relatedTool = toolExecutions.find(exec => exec.id === section.relatedToolId)
+                const relatedTool = normalizedToolExecutions.find(exec => exec.id === section.relatedToolId)
                 if (relatedTool) {
-                  thinkingLabel = 'Analyzing'
-                  thinkingSubtext = `results from ${relatedTool.tool_name}`
                   isRelatedToolRunning = relatedTool.status === 'running'
                 }
               }
               
               // Auto-open if related tool is running, auto-close when done
-              const shouldBeOpen = isRelatedToolRunning || (section.thinkingPosition === 'initial' && hasRunningTool)
+              const isStreaming = isRelatedToolRunning || (section.thinkingPosition === 'initial' && hasRunningTool)
               
               return (
-                <details key={`thinking-${index}`} className="group" open={shouldBeOpen}>
-                  <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 py-1">
-                    <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
-                    <Brain className="h-3 w-3 shrink-0" />
-                    <span className="font-medium">{thinkingLabel}</span>
-                    {thinkingSubtext && (
-                      <span className="text-[10px]">· {thinkingSubtext}</span>
-                    )}
-                    <span className="text-[10px]">({section.content.length} chars)</span>
-                  </summary>
-                  <div className="ml-7 mt-1 p-2 bg-muted/30 rounded text-[11px] leading-relaxed max-h-[300px] overflow-y-auto">
-                    <pre className="whitespace-pre-wrap font-mono">
-                      {section.content}
-                    </pre>
-                  </div>
-                </details>
+                <Reasoning 
+                  key={`thinking-${index}`} 
+                  className="w-full" 
+                  isStreaming={isStreaming}
+                >
+                  <ReasoningTrigger />
+                  <ReasoningContent>
+                    {section.content}
+                  </ReasoningContent>
+                </Reasoning>
               )
             }
 
@@ -266,7 +265,7 @@ export function AssistantMessageRenderer({
               )
               
               return (
-                <div key={`tool-${section.toolExecution.id}`} className="my-2">
+                <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
                   <ToolExecutionIndicator
                     execution={section.toolExecution}
                     compact={!isOperatorTool}
@@ -279,10 +278,9 @@ export function AssistantMessageRenderer({
             case 'content':
               return (
                 <div key={`content-${index}`} className="prose prose-sm dark:prose-invert max-w-none">
-                  <MemoizedMarkdown 
-                    content={section.content}
-                    id={`${messageId}-content`}
-                  />
+                  <Response parseIncompleteMarkdown={true}>
+                    {section.content}
+                  </Response>
                 </div>
               )
 
@@ -293,13 +291,13 @@ export function AssistantMessageRenderer({
       </div>
 
       {/* Show unreferenced tool executions if any */}
-      {toolExecutions.length > 0 && sections.filter(s => s.type === 'tool').length === 0 && (
+      {normalizedToolExecutions.length > 0 && sections.filter(s => s.type === 'tool').length === 0 && (
         <details className="mt-4 pt-4 border-t border-border/50">
           <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
-            Tool Executions ({toolExecutions.length})
+            Tool Executions ({normalizedToolExecutions.length})
           </summary>
           <div className="mt-3 space-y-2">
-            {toolExecutions.map(execution => (
+            {normalizedToolExecutions.map(execution => (
               <ToolExecutionIndicator
                 key={execution.id}
                 execution={execution}

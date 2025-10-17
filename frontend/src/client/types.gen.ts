@@ -713,6 +713,11 @@ export type ChatRequest = {
 } | null);
     conversation_id?: (number | null);
     auto_save?: boolean;
+    display_content?: (string | null);
+    context_assets?: (Array<{
+    [key: string]: unknown;
+}> | null);
+    context_depth?: (string | null);
 };
 
 /**
