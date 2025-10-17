@@ -472,17 +472,12 @@ export default function AnnotationRunner({
                 </TooltipProvider>
               </div>
               <div className="fixed top-0 right-0 md:relative mt-2 flex items-center gap-2 flex-wrap">
-                <Badge variant={
-                   activeRun?.status === 'completed' ? 'default'
-                   : activeRun?.status === 'failed' ? 'destructive'
-                   : activeRun?.status === 'running' ? 'secondary'
-                   : activeRun?.status === 'pending' ? 'secondary'
-                   : activeRun?.status === 'completed_with_errors' ? 'outline'
-                   : 'outline'
-                } className="capitalize">
-                  {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-                  {(activeRun?.status ?? '').replace(/_/g, ' ')}
-                </Badge>
+                {activeRun?.status !== 'completed' && (
+                  <Badge variant="ghost" className="capitalize">
+                    {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                    {(activeRun?.status ?? '').replace(/_/g, ' ')}
+                  </Badge>
+                )}
                 {(activeRun?.status === 'failed' || activeRun?.status === 'completed_with_errors') && (
                   <TooltipProvider delayDuration={100}>
                     <Tooltip>
@@ -528,7 +523,7 @@ export default function AnnotationRunner({
               )}
               {activeRun?.status === 'completed' && ( 
                 <div className="fixed top-0 right-0 md:relative mt-2">
-                  <Badge variant="default">
+                  <Badge variant="outline">
                     <CheckCircle className="h-3 w-3 mr-1 text-green-600" />
                     Completed
                   </Badge>

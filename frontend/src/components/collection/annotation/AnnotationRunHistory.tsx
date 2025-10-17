@@ -270,7 +270,7 @@ const RunTableRow: React.FC<{
       </TableCell>
       <TableCell className="font-medium py-6">
         <div className="flex items-center gap-3">
-        <div className="p-3 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+        <div className="p-3 flex items-center gap-2">
                 <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
               </div>
           <div className="flex-1 min-w-0">
@@ -517,7 +517,7 @@ const RunHistoryPanel: React.FC<{
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
             {/* Left Side - Title and Icon */}
             <div className="flex items-center gap-4 pl-0">
-              <div className="p-3 flex items-center gap-2 rounded-md bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+              <div className="p-3 flex items-center gap-2 ">
                 <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
                 <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
                 <History className="h-6 w-6 text-blue-700 dark:text-blue-400" />
@@ -740,15 +740,13 @@ const RunHistoryPanel: React.FC<{
                       <TableRow className="bg-gradient-to-r from-muted/80 via-muted/60 to-muted/80">
                         <TableHead className="w-16 pl-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                           <div className="flex items-center justify-center">
-                            <Star className="h-4 w-4 text-muted-foreground/50" />
                           </div>
                         </TableHead>
                         <TableHead className="py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                           <div className="flex items-center gap-3">
-                            <div className="p-2.5 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800">
-                              <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
+                            <div className="p-2.5 rounded-md">
                             </div>
-                            Name
+                           Name
                           </div>
                         </TableHead>
                         <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
