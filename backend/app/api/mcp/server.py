@@ -84,9 +84,8 @@ from app.core.config import settings
 from app.api.providers.factory import create_storage_provider, create_model_registry
 from app.api.services.asset_service import AssetService
 from app.api.services.annotation_service import AnnotationService
-from app.api.services.bundle_service import BundleService
 from app.api.services.content_ingestion_service import ContentIngestionService
-from app.models import AssetKind, Infospace
+from app.models import Asset, AssetKind, Infospace
 from app.schemas import (
     AnnotationRunCreate, AssetRead, AnnotationRead, 
     AnnotationSchemaRead, BundleRead, SearchResult
@@ -138,6 +137,11 @@ def get_services():
 
     if not user_id or not infospace_id:
         raise PermissionError("Invalid authentication token")
+    
+    # Extract runtime API keys from JWT claims (passed from frontend)
+    # These are used for cloud providers (OpenAI, Anthropic, Tavily, etc.)
+    api_keys = access_token.claims.get('api_keys', {})
+    runtime_api_keys = api_keys if isinstance(api_keys, dict) else {}
 
     # Initialize database session
     from app.core.db import engine
@@ -152,16 +156,15 @@ def get_services():
         model_registry = create_model_registry(settings)
         annotation_service = AnnotationService(session, model_registry, asset_service)
         content_ingestion_service = ContentIngestionService(session)
-        bundle_service = BundleService(session)
                 
         yield {
             "session": session,
             "user_id": user_id,
             "infospace_id": infospace_id,
-                    "asset_service": asset_service,
-                    "annotation_service": annotation_service,
+            "runtime_api_keys": runtime_api_keys,
+            "asset_service": asset_service,
+            "annotation_service": annotation_service,
             "content_ingestion_service": content_ingestion_service,
-                    "bundle_service": bundle_service,
         }
     finally:
         session.close()
@@ -269,47 +272,79 @@ def format_schema_summary(schemas: List[Any]) -> str:
 # CATEGORY: NAVIGATION & DISCOVERY
 # ============================================================================
 
-@mcp.tool
+@mcp.tool(tags=["files", "navigation"])
 async def navigate(
-    resource: Annotated[str, "Type of resource: 'assets' (documents), 'bundles' (collections), 'schemas' (analysis templates), 'runs' (analysis jobs)"],
     ctx: Context,
-    mode: Annotated[str, "How to access: 'list' (browse all), 'search' (find by query), 'load' (get specific IDs)"] = "list",
-    depth: Annotated[str, "Information detail: 'ids' (just IDs), 'titles' (names and basic info), 'previews' (with text excerpts), 'full' (complete content)"] = "titles",
+    resource: Annotated[str, "Type of resource: 'files' (tree view with bundles, default), 'assets' (documents for search/load)"] = "files",
+    mode: Annotated[str, "How to access: 'tree' (show root hierarchy), 'view' (look inside a node), 'list' (browse all with pagination), 'search' (find by query), 'load' (get specific IDs by ID)"] = "tree",
+    depth: Annotated[str, """Information detail level (BUDGET-AWARE):
+    
+    'tree' - Structure only (no content, ~50-100 tokens)
+    
+    'titles' - Metadata + basic info (~100-200 tokens)
+    
+    'previews' (RECOMMENDED) - Smart excerpts for efficient browsing
+        • Text assets: First 500 chars (~125 tokens each)
+        • CSVs: First 5 rows with structure
+        • PDFs: First 2 pages summary
+        • Bundles: Contents overview
+        Token cost: ~125 tokens per asset
+    
+    'full' - Complete content (USE SPARINGLY - expensive!)
+        • Text/articles: Full text_content (can be 1k-100k+ tokens)
+        • CSVs with >20 rows: BLOCKED (use pagination instead)
+        • Large PDFs: BLOCKED (use page-by-page navigation)
+        • Bundles: Metadata only (children require separate calls)
+        
+    For large datasets, always use 'previews' or paginate with mode='list'.
+    Use 'full' only when you need complete text for a specific small document.
+    """] = "tree",
     ids: Annotated[Optional[List[int]], "Specific resource IDs to retrieve (required when mode='load')"] = None,
+    node_id: Annotated[Optional[str], "Tree node ID to view (format: 'bundle-123' or 'asset-456', required when mode='view')"] = None,
     query: Annotated[Optional[str], "Search terms to find resources (required when mode='search')"] = None,
     search_method: Annotated[str, "Search approach: 'hybrid' (keyword + semantic), 'semantic' (meaning-based), 'text' (exact keyword matching)"] = "hybrid",
-    filters: Annotated[Optional[Dict[str, Any]], "Additional constraints (e.g., {'asset_kinds': ['pdf', 'web']})"] = None,
-    limit: Annotated[int, "Maximum number of items to return"] = 40,
+    filters: Annotated[Optional[Dict[str, Any]], "Additional constraints (e.g., {'asset_kinds': ['pdf', 'web'], 'parent_asset_id': 123, 'bundle_id': 456})"] = None,
+    limit: Annotated[Optional[int], "Maximum items to return (defaults: view=5 for containers/5 for CSVs, list=50, search=30)"] = None,
     offset: Annotated[int, "Number of items to skip (for pagination)"] = 0,
 ) -> ToolResult:
     """
-    Explore and discover workspace resources with flexible control over what you retrieve and how much detail you see.
+    Navigate workspace files and documents. Start with tree view, drill down as needed.
     
-    Use this to:
-    - Discover what documents, collections, or analyses exist
-    - Search for content relevant to your research question
-    - Load specific items when you know their IDs
-    - Control information depth to balance speed and detail
+    <quick_start>
+    See workspace structure:
+      navigate()  # Shows bundles and top-level files
     
-    <common_patterns>
-    Starting research:
-      navigate(resource="bundles", depth="titles")
-      # See what collections exist before diving in
+    Look inside a collection or CSV:
+      navigate(mode="view", node_id="bundle-123")  # Peek inside
+      navigate(mode="view", node_id="asset-456")   # CSV: first 5 rows (df.head())
     
-    Finding relevant documents:
-      navigate(resource="assets", mode="search", query="climate policy", search_method="hybrid")
-      # Combines keyword and semantic search for best results
+    Search for documents:
+      navigate(resource="assets", mode="search", query="climate policy")
     
-    Examining a collection:
-      navigate(resource="bundles", mode="load", ids=[4], depth="previews")
-      # See previews of all documents in bundle #4
+    Load specific documents by ID:
+      navigate(resource="assets", mode="load", ids=[123, 124], depth="previews")
+    </quick_start>
     
-    Reading full content:
-      navigate(resource="assets", mode="load", ids=[123, 124], depth="full")
-      # Get complete text of specific documents
-    </common_patterns>
+    <modes>
+    tree (default): Root hierarchy (~50-100 tokens)
+    view: Peek inside node (~200-500 tokens)
+    list: Browse all with pagination (limit=50 default)
+    search: Find by query (limit=30 default)
+    load: Get specific IDs
+    </modes>
     
-    Performance tip: Start with depth="titles" to get a quick overview, then use mode="load" with specific IDs to read full content only when needed.
+    <depth_parameter>
+    tree: Structure only (no content)
+    titles: Metadata + basic info
+    previews: Smart excerpts - RECOMMENDED (~125 tokens each)
+    full: Complete content - USE SPARINGLY, can be 1k-100k+ tokens
+         ⚠️ Blocked for containers with >20 children - use pagination instead
+    </depth_parameter>
+    
+    <token_budget>
+    Always use depth='previews' for browsing. Only use depth='full' for small specific documents.
+    For large CSVs/PDFs: navigate(mode="view") for preview, then paginate with mode="list".
+    </token_budget>
     """
     with get_services() as services:
         validate_infospace_access(
@@ -320,20 +355,514 @@ async def navigate(
         
         await ctx.info(f"Navigate: resource={resource}, mode={mode}, depth={depth}")
         
-        # Route to appropriate handler
+        # BUDGET PROTECTION: Interactive elicitation for expensive depth='full' operations on large containers
+        if depth == "full" and mode == "load" and ids:
+            from app.models import Asset
+            for asset_id in ids:
+                asset = services["session"].get(Asset, asset_id)
+                if asset and asset.infospace_id == services["infospace_id"] and asset.is_container:
+                    child_count = asset.child_asset_count or 0
+                    if child_count > 20:  # Conservative budget limit
+                        estimated_tokens = child_count * 125  # Rough estimate
+                        
+                        await ctx.info(f"⚠️ Budget protection: Asset {asset_id} has {child_count} children")
+                        
+                        # Request user choice via elicitation
+                        try:
+                            response = await ctx.request_elicitation(
+                                message=f"📊 Budget Check: Asset {asset_id} ({asset.title}) has {child_count} children (≈{estimated_tokens:,} tokens).\n\n"
+                                        f"How would you like to proceed?\n"
+                                        f"• preview: Quick look at structure (first 5-10 items, ≈400 tokens)\n"
+                                        f"• paginate: Load in batches (specify batch_size, ≈125 tokens per item)\n"
+                                        f"• search: Query-based access (provide search_query)\n"
+                                        f"• cancel: Skip this operation",
+                                schema={
+                                    "type": "object",
+                                    "properties": {
+                                        "choice": {
+                                            "type": "string",
+                                            "enum": ["preview", "paginate", "search", "cancel"],
+                                            "description": "How to access this large dataset"
+                                        },
+                                        "batch_size": {
+                                            "type": "integer",
+                                            "description": "For paginate: how many items per batch (default 50)",
+                                            "default": 50,
+                                            "minimum": 10,
+                                            "maximum": 100
+                                        },
+                                        "search_query": {
+                                            "type": "string",
+                                            "description": "For search: what to search for within this container"
+                                        }
+                                    },
+                                    "required": ["choice"]
+                                }
+                            )
+                            
+                            # Handle user's choice
+                            choice = response.get("choice")
+                            
+                            if choice == "preview":
+                                await ctx.info(f"User chose: preview (first 5-10 items)")
+                                return await _navigate_tree_expand(services, ctx, f"asset-{asset_id}", 10, 0)
+                            
+                            elif choice == "paginate":
+                                batch_size = response.get("batch_size", 50)
+                                await ctx.info(f"User chose: paginate (batch_size={batch_size})")
+                                # Execute paginated load
+                                return await _navigate_assets(
+                                    services, ctx, "list", "previews", 
+                                    None, None, "hybrid", 
+                                    {"parent_asset_id": asset_id}, 
+                                    batch_size, 0
+                                )
+                            
+                            elif choice == "search":
+                                search_query = response.get("search_query", "")
+                                if not search_query:
+                                    return ToolResult(
+                                        content=[TextContent(type="text", text="❌ Search query is required for search option")],
+                                        structured_content={"error": "search_query_required"}
+                                    )
+                                await ctx.info(f"User chose: search (query='{search_query}')")
+                                # Execute search within container
+                                return await _navigate_assets(
+                                    services, ctx, "search", "previews",
+                                    None, search_query, "hybrid",
+                                    {"parent_asset_id": asset_id},
+                                    30, 0
+                                )
+                            
+                            else:  # cancel
+                                await ctx.info(f"User chose: cancel")
+                                return ToolResult(
+                                    content=[TextContent(type="text", text="❌ Operation cancelled by user")],
+                                    structured_content={"status": "cancelled", "reason": "user_request"}
+                                )
+                        
+                        except Exception as e:
+                            # Fallback to blocking error if elicitation fails
+                            logger.warning(f"Elicitation failed, falling back to blocking error: {e}")
+                            return ToolResult(
+                                content=[TextContent(
+                                    type="text",
+                                    text=f"⚠️ Budget Protection Active\n\n"
+                                         f"Asset {asset_id} ({asset.title}) is a container with {child_count} children.\n"
+                                         f"Loading with depth='full' would use approximately {estimated_tokens:,} tokens.\n\n"
+                                         f"📊 Recommended alternatives:\n\n"
+                                         f"1. Quick preview:\n"
+                                         f"   navigate(mode='view', node_id='asset-{asset_id}')\n\n"
+                                         f"2. Paginated access:\n"
+                                         f"   navigate(resource='assets', mode='list', \n"
+                                         f"            filters={{'parent_asset_id': {asset_id}}}, \n"
+                                         f"            limit=50, offset=0)\n\n"
+                                         f"3. Query-based access:\n"
+                                         f"   semantic_search(parent_asset_id={asset_id}, \n"
+                                         f"                   query='your search terms', \n"
+                                         f"                   limit=20)"
+                                )],
+                                structured_content={
+                                    "error": "budget_protection_activated",
+                                    "reason": "container_too_large",
+                                    "asset_id": asset_id,
+                                    "asset_title": asset.title,
+                                    "child_count": child_count,
+                                    "estimated_tokens": estimated_tokens
+                                }
+                            )
+        
+        # Apply context-aware default limits if not specified
+        effective_limit = limit
+        if effective_limit is None:
+            if mode in ["view", "expand"]:
+                # Will be refined in _navigate_tree_expand based on node type
+                effective_limit = 10  # Default for bundles/containers
+            elif mode == "list":
+                effective_limit = 50
+            elif mode == "search":
+                effective_limit = 30
+            else:
+                effective_limit = 20  # tree/load default
+        
+        # Tree mode is the default and most efficient way to browse
+        if mode == "tree" or (resource == "files" and mode not in ["search", "view", "expand"]):
+            return await _navigate_tree_root(services, ctx)
+        elif mode in ["view", "expand"]:  # Support both for backward compatibility
+            if not node_id:
+                return ToolResult(
+                    content=[TextContent(type="text", text="node_id is required for view mode")],
+                    structured_content={"error": "node_id required"}
+                )
+            return await _navigate_tree_expand(services, ctx, node_id, effective_limit, offset)
+        
+        # Route to resource-specific handlers
         if resource == "assets":
-            return await _navigate_assets(services, ctx, mode, depth, ids, query, search_method, filters, limit, offset)
-        elif resource == "bundles":
-            return await _navigate_bundles(services, ctx, mode, depth, ids, limit, offset)
-        elif resource == "schemas":
-            return await _navigate_schemas(services, ctx, mode, depth, ids, limit, offset)
-        elif resource == "runs":
-            return await _navigate_runs(services, ctx, mode, depth, ids, limit, offset)
+            return await _navigate_assets(services, ctx, mode, depth, ids, query, search_method, filters, effective_limit, offset)
+        elif resource == "files":
+            # Default to tree mode
+            return await _navigate_tree_root(services, ctx)
         else:
+            # Unsupported resources: bundles (use tree), schemas (use annotation UI), runs (use annotation UI)
             return ToolResult(
-                content=[TextContent(type="text", text=f"Unknown resource type: {resource}")],
-                structured_content={"error": f"Unknown resource: {resource}"}
+                content=[TextContent(type="text", text=f"Resource '{resource}' not supported. Use navigate() for files/bundles, or the annotation UI for schemas/runs.")],
+                structured_content={
+                    "error": f"unsupported resource: {resource}",
+                    "hint": "Use navigate() for tree view, navigate(mode='view', node_id='...') to explore"
+                }
             )
+
+
+async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
+    """Navigate tree root - shows hierarchical structure of bundles and standalone assets."""
+    from sqlmodel import select
+    from app.models import Asset, Bundle
+    from app.api.utils.tree_builder import build_root_tree_nodes, get_bundled_asset_ids
+    
+    # Get root bundles (no parent)
+    root_bundles = services["session"].exec(
+        select(Bundle)
+        .where(Bundle.infospace_id == services["infospace_id"])
+        .where(Bundle.parent_bundle_id.is_(None))
+        .order_by(Bundle.name)
+    ).all()
+    
+    await ctx.info(f"Found {len(root_bundles)} root bundles")
+    
+    # Get all bundled asset IDs to exclude from root assets
+    all_bundles = services["session"].exec(
+        select(Bundle).where(Bundle.infospace_id == services["infospace_id"])
+    ).all()
+    all_bundled_ids = get_bundled_asset_ids(all_bundles)
+    
+    # Get root assets (not in any bundle, no parent)
+    root_assets_query = (
+        select(Asset)
+        .where(Asset.infospace_id == services["infospace_id"])
+        .where(Asset.parent_asset_id.is_(None))
+        .where(Asset.user_id == services["user_id"])
+        .order_by(Asset.updated_at.desc())
+    )
+    
+    if all_bundled_ids:
+        root_assets_query = root_assets_query.where(Asset.id.not_in(all_bundled_ids))
+    
+    root_assets = services["session"].exec(root_assets_query).all()
+    
+    await ctx.info(f"Found {len(root_assets)} root assets")
+    
+    # Build tree structure
+    tree_nodes = build_root_tree_nodes(root_bundles, root_assets)
+    
+    # At root level: NO enrichment (strict lazy-loading)
+    # Tree nodes already have basic metadata from build_root_tree_nodes:
+    # - Bundles: name, item count
+    # - Assets: name, kind, is_container flag
+    # 
+    # Internal structure (bundle contents, CSV columns, etc.) only revealed on explicit view
+    # This keeps root navigation fast and prevents information leakage
+    tree_nodes = tree_nodes  # Use as-is, no enrichment
+    
+    # Build concise summary for model
+    summary_lines = [f"📁 Workspace structure ({len(tree_nodes)} items):\n"]
+    
+    for node in tree_nodes[:10]:
+        node_data = node if isinstance(node, dict) else node.model_dump()
+        node_type = node_data.get("type")
+        node_id = node_data.get("id")
+        node_name = node_data.get("name")
+        preview = node_data.get("preview")
+        
+        if node_type == "bundle":
+            children_count = node_data.get("children_count", 0)
+            summary_lines.append(f"📦 {node_id} | {node_name} ({children_count} items)")
+        else:
+            kind = node_data.get("kind", "unknown")
+            # At root level: Show file type and basic info only
+            # Don't reveal internal structure (columns, etc.) - user must view to see that
+            is_container = node_data.get("is_container", False)
+            container_marker = " 📁" if is_container else ""
+            
+            if kind == "csv" and preview and preview.get("row_count"):
+                summary_lines.append(f"📊 {node_id} | {node_name} ({preview.get('row_count', 0)} rows){container_marker}")
+            else:
+                summary_lines.append(f"📄 {node_id} | {node_name} ({kind}){container_marker}")
+    
+    if len(tree_nodes) > 10:
+        summary_lines.append(f"\n... {len(tree_nodes) - 10} more items")
+    
+    summary_lines.append(f"\n💡 Use navigate(mode='view', node_id='bundle-X') to look inside a bundle")
+    summary_lines.append(f"💡 Use navigate(mode='view', node_id='asset-Y') to preview a CSV's data")
+    
+    # Convert nodes to dicts for structured_content
+    nodes_data = []
+    for node in tree_nodes:
+        if isinstance(node, dict):
+            nodes_data.append(node)
+        else:
+            nodes_data.append(node.model_dump())
+    
+    summary_text = "\n".join(summary_lines)
+    return ToolResult(
+        content=[TextContent(type="text", text=summary_text)],
+        structured_content={
+            "resource": "files",
+            "mode": "tree",
+            "nodes": nodes_data,
+            "total_nodes": len(tree_nodes),
+            "message": summary_text,  # Full summary for frontend
+            "summary": summary_text
+        }
+    )
+
+
+async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str, 
+                                limit: int, offset: int) -> ToolResult:
+    """
+    View a tree node's contents (preview mode).
+    
+    Context-aware limits:
+    - CSV rows: 5 (df.head() style)
+    - Bundles/containers: limit parameter (typically 10)
+    """
+    from app.api.utils.tree_builder import (
+        parse_tree_node_id, 
+        build_bundle_children_nodes, 
+        build_asset_children_nodes,
+        enrich_node_with_preview,
+        build_tree_node_from_asset
+    )
+    from sqlmodel import select
+    from app.models import Asset, Bundle
+    
+    # Parse node ID
+    try:
+        node_type, node_numeric_id = parse_tree_node_id(node_id)
+    except ValueError as e:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"Invalid node_id format: {str(e)}")],
+            structured_content={"error": str(e)}
+        )
+    
+    await ctx.info(f"Viewing {node_type}-{node_numeric_id}")
+    
+    children_nodes = []
+    parent_entity = None  # For enrichment
+    parent_preview = None  # For CSV/container metadata
+    
+    if node_type == "bundle":
+        # Get the bundle
+        bundle = services["session"].get(Bundle, node_numeric_id)
+        if not bundle or bundle.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"Bundle {node_numeric_id} not found")],
+                structured_content={"error": "bundle not found"}
+            )
+        
+        parent_entity = bundle
+        
+        # Get child bundles
+        child_bundles = services["session"].exec(
+            select(Bundle)
+            .where(Bundle.parent_bundle_id == node_numeric_id)
+            .order_by(Bundle.name)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        
+        # Get assets in bundle
+        remaining_limit = limit - len(child_bundles)
+        asset_skip = max(0, offset - (bundle.child_bundle_count or 0))
+        
+        bundle_assets = []
+        if remaining_limit > 0:
+            all_bundle_assets = bundle.assets
+            bundle_assets = all_bundle_assets[asset_skip:asset_skip + remaining_limit]
+        
+        # Build nodes
+        children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets)
+        
+        # Enrich each node with preview data
+        for i, node in enumerate(children_nodes):
+            if i < len(child_bundles):
+                # Bundle node
+                entity = child_bundles[i]
+                children_nodes[i] = enrich_node_with_preview(node, entity, entity.assets)
+            else:
+                # Asset node
+                asset_idx = i - len(child_bundles)
+                if asset_idx < len(bundle_assets):
+                    entity = bundle_assets[asset_idx]
+                    # For container assets, fetch children for preview
+                    if entity.is_container:
+                        asset_children = services["session"].exec(
+                            select(Asset)
+                            .where(Asset.parent_asset_id == entity.id)
+                            .order_by(Asset.part_index, Asset.created_at)
+                            .limit(10)  # First 10 for preview
+                        ).all()
+                        children_nodes[i] = enrich_node_with_preview(node, entity, asset_children)
+                    else:
+                        children_nodes[i] = enrich_node_with_preview(node, entity)
+        
+        await ctx.info(f"Expanded bundle {node_numeric_id}: {len(children_nodes)} children")
+        
+    elif node_type == "asset":
+        # Get the asset
+        asset = services["session"].get(Asset, node_numeric_id)
+        if not asset or asset.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"Asset {node_numeric_id} not found")],
+                structured_content={"error": "asset not found"}
+            )
+        
+        parent_entity = asset
+        
+        if not asset.is_container:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"Asset {node_numeric_id} has no children")],
+                structured_content={"message": "no children"}
+            )
+        
+        # Apply CSV-specific limit (df.head() style: 5 rows)
+        is_csv = asset.kind and asset.kind.value == 'csv'
+        effective_asset_limit = 5 if is_csv else limit
+        
+        # Get child assets
+        child_assets = services["session"].exec(
+            select(Asset)
+            .where(Asset.parent_asset_id == node_numeric_id)
+            .order_by(Asset.part_index, Asset.created_at)
+            .offset(offset)
+            .limit(effective_asset_limit)
+        ).all()
+        
+        # Build nodes
+        children_nodes = build_asset_children_nodes(asset, child_assets)
+        
+        # Enrich with CSV preview if this is a CSV
+        if is_csv:
+            # Get CSV preview with column headers to pass to frontend
+            parent_preview = enrich_node_with_preview(
+                build_tree_node_from_asset(asset),
+                asset,
+                child_assets
+            ).preview
+        
+        await ctx.info(f"Viewing asset {node_numeric_id}: {len(children_nodes)} children (CSV preview)" if is_csv else f"Viewing asset {node_numeric_id}: {len(children_nodes)} children")
+    
+    else:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"Invalid node type: {node_type}")],
+            structured_content={"error": f"invalid node type: {node_type}"}
+        )
+    
+    # Build summary with intelligent preview info
+    summary_lines = []
+    
+    # For CSV assets, show structure PROMINENTLY at top with ASCII table
+    if node_type == "asset" and parent_entity and parent_entity.kind and parent_entity.kind.value == 'csv':
+        columns = parent_entity.source_metadata.get('columns', [])
+        total_row_count = parent_preview.get('row_count') if parent_preview else None
+        
+        if columns and parent_preview and parent_preview.get('sample_rows'):
+            from app.api.utils.tree_builder import format_csv_as_table
+            
+            sample_rows = parent_preview['sample_rows']
+            
+            # Show total row count if available
+            if total_row_count and total_row_count > len(children_nodes):
+                summary_lines.append(f"📊 CSV Preview: {len(columns)} columns × {total_row_count} total rows (showing first {len(children_nodes)})\n")
+            else:
+                summary_lines.append(f"📊 CSV: {len(columns)} columns × {len(children_nodes)} rows\n")
+            
+            summary_lines.append(format_csv_as_table(columns, sample_rows[:5]))
+            summary_lines.append("")  # Blank line
+            
+            # Hint about pagination if there are more rows
+            if total_row_count and total_row_count > len(children_nodes):
+                summary_lines.append(f"💡 Use offset={len(children_nodes)} to see rows {len(children_nodes)+1}-{min(len(children_nodes)+5, total_row_count)}")
+        elif columns:
+            summary_lines.append(f"📊 CSV Structure ({total_row_count or len(children_nodes)} rows):\n")
+            summary_lines.append(f"Columns: {' | '.join(columns)}")
+        else:
+            summary_lines.append(f"📂 Contents of {node_id} ({len(children_nodes)} items):\n")
+    else:
+        summary_lines.append(f"📂 Contents of {node_id} ({len(children_nodes)} items):\n")
+    
+    for i, node in enumerate(children_nodes[:10], 1):
+        node_data = node if isinstance(node, dict) else node.model_dump()
+        child_type = node_data.get("type")
+        child_id = node_data.get("id")
+        child_name = node_data.get("name")
+        kind = node_data.get("kind", "unknown")
+        preview = node_data.get("preview")
+        
+        if child_type == "bundle":
+            children_count = node_data.get("children_count", 0)
+            summary_lines.append(f"  📦 {child_id} | {child_name} ({children_count} items)")
+            # Show bundle preview if available
+            if preview and preview.get("kinds"):
+                kind_summary = ", ".join([f"{count} {kind}" for kind, count in list(preview["kinds"].items())[:3]])
+                summary_lines.append(f"      Contains: {kind_summary}")
+        elif kind == "csv_row":
+            # CSV rows: show as compact data rows, not verbose asset descriptions
+            summary_lines.append(f"  {i} | {child_name}")
+        else:
+            is_container = node_data.get("is_container", False)
+            container_marker = " 📁" if is_container else ""
+            summary_lines.append(f"  📄 {child_id} | {child_name} ({kind}){container_marker}")
+            
+            # Show preview info for assets
+            if preview:
+                if preview.get("columns"):
+                    summary_lines.append(f"      Columns: {', '.join(preview['columns'][:4])}")
+                elif preview.get("excerpt"):
+                    summary_lines.append(f"      {preview['excerpt'][:80]}...")
+                elif preview.get("page_count"):
+                    summary_lines.append(f"      {preview['page_count']} pages")
+    
+    if len(children_nodes) > 10:
+        summary_lines.append(f"\n  ... {len(children_nodes) - 10} more items")
+    
+    # Add helpful hint for CSVs about getting full data
+    if node_type == "asset" and parent_entity and parent_entity.kind and parent_entity.kind.value == 'csv':
+        summary_lines.append(f"\n→ To work with full data: navigate(resource='assets', mode='load', ids=[{node_numeric_id}], depth='full')")
+    
+    # Convert nodes to dicts
+    nodes_data = []
+    for node in children_nodes:
+        if isinstance(node, dict):
+            nodes_data.append(node)
+        else:
+            nodes_data.append(node.model_dump())
+    
+    # Build structured content with parent metadata and optional preview
+    summary_text = "\n".join(summary_lines)
+    structured = {
+        "resource": "files",
+        "mode": "view",  # Preview mode (was "expand")
+        "parent_id": node_id,
+        "parent_name": parent_entity.name if hasattr(parent_entity, 'name') else parent_entity.title if hasattr(parent_entity, 'title') else node_id,
+        "parent_type": node_type,
+        "children": nodes_data,
+        "total_children": len(children_nodes),
+        "message": summary_text,  # Full summary with ASCII tables for frontend
+        "summary": summary_text   # Alternative field name for clarity
+    }
+    
+    # Add parent_kind for assets
+    if node_type == "asset" and hasattr(parent_entity, 'kind') and parent_entity.kind:
+        structured["parent_kind"] = parent_entity.kind.value
+    
+    # Include parent preview for CSV/container assets (has columns, metadata, etc.)
+    if parent_preview:
+        structured["parent_preview"] = parent_preview
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=summary_text)],
+        structured_content=structured
+    )
 
 
 async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str, 
@@ -342,10 +871,12 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
                            limit: int, offset: int) -> ToolResult:
     """Navigate assets: search or load specific ones."""
     
+    # Import at function level so it's available in all branches
+    from sqlmodel import select
+    from app.models import Asset, Bundle
+    
     if mode == "load" and ids:
         # Load specific assets by ID
-        from sqlmodel import select
-        from app.models import Asset
         
         assets = services["session"].exec(
             select(Asset)
@@ -363,7 +894,9 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
             asset_kinds_enum = [AssetKind(kind) for kind in filters["asset_kinds"]]
         
         distance_threshold = filters.get("distance_threshold", 0.8) if filters else 0.8
-        
+        parent_asset_id = filters.get("parent_asset_id") if filters else None
+        bundle_id = filters.get("bundle_id") if filters else None
+
         assets = await services["asset_service"].search_assets(
             user_id=services["user_id"],
             infospace_id=services["infospace_id"],
@@ -371,16 +904,16 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
             search_method=search_method,
             asset_kinds=asset_kinds_enum,
             limit=limit,
-            distance_threshold=distance_threshold
+            distance_threshold=distance_threshold,
+            runtime_api_keys=services["runtime_api_keys"],
+            parent_asset_id=parent_asset_id,
+            bundle_id=bundle_id
         )
         
         await ctx.info(f"Found {len(assets)} assets matching '{query}'")
         
     else:
         # List all assets (rarely used, generally search is better)
-        from sqlmodel import select
-        from app.models import Asset
-        
         query_stmt = select(Asset).where(Asset.infospace_id == services["infospace_id"])
         
         # Apply filters
@@ -395,22 +928,99 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         
         await ctx.info(f"Listed {len(assets)} assets")
     
-    # Format based on depth
+    # Format based on depth (with bundle context)
+    def build_hierarchy_path(asset: Asset, session) -> list:
+        """
+        Build the complete hierarchy path from asset to root.
+        Returns list of dicts with {type, id, name, kind} for each level.
+        """
+        path = []
+        current = asset
+        visited = set()  # Prevent infinite loops
+        
+        # Walk up through parent assets
+        while current and current.id not in visited:
+            visited.add(current.id)
+            
+            # Add parent asset if exists
+            if current.parent_asset_id:
+                parent = session.get(Asset, current.parent_asset_id)
+                if parent:
+                    path.append({
+                        "type": "asset",
+                        "id": parent.id,
+                        "name": parent.title,
+                        "kind": parent.kind.value if parent.kind else "text"
+                    })
+                    current = parent
+                    continue
+            
+            # Add bundle if exists (at this level or walked up to it)
+            if current.bundle_id:
+                bundle = session.get(Bundle, current.bundle_id)
+                if bundle:
+                    path.append({
+                        "type": "bundle",
+                        "id": bundle.id,
+                        "name": bundle.name
+                    })
+                    
+                    # Walk up through parent bundles
+                    current_bundle = bundle
+                    while current_bundle.parent_bundle_id and current_bundle.parent_bundle_id not in visited:
+                        visited.add(current_bundle.parent_bundle_id)
+                        parent_bundle = session.get(Bundle, current_bundle.parent_bundle_id)
+                        if parent_bundle:
+                            path.append({
+                                "type": "bundle",
+                                "id": parent_bundle.id,
+                                "name": parent_bundle.name
+                            })
+                            current_bundle = parent_bundle
+                        else:
+                            break
+            break
+        
+        return path
+    
     asset_data = []
     for asset in assets:
-        item = {"id": asset.id, "title": asset.title}
+        # Use consistent ID format with tree nodes
+        item = {
+            "id": f"asset-{asset.id}",
+            "type": "asset",
+            "name": asset.title,
+            "kind": asset.kind.value if asset.kind else "text",  # Always include kind for proper icon display
+        }
         
         if depth in ["titles", "previews", "full"]:
             item.update({
-                "kind": asset.kind.value,
                 "source_identifier": asset.source_identifier,
                 "created_at": asset.created_at.isoformat() if asset.created_at else None,
                 "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
+                "is_container": asset.is_container,
             })
+        
+        # Build complete hierarchy path for search/browsing context
+        hierarchy_path = build_hierarchy_path(asset, services["session"])
+        if hierarchy_path:
+            item["hierarchy_path"] = hierarchy_path
         
         if depth in ["previews", "full"]:
             preview_length = 200 if depth == "previews" else None
-            item["text_content"] = truncate_text(asset.text_content or "", preview_length) if preview_length else asset.text_content
+            
+            # Add content with appropriate truncation
+            if preview_length:
+                item["text_content"] = truncate_text(asset.text_content or "", preview_length)
+            else:
+                # depth="full" - warn if content is very large
+                content_size = len(asset.text_content or "")
+                if content_size > 50000:  # ~12.5k tokens
+                    token_estimate = content_size // 4
+                    await ctx.info(f"⚠️ Asset {asset.id} has {content_size:,} chars (~{token_estimate:,} tokens)")
+                
+                item["text_content"] = asset.text_content
+            
             item["source_metadata"] = asset.source_metadata
         
         asset_data.append(item)
@@ -433,8 +1043,9 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
     
     summary_lines.append(f"\n→ Load details: navigate(resource='assets', mode='load', ids=[...], depth='full')")
     
+    summary_text = "\n".join(summary_lines)
     return ToolResult(
-        content=[TextContent(type="text", text="\n".join(summary_lines))],
+        content=[TextContent(type="text", text=summary_text)],
         structured_content={
             "resource": "assets",
             "mode": mode,
@@ -442,245 +1053,13 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
             "items": asset_data,
             "total": len(assets),
             "query": query,
-            "message": f"Found {len(assets)} assets"
+            "message": summary_text,  # Full summary for frontend
+            "summary": summary_text
         }
     )
 
 
-async def _navigate_bundles(services: Dict, ctx: Context, mode: str, depth: str,
-                            ids: Optional[List[int]], limit: int, offset: int) -> ToolResult:
-    """Navigate bundles: list all or load specific ones with their assets."""
-    from sqlmodel import select
-    from app.models import Bundle
-    
-    if mode == "load" and ids:
-        # Load specific bundles with their assets
-        bundle_data = {}
-        
-        for bundle_id in ids:
-            bundle = services["session"].get(Bundle, bundle_id)
-            if not bundle or bundle.infospace_id != services["infospace_id"]:
-                continue
-            
-            # Get assets in bundle based on depth
-            asset_limit = 10 if depth == "titles" else (100 if depth == "previews" else None)
-            assets = services["bundle_service"].get_assets_for_bundle(
-                bundle_id=bundle_id,
-                infospace_id=services["infospace_id"],
-                user_id=services["user_id"],
-                limit=asset_limit or 1000
-            )
-            
-            # Format assets based on depth
-            formatted_assets = []
-            for asset in assets:
-                item = {"id": asset.id, "title": asset.title, "kind": asset.kind.value}
-                
-                if depth in ["previews", "full"]:
-                    preview_length = 200 if depth == "previews" else None
-                    item["text_content"] = truncate_text(asset.text_content or "", preview_length) if preview_length else asset.text_content
-                    item["source_metadata"] = asset.source_metadata
-                    item["updated_at"] = asset.updated_at.isoformat() if asset.updated_at else None
-                
-                formatted_assets.append(item)
-            
-            bundle_data[str(bundle_id)] = {
-                "bundle_id": bundle.id,
-                "bundle_name": bundle.name,
-                "bundle_description": bundle.description,
-                "asset_count": bundle.asset_count,
-                "assets": formatted_assets,
-                "created_at": bundle.created_at.isoformat() if bundle.created_at else None,
-            }
-        
-        await ctx.info(f"Loaded {len(bundle_data)} bundles")
-        
-        # Build summary
-        summary_lines = []
-        for bid, data in bundle_data.items():
-            summary_lines.append(f"\n📦 [{bid}] {data['bundle_name']}")
-            summary_lines.append(f"    {data['bundle_description'] or 'No description'}")
-            summary_lines.append(f"    {data['asset_count']} assets\n")
-            
-            for i, asset in enumerate(data['assets'][:3], 1):
-                summary_lines.append(f"    [{asset['id']}] {asset['title']}")
-            
-            if len(data['assets']) > 3:
-                summary_lines.append(f"    ... {len(data['assets']) - 3} more")
-        
-        return ToolResult(
-            content=[TextContent(type="text", text="\n".join(summary_lines))],
-            structured_content={
-                "resource": "bundles",
-                "mode": "load",
-                "depth": depth,
-                "bundle_data": bundle_data,
-                "total": len(bundle_data),
-                "message": f"Loaded {len(bundle_data)} bundles"
-            }
-        )
-    
-    else:
-        # List all bundles
-        bundles = services["session"].exec(
-            select(Bundle)
-            .where(Bundle.infospace_id == services["infospace_id"])
-            .offset(offset)
-            .limit(limit)
-        ).all()
-        
-        await ctx.info(f"Listed {len(bundles)} bundles")
-        
-        # Format based on depth
-        bundle_list = []
-        for bundle in bundles:
-            item = {"id": bundle.id, "name": bundle.name}
-            
-            if depth in ["titles", "previews", "full"]:
-                item.update({
-                    "description": bundle.description,
-                    "asset_count": bundle.asset_count,
-                    "created_at": bundle.created_at.isoformat() if bundle.created_at else None,
-                })
-            
-            bundle_list.append(item)
-        
-        # Build summary
-        summary_lines = [f"📦 {len(bundles)} bundles:\n"]
-        for bundle in bundles[:8]:
-            summary_lines.append(f"[{bundle.id}] {bundle.name}")
-            summary_lines.append(f"    {bundle.asset_count} assets | {bundle.description or 'No description'}")
-        
-        if len(bundles) > 8:
-            summary_lines.append(f"\n... {len(bundles) - 8} more")
-        
-        summary_lines.append(f"\n→ Load contents: navigate(resource='bundles', mode='load', ids=[...], depth='previews')")
-        
-        return ToolResult(
-            content=[TextContent(type="text", text="\n".join(summary_lines))],
-            structured_content={
-                "resource": "bundles",
-                "mode": "list",
-                "depth": depth,
-                "items": bundle_list,
-                "total": len(bundles),
-                "message": f"Found {len(bundles)} bundles"
-            }
-        )
-
-
-async def _navigate_schemas(services: Dict, ctx: Context, mode: str, depth: str,
-                            ids: Optional[List[int]], limit: int, offset: int) -> ToolResult:
-    """Navigate annotation schemas."""
-    
-    schemas = services["annotation_service"].list_schemas(
-        services["user_id"],
-        services["infospace_id"],
-        active_only=True
-    )
-    
-    # Filter by IDs if mode=load
-    if mode == "load" and ids:
-        schemas = [s for s in schemas if s.id in ids]
-    
-    # Apply pagination
-    schemas = schemas[offset:offset + limit]
-    
-    # Format based on depth
-    schema_list = []
-    for schema in schemas:
-        item = {"id": schema.id, "name": schema.name}
-        
-        if depth in ["titles", "previews", "full"]:
-            item.update({
-                "description": schema.description,
-                "version": schema.version,
-                "created_at": schema.created_at.isoformat() if schema.created_at else None,
-            })
-        
-        if depth in ["full"]:
-            # Include field definitions
-            item["fields"] = [
-                {"name": f.name, "type": f.type, "description": f.description}
-                for f in schema.output_contract.fields
-            ]
-        
-        schema_list.append(item)
-    
-    # Build summary
-    summary_lines = [f"📋 {len(schemas)} annotation schemas:\n"]
-    for schema in schemas:
-        summary_lines.append(f"[{schema.id}] {schema.name} (v{schema.version})")
-        if schema.description:
-            summary_lines.append(f"    {truncate_text(schema.description, 80)}")
-    
-    return ToolResult(
-        content=[TextContent(type="text", text="\n".join(summary_lines))],
-        structured_content={
-            "resource": "schemas",
-            "mode": mode,
-            "depth": depth,
-            "items": schema_list,
-            "total": len(schemas),
-            "message": f"Found {len(schemas)} schemas"
-        }
-    )
-
-
-async def _navigate_runs(services: Dict, ctx: Context, mode: str, depth: str,
-                        ids: Optional[List[int]], limit: int, offset: int) -> ToolResult:
-    """Navigate annotation runs."""
-    from sqlmodel import select
-    from app.models import AnnotationRun
-    
-    query_stmt = select(AnnotationRun).where(
-        AnnotationRun.infospace_id == services["infospace_id"]
-    )
-    
-    if mode == "load" and ids:
-        query_stmt = query_stmt.where(AnnotationRun.id.in_(ids))
-    
-    runs = services["session"].exec(
-        query_stmt.offset(offset).limit(limit)
-    ).all()
-    
-    # Format based on depth
-    run_list = []
-    for run in runs:
-        item = {"id": run.id, "name": run.name}
-        
-        if depth in ["titles", "previews", "full"]:
-            item.update({
-                "description": run.description,
-                "status": run.status.value if run.status else None,
-                "created_at": run.created_at.isoformat() if run.created_at else None,
-            })
-        
-        run_list.append(item)
-    
-    # Build summary
-    summary_lines = [f"🔬 {len(runs)} annotation runs:\n"]
-    for run in runs[:5]:
-        summary_lines.append(f"[{run.id}] {run.name}")
-        summary_lines.append(f"    Status: {run.status.value if run.status else 'unknown'}")
-    
-    if len(runs) > 5:
-        summary_lines.append(f"\n... {len(runs) - 5} more")
-    
-    return ToolResult(
-        content=[TextContent(type="text", text="\n".join(summary_lines))],
-        structured_content={
-            "resource": "runs",
-            "mode": mode,
-            "depth": depth,
-            "items": run_list,
-            "total": len(runs),
-            "message": f"Found {len(runs)} runs"
-        }
-    )
-
-
-@mcp.tool
+@mcp.tool(tags=["search", "web", "ingestion"])
 async def search_web(
     query: Annotated[str, "What to search for (e.g., 'recent climate legislation in Europe')"],
     ctx: Context,
@@ -739,16 +1118,13 @@ async def search_web(
         # Normalize provider name to lowercase for registry lookup
         provider_normalized = provider.lower()
         
-        # Extract API key from JWT token claims (passed from frontend)
-        access_token: AccessToken = get_access_token()
+        # Extract provider-specific API key from runtime keys
         api_key = None
-        if access_token and access_token.claims:
-            api_keys = access_token.claims.get('api_keys', {})
-            if isinstance(api_keys, dict):
-                if provider_normalized == 'tavily':
-                    api_key = api_keys.get('tavily') or api_keys.get('TAVILY_API_KEY')
-                elif provider_normalized == 'opol':
-                    api_key = api_keys.get('opol') or api_keys.get('OPOL_API_KEY')
+        if services["runtime_api_keys"]:
+            if provider_normalized == 'tavily':
+                api_key = services["runtime_api_keys"].get('tavily') or services["runtime_api_keys"].get('TAVILY_API_KEY')
+            elif provider_normalized == 'opol':
+                api_key = services["runtime_api_keys"].get('opol') or services["runtime_api_keys"].get('OPOL_API_KEY')
         
         # Initialize search provider
         from app.api.providers.search_registry import SearchProviderRegistryService
@@ -834,7 +1210,7 @@ async def search_web(
 # CATEGORY: CONTENT INGESTION
 # ============================================================================
 
-@mcp.tool
+@mcp.tool(tags=["ingestion", "content"])
 async def ingest_urls(
     urls: Annotated[List[str], "Web addresses to save as permanent documents (e.g., ['https://example.com/article1', 'https://example.com/doc2'])"],
     ctx: Context,
@@ -1011,7 +1387,7 @@ async def ingest_urls(
 # CATEGORY: ORGANIZATION & CURATION
 # ============================================================================
 
-@mcp.tool
+@mcp.tool(tags=["organization", "bundles"])
 async def organize(
     operation: Annotated[str, "What to do: 'create' (new collection), 'add' (documents to collection), 'remove' (documents from collection), 'rename' (update collection), 'delete' (remove collection)"],
     ctx: Context,
@@ -1021,52 +1397,66 @@ async def organize(
     description: Annotated[Optional[str], "What this collection is about (optional, helps track purpose)"] = None,
 ) -> ToolResult:
     """
-    Manage document collections (bundles) to organize your research materials.
+    Manage document collections (bundles). Group related documents by topic, source, or research phase.
     
-    Use this to:
-    - Group related documents together
-    - Organize documents by topic, source, or research phase
-    - Maintain clean separation between different research areas
-    - Track which documents you've selected for specific analyses
+    ⚠️ IMPORTANT: Bundles are LOGICAL collections (like folders/tags).
+    For PHYSICAL parent-child relationships (CSV→rows), use asset() tool instead.
+    
+    <conceptual_model>
+    Bundles are flexible, many-to-many collections:
+    - One asset can be in multiple bundles
+    - Add/remove assets anytime
+    - Doesn't affect asset structure or parent-child relationships
+    - Think: Spotify playlists (same song can be in many playlists)
+    
+    NOT for:
+    - Making CSV rows "children" of an article → That's parent-child (use asset())
+    - Structural hierarchies → Use parent_asset_id when creating assets
+    
+    Use for:
+    - Organizing by topic: "Climate Policy", "Q1 Research"
+    - Temporary working sets: "For Review", "High Priority"
+    - Project grouping: "Berlin Study", "Validation Round 1"
+    </conceptual_model>
     
     <operations>
-    create - Start a new collection:
-      organize(operation="create", name="2024 Climate Reports", description="Recent policy documents")
-      # Can include initial documents with asset_ids=[1,2,3]
+    create: Start new collection
+      organize(operation="create", name="Climate Reports", asset_ids=[1,2,3])
+      Returns bundle_id for future operations
     
-    add - Put documents into a collection:
+    add: Put documents in collection
       organize(operation="add", bundle_id=4, asset_ids=[5,6,7])
-      # Adds documents 5, 6, 7 to collection 4
+      Can add same asset to multiple bundles
     
-    remove - Take documents out of a collection:
+    remove: Take documents out (doesn't delete them)
       organize(operation="remove", bundle_id=4, asset_ids=[5])
-      # Removes document 5 from collection 4 (doesn't delete document)
+      Assets remain in database and other bundles
     
-    rename - Update collection details:
-      organize(operation="rename", bundle_id=4, name="Updated Name", description="New focus area")
+    rename: Update collection details
+      organize(operation="rename", bundle_id=4, name="New Name", description="Updated desc")
     
-    delete - Remove entire collection:
+    delete: Remove collection (keeps documents)
       organize(operation="delete", bundle_id=4)
-      # Deletes collection but keeps all documents
+      All assets remain, just the bundle grouping is removed
     </operations>
     
-    <examples>
-    Research workflow:
-      1. navigate(resource="assets", mode="search", query="carbon tax")
-      2. organize(operation="create", name="Carbon Tax Research", asset_ids=[10,11,12])
-      3. search_web(query="recent carbon tax news")
-      4. ingest_urls(urls=["url1", "url2"], bundle_id=15)
+    <workflow_example>
+    Task: "Organize Leipzig entries from CSV into a collection with summary article"
     
-    Organizing after search:
-      navigate(resource="assets", mode="search", query="renewable energy")
-      # Found assets: 20, 21, 22, 23
-      organize(operation="create", name="Renewable Energy", asset_ids=[20,21,22,23])
+    1. Create bundle:
+       organize(operation="create", name="Leipzig Centers", description="Summary of Leipzig entries")
+       → Returns bundle_id: 5
     
-    Adding to existing:
-      organize(operation="add", bundle_id=8, asset_ids=[30,31])
-    </examples>
+    2. Create summary article:
+       asset(data={"kind": "article", "title": "Leipzig Summary", "content": "..."})
+       → Returns asset_id: 100
     
-    Tip: Collections help you work with groups of documents without searching repeatedly.
+    3. Add article + CSV rows to bundle:
+       organize(operation="add", bundle_id=5, asset_ids=[100, 7033, 7034, 7035])
+       → All assets now logically grouped (but CSV rows still children of their CSV parent)
+    </workflow_example>
+    
+    Tip: Use collections to work with document groups without searching repeatedly.
     """
     with get_services() as services:
         validate_infospace_access(
@@ -1106,48 +1496,50 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
     """Create a new bundle."""
     if not name:
         return ToolResult(
-            content=[TextContent(type="text", text="Bundle name is required for create operation")],
-            structured_content={"error": "name is required"}
+            content=[TextContent(type="text", text="❌ Missing required parameter: name\n\nExample:\n  organize(operation='create', name='Climate Reports', asset_ids=[1,2,3])\n\nBundle name should describe the collection's purpose or topic")],
+            structured_content={
+                "error": "missing_required_parameter",
+                "missing_parameter": "name",
+                "hint": "Provide a descriptive name for the new collection"
+            }
         )
     
-    from app.schemas import BundleCreate
+    from app.api.utils.tree_builder import create_bundle, add_assets_to_bundle
     
-    bundle_create = BundleCreate(
-        name=name,
-        description=description,
+    # Create bundle using tree_builder
+    bundle = create_bundle(
+        session=services["session"],
+        user_id=services["user_id"],
         infospace_id=services["infospace_id"],
-        user_id=services["user_id"]
-    )
-    
-    bundle = services["bundle_service"].create_bundle(
-        bundle_create,
-        services["user_id"],
-        services["infospace_id"]
+        name=name,
+        description=description
     )
     
     # Add initial assets if provided
     assets_added = 0
+    children_added = 0
     if asset_ids:
-        for asset_id in asset_ids:
-            try:
-                services["bundle_service"].add_asset_to_bundle(
-                    bundle_id=bundle.id,
-                    asset_id=asset_id,
-                    infospace_id=services["infospace_id"],
-                    user_id=services["user_id"],
-                    include_child_assets=True
-                )
-                assets_added += 1
-            except Exception as e:
-                logger.warning(f"Failed to add asset {asset_id}: {e}")
+        try:
+            assets_added, children_added = add_assets_to_bundle(
+                session=services["session"],
+                bundle_id=bundle.id,
+                asset_ids=asset_ids,
+                infospace_id=services["infospace_id"],
+                include_children=True
+            )
+        except Exception as e:
+            logger.warning(f"Failed to add assets: {e}")
     
     services["session"].commit()
     
-    await ctx.info(f"Created bundle #{bundle.id} with {assets_added} assets")
+    total_added = assets_added + children_added
+    await ctx.info(f"Created bundle #{bundle.id} with {total_added} assets")
     
     summary = f"✅ Created bundle '{name}' (ID: {bundle.id})"
-    if assets_added:
+    if total_added:
         summary += f"\n   Added {assets_added} assets"
+        if children_added:
+            summary += f" (+{children_added} children)"
     
     return ToolResult(
         content=[TextContent(type="text", text=summary)],
@@ -1156,6 +1548,7 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
             "bundle_id": bundle.id,
             "bundle_name": bundle.name,
             "assets_added": assets_added,
+            "children_added": children_added,
             "status": "success"
         }
     )
@@ -1166,51 +1559,65 @@ async def _organize_add(services: Dict, ctx: Context, bundle_id: Optional[int],
     """Add assets to an existing bundle."""
     if not bundle_id:
         return ToolResult(
-            content=[TextContent(type="text", text="bundle_id is required for add operation")],
-            structured_content={"error": "bundle_id is required"}
+            content=[TextContent(type="text", text="❌ Missing required parameter: bundle_id\n\nExample:\n  organize(operation='add', bundle_id=5, asset_ids=[1,2,3])\n\nTip: Use navigate() to find bundle IDs or create a new bundle with operation='create'")],
+            structured_content={
+                "error": "missing_required_parameter",
+                "missing_parameter": "bundle_id",
+                "hint": "Specify which collection to add assets to"
+            }
         )
     
     if not asset_ids:
         return ToolResult(
-            content=[TextContent(type="text", text="asset_ids is required for add operation")],
-            structured_content={"error": "asset_ids is required"}
+            content=[TextContent(type="text", text="❌ Missing required parameter: asset_ids\n\nExample:\n  organize(operation='add', bundle_id=5, asset_ids=[1,2,3])\n\nTip: Use navigate() to find asset IDs you want to add to the collection")],
+            structured_content={
+                "error": "missing_required_parameter",
+                "missing_parameter": "asset_ids",
+                "hint": "Provide a list of asset IDs to add to the bundle"
+            }
         )
     
-    added_count = 0
-    failed_count = 0
+    from app.api.utils.tree_builder import add_assets_to_bundle
     
-    for asset_id in asset_ids:
-        try:
-            services["bundle_service"].add_asset_to_bundle(
-                bundle_id=bundle_id,
-                asset_id=asset_id,
-                infospace_id=services["infospace_id"],
-                user_id=services["user_id"],
-                include_child_assets=True
-            )
-            added_count += 1
-        except Exception as e:
-            logger.warning(f"Failed to add asset {asset_id}: {e}")
-            failed_count += 1
-    
-    services["session"].commit()
-    
-    await ctx.info(f"Added {added_count} assets to bundle #{bundle_id}")
-    
-    summary = f"✅ Added {added_count} assets to bundle #{bundle_id}"
-    if failed_count:
-        summary += f"\n   ⚠️  {failed_count} assets failed to add"
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=summary)],
-        structured_content={
-            "operation": "add",
-            "bundle_id": bundle_id,
-            "assets_added": added_count,
-            "assets_failed": failed_count,
-            "status": "success" if failed_count == 0 else "partial_success"
-        }
-    )
+    try:
+        assets_added, children_added = add_assets_to_bundle(
+            session=services["session"],
+            bundle_id=bundle_id,
+            asset_ids=asset_ids,
+            infospace_id=services["infospace_id"],
+            include_children=True
+        )
+        
+        services["session"].commit()
+        
+        total_added = assets_added + children_added
+        await ctx.info(f"Added {total_added} assets to bundle #{bundle_id}")
+        
+        summary = f"✅ Added {assets_added} assets to bundle #{bundle_id}"
+        if children_added:
+            summary += f" (+{children_added} children)"
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=summary)],
+            structured_content={
+                "operation": "add",
+                "bundle_id": bundle_id,
+                "assets_added": assets_added,
+                "children_added": children_added,
+                "status": "success"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to add assets to bundle: {e}")
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to add assets: {str(e)}")],
+            structured_content={
+                "operation": "add",
+                "bundle_id": bundle_id,
+                "error": str(e),
+                "status": "failed"
+            }
+        )
 
 
 async def _organize_remove(services: Dict, ctx: Context, bundle_id: Optional[int],
@@ -1222,40 +1629,42 @@ async def _organize_remove(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id and asset_ids required"}
         )
     
-    removed_count = 0
-    failed_count = 0
+    from app.api.utils.tree_builder import remove_assets_from_bundle
     
-    for asset_id in asset_ids:
-        try:
-            services["bundle_service"].remove_asset_from_bundle(
-                bundle_id=bundle_id,
-                asset_id=asset_id,
-                infospace_id=services["infospace_id"],
-                user_id=services["user_id"]
-            )
-            removed_count += 1
-        except Exception as e:
-            logger.warning(f"Failed to remove asset {asset_id}: {e}")
-            failed_count += 1
-    
-    services["session"].commit()
-    
-    await ctx.info(f"Removed {removed_count} assets from bundle #{bundle_id}")
-    
-    summary = f"✅ Removed {removed_count} assets from bundle #{bundle_id}"
-    if failed_count:
-        summary += f"\n   ⚠️  {failed_count} assets failed to remove"
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=summary)],
-        structured_content={
-            "operation": "remove",
-            "bundle_id": bundle_id,
-            "assets_removed": removed_count,
-            "assets_failed": failed_count,
-            "status": "success" if failed_count == 0 else "partial_success"
-        }
-    )
+    try:
+        removed_count = remove_assets_from_bundle(
+            session=services["session"],
+            bundle_id=bundle_id,
+            asset_ids=asset_ids,
+            infospace_id=services["infospace_id"]
+        )
+        
+        services["session"].commit()
+        
+        await ctx.info(f"Removed {removed_count} assets from bundle #{bundle_id}")
+        
+        summary = f"✅ Removed {removed_count} assets from bundle #{bundle_id}"
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=summary)],
+            structured_content={
+                "operation": "remove",
+                "bundle_id": bundle_id,
+                "assets_removed": removed_count,
+                "status": "success"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to remove assets from bundle: {e}")
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to remove assets: {str(e)}")],
+            structured_content={
+                "operation": "remove",
+                "bundle_id": bundle_id,
+                "error": str(e),
+                "status": "failed"
+            }
+        )
 
 
 async def _organize_rename(services: Dict, ctx: Context, bundle_id: Optional[int],
@@ -1267,41 +1676,48 @@ async def _organize_rename(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id is required"}
         )
     
-    from app.models import Bundle
+    from app.api.utils.tree_builder import update_bundle
     
-    bundle = services["session"].get(Bundle, bundle_id)
-    if not bundle or bundle.infospace_id != services["infospace_id"]:
-        return ToolResult(
-            content=[TextContent(type="text", text=f"Bundle {bundle_id} not found")],
-            structured_content={"error": "bundle not found"}
+    try:
+        bundle = update_bundle(
+            session=services["session"],
+            bundle_id=bundle_id,
+            infospace_id=services["infospace_id"],
+            name=name,
+            description=description
         )
-    
-    if name:
-        bundle.name = name
-    if description is not None:
-        bundle.description = description
-    
-    services["session"].add(bundle)
-    services["session"].commit()
-    
-    await ctx.info(f"Updated bundle #{bundle_id}")
-    
-    summary = f"✅ Updated bundle #{bundle_id}"
-    if name:
-        summary += f"\n   New name: {name}"
-    if description is not None:
-        summary += f"\n   New description: {description}"
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=summary)],
-        structured_content={
-            "operation": "rename",
-            "bundle_id": bundle.id,
-            "bundle_name": bundle.name,
-            "bundle_description": bundle.description,
-            "status": "success"
-        }
-    )
+        
+        services["session"].commit()
+        
+        await ctx.info(f"Updated bundle #{bundle_id}")
+        
+        summary = f"✅ Updated bundle #{bundle_id}"
+        if name:
+            summary += f"\n   New name: {name}"
+        if description is not None:
+            summary += f"\n   New description: {description}"
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=summary)],
+            structured_content={
+                "operation": "rename",
+                "bundle_id": bundle.id,
+                "bundle_name": bundle.name,
+                "bundle_description": bundle.description,
+                "status": "success"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to update bundle: {e}")
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to update bundle: {str(e)}")],
+            structured_content={
+                "operation": "rename",
+                "bundle_id": bundle_id,
+                "error": str(e),
+                "status": "failed"
+            }
+        )
 
 
 async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int]) -> ToolResult:
@@ -1312,35 +1728,1457 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id is required"}
         )
     
-    from app.models import Bundle
+    from app.api.utils.tree_builder import delete_bundle
     
-    bundle = services["session"].get(Bundle, bundle_id)
-    if not bundle or bundle.infospace_id != services["infospace_id"]:
+    try:
+        bundle_name = delete_bundle(
+            session=services["session"],
+            bundle_id=bundle_id,
+            infospace_id=services["infospace_id"]
+        )
+        
+        services["session"].commit()
+        
+        await ctx.info(f"Deleted bundle #{bundle_id}")
+        
         return ToolResult(
-            content=[TextContent(type="text", text=f"Bundle {bundle_id} not found")],
-            structured_content={"error": "bundle not found"}
+            content=[TextContent(type="text", text=f"✅ Deleted bundle '{bundle_name}' (ID: {bundle_id})")],
+            structured_content={
+                "operation": "delete",
+                "bundle_id": bundle_id,
+                "bundle_name": bundle_name,
+                "status": "success"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete bundle: {e}")
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to delete bundle: {str(e)}")],
+            structured_content={
+                "operation": "delete",
+                "bundle_id": bundle_id,
+                "error": str(e),
+                "status": "failed"
+            }
+        )
+
+
+# ============================================================================
+# CATEGORY: ANALYSIS & SCHEMA CREATION
+# ============================================================================
+
+@mcp.tool(tags=["analysis", "schema"])
+async def create_schema(
+    name: Annotated[str, "Schema name (e.g., 'Sentiment Analysis', 'Entity Extraction')"],
+    fields: Annotated[List[Dict[str, Any]], "List of field definitions. Each field needs: {name, type, description, required}. Types: 'string', 'number', 'boolean', 'array', 'object'"],
+    ctx: Context,
+    description: Annotated[Optional[str], "What this schema extracts or analyzes"] = None,
+    instructions: Annotated[Optional[str], "Custom instructions for the AI when using this schema"] = None,
+) -> ToolResult:
+    """
+    Create a new analysis schema that defines what information to extract from documents.
+    
+    Think of schemas as templates that tell the AI exactly what to look for and how to structure the results.
+    
+    Common use cases:
+    - Extract entities: organizations, people, locations, dates
+    - Classify content: sentiment, topics, categories
+    - Analyze patterns: arguments, evidence, claims
+    - Score documents: relevance, quality, bias
+    
+    Example fields:
+    ```python
+    [
+        {"name": "sentiment", "type": "string", "description": "Overall sentiment: positive, negative, or neutral", "required": True},
+        {"name": "confidence", "type": "number", "description": "Confidence score 0-1", "required": True},
+        {"name": "key_phrases", "type": "array", "description": "Important phrases mentioned", "required": False}
+    ]
+    ```
+    
+    Returns schema_id for use with analyze().
+    """
+    with get_services() as services:
+        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        
+        await ctx.info(f"Creating schema '{name}' with {len(fields)} fields")
+        
+        try:
+            # Build output contract from fields
+            from app.schemas import AnnotationSchemaCreate, OutputContract, FieldDefinition
+            
+            field_definitions = []
+            for field in fields:
+                field_def = FieldDefinition(
+                    name=field["name"],
+                    type=field["type"],
+                    description=field.get("description", ""),
+                    required=field.get("required", True)
+                )
+                field_definitions.append(field_def)
+            
+            output_contract = OutputContract(fields=field_definitions)
+            
+            schema_create = AnnotationSchemaCreate(
+                name=name,
+                description=description or f"Schema: {name}",
+                instructions=instructions,
+                output_contract=output_contract,
+                version="1.0.0"
+            )
+            
+            schema = services["annotation_service"].create_schema(
+                services["user_id"],
+                services["infospace_id"],
+                schema_create
+            )
+            
+            services["session"].commit()
+            
+            await ctx.info(f"Created schema #{schema.id}")
+            
+            field_summary = "\n".join([f"  • {f['name']} ({f['type']}): {f.get('description', 'No description')}" for f in fields])
+            
+            return ToolResult(
+                content=[TextContent(type="text", text=f"✅ Created schema '{name}' (ID: {schema.id})\n\nFields:\n{field_summary}\n\n→ Use analyze(asset_ids=[...], schema_id={schema.id}) to run analysis")],
+                structured_content={
+                    "schema_id": schema.id,
+                    "schema_name": schema.name,
+                    "schema_uuid": str(schema.uuid),
+                    "field_count": len(fields),
+                    "fields": fields,
+                    "status": "created"
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to create schema: {e}", exc_info=True)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Failed to create schema: {str(e)}")],
+                structured_content={"error": str(e), "status": "failed"}
+            )
+
+
+@mcp.tool(tags=["analysis", "execution"])
+async def analyze(
+    asset_ids: Annotated[List[int], "Document IDs to analyze (from navigate or search results)"],
+    schema_id: Annotated[int, "Schema ID defining what to extract (from create_schema or navigate schemas)"],
+    ctx: Context,
+    name: Annotated[Optional[str], "Name for this analysis run"] = None,
+    custom_instructions: Annotated[Optional[str], "Additional instructions for the AI"] = None,
+) -> ToolResult:
+    """
+    Run structured analysis on documents using a schema.
+    
+    This creates an annotation run that:
+    1. Processes each document with AI
+    2. Extracts information according to the schema
+    3. Returns structured results you can query and visualize
+    
+    The analysis runs asynchronously. Use get_run_dashboard() to check results.
+    
+    Workflow:
+    ```
+    # 1. Find documents
+    results = navigate(resource="assets", mode="search", query="climate policy")
+    
+    # 2. Create schema
+    schema = create_schema(name="Policy Analysis", fields=[...])
+    
+    # 3. Run analysis
+    run = analyze(asset_ids=[20,21,22], schema_id=schema.schema_id)
+    
+    # 4. Get results
+    dashboard = get_run_dashboard(run_id=run.run_id)
+    ```
+    """
+    with get_services() as services:
+        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        
+        await ctx.info(f"Creating analysis run for {len(asset_ids)} assets with schema #{schema_id}")
+        
+        try:
+            run_name = name or f"Analysis - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+            
+            configuration = {}
+            if custom_instructions:
+                configuration["custom_instructions"] = custom_instructions
+            
+            run_create = AnnotationRunCreate(
+                name=run_name,
+                description=f"Analysis via chat{': ' + custom_instructions if custom_instructions else ''}",
+                schema_ids=[schema_id],
+                target_asset_ids=asset_ids,
+                configuration=configuration
+            )
+            
+            run = services["annotation_service"].create_run(
+                services["user_id"],
+                services["infospace_id"],
+                run_create
+            )
+            
+            services["session"].commit()
+            
+            await ctx.info(f"Started run #{run.id}")
+            
+            return ToolResult(
+                content=[TextContent(type="text", text=f"🔬 Started analysis run '{run_name}' (ID: {run.id})\n\n📊 Analyzing {len(asset_ids)} documents with schema #{schema_id}\n\n⏳ Status: {run.status.value}\n\n→ Check results: get_run_dashboard(run_id={run.id})")],
+                structured_content={
+                    "run_id": run.id,
+                    "run_name": run.name,
+                    "run_uuid": str(run.uuid),
+                    "schema_id": schema_id,
+                    "asset_count": len(asset_ids),
+                    "status": run.status.value,
+                    "created_at": run.created_at.isoformat() if run.created_at else None
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to create analysis run: {e}", exc_info=True)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Failed to start analysis: {str(e)}")],
+                structured_content={"error": str(e), "status": "failed"}
+            )
+
+
+@mcp.tool(tags=["tasks", "productivity"])
+async def tasks(ctx: Context) -> ToolResult:
+    """
+    View all current tasks and their status.
+    
+    Shows:
+    - Tasks in progress (what you're working on now)
+    - Pending tasks (what's coming up)
+    - Recently completed tasks
+    
+    Use add_task() to create new tasks.
+    """
+    if not hasattr(ctx, "_task_list"):
+        ctx._task_list = []
+    
+    tasks_list = ctx._task_list
+    
+    if not tasks_list:
+        return ToolResult(
+            content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse add_task('description') to create your first task.")],
+            structured_content={"tasks": [], "summary": "empty"}
         )
     
-    bundle_name = bundle.name
-    services["session"].delete(bundle)
-    services["session"].commit()
+    # Group by status
+    in_progress = [t for t in tasks_list if t["status"] == "in_progress"]
+    pending = [t for t in tasks_list if t["status"] == "pending"]
+    completed = [t for t in tasks_list if t["status"] == "completed"]
     
-    await ctx.info(f"Deleted bundle #{bundle_id}")
+    lines = ["📋 **Current Tasks**\n"]
+    
+    if in_progress:
+        lines.append("🔵 **In Progress:**")
+        for task in in_progress:
+            lines.append(f"  [{task['id']}] {task['description']}")
+        lines.append("")
+    
+    if pending:
+        lines.append("⚪ **Pending:**")
+        for task in pending[:5]:  # Show first 5
+            lines.append(f"  [{task['id']}] {task['description']}")
+        if len(pending) > 5:
+            lines.append(f"  ... and {len(pending) - 5} more")
+        lines.append("")
+    
+    if completed:
+        lines.append(f"✅ **Completed:** {len(completed)} tasks")
+        for task in completed[:3]:  # Show last 3
+            lines.append(f"  [{task['id']}] {task['description']}")
     
     return ToolResult(
-        content=[TextContent(type="text", text=f"✅ Deleted bundle '{bundle_name}' (ID: {bundle_id})")],
+        content=[TextContent(type="text", text="\n".join(lines))],
         structured_content={
-            "operation": "delete",
-            "bundle_id": bundle_id,
-            "bundle_name": bundle_name,
-            "status": "success"
+            "tasks": tasks_list,
+            "counts": {
+                "in_progress": len(in_progress),
+                "pending": len(pending),
+                "completed": len(completed)
+            }
         }
     )
 
 
+@mcp.tool(tags=["tasks", "productivity"])
+async def add_task(
+    description: Annotated[str, "What needs to be done (be specific)"],
+    ctx: Context,
+    start_now: Annotated[bool, "Start working on it immediately"] = False
+) -> ToolResult:
+    """
+    Add a new task to your list.
+    
+    Examples:
+      add_task("Refactor bundle creation to use tree_builder")
+      add_task("Add error handling to organize tool", start_now=True)
+    
+    Tasks start as 'pending' unless start_now=True.
+    Use start_task(id) to begin working on a pending task.
+    """
+    if not hasattr(ctx, "_task_list"):
+        ctx._task_list = []
+    
+    # Generate simple numeric ID
+    task_id = len(ctx._task_list) + 1
+    
+    # Auto-pause any in-progress tasks if starting this one
+    if start_now:
+        for task in ctx._task_list:
+            if task["status"] == "in_progress":
+                task["status"] = "pending"
+    
+    new_task = {
+        "id": task_id,
+        "description": description,
+        "status": "in_progress" if start_now else "pending",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    ctx._task_list.append(new_task)
+    
+    status_emoji = "🔵" if start_now else "⚪"
+    status_text = "Started" if start_now else "Added"
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=f"{status_emoji} {status_text} task #{task_id}: {description}")],
+        structured_content={"task": new_task}
+    )
+
+
+@mcp.tool(tags=["tasks", "productivity"])
+async def start_task(
+    task_id: Annotated[int, "ID of task to start working on"],
+    ctx: Context
+) -> ToolResult:
+    """
+    Start working on a task (marks it in-progress).
+    
+    Automatically pauses any other in-progress tasks.
+    
+    Example:
+      start_task(3)
+    """
+    if not hasattr(ctx, "_task_list"):
+        ctx._task_list = []
+    
+    task = next((t for t in ctx._task_list if t["id"] == task_id), None)
+    if not task:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
+            structured_content={"error": "task_not_found"}
+        )
+    
+    if task["status"] == "completed":
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
+            structured_content={"status": "already_completed"}
+        )
+    
+    # Pause other in-progress tasks
+    paused = []
+    for t in ctx._task_list:
+        if t["status"] == "in_progress" and t["id"] != task_id:
+            t["status"] = "pending"
+            paused.append(t["id"])
+    
+    task["status"] = "in_progress"
+    task["started_at"] = datetime.now(timezone.utc).isoformat()
+    
+    msg = f"🔵 Started task #{task_id}: {task['description']}"
+    if paused:
+        msg += f"\n⏸️  Paused tasks: {', '.join(f'#{id}' for id in paused)}"
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=msg)],
+        structured_content={"task": task, "paused": paused}
+    )
+
+
+@mcp.tool(tags=["tasks", "productivity"])
+async def finish_task(
+    task_id: Annotated[int, "ID of task to mark complete"],
+    ctx: Context
+) -> ToolResult:
+    """
+    Mark a task as completed.
+    
+    Example:
+      finish_task(3)
+    
+    Use tasks() to see your progress.
+    """
+    if not hasattr(ctx, "_task_list"):
+        ctx._task_list = []
+    
+    task = next((t for t in ctx._task_list if t["id"] == task_id), None)
+    if not task:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
+            structured_content={"error": "task_not_found"}
+        )
+    
+    if task["status"] == "completed":
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
+            structured_content={"status": "already_completed"}
+        )
+    
+    task["status"] = "completed"
+    task["completed_at"] = datetime.now(timezone.utc).isoformat()
+    
+    # Count remaining
+    remaining = len([t for t in ctx._task_list if t["status"] in ["pending", "in_progress"]])
+    completed_count = len([t for t in ctx._task_list if t["status"] == "completed"])
+    
+    msg = f"✅ Completed task #{task_id}: {task['description']}"
+    if remaining > 0:
+        msg += f"\n\n📊 Progress: {completed_count} done, {remaining} remaining"
+    else:
+        msg += f"\n\n🎉 All tasks completed!"
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=msg)],
+        structured_content={"task": task, "progress": {"completed": completed_count, "remaining": remaining}}
+    )
+
+
+@mcp.tool(tags=["tasks", "productivity"])
+async def cancel_task(
+    task_id: Annotated[int, "ID of task to cancel"],
+    ctx: Context
+) -> ToolResult:
+    """
+    Cancel a task (no longer needed).
+    
+    Example:
+      cancel_task(5)
+    """
+    if not hasattr(ctx, "_task_list"):
+        ctx._task_list = []
+    
+    task = next((t for t in ctx._task_list if t["id"] == task_id), None)
+    if not task:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
+            structured_content={"error": "task_not_found"}
+        )
+    
+    task["status"] = "cancelled"
+    task["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=f"❌ Cancelled task #{task_id}: {task['description']}")],
+        structured_content={"task": task}
+    )
+
+
+@mcp.tool(tags=["memory", "context"])
+async def working_memory(
+    operation: Annotated[str, "Action: 'view' (show current memory), 'add' (save item), 'remove' (delete item), 'pin' (mark important), 'unpin', 'clear' (reset all)"],
+    ctx: Context,
+    item_type: Annotated[Optional[str], "Type of item: 'asset', 'finding', 'path', 'note' (required for add/remove)"] = None,
+    item_id: Annotated[Optional[Union[int, str]], "Identifier (asset_id for assets, custom key for others)"] = None,
+    content: Annotated[Optional[str], "Content to store (for findings/notes)"] = None,
+    metadata: Annotated[Optional[Dict[str, Any]], "Additional metadata (e.g., tree path, timestamps)"] = None,
+) -> ToolResult:
+    """
+    Your working memory for this conversation.
+    
+    Keep track of:
+    - Assets you've already fetched (avoid re-fetching)
+    - Important findings and insights
+    - Navigation paths through the tree
+    - Quick notes and reminders
+    
+    Pinned items stay at the top for easy reference.
+    Memory persists throughout the conversation.
+    """
+    # Get or initialize memory in context metadata (no database access needed)
+    if not hasattr(ctx, "_working_memory"):
+        ctx._working_memory = {
+            "assets": {},      # {asset_id: {title, last_accessed, pinned}}
+            "findings": {},    # {key: {content, pinned}}
+            "paths": {},       # {key: {path, description, pinned}}
+            "notes": {},       # {key: {content, pinned}}
+        }
+    
+    memory = ctx._working_memory
+    
+    try:
+        if operation == "view":
+            # Show current memory state
+            summary = []
+            total_items = sum(len(items) for items in memory.values())
+            
+            if total_items == 0:
+                return ToolResult(
+                    content="Working memory is empty.",
+                    structured_content={"memory": memory, "total_items": 0}
+                )
+            
+            # Format memory for display
+            for category, items in memory.items():
+                if not items:
+                    continue
+                
+                pinned = {k: v for k, v in items.items() if v.get("pinned")}
+                unpinned = {k: v for k, v in items.items() if not v.get("pinned")}
+                
+                if pinned:
+                    summary.append(f"\n📌 Pinned {category}:")
+                    for key, data in list(pinned.items())[:5]:  # Show up to 5 pinned
+                        summary.append(f"  • {key}: {str(data)[:100]}")
+                
+                if unpinned:
+                    summary.append(f"\n{category.title()} ({len(unpinned)}):")
+                    for key, data in list(unpinned.items())[:3]:  # Show up to 3 recent
+                        summary.append(f"  • {key}: {str(data)[:100]}")
+            
+            return ToolResult(
+                content=f"Working memory ({total_items} items):\n" + "\n".join(summary),
+                structured_content={"memory": memory, "total_items": total_items}
+            )
+        
+        elif operation == "add":
+            if not item_type or item_id is None:
+                return ToolResult(
+                    content="Error: item_type and item_id required for 'add' operation",
+                    structured_content={"error": "missing_parameters", "status": "failed"}
+                )
+            
+            category = item_type + "s" if item_type in ["asset", "finding", "path", "note"] else "notes"
+            
+            item_data = {
+                "id": item_id,
+                "added_at": datetime.now(timezone.utc).isoformat(),
+                "pinned": False
+            }
+            
+            if content:
+                item_data["content"] = content
+            if metadata:
+                item_data.update(metadata)
+            
+            memory[category][str(item_id)] = item_data
+            
+            return ToolResult(
+                content=f"Added {item_type} '{item_id}' to working memory",
+                structured_content={"added": item_data, "category": category}
+            )
+        
+        elif operation == "remove":
+            if not item_type or item_id is None:
+                return ToolResult(
+                    content="Error: item_type and item_id required for 'remove' operation",
+                    structured_content={"error": "missing_parameters", "status": "failed"}
+                )
+            
+            category = item_type + "s" if item_type in ["asset", "finding", "path", "note"] else "notes"
+            
+            if str(item_id) in memory[category]:
+                del memory[category][str(item_id)]
+                return ToolResult(
+                    content=f"Removed {item_type} '{item_id}' from working memory",
+                    structured_content={"removed": item_id, "category": category}
+                )
+            else:
+                return ToolResult(
+                    content=f"{item_type} '{item_id}' not found in working memory",
+                    structured_content={"found": False}
+                )
+        
+        elif operation in ["pin", "unpin"]:
+            if not item_type or item_id is None:
+                return ToolResult(
+                    content=f"Error: item_type and item_id required for '{operation}' operation",
+                    structured_content={"error": "missing_parameters", "status": "failed"}
+                )
+            
+            category = item_type + "s" if item_type in ["asset", "finding", "path", "note"] else "notes"
+            
+            if str(item_id) in memory[category]:
+                memory[category][str(item_id)]["pinned"] = (operation == "pin")
+                return ToolResult(
+                    content=f"{'Pinned' if operation == 'pin' else 'Unpinned'} {item_type} '{item_id}'",
+                    structured_content={"item": memory[category][str(item_id)]}
+                )
+            else:
+                return ToolResult(
+                    content=f"{item_type} '{item_id}' not found in working memory",
+                    structured_content={"error": "not_found", "status": "failed"}
+                )
+        
+        elif operation == "clear":
+            memory.clear()
+            memory.update({
+                "assets": {},
+                "findings": {},
+                "paths": {},
+                "notes": {},
+            })
+            return ToolResult(
+                content="Working memory cleared",
+                structured_content={"memory": memory}
+            )
+        
+        else:
+            return ToolResult(
+                content=f"Unknown operation: {operation}. Use: view, add, remove, pin, unpin, clear",
+                structured_content={"error": "unknown_operation", "status": "failed"}
+            )
+    
+    except Exception as e:
+        logger.error(f"working_memory error: {e}", exc_info=True)
+        return ToolResult(
+            content=f"Error managing working memory: {str(e)}",
+            structured_content={"error": "exception", "status": "failed", "exception": str(e)}
+        )
+
+
+@mcp.tool(tags=["analysis", "discovery"])
+async def list_runs(
+    ctx: Context,
+    schema_id: Annotated[Optional[int], "Filter by schema ID (show runs using this analysis template)"] = None,
+    status: Annotated[Optional[str], "Filter by status: 'pending', 'running', 'completed', 'failed', 'completed_with_errors'"] = None,
+    limit: Annotated[int, "Maximum number of runs to return"] = 20,
+    offset: Annotated[int, "Number of runs to skip (for pagination)"] = 0,
+) -> ToolResult:
+    """
+    Browse annotation runs in this workspace.
+    
+    Use this to:
+    - Discover existing analysis runs from previous sessions
+    - Find runs by schema or status
+    - Get run IDs for accessing results with get_run_dashboard()
+    
+    <workflow>
+    Discover runs:
+      list_runs()  # All recent runs
+      list_runs(schema_id=5)  # Runs using specific schema
+      list_runs(status="completed")  # Only finished runs
+    
+    Access results:
+      runs = list_runs(limit=5)
+      # Pick a run_id from results
+      dashboard = get_run_dashboard(run_id=42)
+    </workflow>
+    
+    Returns run metadata including ID, name, status, asset count, and timestamps.
+    """
+    with get_services() as services:
+        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        
+        from sqlmodel import select, and_
+        from app.models import AnnotationRun, RunStatus
+        
+        await ctx.info(f"Listing runs (schema_id={schema_id}, status={status})")
+        
+        # Build query
+        query_conditions = [AnnotationRun.infospace_id == services["infospace_id"]]
+        
+        if schema_id:
+            # Filter runs that target this schema
+            # Note: target_schemas is a relationship, so we need to join
+            from app.models import annotation_run_schema_association
+            query = (
+                select(AnnotationRun)
+                .join(annotation_run_schema_association)
+                .where(annotation_run_schema_association.c.schema_id == schema_id)
+                .where(AnnotationRun.infospace_id == services["infospace_id"])
+            )
+        else:
+            query = select(AnnotationRun).where(and_(*query_conditions))
+        
+        if status:
+            try:
+                status_enum = RunStatus(status)
+                query = query.where(AnnotationRun.status == status_enum)
+            except ValueError:
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"❌ Invalid status: {status}. Valid: pending, running, completed, failed, completed_with_errors")],
+                    structured_content={"error": "invalid_status", "valid_statuses": ["pending", "running", "completed", "failed", "completed_with_errors"]}
+                )
+        
+        # Order by most recent first
+        query = query.order_by(AnnotationRun.created_at.desc()).offset(offset).limit(limit)
+        
+        runs = services["session"].exec(query).all()
+        
+        await ctx.info(f"Found {len(runs)} runs")
+        
+        if not runs:
+            filters_text = []
+            if schema_id:
+                filters_text.append(f"schema_id={schema_id}")
+            if status:
+                filters_text.append(f"status={status}")
+            filter_desc = f" with filters: {', '.join(filters_text)}" if filters_text else ""
+            
+            return ToolResult(
+                content=[TextContent(type="text", text=f"📊 No annotation runs found{filter_desc}\n\nCreate your first run:\n  analyze(asset_ids=[...], schema_id=...)")],
+                structured_content={"runs": [], "total": 0, "filters": {"schema_id": schema_id, "status": status}}
+            )
+        
+        # Build concise summary for model
+        summary_lines = [f"📊 Found {len(runs)} annotation runs:\n"]
+        
+        for i, run in enumerate(runs[:10], 1):
+            # Get target asset count from configuration (just for display, not storing full list)
+            run_config = run.configuration or {}
+            target_asset_ids = run_config.get('target_asset_ids', [])
+            target_count = len(target_asset_ids) if target_asset_ids else 0
+            
+            # Get annotation count (actual results produced)
+            annotation_count = len(run.annotations) if hasattr(run, 'annotations') and run.annotations else 0
+            
+            # If no direct asset IDs, check for bundle
+            target_display = str(target_count) if target_count > 0 else "bundle" if run_config.get('target_bundle_id') else "0"
+            
+            # Status emoji
+            status_emoji = {
+                "pending": "⏳",
+                "running": "🔄", 
+                "completed": "✅",
+                "failed": "❌",
+                "completed_with_errors": "⚠️"
+            }.get(run.status.value if run.status else "unknown", "❓")
+            
+            summary_lines.append(f"{i}. {status_emoji} [{run.id}] {run.name}")
+            
+            # Show both target count and results count
+            if annotation_count > 0:
+                summary_lines.append(f"   {annotation_count} results from {target_display} assets | {run.status.value if run.status else 'unknown'}")
+            else:
+                summary_lines.append(f"   Targets: {target_display} assets | {run.status.value if run.status else 'unknown'}")
+            
+            if run.created_at:
+                summary_lines.append(f"   Created: {run.created_at.strftime('%Y-%m-%d %H:%M')}")
+            
+            summary_lines.append("")
+        
+        if len(runs) > 10:
+            summary_lines.append(f"... {len(runs) - 10} more runs")
+        
+        summary_lines.append(f"💡 Use get_run_dashboard(run_id=X) to see results")
+        
+        # Build structured data (counts only, no full asset ID lists)
+        run_data = []
+        for run in runs:
+            # Get target asset count from configuration (just count, not full list)
+            run_config = run.configuration or {}
+            target_asset_ids = run_config.get('target_asset_ids', [])
+            target_count = len(target_asset_ids) if target_asset_ids else 0
+            
+            # Get annotation count (actual results produced)
+            annotation_count = len(run.annotations) if hasattr(run, 'annotations') and run.annotations else 0
+            
+            # Get schema IDs and names
+            schema_ids = [s.id for s in run.target_schemas] if hasattr(run, 'target_schemas') and run.target_schemas else []
+            schema_names = [s.name for s in run.target_schemas] if hasattr(run, 'target_schemas') and run.target_schemas else []
+            
+            run_data.append({
+                "id": run.id,
+                "uuid": str(run.uuid),
+                "name": run.name,
+                "description": run.description,
+                "status": run.status.value if run.status else None,
+                "target_asset_count": target_count,
+                "annotation_count": annotation_count,
+                "target_bundle_id": run_config.get('target_bundle_id'),
+                "schema_ids": schema_ids,
+                "schema_names": schema_names,
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            })
+        
+        summary_text = "\n".join(summary_lines)
+        return ToolResult(
+            content=[TextContent(type="text", text=summary_text)],
+            structured_content={
+                "runs": run_data,
+                "total": len(runs),
+                "limit": limit,
+                "offset": offset,
+                "filters": {
+                    "schema_id": schema_id,
+                    "status": status
+                },
+                "message": summary_text
+            }
+        )
+
+
+@mcp.tool(tags=["analysis", "results"])
+async def get_run_dashboard(
+    run_id: Annotated[int, "Analysis run ID (from analyze or list_runs)"],
+    ctx: Context,
+) -> ToolResult:
+    """
+    Get analysis results with inline dashboard preview.
+    
+    Returns:
+    - Run status and metadata
+    - Annotation results (structured extractions)
+    - Dashboard configuration (for frontend rendering)
+    - Summary statistics
+    
+    The structured_content includes complete dashboard data that the frontend can render as:
+    - Tables showing all results
+    - Charts visualizing patterns
+    - Maps of geographic data
+    - Filters and controls
+    
+    Use this after analyze() or list_runs() to see what was extracted.
+    """
+    with get_services() as services:
+        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        
+        await ctx.info(f"Fetching dashboard for run #{run_id}")
+        
+        try:
+            from sqlmodel import select
+            from app.models import AnnotationRun, Annotation, AnnotationSchema
+            
+            # Get run
+            run = services["session"].get(AnnotationRun, run_id)
+            if not run or run.infospace_id != services["infospace_id"]:
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                    structured_content={"error": "run not found"}
+                )
+            
+            # Get annotations
+            annotations = services["session"].exec(
+                select(Annotation).where(Annotation.run_id == run_id)
+            ).all()
+            
+            # Get schemas from the target_schemas relationship
+            schemas = run.target_schemas if hasattr(run, 'target_schemas') and run.target_schemas else []
+            logger.info(f"Run has {len(schemas)} schemas via target_schemas relationship")
+            
+            # Build summary
+            status_counts = {}
+            for ann in annotations:
+                status = ann.status.value if ann.status else "unknown"
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            # Format CONCISE summary for model (minimal tokens)
+            summary_lines = [
+                f"📊 {run.name}: {len(annotations)} annotations • {run.status.value}",
+            ]
+            
+            if status_counts:
+                status_parts = [f"{count} {status}" for status, count in list(status_counts.items())[:3]]
+                summary_lines.append(f"   {', '.join(status_parts)}")
+            
+            if schemas:
+                summary_lines.append(f"   Schemas: {', '.join([s.name for s in schemas[:2]])}")
+            
+            # Prepare structured content with FULL dashboard data (for frontend only)
+            annotation_data = []
+            asset_ids_in_results = set()
+            for ann in annotations[:100]:  # Limit for performance
+                asset_ids_in_results.add(ann.asset_id)
+                annotation_data.append({
+                    "id": ann.id,
+                    "asset_id": ann.asset_id,
+                    "schema_id": ann.schema_id,
+                    "value": ann.value,
+                    "status": ann.status.value if ann.status else None,
+                    "timestamp": ann.timestamp.isoformat() if ann.timestamp else None,
+                })
+            
+            # Fetch assets for the annotations
+            from app.models import Asset
+            asset_data = []
+            if asset_ids_in_results:
+                assets = services["session"].exec(
+                    select(Asset).where(Asset.id.in_(list(asset_ids_in_results)))
+                ).all()
+                for asset in assets:
+                    asset_data.append({
+                        "id": asset.id,
+                        "uuid": str(asset.uuid),
+                        "title": asset.title,
+                        "kind": asset.kind.value if asset.kind else None,
+                        "infospace_id": asset.infospace_id,
+                    })
+                logger.info(f"Fetched {len(asset_data)} assets for dashboard")
+            
+            schema_data = []
+            for schema in schemas:
+                # Handle output_contract which might be a dict or Pydantic model
+                output_contract = None
+                if schema.output_contract:
+                    if hasattr(schema.output_contract, 'model_dump'):
+                        output_contract = schema.output_contract.model_dump()
+                    elif isinstance(schema.output_contract, dict):
+                        output_contract = schema.output_contract
+                    else:
+                        # Try to convert to dict
+                        try:
+                            output_contract = dict(schema.output_contract)
+                        except Exception as e:
+                            logger.warning(f"Could not serialize output_contract for schema {schema.id}: {e}")
+                            output_contract = None
+                
+                schema_data.append({
+                    "id": schema.id,
+                    "name": schema.name,
+                    "description": schema.description,
+                    "output_contract": output_contract,
+                })
+            
+            logger.info(f"Serialized {len(schema_data)} schemas for run {run_id}")
+            
+            structured_result = {
+                "run_id": run.id,
+                "run_name": run.name,
+                "run_uuid": str(run.uuid),
+                "status": run.status.value,
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "annotation_count": len(annotations),
+                "annotations": annotation_data,
+                "schemas": schema_data,
+                "assets": asset_data,
+                "views_config": run.views_config,
+                "status_counts": status_counts,
+            }
+            
+            return ToolResult(
+                content=[TextContent(type="text", text="\n".join(summary_lines))],
+                structured_content=structured_result
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to get run dashboard: {e}", exc_info=True)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Failed to fetch dashboard: {str(e)}")],
+                structured_content={"error": str(e), "status": "failed"}
+            )
+
+
 # ============================================================================
-# CATEGORY: ASSET ANALYSIS
+# ASSET CRUD HELPERS (for the asset() tool)
 # ============================================================================
+
+async def _asset_create(services: Dict, ctx: Context, data: Dict[str, Any], parent_asset_id: Optional[int]) -> ToolResult:
+    """Create asset using AssetBuilder pattern."""
+    from app.api.services.asset_builder import AssetBuilder
+    from app.models import AssetKind
+
+    kind = data.get("kind")
+    if not kind:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'kind' field is required for asset creation")],
+            structured_content={"error": "kind is required"}
+        )
+
+    try:
+        # Convert string kind to enum
+        asset_kind = AssetKind(kind)
+    except ValueError:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Invalid asset kind: {kind}")],
+            structured_content={"error": f"Invalid kind: {kind}"}
+        )
+
+    # Create builder
+    builder = AssetBuilder(services["session"], services["user_id"], services["infospace_id"])
+
+    # Route based on asset kind
+    if asset_kind == AssetKind.CSV_ROW:
+        return await _asset_create_csv_row(services, ctx, builder, data, parent_asset_id)
+    elif asset_kind == AssetKind.ARTICLE:
+        return await _asset_create_article(services, ctx, builder, data)
+    elif asset_kind == AssetKind.WEB:
+        return await _asset_create_web(services, ctx, builder, data)
+    elif asset_kind == AssetKind.TEXT:
+        return await _asset_create_text(services, ctx, builder, data)
+    else:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Asset kind '{kind}' not supported for creation")],
+            structured_content={"error": f"Unsupported kind: {kind}"}
+        )
+
+
+async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dict[str, Any], parent_asset_id: Optional[int]) -> ToolResult:
+    """Create CSV row asset."""
+    row_data = data.get("row_data")
+    if not row_data:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Missing required field 'row_data' for CSV row creation\n\nRequired:\n- row_data (dict): Column-value pairs, e.g. {{'Name': 'Berlin Center', 'Address': '...'}}\n\nReceived data: {list(data.keys())}")],
+            structured_content={
+                "error": "missing_required_fields",
+                "missing_fields": ["row_data"],
+                "received_fields": list(data.keys()),
+                "required_fields": ["row_data"],
+                "hint": "row_data should be a dictionary with column names as keys"
+            }
+        )
+
+    # Get parent CSV asset if parent_asset_id provided
+    parent_asset = None
+    if parent_asset_id:
+        parent_asset = services["session"].get(Asset, parent_asset_id)
+        if not parent_asset or parent_asset.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Parent asset #{parent_asset_id} not found or not accessible\n\nTroubleshooting:\n1. Verify the asset ID exists: navigate(resource='assets', mode='load', ids=[{parent_asset_id}])\n2. Check if it's a CSV container: Should have kind='csv' and is_container=True\n3. Ensure it belongs to your infospace")],
+                structured_content={
+                    "error": "parent_asset_not_found",
+                    "parent_asset_id": parent_asset_id,
+                    "hint": "Parent must be a CSV container in your infospace"
+                }
+            )
+
+    # Get column headers from parent if available
+    column_headers = None
+    if parent_asset and parent_asset.source_metadata.get("columns"):
+        column_headers = parent_asset.source_metadata["columns"]
+
+    # Build and create the CSV row
+    if parent_asset_id:
+        asset = await (builder
+            .for_csv_row(
+                row_data=row_data,
+                column_headers=column_headers
+            )
+            .as_child_of(parent_asset_id)
+            .build()
+        )
+    else:
+        asset = await (builder
+            .for_csv_row(
+                row_data=row_data,
+                column_headers=column_headers
+            )
+            .build()
+        )
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ CSV Row #{asset.id}\n{asset.title}")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": asset.title,
+            "asset_kind": asset.kind.value,
+            "parent_asset_id": parent_asset_id,
+            "row_data": row_data,
+            "status": "created"
+        }
+    )
+
+
+async def _asset_create_article(services: Dict, ctx: Context, builder, data: Dict[str, Any]) -> ToolResult:
+    """Create article asset."""
+    title = data.get("title")
+    content = data.get("content")
+
+    if not title or not content:
+        missing_fields = []
+        if not title:
+            missing_fields.append("title")
+        if not content:
+            missing_fields.append("content")
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Missing required fields for article creation: {', '.join(missing_fields)}\n\nRequired:\n- title (string): Article headline\n- content (string): Article body text\n\nReceived data: {list(data.keys())}")],
+            structured_content={
+                "error": "missing_required_fields",
+                "missing_fields": missing_fields,
+                "received_fields": list(data.keys()),
+                "required_fields": ["title", "content"]
+            }
+        )
+
+    asset = await builder.from_article(title=title, content=content).build()
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ Article #{asset.id}\n{asset.title}")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": asset.title,
+            "asset_kind": asset.kind.value,
+            "status": "created"
+        }
+    )
+
+
+async def _asset_create_web(services: Dict, ctx: Context, builder, data: Dict[str, Any]) -> ToolResult:
+    """Create web asset."""
+    url = data.get("url")
+    if not url:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'url' field is required for web asset creation")],
+            structured_content={"error": "url is required"}
+        )
+
+    title = data.get("title")
+    stub = data.get("stub", False)
+
+    if stub:
+        asset = await builder.from_url_stub(url, title).build()
+    else:
+        asset = await builder.from_url(url, title).build()
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ Web #{asset.id}\n{asset.title}")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": asset.title,
+            "asset_kind": asset.kind.value,
+            "url": url,
+            "stub": stub,
+            "status": "created"
+        }
+    )
+
+
+async def _asset_create_text(services: Dict, ctx: Context, builder, data: Dict[str, Any]) -> ToolResult:
+    """Create text asset."""
+    content = data.get("content")
+    if not content:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'content' field is required for text asset creation")],
+            structured_content={"error": "content is required"}
+        )
+
+    title = data.get("title")
+
+    asset = await builder.from_text(content, title).build()
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ Text #{asset.id}\n{asset.title}")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": asset.title,
+            "asset_kind": asset.kind.value,
+            "status": "created"
+        }
+    )
+
+
+async def _asset_update(services: Dict, ctx: Context, data: Dict[str, Any]) -> ToolResult:
+    """Update existing asset."""
+    asset_id = data.get("id")
+    if not asset_id:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'id' field is required for asset update")],
+            structured_content={"error": "id is required"}
+        )
+
+    # Get existing asset
+    from app.models import Asset
+    asset = services["session"].get(Asset, asset_id)
+    if not asset or asset.infospace_id != services["infospace_id"]:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Asset {asset_id} not found or not accessible")],
+            structured_content={"error": "asset not found"}
+        )
+
+    # Handle CSV row updates specially
+    if asset.kind == AssetKind.CSV_ROW:
+        return await _asset_update_csv_row(services, ctx, asset, data)
+    else:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Update not supported for asset kind: {asset.kind.value}")],
+            structured_content={"error": f"Update not supported for kind: {asset.kind.value}"}
+        )
+
+
+async def _asset_update_csv_row(services: Dict, ctx: Context, asset, data: Dict[str, Any]) -> ToolResult:
+    """Update CSV row asset."""
+    updates = data.get("updates")
+    if not updates:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'updates' field is required for CSV row update")],
+            structured_content={"error": "updates is required"}
+        )
+
+    # Create builder for update
+    from app.api.services.asset_builder import AssetBuilder
+    builder = AssetBuilder(services["session"], services["user_id"], services["infospace_id"])
+
+    # Use update method
+    merge_strategy = data.get("merge_strategy", "overwrite")
+    updated_asset = await builder.update_csv_row(asset.id, updates, merge_strategy).build()
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ Updated CSV Row #{asset.id}\n{updated_asset.title}")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": updated_asset.title,
+            "updated_fields": list(updates.keys()),
+            "merge_strategy": merge_strategy,
+            "status": "updated"
+        }
+    )
+
+
+async def _asset_delete(services: Dict, ctx: Context, data: Dict[str, Any]) -> ToolResult:
+    """Delete asset."""
+    asset_id = data.get("id")
+    if not asset_id:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'id' field is required for asset deletion")],
+            structured_content={"error": "id is required"}
+        )
+
+    # Delete using asset service (handles cascade)
+    deleted = services["asset_service"].delete_asset(asset_id)
+
+    if not deleted:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Asset {asset_id} not found or could not be deleted")],
+            structured_content={"error": "asset not found or deletion failed"}
+        )
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ Deleted asset #{asset_id}")],
+        structured_content={
+            "asset_id": asset_id,
+            "status": "deleted"
+        }
+    )
+
+
+@mcp.tool(tags=["asset", "crud"])
+async def asset(
+    ctx: Context,
+    operation: Annotated[str, "CRUD operation: 'create', 'update', or 'delete'"] = "create",
+    data: Annotated[Optional[Dict[str, Any]], "Asset data with 'kind' field (article/web/text/csv_row). For csv_row, include 'parent_asset_id'."] = None,
+) -> ToolResult:
+    """
+    Create, update, or delete assets. Universal interface for all asset types.
+    
+    ⚠️ IMPORTANT: This tool manages PHYSICAL parent-child relationships (CSV→rows, PDF→pages).
+    For LOGICAL grouping (organizing documents into collections), use organize() instead.
+    
+    <conceptual_model>
+    TWO WAYS TO ORGANIZE ASSETS:
+    
+    1. Parent-Child Relationships (THIS TOOL):
+       - Physical hierarchical structure
+       - Set at creation time only
+       - Cannot be changed after creation
+       - Examples: CSV contains rows, PDF contains pages
+       - Use when: Creating structured data (rows, pages, chapters)
+    
+    2. Bundles (USE organize() TOOL):
+       - Logical collections/folders
+       - Can be modified anytime
+       - Assets can be in multiple bundles
+       - Examples: "Climate Reports", "Q1 2024 Research"
+       - Use when: Grouping related documents by topic/project
+    
+    ❌ WRONG: Trying to make CSV rows "children" of an article
+       → CSV rows are permanently tied to their CSV parent
+       → Use organize() to put both the article AND the CSV in the same bundle
+    
+    ✅ RIGHT: Create article, then add article + CSV to shared bundle:
+       1. asset(data={"kind": "article", "title": "Summary", "content": "..."})
+       2. organize(operation="add", bundle_id=5, asset_ids=[article_id, csv_id])
+    </conceptual_model>
+    
+    <core_examples>
+    ⚠️ CSV Row (hierarchical - MUST include parent_asset_id):
+      asset(data={
+          "kind": "csv_row",
+          "parent_asset_id": 7032,  # REQUIRED - CSV container ID
+          "row_data": {"Name": "...", "Address": "..."}
+      })
+      Missing parent_asset_id creates orphaned root asset ❌
+    
+    Article (standalone):
+      asset(data={
+          "kind": "article",
+          "title": "Research Notes",
+          "content": "# Summary\n\nDetailed findings..."
+      })
+      Note: Use "content" not "text_content" - tool handles mapping
+    
+    Web page:
+      asset(data={
+          "kind": "web",
+          "url": "https://example.com/page",
+          "title": "Optional title"
+      })
+    
+    Text note:
+      asset(data={
+          "kind": "text",
+          "title": "Quick Note",
+          "content": "Plain text content"
+      })
+    
+    Update CSV row:
+      asset(operation="update", data={
+          "id": 7033,
+          "updates": {"Address": "New Street", "Phone": "+49..."}
+      })
+    
+    Delete (cascades to children):
+      asset(operation="delete", data={"id": 7034})
+    </core_examples>
+    
+    <field_reference>
+    Article fields:
+      - title (string): Headline
+      - content (string): Body text (maps to text_content in database)
+    
+    CSV Row fields:
+      - row_data (dict): Column-value pairs
+      - parent_asset_id (int): REQUIRED - CSV container ID
+    
+    Web fields:
+      - url (string): Web address
+      - title (string, optional): Custom title
+      - stub (bool, optional): Create without fetching content
+    
+    Text fields:
+      - content (string): Plain text
+      - title (string, optional): Custom title
+    </field_reference>
+    
+    <hierarchy>
+    Parent-child relationships (permanent):
+      CSV(7032) → CSV Rows(7033, 7034, ...)
+      PDF(123) → PDF Pages(124, 125, ...)
+    
+    ⚠️ Cannot re-parent existing assets
+    ⚠️ Deletion cascades: deleting parent removes all children
+    ⚠️ Always verify parent exists before creating children
+    </hierarchy>
+    
+    <common_mistakes>
+    ❌ csv_row without parent_asset_id → orphaned at root
+    ❌ Using "text_content" instead of "content" → field not recognized
+    ❌ Trying to re-parent existing assets → not supported
+    ❌ Confusing bundles with parent-child → use organize() for collections
+    ✅ Check with navigate() first, then create with correct parent_asset_id
+    ✅ Use organize() for logical grouping, asset() for physical hierarchy
+    </common_mistakes>
+    
+    Returns: Created/updated asset with ID, title, and status.
+    """
+    with get_services() as services:
+        validate_infospace_access(
+            services["session"],
+            services["infospace_id"],
+            services["user_id"]
+        )
+
+        # Validate data parameter
+        if not data:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ Missing required 'data' parameter.\n\nExamples:\n  asset(data={'kind': 'article', 'title': '...', 'content': '...'})\n  asset(data={'kind': 'web', 'url': 'https://...'})")],
+                structured_content={"error": "data parameter is required", "hint": "Include data={'kind': '...', ...}"}
+            )
+
+        await ctx.info(f"Asset operation: {operation} on kind={data.get('kind')}")
+
+        try:
+            if operation == "delete":
+                return await _asset_delete(services, ctx, data)
+            elif operation == "update":
+                return await _asset_update(services, ctx, data)
+            else:  # create (default)
+                # Extract parent_asset_id from data if present
+                parent_asset_id = data.get("parent_asset_id")
+                return await _asset_create(services, ctx, data, parent_asset_id)
+
+        except Exception as e:
+            logger.error(f"Asset operation failed: {e}", exc_info=True)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Asset operation failed: {str(e)}")],
+                structured_content={"error": str(e), "status": "failed"}
+            )
+
+
+@mcp.tool(tags=["sharing"])
+async def share_run(
+    run_id: Annotated[int, "Analysis run ID to share"],
+    ctx: Context,
+    name: Annotated[Optional[str], "Name for the shareable link"] = None,
+    expiration_days: Annotated[Optional[int], "Days until link expires (default: never)"] = None,
+) -> ToolResult:
+    """
+    Create a shareable link for an analysis run.
+    
+    Recipients can:
+    - View the complete dashboard
+    - See all results and visualizations  
+    - Import the run into their own workspace
+    - Cannot modify or see your other data
+    
+    Returns a public URL that works without login.
+    """
+    with get_services() as services:
+        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        
+        await ctx.info(f"Creating shareable link for run #{run_id}")
+        
+        try:
+            from app.api.services.shareable_service import ShareableService
+            from app.schemas import ShareableLinkCreate
+            from datetime import timedelta
+            
+            shareable_service = ShareableService(services["session"])
+            
+            expiration_date = None
+            if expiration_days:
+                expiration_date = datetime.now(timezone.utc) + timedelta(days=expiration_days)
+            
+            link_create = ShareableLinkCreate(
+                name=name or f"Shared: Run {run_id}",
+                resource_type="run",
+                resource_id=run_id,
+                permission_level="read_only",
+                is_public=True,
+                expiration_date=expiration_date
+            )
+            
+            link = shareable_service.create_shareable_link(
+                services["user_id"],
+                services["infospace_id"],
+                link_create
+            )
+            
+            services["session"].commit()
+            
+            # Build shareable URL
+            share_url = f"{settings.FRONTEND_URL}/share/{link.token}"
+            
+            await ctx.info(f"Created shareable link: {share_url}")
+            
+            expiry_text = f"Expires: {expiration_date.strftime('%Y-%m-%d')}" if expiration_date else "Never expires"
+            
+            return ToolResult(
+                content=[TextContent(type="text", text=f"🔗 Shareable link created!\n\n{share_url}\n\n{expiry_text}\n\nRecipients can view the dashboard and import the run into their workspace.")],
+                structured_content={
+                    "share_url": share_url,
+                    "token": link.token,
+                    "link_id": link.id,
+                    "run_id": run_id,
+                    "expiration_date": expiration_date.isoformat() if expiration_date else None,
+                    "created_at": link.created_at.isoformat() if link.created_at else None
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to create shareable link: {e}", exc_info=True)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Failed to create share link: {str(e)}")],
+                structured_content={"error": str(e), "status": "failed"}
+            )
+
 
 # @mcp.tool
 # async def analyze_assets(
@@ -1405,7 +3243,7 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
 #             )
 
 
-@mcp.tool
+@mcp.tool(tags=["analysis", "schema"])
 async def list_schemas(ctx: Context) -> ToolResult:
     """
     View available analysis templates (schemas) that define how to extract structured information from documents.
@@ -1457,55 +3295,50 @@ async def list_schemas(ctx: Context) -> ToolResult:
         )
 
 
-@mcp.tool
+@mcp.tool(tags=["search", "semantic", "discovery"])
 async def semantic_search(
     query: Annotated[Union[str, List[str]], "What to search for conceptually (e.g., 'arguments for carbon pricing') or multiple related queries ['carbon tax benefits', 'emissions trading advantages']"],
     ctx: Context,
     limit: Annotated[int, "Maximum results per query (10-50 recommended)"] = 10,
     asset_kinds: Annotated[Optional[List[str]], "Limit to document types: ['web', 'pdf', 'text', 'article']"] = None,
     bundle_id: Annotated[Optional[int], "Search only within a specific collection (bundle ID)"] = None,
+    parent_asset_id: Annotated[Optional[int], "Search only within a specific parent asset (e.g., CSV rows under a CSV)"] = None,
     date_from: Annotated[Optional[str], "Only documents from this date onward (format: YYYY-MM-DD)"] = None,
     date_to: Annotated[Optional[str], "Only documents up to this date (format: YYYY-MM-DD)"] = None,
     combine_results: Annotated[bool, "For multiple queries, merge and deduplicate results"] = True,
 ) -> ToolResult:
     """
-    Find content by meaning rather than exact keywords—discovers related passages even with different wording.
+    Find content by meaning, not exact text. Works on any asset type (articles, CSV rows, PDFs, web pages).
     
-    Use this when:
-    - You want to find concepts, not just exact phrases
-    - Looking for different ways people discuss the same idea
-    - Regular search (navigate) isn't finding what you need
-    - Exploring thematic connections across documents
+    <core_examples>
+    General discovery:
+      semantic_search(query="carbon pricing arguments")
     
-    How it works: Converts your query into a vector (mathematical representation of meaning) and finds 
-    text passages with similar meanings, even if they use completely different words.
-    
-    <examples>
-    Finding concepts:
-      semantic_search(query="arguments against carbon pricing")
-      # Finds passages discussing opposition, even if they don't say "arguments against"
-    
-    Exploring multiple angles:
+    CSV deduplication (check if row exists elsewhere):
       semantic_search(
-        query=["renewable energy benefits", "clean energy advantages", "sustainable power pros"],
-        combine_results=True
-      )
-      # Searches all angles and returns unified results
-    
-    Time-bounded research:
-      semantic_search(
-        query="inflation policy responses",
-        date_from="2024-01-01",
-        date_to="2024-12-31"
+          query="München Hegelstraße 8 info@queeres-zentrum.de",  # Key fields
+          parent_asset_id=7032,  # Search within CSV
+          limit=20
       )
     
-    Within specific collection:
-      semantic_search(query="climate adaptation strategies", bundle_id=12)
-    </examples>
+    Multiple query angles:
+      semantic_search(
+          query=["carbon tax benefits", "emissions trading"],
+          combine_results=True
+      )
     
-    Returns: Text passages (chunks) with similarity scores, showing exactly where relevant content appears in which documents.
+    Scoped search:
+      semantic_search(query="...", bundle_id=5)  # Within collection
+      semantic_search(query="...", asset_kinds=["article", "web"])  # By type
+    </core_examples>
     
-    Tip: Start broad, then refine with filters. Semantic search often surfaces unexpected but relevant connections.
+    
+    <scope>
+    parent_asset_id: Searches children only (CSV rows, PDF pages)
+    bundle_id: Searches assets in collection
+    (no scope): Searches entire workspace
+    </scope>
+
     """
     with get_services() as services:
         session = services["session"]
@@ -1559,21 +3392,12 @@ async def semantic_search(
                     content=[TextContent(type="text", text=f"❌ Invalid asset kind: {e}")]
                 )
         
-        # Extract API keys from JWT token claims (for cloud embedding providers)
-        from fastmcp.server.dependencies import get_access_token, AccessToken
-        access_token: AccessToken = get_access_token()
-        runtime_api_keys = None
-        if access_token and access_token.claims:
-            api_keys = access_token.claims.get('api_keys', {})
-            if isinstance(api_keys, dict) and api_keys:
-                runtime_api_keys = api_keys
-        
         # Handle single or multiple queries
         queries = [query] if isinstance(query, str) else query
         
-        # Perform semantic search
+        # Perform semantic search using runtime API keys from services
         from app.api.services.vector_search_service import VectorSearchService
-        search_service = VectorSearchService(session, runtime_api_keys=runtime_api_keys)
+        search_service = VectorSearchService(session, runtime_api_keys=services["runtime_api_keys"])
         
         try:
             all_results = []
@@ -1587,7 +3411,8 @@ async def semantic_search(
                     asset_kinds=kinds,
                     date_from=date_from_dt,
                     date_to=date_to_dt,
-                    bundle_id=bundle_id
+                    bundle_id=bundle_id,
+                    parent_asset_id=parent_asset_id
                 )
                 query_results_map[q] = results
                 all_results.extend(results)
@@ -1839,4 +3664,5 @@ async def get_asset_annotations(
 
 if __name__ == "__main__":
     mcp.run(stateless_http=True)
+
 

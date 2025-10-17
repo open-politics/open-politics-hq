@@ -173,6 +173,17 @@ class ChunkingService:
             logger.warning(f"No chunks generated for asset {asset.id}")
             return []
         
+        # Verify asset exists in database before creating chunks
+        # This handles race conditions where chunking runs before asset is committed
+        try:
+            db_asset = self.session.get(Asset, asset.id)
+            if not db_asset:
+                logger.warning(f"Asset {asset.id} not found in database during chunking, skipping")
+                return []
+        except Exception as e:
+            logger.warning(f"Error verifying asset {asset.id} in database: {e}, skipping chunking")
+            return []
+
         # Create AssetChunk records
         asset_chunks = []
         for chunk_info in chunk_data:
@@ -184,7 +195,7 @@ class ChunkingService:
             )
             asset_chunks.append(chunk)
             self.session.add(chunk)
-        
+
         self.session.commit()
         logger.info(f"Created {len(asset_chunks)} chunks for asset {asset.id}")
         

@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 
 import dateutil.parser
 from fastapi import UploadFile
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate, SearchResult
@@ -314,6 +314,102 @@ class AssetBuilder:
         
         return self
     
+    def for_csv_row(
+        self,
+        row_data: Dict[str, Any],
+        column_headers: Optional[List[str]] = None,
+        schema_validation: Optional[Dict[str, Any]] = None
+    ) -> 'AssetBuilder':
+        """
+        Build a CSV row asset from structured data.
+
+        Args:
+            row_data: Dictionary of column_name -> value
+            column_headers: Optional list of expected column names for validation
+            schema_validation: Optional schema for data validation (lenient by default)
+        """
+        self.blueprint.kind = AssetKind.CSV_ROW
+        self.blueprint.stub = False
+
+        # Generate title in CSV format: {index} | {first_non_empty_cols[:25]}
+        # Calculate the next available part_index based on existing children
+        if self.blueprint.parent_asset_id:
+            # Count existing children to determine the next part_index
+            existing_children = self.session.exec(
+                select(Asset).where(Asset.parent_asset_id == self.blueprint.parent_asset_id)
+            ).all()
+            next_part_index = len(existing_children)
+            title_parts = [str(next_part_index + 1)]
+        else:
+            title_parts = ["1"]
+
+        for key, value in list(row_data.items())[:3]:
+            if value and str(value).strip():
+                title_parts.append(f"{key}: {str(value)[:25]}")
+        self.blueprint.title = " | ".join(title_parts) if len(title_parts) > 1 else f"Row {len(row_data)} columns"
+
+        # Create pipe-separated text content from row data
+        if column_headers:
+            # Use provided headers for consistent ordering
+            self.blueprint.text_content = " | ".join(
+                str(row_data.get(header, "")) for header in column_headers
+            )
+        else:
+            # Use row keys as headers
+            sorted_keys = sorted(row_data.keys())
+            self.blueprint.text_content = " | ".join(
+                str(row_data.get(key, "")) for key in sorted_keys
+            )
+
+        # Store original structured data in source_metadata
+        self.blueprint.source_metadata.update({
+            "original_row_data": row_data,
+            "column_headers": column_headers or list(row_data.keys()),
+            "ingestion_method": "csv_row_construction",
+            "row_length": len(row_data)
+        })
+
+        # Basic schema validation (lenient - just check required fields exist)
+        if schema_validation:
+            for field_name, field_config in schema_validation.items():
+                if field_config.get("required", False) and field_name not in row_data:
+                    logger.warning(f"Missing required field '{field_name}' in CSV row data")
+
+        self.blueprint.processing_status = ProcessingStatus.READY
+        return self
+
+    def update_csv_row(
+        self,
+        existing_asset_id: int,
+        updates: Dict[str, Any],
+        merge_strategy: str = "overwrite"
+    ) -> 'AssetBuilder':
+        """
+        Update an existing CSV row asset with new data.
+
+        Args:
+            existing_asset_id: ID of the CSV row asset to update
+            updates: Dictionary of fields to update
+            merge_strategy: "overwrite" (replace), "merge" (combine with existing)
+        """
+        self.blueprint.kind = AssetKind.CSV_ROW
+        self.blueprint.stub = False
+
+        # Mark this as an update operation
+        self.blueprint.source_metadata.update({
+            "update_operation": True,
+            "existing_asset_id": existing_asset_id,
+            "merge_strategy": merge_strategy,
+            "ingestion_method": "csv_row_update"
+        })
+
+        # Queue the update enricher
+        self.blueprint._enrichers.append(
+            lambda: self._enrich_csv_row_update(existing_asset_id, updates, merge_strategy)
+        )
+
+        return self
+
     def from_rss_entry(
         self,
         entry: Any,
@@ -514,11 +610,20 @@ class AssetBuilder:
         # 3. Add ingestion timestamp
         self.blueprint.source_metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
         
-        # 4. Create the asset via AssetService (handles deduplication)
-        asset_create = self._blueprint_to_asset_create()
-        asset = self.asset_service.create_asset(asset_create)
-        
-        logger.info(f"Created asset: {asset.id} ({asset.kind.value}) - {asset.title}")
+        # 4. Handle CSV row updates vs creation
+        if self.blueprint.source_metadata.get("update_operation"):
+            # For CSV row updates, we need to return the updated asset directly
+            # The enricher already handled the update
+            existing_asset_id = self.blueprint.source_metadata.get("existing_asset_id")
+            asset = self.session.get(Asset, existing_asset_id)
+            if not asset:
+                raise ValueError(f"Failed to find updated asset {existing_asset_id}")
+            logger.info(f"Updated asset: {asset.id} ({asset.kind.value}) - {asset.title}")
+        else:
+            # Create the asset via AssetService (handles deduplication)
+            asset_create = self._blueprint_to_asset_create()
+            asset = self.asset_service.create_asset(asset_create)
+            logger.info(f"Created asset: {asset.id} ({asset.kind.value}) - {asset.title}")
         
         # 5. Extract children based on ingestion_depth
         if self.blueprint.ingestion_depth > 0:
@@ -678,6 +783,64 @@ class AssetBuilder:
                 logger.warning(f"Failed to create embed reference for asset {embed_config.get('asset_id')}: {e}")
                 continue
     
+    async def _enrich_csv_row_update(self, existing_asset_id: int, updates: Dict[str, Any], merge_strategy: str):
+        """Enricher: Update existing CSV row asset with new data."""
+        # Get the existing asset
+        existing_asset = self.session.get(Asset, existing_asset_id)
+        if not existing_asset:
+            raise ValueError(f"CSV row asset {existing_asset_id} not found")
+
+        if existing_asset.infospace_id != self.blueprint.infospace_id:
+            raise ValueError(f"CSV row asset {existing_asset_id} does not belong to this infospace")
+
+        # Get existing row data
+        existing_row_data = existing_asset.source_metadata.get("original_row_data", {})
+
+        # Apply merge strategy
+        if merge_strategy == "merge":
+            # Merge updates with existing data
+            merged_data = {**existing_row_data, **updates}
+        elif merge_strategy == "overwrite":
+            # Use updates, but preserve non-updated fields from existing
+            merged_data = {**existing_row_data, **updates}
+        else:
+            raise ValueError(f"Unknown merge strategy: {merge_strategy}")
+
+        # Update the asset
+        column_headers = existing_asset.source_metadata.get("column_headers", list(merged_data.keys()))
+
+        # Generate new title from first few columns
+        title_parts = []
+        for key, value in list(merged_data.items())[:3]:
+            if value and str(value).strip():
+                title_parts.append(f"{key}: {str(value)[:25]}")
+        new_title = " | ".join(title_parts) if title_parts else f"Row {len(merged_data)} columns"
+
+        # Create pipe-separated text content
+        existing_asset.text_content = " | ".join(
+            str(merged_data.get(header, "")) for header in column_headers
+        )
+
+        # Update metadata
+        existing_asset.title = new_title
+        existing_asset.source_metadata.update({
+            "original_row_data": merged_data,
+            "column_headers": column_headers,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "merge_strategy": merge_strategy,
+            "updated_fields": list(updates.keys())
+        })
+
+        # Update timestamp
+        existing_asset.updated_at = datetime.now(timezone.utc)
+
+        # Mark as ready
+        existing_asset.processing_status = ProcessingStatus.READY
+
+        self.session.add(existing_asset)
+
+        logger.info(f"Updated CSV row asset {existing_asset_id} with {len(updates)} fields")
+
     async def _enrich_rss_images(self, image_urls: List[Dict[str, Any]]):
         """Enricher: Create child image assets from RSS media:content."""
         # This enricher queues child builders to run after parent is created
@@ -686,24 +849,24 @@ class AssetBuilder:
                 image_url = img_data.get('url')
                 if not image_url:
                     continue
-                
+
                 # Determine if this is the featured/hero image (first one)
                 is_featured = (idx == 0)
                 role = img_data.get('role', 'featured' if is_featured else 'content')
-                
+
                 # Create a child builder for the image as a stub (don't download)
                 child_builder = AssetBuilder(self.session, self.blueprint.user_id, self.blueprint.infospace_id)
-                
+
                 # Use URL stub pattern - creates reference without downloading
                 if is_featured:
                     image_title = img_data.get('title') or "Featured image"
                 else:
                     image_title = img_data.get('title') or f"Image {idx + 1}"
-                
+
                 child_builder.from_url_stub(image_url, image_title)
                 child_builder.blueprint.kind = AssetKind.IMAGE
                 child_builder.blueprint.part_index = img_data.get('part_index', idx)
-                
+
                 # Add rich metadata from RSS feed (following WebProcessor pattern)
                 child_builder.with_metadata(
                     source='rss_media_content',
@@ -713,9 +876,9 @@ class AssetBuilder:
                     media_credit=img_data.get('media_credit'),
                     extracted_from_rss=True
                 )
-                
+
                 self.blueprint._child_builders.append(child_builder)
-                
+
             except Exception as e:
                 logger.warning(f"Failed to create image asset for {img_data.get('url')}: {e}")
                 continue

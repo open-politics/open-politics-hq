@@ -156,7 +156,7 @@ class ShareableService:
             if exp_date_val := update_dict.get("expiration_date"): # Check if not None
                 if exp_date_val.tzinfo is None: update_dict["expiration_date"] = exp_date_val.replace(tzinfo=timezone.utc)
                 if exp_date_val < datetime.now(timezone.utc): raise ValueError("Expiration date cannot be in the past.")
-            link.sqlmodel_update(update_dict); link.updated_at = datetime.now(timezone.utc)
+            link.sqlmodel_update(update_dict)
             self.session.add(link); self.session.commit(); self.session.refresh(link); return link
         except ValueError as ve: logger.error(f"Validation error: {ve}"); raise ve
         except Exception as e: logger.error(f"Error updating link {link_id}: {e}", exc_info=True); raise ValueError(f"Update failed: {e}")
@@ -167,7 +167,7 @@ class ShareableService:
         self.session.delete(link); self.session.commit(); return True
 
     def record_link_usage(self, link: ShareableLink) -> None:
-        try: link.use_count += 1; link.updated_at = datetime.now(timezone.utc); self.session.add(link); self.session.commit(); self.session.refresh(link)
+        try: link.use_count += 1; self.session.add(link); self.session.commit(); self.session.refresh(link)
         except Exception as e: logger.error(f"Error recording usage for link {link.id}: {e}", exc_info=True)
 
     def get_link_stats(self, user_id: int, infospace_id: Optional[int] = None) -> ShareableLinkStats:
@@ -209,7 +209,6 @@ class ShareableService:
         link = self.get_link_by_token(token)
         if not link: raise HTTPException(status.HTTP_404_NOT_FOUND, "Link not found")
         if not link.is_valid(): raise HTTPException(status.HTTP_403_FORBIDDEN, "Link invalid/expired")
-        if link.requires_login and not requesting_user_id: raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Login required")
         self.record_link_usage(link)
 
         resource_infospace_id = getattr(link, 'infospace_id', None)
@@ -237,19 +236,26 @@ class ShareableService:
         Provides a read-only, public view of a shared resource (Asset, Bundle, or AnnotationRun).
         This method does not require authentication if the link is public.
         """
+        logger.info(f"view_shared_resource called with token: {token[:6]}...")
         link = self.get_link_by_token(token)
+        logger.info(f"Link found: {link is not None}, Link valid: {link.is_valid() if link else 'N/A'}, Resource type: {link.resource_type if link else 'N/A'}")
 
         if not link or not link.is_valid():
+            logger.warning(f"Link not found or invalid. Link exists: {link is not None}, Valid: {link.is_valid() if link else 'N/A'}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link not found or has expired.")
 
         # This endpoint supports viewing assets, bundles, and annotation runs.
         if link.resource_type not in [ResourceType.ASSET, ResourceType.BUNDLE, ResourceType.RUN]:
+            logger.warning(f"Unsupported resource type for view: {link.resource_type}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This link cannot be viewed directly.")
 
         # Robustly determine the infospace_id for the resource,
         # supporting older links that may not have it stored directly.
         resource_infospace_id = link.infospace_id
+        logger.info(f"Initial infospace_id from link: {resource_infospace_id}")
+        
         if not resource_infospace_id:
+            logger.info(f"Fetching infospace_id for resource {link.resource_type.value}/{link.resource_id}")
             resource_for_infospace = self._get_resource_by_type(
                 rt=link.resource_type, 
                 r_id=link.resource_id, 
@@ -258,6 +264,7 @@ class ShareableService:
             )
             if resource_for_infospace and hasattr(resource_for_infospace, 'infospace_id'):
                 resource_infospace_id = resource_for_infospace.infospace_id
+                logger.info(f"Found infospace_id: {resource_infospace_id}")
         
         if not resource_infospace_id:
             logger.error(f"Could not determine infospace for shared resource. Link ID: {link.id}, Resource: {link.resource_type.value}/{link.resource_id}")
@@ -265,6 +272,7 @@ class ShareableService:
 
         # The resource should be fetched without a specific user context (u_id=None),
         # as the link's validity is the sole authorization for this public view.
+        logger.info(f"Fetching resource {link.resource_type.value}/{link.resource_id} in infospace {resource_infospace_id}")
         resource = self._get_resource_by_type(
             rt=link.resource_type, 
             r_id=link.resource_id, 
@@ -272,6 +280,7 @@ class ShareableService:
             inf_id_ctx=resource_infospace_id
         )
         if not resource:
+            logger.error(f"Resource not found: {link.resource_type.value}/{link.resource_id} in infospace {resource_infospace_id}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The shared resource could not be found.")
 
         if link.resource_type == ResourceType.ASSET:
@@ -305,13 +314,19 @@ class ShareableService:
             )
         
         elif link.resource_type == ResourceType.RUN:
-            run_preview = self._build_annotation_run_preview(resource, resource_infospace_id)
-            return SharedResourcePreview(
-                resource_type=link.resource_type,
-                name=run_preview.name,
-                description=run_preview.description,
-                content=run_preview
-            )
+            logger.info(f"Building annotation run preview for run {resource.id}")
+            try:
+                run_preview = self._build_annotation_run_preview(resource, resource_infospace_id)
+                logger.info(f"Successfully built run preview with {len(run_preview.annotations)} annotations")
+                return SharedResourcePreview(
+                    resource_type=link.resource_type,
+                    name=run_preview.name,
+                    description=run_preview.description,
+                    content=run_preview
+                )
+            except Exception as e:
+                logger.error(f"Failed to build annotation run preview: {e}", exc_info=True)
+                raise
         
         # This should not be reached due to the check above, but as a safeguard:
         raise HTTPException(status_code=500, detail="Unexpected error processing the shared resource.")
@@ -834,6 +849,25 @@ class ShareableService:
                 "target_infospace_id": target_infospace_id,
             } 
 
+    def _sanitize_configuration(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove sensitive data like API keys from configuration."""
+        if not config:
+            return {}
+        
+        sanitized = config.copy()
+        
+        # Remove API keys
+        if "api_keys" in sanitized:
+            sanitized["api_keys"] = {k: "***REDACTED***" for k in sanitized["api_keys"].keys()}
+        
+        # Remove any field containing 'key', 'token', 'secret', 'password' (case insensitive)
+        sensitive_patterns = ['key', 'token', 'secret', 'password', 'credential']
+        for key in list(sanitized.keys()):
+            if any(pattern in key.lower() for pattern in sensitive_patterns):
+                sanitized[key] = "***REDACTED***"
+        
+        return sanitized
+
     def _build_annotation_run_preview(self, run: AnnotationRun, infospace_id: int) -> "AnnotationRunPreview":
         """
         Build a preview representation of an annotation run for public sharing.
@@ -904,7 +938,7 @@ class ShareableService:
             updated_at=run.updated_at,
             completed_at=run.completed_at,
             views_config=run.views_config,
-            configuration=run.configuration,
+            configuration=self._sanitize_configuration(run.configuration),
             annotation_count=len(annotations),
             target_schemas=target_schemas,
             annotations=annotation_summaries

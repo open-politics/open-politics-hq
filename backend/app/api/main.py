@@ -63,7 +63,7 @@ api_router.include_router(monitors.router, tags=["Monitors"])
 api_router.include_router(pipelines.router, prefix="/pipelines", tags=["Pipelines"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
 
-api_router.include_router(shareables.router, prefix="/sharing", tags=["sharing"])
+api_router.include_router(shareables.router, prefix="/shareables", tags=["sharing"])
 api_router.include_router(sources.router, tags=["Sources"])
 api_router.include_router(sso.router, tags=["sso"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])

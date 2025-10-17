@@ -214,4 +214,3 @@ class CSVProcessor(BaseProcessor):
                 continue
         
         return best_delimiter
-

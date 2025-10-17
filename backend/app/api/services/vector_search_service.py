@@ -68,12 +68,13 @@ class VectorSearchService:
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         bundle_id: Optional[int] = None,
+        parent_asset_id: Optional[int] = None,
         distance_threshold: Optional[float] = None,
         distance_function: str = "cosine"
     ) -> List[SearchResult]:
         """
         Perform semantic search using vector embeddings.
-        
+
         Args:
             query_text: Search query text
             infospace_id: Infospace to search within
@@ -82,9 +83,10 @@ class VectorSearchService:
             date_from: Filter assets created after this date
             date_to: Filter assets created before this date
             bundle_id: Filter by bundle membership
+            parent_asset_id: Filter by parent asset (for searching within specific parent assets like CSV rows)
             distance_threshold: Maximum distance for results
             distance_function: "cosine", "l2", or "inner_product"
-        
+
         Returns:
             List of SearchResult objects
         """
@@ -168,7 +170,11 @@ class VectorSearchService:
         if bundle_id:
             # Filter by bundle_id (one-to-many relationship)
             query = query.where(Asset.bundle_id == bundle_id)
-        
+
+        if parent_asset_id:
+            # Filter by parent_asset_id (for searching within specific parent assets like CSV rows)
+            query = query.where(Asset.parent_asset_id == parent_asset_id)
+
         # For now, we'll do distance calculation in Python since we're using embedding_json
         # In production, you'd want to use pgvector's operators directly
         results = self.session.exec(query).all()

@@ -212,6 +212,40 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         else:
             return await self._generate(payload)
     
+    def _extract_tool_result_streams(self, tool_result: Any, tool_name: str) -> tuple[str, Any]:
+        """
+        Extract separate LLM and frontend streams from tool result.
+        
+        Returns:
+            Tuple of (llm_content, frontend_data) where:
+            - llm_content: Concise text for model conversation (~200-500 chars)
+            - frontend_data: Full structured data for UI rendering
+        """
+        # Ensure serializable
+        if hasattr(tool_result, 'model_dump'):
+            tool_result = tool_result.model_dump()
+        elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
+            tool_result = str(tool_result)
+        
+        # Check for error
+        is_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
+        
+        if isinstance(tool_result, dict) and not is_error:
+            # Extract concise content for LLM
+            llm_content = tool_result.get("content")
+            if not llm_content:
+                # No content provided - error case, don't send full structured data
+                llm_content = f"[Tool {tool_name} executed - no summary available]"
+            
+            # Extract full data for frontend
+            frontend_data = tool_result.get("structured_content", tool_result)
+        else:
+            # Error or simple response - send as-is to both
+            llm_content = json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result
+            frontend_data = tool_result
+        
+        return llm_content, frontend_data
+    
     async def _stream_tool_loop_wrapper(self,
                                        messages: List[Dict[str, str]],
                                        model_name: str,
@@ -362,28 +396,27 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                     logger.info(f"Executing Ollama tool: {name} with args: {args}")
                     tool_result = await tool_executor(name, args)
                     
-                    # Ensure tool_result is JSON serializable
-                    if hasattr(tool_result, 'model_dump'):
-                        tool_result = tool_result.model_dump()
-                    elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
-                        # Convert other objects to string representation
-                        tool_result = str(tool_result)
+                    # Extract separate streams for LLM and frontend
+                    llm_content, frontend_data = self._extract_tool_result_streams(tool_result, name)
                     
                     # Check if tool execution failed
-                    has_error = isinstance(tool_result, dict) and tool_result.get("error")
+                    has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
                     
-                    # Record execution for frontend display with segmented thinking
+                    # Record execution with FULL data for frontend
                     tool_execution = {
                         "id": tc.get("id") or f"call_{name}_{iteration}",
                         "tool_name": name,
                         "arguments": args,
-                        "result": tool_result if not has_error else None,
-                        "error": tool_result.get("error") if has_error else None,
+                        "result": frontend_data if not has_error else None,
+                        "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
                         "iteration": iteration,
                         "thinking_before": current_thinking if current_thinking else None  # Attach thinking to tool
                     }
                     all_tool_executions.append(tool_execution)
+                    
+                    llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
+                    logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
                     
                     # Yield intermediate update with this tool execution
                     yield GenerationResponse(
@@ -396,15 +429,12 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                     )
                     
                     if has_error:
-                        logger.warning(f"Tool {name} returned error: {tool_result.get('error')}")
-                    else:
-                        logger.info(f"Tool {name} executed successfully")
+                        logger.warning(f"Tool {name} returned error: {tool_result.get('error') if isinstance(tool_result, dict) else tool_result}")
                     
-                    # Append tool result back to the conversation for the model to use
-                    # Ollama expects a specific format for tool results
+                    # Send ONLY concise content to LLM conversation
                     iterative_messages.append({
                         "role": "tool", 
-                        "content": json.dumps(tool_result)
+                        "content": llm_content
                     })
                 except Exception as e:
                     logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)

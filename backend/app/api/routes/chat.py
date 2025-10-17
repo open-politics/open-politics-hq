@@ -54,7 +54,8 @@ async def intelligence_chat(
             usage: Optional[Dict[str, Any]] = None,
             tool_calls: Optional[List[Dict[str, Any]]] = None,
             tool_executions: Optional[List[Dict[str, Any]]] = None,
-            thinking_trace: Optional[str] = None
+            thinking_trace: Optional[str] = None,
+            message_metadata: Optional[Dict[str, Any]] = None
         ):
             """Save a message to the conversation history."""
             try:
@@ -80,6 +81,7 @@ async def intelligence_chat(
                     tool_calls=tool_calls,
                     tool_executions=tool_executions,
                     thinking_trace=thinking_trace,
+                    message_metadata=message_metadata or {},
                 )
                 
                 session.add(message)
@@ -99,14 +101,36 @@ async def intelligence_chat(
         if request.conversation_id and len(request.messages) > 0:
             last_user_message = request.messages[-1]
             if last_user_message.role == "user":
+                # Preserve display content and context metadata for UI rendering
+                user_metadata = {}
+                if request.display_content:
+                    user_metadata['display_content'] = request.display_content
+                if request.context_assets:
+                    user_metadata['context_assets'] = request.context_assets
+                if request.context_depth:
+                    user_metadata['context_depth'] = request.context_depth
+                
                 await save_message_to_conversation(
                     request.conversation_id,
                     role="user",
-                    content=last_user_message.content
+                    content=last_user_message.content,
+                    message_metadata=user_metadata if user_metadata else None
                 )
         
-        # Convert Pydantic models to dicts
-        messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
+        # Convert Pydantic models to dicts, filtering out empty messages
+        # Anthropic requires all messages to have non-empty content
+        messages = [
+            {"role": msg.role, "content": msg.content} 
+            for msg in request.messages 
+            if msg.content and msg.content.strip()
+        ]
+        
+        # Ensure we have at least one message
+        if not messages:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one non-empty message is required"
+            )
         
         # Prepare kwargs
         kwargs = {}

@@ -229,8 +229,11 @@ async def get_tavily_data():
     result = tavily.get_tavily_data()
     return JSONResponse(content=result, status_code=200)
 
-def call_pelias_api(location, lang=None):
-    """Call Pelias API for geocoding with custom mappings for certain locations."""
+def call_nominatim_api(location, lang=None):
+    """
+    Call Nominatim search API for geocoding. Handles varied location formats from LLM.
+    Nominatim's search endpoint is flexible and works with various location formats.
+    """
     custom_mappings = {
         "europe": {
             'coordinates': [13.405, 52.52],
@@ -244,38 +247,74 @@ def call_pelias_api(location, lang=None):
         return custom_mappings[location.lower()]
 
     try:
-        pelias_url = settings.PELIAS_PLACEHOLDER_PORT
-        url = f"http://{pelias_url}/parser/search?text={location}"
+        # Nominatim's /search endpoint is the most flexible - handles cities, countries, addresses, etc.
+        url = f"http://nominatim:8721/search"
+        params = {
+            'q': location,
+            'format': 'json',
+            'limit': 1,
+            'addressdetails': 1,
+            'extratags': 1,
+            'namedetails': 1
+        }
         if lang:
-            url += f"&lang={lang}"
+            params['accept-language'] = lang
 
-        response = requests.get(url)
+        response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if data and len(data) > 0:
                 top_result = data[0]
-                geometry = top_result.get('geom')
-                location_type = top_result.get('placetype', 'location')
-                if geometry:
-                    bbox = geometry.get('bbox')
-                    area = geometry.get('area')
-                    return {
-                        'coordinates': [geometry.get('lon'), geometry.get('lat')],
-                        'location_type': location_type if location_type else 'location',
-                        'bbox': bbox.split(',') if bbox else None,
-                        'area': area
-                    }
-                else:
-                    logger.warning(f"No geometry found for location: {location}")
+                lat = float(top_result.get('lat'))
+                lon = float(top_result.get('lon'))
+                boundingbox = top_result.get('boundingbox', [])
+                
+                # Map Nominatim's type/class to our location_type
+                osm_type = top_result.get('type', 'location')
+                osm_class = top_result.get('class', '')
+                location_type = _map_nominatim_type(osm_type, osm_class)
+                
+                # Calculate approximate area from bounding box (in degrees squared, rough estimate)
+                area = None
+                if len(boundingbox) == 4:
+                    bbox_floats = [float(b) for b in boundingbox]
+                    # bbox format: [min_lat, max_lat, min_lon, max_lon]
+                    lat_diff = bbox_floats[1] - bbox_floats[0]
+                    lon_diff = bbox_floats[3] - bbox_floats[2]
+                    area = lat_diff * lon_diff
+                
+                return {
+                    'coordinates': [lon, lat],  # [lon, lat] format
+                    'location_type': location_type,
+                    'bbox': boundingbox if boundingbox else None,
+                    'area': area
+                }
             else:
-                logger.warning(f"No data returned from API for location: {location}")
+                logger.warning(f"No data returned from Nominatim for location: {location}")
         else:
-            logger.error(f"API call failed with status code: {response.status_code}")
+            logger.error(f"Nominatim API call failed with status code: {response.status_code}")
     except requests.RequestException as e:
-        logger.error(f"API call exception for location {location}: {str(e)}")
+        logger.error(f"Nominatim API call exception for location {location}: {str(e)}")
     except Exception as e:
         logger.error(f"Unexpected error for location {location}: {str(e)}")
     return None
+
+def _map_nominatim_type(osm_type, osm_class):
+    """Map Nominatim's OSM type/class to our location_type."""
+    type_mapping = {
+        'country': 'country',
+        'state': 'state',
+        'province': 'state',
+        'city': 'city',
+        'town': 'city',
+        'village': 'locality',
+        'hamlet': 'locality',
+        'suburb': 'locality',
+        'neighbourhood': 'locality',
+        'county': 'county',
+        'region': 'region'
+    }
+    return type_mapping.get(osm_type.lower(), 'location')
 
 
 @router.get("/get_coordinates")
@@ -285,7 +324,7 @@ async def get_coordinates(location: str, language: str = "en"):
     """
     try:
         logger.info(f"Geocoding location: {location}")
-        coordinates = call_pelias_api(location, lang=language)
+        coordinates = call_nominatim_api(location, lang=language)
         logger.info(f"Coordinates: {coordinates}")
 
         if coordinates:

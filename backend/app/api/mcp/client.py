@@ -127,16 +127,19 @@ class IntelligenceMCPClient:
         self._connected_client = None
         logger.info("MCP client disconnected")
 
-    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute an MCP tool with the given arguments.
+        Execute an MCP tool and return both LLM content and frontend data.
         
-        Args:
-            tool_name: Name of the tool to execute
-            arguments: Arguments for the tool call
-            
+        FastMCP ToolResult provides two streams:
+        - content: Concise text for LLM conversation (~200-500 chars)
+        - data: Full structured data for frontend rendering
+        
         Returns:
-            Tool execution result - FastMCP automatically deserializes to Python objects
+            Dict with:
+            - content: Concise text for LLM (from result.content)
+            - structured_content: Full data for frontend (from result.data)
+            - error: Error message if tool failed
         """
         if not self._is_connected:
             raise RuntimeError("MCP client is not connected.")
@@ -144,37 +147,34 @@ class IntelligenceMCPClient:
         logger.info(f"Executing MCP tool: {tool_name} with args: {arguments}")
         
         try:
-            # The context token is passed via the auth provider during client initialization.
-            result = await self._connected_client.call_tool(
-                tool_name, 
-                arguments or {}
-            )
+            result = await self._connected_client.call_tool(tool_name, arguments or {})
             
-            # FastMCP automatically deserializes structured output to Python objects
-            # The .data property contains the fully hydrated objects
-            if hasattr(result, 'data') and result.data is not None:
-                logger.info(f"MCP tool {tool_name} executed successfully with structured output")
-                # Convert Pydantic models to dictionaries for JSON serialization
-                if hasattr(result.data, 'model_dump'):
-                    return result.data.model_dump()
-                else:
-                    return result.data
-            elif hasattr(result, 'content') and result.content:
-                # Fallback to content blocks if no structured data
-                logger.info(f"MCP tool {tool_name} executed successfully with content blocks")
-                # Serialize TextContent objects to dictionaries
-                serialized_content = []
+            # Extract concise text content for LLM (what model should see)
+            content_text = None
+            if hasattr(result, 'content') and result.content:
+                text_parts = []
                 for content_item in result.content:
-                    if hasattr(content_item, 'model_dump'):
-                        serialized_content.append(content_item.model_dump())
-                    elif hasattr(content_item, '__dict__'):
-                        serialized_content.append(content_item.__dict__)
-                    else:
-                        serialized_content.append(str(content_item))
-                return {"content": serialized_content}
-            else:
-                logger.warning(f"MCP tool {tool_name} returned empty result")
-                return None
+                    if hasattr(content_item, 'text'):
+                        text_parts.append(content_item.text)
+                    elif hasattr(content_item, 'model_dump'):
+                        dumped = content_item.model_dump()
+                        if 'text' in dumped:
+                            text_parts.append(dumped['text'])
+                content_text = "\n".join(text_parts) if text_parts else None
+            
+            # Extract structured data for frontend (what user should see in UI)
+            structured_data = None
+            if hasattr(result, 'data') and result.data is not None:
+                if hasattr(result.data, 'model_dump'):
+                    structured_data = result.data.model_dump()
+                else:
+                    structured_data = result.data
+            
+            # Return both streams - never discard either!
+            return {
+                "content": content_text,
+                "structured_content": structured_data,
+            }
             
         except Exception as e:
             logger.error(f"MCP tool execution failed: {tool_name} - {e}", exc_info=True)

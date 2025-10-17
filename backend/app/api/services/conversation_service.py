@@ -611,60 +611,42 @@ class IntelligenceConversationService:
         now = datetime.now(timezone.utc)
         current_datetime = now.strftime("%A, %B %d, %Y at %H:%M UTC")
         
+        # Escape curly braces in user-provided content to prevent f-string parsing errors
+        safe_name = (infospace.name or "").replace("{", "{{").replace("}", "}}")
+        safe_description = (infospace.description or "A research workspace for analyzing documents and data.").replace("{", "{{").replace("}", "}}")
+        
+        # Build workspace context with proper f-string formatting
         context = f"""<workspace>
-You're working in "{infospace.name}".
-{infospace.description or "A research workspace for analyzing documents and data."}
-
-Current date and time: {current_datetime}
+"{safe_name}" - {safe_description}
+Current: {current_datetime}
 </workspace>
 
-<capabilities>
-This workspace lets you discover, organize, and analyze documents:
-- Search and navigate through document collections (assets and bundles)
-- Find information using keyword or semantic search
-- Gather new content from the web when needed
-- Create organized collections for specific research topics
-</capabilities>
-
-<tool_results_display>
-After executing a tool, reference its results using this marker:
-<tool_results tool="tool_name" />
-
-The system will automatically display rich, interactive results at that location.
-
-Example: "I found 6 bundles <tool_results tool="navigate" />. Loading Climate Research now <tool_results tool="navigate" />."
-</tool_results_display>
-
-<workflow_patterns>
-Navigation (start lean, go deeper as needed):
-• List resources: navigate(resource="bundles", depth="titles")
-• Search for content: navigate(resource="assets", mode="search", query="climate policy")
-• Load specific items: navigate(resource="bundles", mode="load", ids=[4], depth="previews")
-• Read full content: navigate(resource="assets", mode="load", ids=[123], depth="full")
-
-Organization (chain operations efficiently):
-• Create and populate: Search → Create bundle → Add assets in one turn
-• Find and gather: navigate(mode="search") → organize(operation="create")
-
-Web research (two-step process):
-• Step 1: search_web(query="...") → Review results
-• Step 2: ingest_urls(urls=[...]) → Save selected items as permanent assets
-</workflow_patterns>
-
 <instructions>
-1. Start by navigating to understand what's available before making assumptions
-2. Use depth="titles" first, only request depth="full" when you need to read complete content
-3. Chain multiple operations in a single response when they logically follow
-4. Keep your responses concise—the UI displays full details interactively
-5. Think step-by-step about what information you need to answer thoroughly
-</instructions>
+Tool results display: After executing a tool, reference with <tool_results tool="name" />
+The UI will render rich interactive results at that marker.
 
-<response_format>
-- Use <tool_results tool="name" /> markers to reference tool outputs
-- Present findings clearly with evidence from the documents
-- Suggest logical next steps when relevant
-- Be direct and analytical in your language
-</response_format>"""
+Common operations
+1. Start: navigate() shows workspace tree (bundles + assets)
+2. Explore: navigate(mode="view", node_id="X") peeks inside
+3. Search: navigate(mode="search", query="...") or semantic_search()
+4. Organize: organize(operation="create", name="...", asset_ids=[...])
+5. Web: search_web() → ingest_urls() (two-step: search, then save selections)
+
+Key principles:
+• Always use depth="previews" for browsing (efficient ~125 tokens/asset)
+• Only use depth="full" for small specific documents (can be 1k-100k+ tokens)
+• CSVs: navigate(mode="view") for preview, paginate with mode="list" for more
+• Track work: working_memory() avoids redundant fetches
+• Chain operations: Multiple tools in one response when logical
+
+Response style:
+• Direct and analytical
+• Use compact formats (tables over bullet lists)
+• Suggest next steps when relevant
+
+Tool execution: Execute tools directly without narrating your process or showing JSON arguments.
+Users see structured tool results automatically. Focus your response tokens on answering their question.
+</instructions>"""
         return context
     
     async def get_available_models(self, user_id: int, capability: Optional[str] = None) -> List[Dict[str, Any]]:

@@ -468,44 +468,54 @@ class ContentIngestionService:
     # ═══════════════════════════════════════════════════════════════
     
     async def search_assets_text(
-        self, 
-        query: str, 
-        infospace_id: int, 
-        limit: int, 
+        self,
+        query: str,
+        infospace_id: int,
+        limit: int,
         options: Dict[str, Any]
     ) -> List[Asset]:
         """
         Text-based search in existing assets.
-        
+
         Used by: ConversationService MCP search_assets tool
         """
         asset_kinds = options.get('asset_kinds', [])
-        
+        parent_asset_id = options.get('parent_asset_id')
+        bundle_id = options.get('bundle_id')
+
         query_conditions = [Asset.infospace_id == infospace_id]
-        
+
         if query:
             search_condition = or_(
                 Asset.title.ilike(f"%{query}%"),
                 Asset.text_content.ilike(f"%{query}%")
             )
             query_conditions.append(search_condition)
-        
+
         if asset_kinds:
             kind_conditions = [
-                Asset.kind == AssetKind(kind) 
-                for kind in asset_kinds 
+                Asset.kind == AssetKind(kind)
+                for kind in asset_kinds
                 if kind in AssetKind.__members__
             ]
             if kind_conditions:
                 query_conditions.append(or_(*kind_conditions))
-        
+
+        if parent_asset_id:
+            # Filter by parent_asset_id (for searching within specific parent assets like CSV rows)
+            query_conditions.append(Asset.parent_asset_id == parent_asset_id)
+
+        if bundle_id:
+            # Filter by bundle_id (for searching within specific bundles)
+            query_conditions.append(Asset.bundle_id == bundle_id)
+
         assets = self.session.exec(
             select(Asset)
             .where(and_(*query_conditions))
             .order_by(Asset.created_at.desc())
             .limit(limit)
         ).all()
-        
+
         return list(assets)
     
     async def search_assets_semantic(
@@ -518,30 +528,34 @@ class ContentIngestionService:
         """
         Semantic search using embeddings.
         
-        Used by: ConversationService MCP search_assets tool
+        Used by: AssetService search_assets method for semantic/hybrid search
         """
         try:
-            from app.api.services.embedding_service import EmbeddingService
-            from app.api.providers.factory import create_embedding_provider
+            from app.api.services.vector_search_service import VectorSearchService
             
-            embedding_provider = create_embedding_provider(settings)
-            embedding_service = EmbeddingService(self.session, embedding_provider)
+            # Extract runtime API keys from options (passed from MCP server via AssetService)
+            runtime_api_keys = options.get('runtime_api_keys')
             
-            search_results = await embedding_service.search_similar_chunks(
+            # Use VectorSearchService for semantic search
+            search_service = VectorSearchService(self.session, runtime_api_keys=runtime_api_keys)
+            search_results = await search_service.semantic_search(
                 query_text=query,
                 infospace_id=infospace_id,
                 limit=limit,
+                asset_kinds=options.get('asset_kinds'),
                 distance_threshold=options.get('distance_threshold', 0.8)
             )
             
-            # Get unique assets from chunks
-            asset_ids = list(set(result["asset_id"] for result in search_results))
+            # Get unique assets from search results
+            asset_ids = list(set(result.asset_id for result in search_results))
+            
+            if not asset_ids:
+                return []
             
             assets = self.session.exec(
                 select(Asset)
                 .where(Asset.id.in_(asset_ids))
                 .where(Asset.infospace_id == infospace_id)
-                .limit(limit)
             ).all()
             
             return list(assets)

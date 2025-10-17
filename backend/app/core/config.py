@@ -41,7 +41,7 @@ class AppSettings(BaseSettings):
     OPOL_DEV_MODE: bool = os.environ.get("OPOL_DEV_MODE", "False") == "True"
     OPOL_MODE: str = os.environ.get("OPOL_MODE", "container")
     OPOL_API_KEY: str | None = os.environ.get("OPOL_API_KEY")
-    PELIAS_PLACEHOLDER_PORT: int = os.environ.get("PELIAS_PLACEHOLDER_PORT", 8721)
+    NOMINATIM_PORT: int = os.environ.get("NOMINATIM_PORT", 8721)
     
     if OPOL_DEV_MODE:
         os.environ["PYTHONPATH"] = "/app/opol:/app"
@@ -150,7 +150,7 @@ class AppSettings(BaseSettings):
     # === Provider Configurations ===
 
     # --- GeoCoding Provider ---
-    GEOCODING_PROVIDER_TYPE: Literal["pelias", "mapbox"] = Field(default="pelias", env="GEOCODING_PROVIDER_TYPE")
+    GEOCODING_PROVIDER_TYPE: Literal["nominatim", "mapbox"] = Field(default="nominatim", env="GEOCODING_PROVIDER_TYPE")
 
     # --- Storage Provider ---
     STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")

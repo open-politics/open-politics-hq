@@ -1239,6 +1239,11 @@ class ChatMessage(SQLModel):
     """Individual message in a conversation."""
     role: str  # "system", "user", "assistant"
     content: str
+    
+    @property
+    def has_content(self) -> bool:
+        """Check if message has non-empty content."""
+        return bool(self.content and self.content.strip())
 
 class ChatRequest(SQLModel):
     """Request for intelligence analysis chat."""
@@ -1252,6 +1257,10 @@ class ChatRequest(SQLModel):
     api_keys: Optional[Dict[str, str]] = None  # Runtime API keys for providers (e.g., {"tavily": "key", "openai": "key"})
     conversation_id: Optional[int] = None  # Optional: Save messages to this conversation
     auto_save: bool = False  # Optional: Automatically save messages to conversation history
+    # UI-specific fields for preserving display state
+    display_content: Optional[str] = None  # Original user input without XML formatting
+    context_assets: Optional[List[Dict[str, Any]]] = None  # Assets attached as context
+    context_depth: Optional[str] = None  # Context depth level: 'titles', 'previews', 'full'
 
 class ChatResponse(SQLModel):
     """Response from intelligence analysis chat."""
@@ -1469,6 +1478,12 @@ class TreeNode(SQLModel):
     
     # Stub flag for assets
     stub: Optional[bool] = None
+    
+    # Source metadata (for CSV rows and other special types)
+    source_metadata: Optional[Dict[str, Any]] = None
+    
+    # Rich preview data (CSV structure, bundle summary, etc.)
+    preview: Optional[Dict[str, Any]] = None
 
 class TreeResponse(SQLModel):
     """Response containing tree structure."""

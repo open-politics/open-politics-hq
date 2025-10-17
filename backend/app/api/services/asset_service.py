@@ -197,10 +197,13 @@ class AssetService:
         asset_kinds: List[AssetKind],
         limit: int,
         distance_threshold: float,
+        runtime_api_keys: Optional[Dict[str, str]] = None,
+        parent_asset_id: Optional[int] = None,
+        bundle_id: Optional[int] = None,
     ) -> List[Asset]:
         """
         Unified asset search with text, semantic, and hybrid methods.
-        
+
         Args:
             user_id: ID of the user performing the search
             infospace_id: ID of the infospace to search within
@@ -209,7 +212,10 @@ class AssetService:
             asset_kinds: List of AssetKind enums to filter by
             limit: Maximum number of results to return
             distance_threshold: Similarity threshold for semantic search
-        
+            runtime_api_keys: Optional runtime API keys for cloud providers (e.g., OpenAI for embeddings)
+            parent_asset_id: Optional parent asset ID to filter by (for searching within specific parent assets)
+            bundle_id: Optional bundle ID to filter by (for searching within specific bundles)
+
         Returns:
             A list of Asset objects matching the search criteria.
         """
@@ -219,7 +225,10 @@ class AssetService:
         
         options = {
             "asset_kinds": [kind.value for kind in asset_kinds],
-            "distance_threshold": distance_threshold
+            "distance_threshold": distance_threshold,
+            "runtime_api_keys": runtime_api_keys,
+            "parent_asset_id": parent_asset_id,
+            "bundle_id": bundle_id
         }
         
         if search_method == "text":

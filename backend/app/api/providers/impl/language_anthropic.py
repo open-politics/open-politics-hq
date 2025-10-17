@@ -108,8 +108,14 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
         non_system_messages = []
         
         for msg in messages:
+            # Skip messages with empty content (Anthropic requirement)
+            content = msg.get("content", "")
+            if isinstance(content, str) and not content.strip():
+                logger.warning(f"Skipping message with empty content: role={msg.get('role')}")
+                continue
+            
             if msg.get("role") == "system":
-                system_messages.append(msg.get("content", ""))
+                system_messages.append(content)
             else:
                 non_system_messages.append(msg)
         
@@ -163,6 +169,40 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                 return self._stream_generate(base_params)
             else:
                 return await self._generate(base_params)
+    
+    def _extract_tool_result_streams(self, tool_result: Any, tool_name: str) -> tuple[str, Any]:
+        """
+        Extract separate LLM and frontend streams from tool result.
+        
+        Returns:
+            Tuple of (llm_content, frontend_data) where:
+            - llm_content: Concise text for model conversation (~200-500 chars)
+            - frontend_data: Full structured data for UI rendering
+        """
+        # Ensure serializable
+        if hasattr(tool_result, 'model_dump'):
+            tool_result = tool_result.model_dump()
+        elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
+            tool_result = str(tool_result)
+        
+        # Check for error
+        is_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
+        
+        if isinstance(tool_result, dict) and not is_error:
+            # Extract concise content for LLM
+            llm_content = tool_result.get("content")
+            if not llm_content:
+                # No content provided - error case, don't send full structured data
+                llm_content = f"[Tool {tool_name} executed - no summary available]"
+            
+            # Extract full data for frontend
+            frontend_data = tool_result.get("structured_content", tool_result)
+        else:
+            # Error or simple response - send as-is to both
+            llm_content = json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result
+            frontend_data = tool_result
+        
+        return llm_content, frontend_data
     
     async def _stream_tool_loop_wrapper(self, request_params: Dict, tool_executor: Callable) -> AsyncIterator[GenerationResponse]:
         """
@@ -331,11 +371,14 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         "input": tool_use["input"]
                     })
                 
-                # Add assistant message to conversation
-                conversation_messages.append({
-                    "role": "assistant",
-                    "content": assistant_content
-                })
+                # Add assistant message to conversation (only if content is non-empty)
+                if assistant_content:
+                    conversation_messages.append({
+                        "role": "assistant",
+                        "content": assistant_content
+                    })
+                else:
+                    logger.warning("Skipping assistant message with empty content array")
                 
                 # Execute tool calls and collect results
                 logger.info(f"Executing {len(accumulated_tool_uses)} tool calls in iteration {iteration}")
@@ -384,19 +427,16 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         logger.info(f"Executing tool: {name} with args: {args}")
                         tool_result = await tool_executor(name, args)
                         
-                        # Ensure tool_result is serializable
-                        if hasattr(tool_result, 'model_dump'):
-                            tool_result = tool_result.model_dump()
-                        elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
-                            tool_result = str(tool_result)
+                        # Extract separate streams for LLM and frontend
+                        llm_content, frontend_data = self._extract_tool_result_streams(tool_result, name)
                         
                         # Check if tool execution failed
                         has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
                         
-                        # Update execution status
+                        # Update execution status with FULL data for frontend
                         all_tool_executions[-1].update({
-                            "result": tool_result if not has_error else None,
-                            "error": tool_result.get("error") if has_error else None,
+                            "result": frontend_data if not has_error else None,
+                            "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                             "status": "failed" if has_error else "completed",
                         })
                         
@@ -409,11 +449,11 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                             tool_executions=all_tool_executions,
                         )
                         
-                        # Add tool result in Anthropic format
+                        # Add ONLY concise content to LLM conversation
                         tool_result_block = {
                             "type": "tool_result",
                             "tool_use_id": tool_use["id"],
-                            "content": json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result,
+                            "content": llm_content,
                         }
                         # Only add is_error if True (it's optional)
                         if has_error:
@@ -421,9 +461,10 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         tool_results_content.append(tool_result_block)
                         
                         if has_error:
-                            logger.warning(f"Tool {name} returned error: {tool_result.get('error')}")
+                            logger.warning(f"Tool {name} returned error: {tool_result.get('error') if isinstance(tool_result, dict) else tool_result}")
                         else:
-                            logger.info(f"Tool {name} executed successfully")
+                            llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
+                            logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
                         
                     except Exception as e:
                         logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
@@ -569,11 +610,14 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             for tool_use in tool_uses:
                 assistant_content.append(tool_use)
             
-            # Add assistant message to conversation
-            conversation_messages.append({
-                "role": "assistant",
-                "content": assistant_content
-            })
+            # Add assistant message to conversation (only if content is non-empty)
+            if assistant_content:
+                conversation_messages.append({
+                    "role": "assistant",
+                    "content": assistant_content
+                })
+            else:
+                logger.warning("Skipping assistant message with empty content array")
             
             # Execute tool calls and collect results
             logger.info(f"Executing {len(tool_uses)} tool calls in iteration {iteration}")
@@ -602,33 +646,30 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                     logger.info(f"Executing tool: {name} with args: {args}")
                     tool_result = await tool_executor(name, args)
                     
-                    # Ensure tool_result is JSON serializable
-                    if hasattr(tool_result, 'model_dump'):
-                        tool_result = tool_result.model_dump()
-                    elif not isinstance(tool_result, (dict, list, str, int, float, bool, type(None))):
-                        tool_result = str(tool_result)
+                    # Extract separate streams for LLM and frontend
+                    llm_content, frontend_data = self._extract_tool_result_streams(tool_result, name)
                     
                     # Check if tool execution failed
                     has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
                     
-                    # Record execution for frontend display
+                    # Record execution with FULL data for frontend
                     all_tool_executions.append({
                         "id": tool_use["id"],
                         "tool_name": name,
                         "arguments": args,
-                        "result": tool_result if not has_error else None,
-                        "error": tool_result.get("error") if has_error else None,
+                        "result": frontend_data if not has_error else None,
+                        "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
                         "iteration": iteration,
                         "thinking_before": thinking_before,
                         "thinking_after": thinking_after,
                     })
                     
-                    # Add tool result in Anthropic format
+                    # Add ONLY concise content to LLM conversation
                     tool_result_block = {
                         "type": "tool_result",
                         "tool_use_id": tool_use["id"],
-                        "content": json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result,
+                        "content": llm_content,
                     }
                     # Only add is_error if True (it's optional)
                     if has_error:
@@ -636,9 +677,10 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                     tool_results_content.append(tool_result_block)
                     
                     if has_error:
-                        logger.warning(f"Tool {name} returned error: {tool_result.get('error')}")
+                        logger.warning(f"Tool {name} returned error: {tool_result.get('error') if isinstance(tool_result, dict) else tool_result}")
                     else:
-                        logger.info(f"Tool {name} executed successfully")
+                        llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
+                        logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
                     
                 except Exception as e:
                     logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
