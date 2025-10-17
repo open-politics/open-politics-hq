@@ -32,11 +32,10 @@ image:
     tag: "latest"
     pullPolicy: IfNotPresent
     nodes: 1
-  peliasPlaceholder:
-    image: pelias/placeholder
-    tag: "latest"
+  nominatim:
+    image: mediagis/nominatim
+    tag: "5.1"
     pullPolicy: IfNotPresent
-    nodes: 1
 
 # Image pull secrets (if using private registry)
 # imagePullSecrets:
@@ -231,15 +230,30 @@ resources:
       memory: 512Mi
 
 
-peliasPlaceholder:
+nominatim:
+  # Default: World coarse (admin boundaries - countries, states, cities, districts)
+  pbfUrl: "https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf"
+  replicationUrl: "https://planet.openstreetmap.org/replication/day/"
+  importStyle: "admin"
+  # Other common configs:
+  #   Europe detailed:   pbfUrl: https://download.geofabrik.de/europe-latest.osm.pbf importStyle: address
+  #   North America:     pbfUrl: https://download.geofabrik.de/north-america-latest.osm.pbf importStyle: address
+  #   Full detail:       importStyle: full
   service:
     type: ClusterIP
     port: 8721
+  # Persistent storage for PostgreSQL data and flatnode
   persistence:
-    enabled: true
-    storageClass: "local-path"
-    size: 10Gi
-    accessMode: ReadWriteOnce
+    data:
+      enabled: true
+      storageClass: "local-path"
+      size: 50Gi
+      accessMode: ReadWriteOnce
+    flatnode:
+      enabled: true
+      storageClass: "local-path"
+      size: 20Gi
+      accessMode: ReadWriteOnce
 
 # Node affinity (optional - spread across nodes)
 nodeAffinity:

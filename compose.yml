@@ -127,38 +127,52 @@ services:
       - ./backend:/app
 
   
-  engine-pelias-placeholder:
-    image: pelias/placeholder
+  nominatim:
+    image: mediagis/nominatim:5.1
     restart: always
-    command: >
-      sh -c '
-        if [ ! -s /data/placeholder/store.sqlite3 ]; then
-          echo "Placeholder data not found or empty. Downloading..."
-          rm -f /data/placeholder/store.sqlite3
-          mkdir -p /data/placeholder
-          wget -O /data/placeholder/store.sqlite3.gz https://data.geocode.earth/placeholder/store.sqlite3.gz
-          gunzip /data/placeholder/store.sqlite3.gz
-        else
-          echo "Placeholder data found."
-        fi
-        ls -l /data/placeholder
-        ./cmd/server.sh
-      '
-    environment:
-      - PORT=${PELIAS_PLACEHOLDER_PORT}
-      - WORKERS=4
+    shm_size: 4g
     ports:
-      - "${PELIAS_PLACEHOLDER_PORT}:${PELIAS_PLACEHOLDER_PORT}"
+      - "8721:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 2h
+    environment:
+      # Default: World coarse (admin boundaries only - countries, states, cities)
+      # Fast download (~5GB) and import (~2h), good for global coverage
+      - PBF_URL=${NOMINATIM_PBF_URL:-https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf}
+      - REPLICATION_URL=${NOMINATIM_REPLICATION_URL:-https://planet.openstreetmap.org/replication/day/}
+      - IMPORT_STYLE=${NOMINATIM_IMPORT_STYLE:-admin}
+      - UPDATE_MODE=none
+      - FREEZE=false
+      - THREADS=4
+      - GUNICORN_WORKERS=4
+      - IMPORT_WIKIPEDIA=false
+      - IMPORT_GB_POSTCODES=true
+      - POSTGRES_SHARED_BUFFERS=2GB
+      - POSTGRES_MAINTENANCE_WORK_MEM=4GB
+      - POSTGRES_WORK_MEM=50MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=8GB
     volumes:
-      - .store/data/placeholder:/data/placeholder
+      - nominatim-data:/var/lib/postgresql/16/main
+      - nominatim-flatnode:/nominatim/flatnode
     networks:
       - default
     env_file:
       - .env
+    # Override in .env for detailed regions:
+    # Europe detailed:     NOMINATIM_PBF_URL=https://download.geofabrik.de/europe-latest.osm.pbf NOMINATIM_IMPORT_STYLE=address
+    # North America:       NOMINATIM_PBF_URL=https://download.geofabrik.de/north-america-latest.osm.pbf NOMINATIM_IMPORT_STYLE=address
+    # Full POIs:           NOMINATIM_IMPORT_STYLE=full
+    # Admin: ~5GB download, ~2h import | Address: ~28GB Europe, ~3h import | Full: ~60GB Europe, ~8h import
 
 volumes:
   app-db-data:
   redis_data:
+  nominatim-data:
+  nominatim-flatnode:
 
 networks:
   default:
