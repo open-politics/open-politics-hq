@@ -980,7 +980,7 @@ export function AnnotationResultsTable({
           
           return (
             <div className={cn(
-              "relative h-full min-w-0 p-2",
+              "relative h-full min-w-0 max-w-full overflow-hidden p-2",
               isFailed && "border-l-2 border-destructive pl-1",
               fieldIndex === 0 && schemaIndex > 0 && "border-l-2 border-primary/20"
             )}>
@@ -989,7 +989,7 @@ export function AnnotationResultsTable({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <AlertCircle 
-                        className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help" 
+                        className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help z-10" 
                         onClick={(e) => e.stopPropagation()}
                       />
                     </TooltipTrigger>
@@ -1002,23 +1002,25 @@ export function AnnotationResultsTable({
                 </TooltipProvider>
               )}
               
-              <AnnotationResultDisplay
-                result={resultForThisCell}
-                schema={schema}
-                compact={true}
-                targetFieldKey={field.key}
-                renderContext="table"
-                onResultSelect={onResultSelect}
-                forceExpanded={false}
-                onTimestampClick={onTimestampClick}
-                onLocationClick={onLocationClick}
-              />
+              <div className="min-w-0 max-w-full">
+                <AnnotationResultDisplay
+                  result={resultForThisCell}
+                  schema={schema}
+                  compact={true}
+                  targetFieldKey={field.key}
+                  renderContext="table"
+                  onResultSelect={onResultSelect}
+                  forceExpanded={false}
+                  onTimestampClick={onTimestampClick}
+                  onLocationClick={onLocationClick}
+                />
+              </div>
             </div>
           );
         },
-        maxSize: 250,
-        minSize: 100,
-        size: 150,
+        maxSize: 300,
+        minSize: 120,
+        size: 180,
         enableResizing: true,
         enableHiding: true,
       }));
@@ -1106,13 +1108,13 @@ export function AnnotationResultsTable({
         const isFailed = resultForThisCell.status === 'failure';
 
         return (
-          <div className={cn("relative h-full min-w-0", isFailed && "border-l-2 border-destructive pl-1")}>
+          <div className={cn("relative h-full min-w-0 max-w-full overflow-hidden", isFailed && "border-l-2 border-destructive pl-1")}>
             {isFailed && (
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <AlertCircle 
-                      className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help" 
+                      className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help z-10" 
                       onClick={(e) => e.stopPropagation()}
                     />
                   </TooltipTrigger>
@@ -1124,25 +1126,27 @@ export function AnnotationResultsTable({
                 </Tooltip>
               </TooltipProvider>
             )}
-            <AnnotationResultDisplay
-              result={resultForThisCell}
-              schema={schema}
-              compact={false}
-              selectedFieldKeys={fieldKeysToShow}
-              maxFieldsToShow={undefined}
-              renderContext="table"
-              onResultSelect={onResultSelect}
-              forceExpanded={expandAllAnnotations}
-              onTimestampClick={onTimestampClick}
-              onLocationClick={onLocationClick}
-            />
+            <div className="min-w-0 max-w-full">
+              <AnnotationResultDisplay
+                result={resultForThisCell}
+                schema={schema}
+                compact={false}
+                selectedFieldKeys={fieldKeysToShow}
+                maxFieldsToShow={undefined}
+                renderContext="table"
+                onResultSelect={onResultSelect}
+                forceExpanded={expandAllAnnotations}
+                onTimestampClick={onTimestampClick}
+                onLocationClick={onLocationClick}
+              />
+            </div>
           </div>
         );
       },
-      // Make schema columns flexible based on content
-      maxSize: 300,
-      minSize: 120,
-      size: 200,
+      // Make schema columns flexible based on content - increased for arrays
+      maxSize: 400,
+      minSize: 150,
+      size: 250,
       enableResizing: true,
       enableHiding: true,
     })) : [];
@@ -1529,7 +1533,7 @@ export function AnnotationResultsTable({
                       <TableCell 
                         key={cell.id} 
                         className={cn(
-                          "h-full align-top min-w-0",
+                          "h-full align-top min-w-0 max-w-full",
                           // Minimal padding for schema result cells, slightly more for asset cell
                           cell.column.id === 'asset' ? 'p-1.5' : 'px-2 py-1'
                         )}

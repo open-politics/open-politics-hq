@@ -320,7 +320,79 @@ function SingleAnnotationResult({
   
   const isFailed = result.status === "failure";
 
-  const formatFieldValue = (rawValueObject: any, field: SchemaField, highlightValue: string | null, context: string = 'default'): React.ReactNode => {
+  // Enhanced version for unfolded columns that passes justification to formatFieldValue
+  const formatFieldValueWithTypeIndicator = (rawValueObject: any, field: SchemaField, highlightValue: string | null, context: string = 'default', showTypeIndicator: boolean = false, justificationValue?: any): React.ReactNode => {
+    // Pass justification info to formatFieldValue so it can integrate tooltips directly into badges/values
+    return formatFieldValue(rawValueObject, field, highlightValue, context, justificationValue, showTypeIndicator);
+  };
+
+  // Helper function to wrap any value with tooltip if justification exists
+  const wrapWithTooltipIfNeeded = (content: React.ReactNode, field: SchemaField, justificationValue?: any, showIntegratedTooltip: boolean = false): React.ReactNode => {
+    if (!showIntegratedTooltip || !justificationValue) {
+      return content;
+    }
+
+    return (
+      <TooltipProvider delayDuration={100}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div 
+              className="cursor-help inline-flex items-center gap-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onFieldInteraction) {
+                  onFieldInteraction(field.name, justificationValue);
+                  return;
+                }
+                if (onResultSelect) {
+                  const resultWithContext = {
+                    ...result,
+                    _selectedField: field.name
+                  };
+                  onResultSelect(resultWithContext as FormattedAnnotation);
+                }
+              }}
+            >
+              {content}
+              {/* Clear justification indicator */}
+              <HelpCircle className="h-3 w-3 text-blue-500 opacity-70 hover:opacity-100 transition-opacity flex-shrink-0" />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center" className="max-w-sm z-[1001]">
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold">Justification:</p>
+              </div>
+              {(() => {
+                if (typeof justificationValue === 'object' && justificationValue !== null) {
+                  return (
+                    <div className="space-y-1">
+                      {justificationValue.reasoning && (
+                        <p className="text-xs">{justificationValue.reasoning}</p>
+                      )}
+                      {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium">Evidence:</p>
+                          {justificationValue.text_spans.map((span: any, i: number) => (
+                            <div key={i} className="text-xs bg-muted/50 p-1 rounded border-l-2 border-primary/30">
+                              "{span.text_snippet}"
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                return <p className="text-xs">{String(justificationValue)}</p>;
+              })()}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
+  const formatFieldValue = (rawValueObject: any, field: SchemaField, highlightValue: string | null, context: string = 'default', justificationValue?: any, showIntegratedTooltip: boolean = false): React.ReactNode => {
       // Use hierarchical field access with the full path (e.g., "document.topics")
       const valueForField = getAnnotationFieldValue(rawValueObject, field.name);
 
@@ -337,7 +409,7 @@ function SingleAnnotationResult({
         const timestamp = parseTimestampValue(valueForField);
         if (timestamp) {
           return (
-            <div className="inline-flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 max-w-full min-w-0">
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -347,11 +419,10 @@ function SingleAnnotationResult({
                         onTimestampClick(timestamp, field.name);
                       }}
                       className={cn(
-                        "cursor-pointer inline-flex items-center justify-center transition-all",
+                        "cursor-pointer flex items-center justify-center transition-all flex-shrink-0",
                         "bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:hover:bg-blue-900",
                         "border border-blue-200 dark:border-blue-800 rounded-md p-1",
                         "hover:border-blue-400 dark:hover:border-blue-600",
-                        "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1",
                         "group"
                       )}
                     >
@@ -366,7 +437,7 @@ function SingleAnnotationResult({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
-              <span className="text-xs tabular-nums">{String(valueForField)}</span>
+              <span className="text-xs tabular-nums min-w-0 truncate">{String(valueForField)}</span>
             </div>
           );
         }
@@ -378,7 +449,7 @@ function SingleAnnotationResult({
         
         if (Array.isArray(valueForField) && locations.length > 0) {
           return (
-            <div className="flex flex-wrap gap-1.5 items-center">
+            <div className="flex flex-wrap gap-2 items-center">
               {locations.map((location, i) => (
                 <div key={i} className="inline-flex items-center gap-1.5">
                   <TooltipProvider delayDuration={100}>
@@ -395,7 +466,6 @@ function SingleAnnotationResult({
                             "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950 dark:hover:bg-emerald-900",
                             "border border-emerald-200 dark:border-emerald-800 rounded-md p-1",
                             "hover:border-emerald-400 dark:hover:border-emerald-600",
-                            "focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1",
                             "group",
                             highlightValue === location && "ring-2 ring-offset-2 ring-emerald-500 ring-offset-background"
                           )}
@@ -441,7 +511,6 @@ function SingleAnnotationResult({
                         "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950 dark:hover:bg-emerald-900",
                         "border border-emerald-200 dark:border-emerald-800 rounded-md p-1",
                         "hover:border-emerald-400 dark:hover:border-emerald-600",
-                        "focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1",
                         "group"
                       )}
                     >
@@ -465,40 +534,148 @@ function SingleAnnotationResult({
       // Determine if we're in table context for compact rendering
       const isTableContext = context === 'table';
       
-      // Clean, consistent value rendering - lighter weight, smaller text
+      // Clean, consistent value rendering - lighter weight, smaller text with proper overflow handling
       switch ((field as any).type) {
           case "integer":
           case "number":
-              return <span className="text-xs tabular-nums">{String(valueForField)}</span>; 
+              const badge = (
+                <Badge 
+                  variant="secondary" 
+                  className={cn(
+                    "text-xs tabular-nums font-medium px-2 py-0.5",
+                    "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300",
+                    "border-blue-200 dark:border-blue-800",
+                    "hover:bg-blue-100 dark:hover:bg-blue-900/50",
+                    highlightValue === String(valueForField) && "ring-2 ring-offset-2 ring-blue-500 ring-offset-background"
+                  )}
+                >
+                  {String(valueForField)}
+                </Badge>
+              );
+              return wrapWithTooltipIfNeeded(badge, field, justificationValue, showIntegratedTooltip); 
           case "string":
           case "boolean":
-              return <span className="text-xs">{String(valueForField)}</span>;
+              const stringValue = String(valueForField);
+              
+              let stringContent: React.ReactNode;
+              // In table context, break longer strings to new line like arrays for better layout
+              if (isTableContext && stringValue.length > 50) {
+                stringContent = (
+                  <div className="w-full">
+                    <div className="text-xs leading-tight break-words max-w-full">
+                      {stringValue}
+                    </div>
+                  </div>
+                );
+              } else {
+                // For shorter strings or non-table context, use inline wrapping
+                stringContent = (
+                  <div className="text-xs leading-tight max-w-full min-w-0">
+                    <span className="break-words">{stringValue}</span>
+                  </div>
+                );
+              }
+              return wrapWithTooltipIfNeeded(stringContent, field, justificationValue, showIntegratedTooltip);
           case "array":
               if (Array.isArray(valueForField)) {
                   if (valueForField.length === 0) return <span className="text-muted-foreground italic text-xs">empty</span>;
-                  return (
-                      <div className="flex flex-wrap gap-1 items-center">
-                          {valueForField.map((item, i) => (
+                  
+                  let arrayContent: React.ReactNode;
+                  // In table context, break arrays to new line like long strings
+                  if (isTableContext) {
+                    arrayContent = (
+                      <div className="w-full">
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {valueForField.map((item, i) => {
+                            const itemText = typeof item === 'object' ? JSON.stringify(item) : String(item);
+                            return (
                               <Badge 
                                 key={i} 
                                 variant="outline" 
                                 className={cn(
-                                  "text-[10px] px-1.5 py-0 whitespace-nowrap font-normal border-border/40",
+                                  "text-[10px] px-1.5 py-0 font-normal border-border/40",
+                                  // In table context, allow badges to wrap naturally
+                                  "whitespace-nowrap",
                                   highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background"
                                 )}
+                                title={itemText.length > 30 ? itemText : undefined}
                               >
-                                  {typeof item === 'object' ? JSON.stringify(item) : String(item)}
+                                {itemText}
                               </Badge>
-                          ))}
+                            );
+                          })}
+                        </div>
                       </div>
-                  );
+                    );
+                  } else {
+                    // Non-table context: keep inline
+                    arrayContent = (
+                        <div className="flex flex-wrap gap-1 items-center max-w-full min-w-0">
+                            {valueForField.map((item, i) => {
+                              const itemText = typeof item === 'object' ? JSON.stringify(item) : String(item);
+                              return (
+                                <Badge 
+                                  key={i} 
+                                  variant="outline" 
+                                  className={cn(
+                                    "text-[10px] px-1.5 py-0 font-normal border-border/40 max-w-full",
+                                    // Handle long badge content
+                                    itemText.length > 50 ? "break-all" : "whitespace-nowrap",
+                                    highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background"
+                                  )}
+                                  title={itemText.length > 50 ? itemText : undefined}
+                                >
+                                  <span className={cn(
+                                    "truncate block",
+                                    itemText.length > 50 && "max-w-[200px]"
+                                  )}>
+                                    {itemText}
+                                  </span>
+                                </Badge>
+                              );
+                            })}
+                        </div>
+                    );
+                  }
+                  return wrapWithTooltipIfNeeded(arrayContent, field, justificationValue, showIntegratedTooltip);
               }
               return <span className="text-destructive italic text-xs">Expected Array, got: {typeof valueForField}</span>;
           default:
               if (typeof valueForField === 'object' && valueForField !== null) {
-                  return <pre className="text-[10px] overflow-auto bg-muted/30 p-1.5 rounded max-h-20 border border-border/30">{JSON.stringify(valueForField, null, 2)}</pre>;
+                  const jsonString = JSON.stringify(valueForField, null, 2);
+                  const objectContent = (
+                    <div className="max-w-full min-w-0">
+                      <pre className={cn(
+                        "text-[10px] bg-muted/30 p-1.5 rounded border border-border/30 max-w-full min-w-0",
+                        isTableContext ? "max-h-20 overflow-auto" : "max-h-32 overflow-auto",
+                        "whitespace-pre-wrap break-words"
+                      )}>
+                        {jsonString}
+                      </pre>
+                    </div>
+                  );
+                  return wrapWithTooltipIfNeeded(objectContent, field, justificationValue, showIntegratedTooltip);
               }
-              return <span className="text-xs">{String(valueForField)}</span>;
+              const defaultStringValue = String(valueForField);
+              
+              let defaultContent: React.ReactNode;
+              // In table context, break longer strings to new line like arrays
+              if (isTableContext && defaultStringValue.length > 50) {
+                defaultContent = (
+                  <div className="w-full">
+                    <div className="text-xs leading-tight break-words max-w-full">
+                      {defaultStringValue}
+                    </div>
+                  </div>
+                );
+              } else {
+                defaultContent = (
+                  <div className="text-xs leading-tight max-w-full min-w-0">
+                    <span className="break-words">{defaultStringValue}</span>
+                  </div>
+                );
+              }
+              return wrapWithTooltipIfNeeded(defaultContent, field, justificationValue, showIntegratedTooltip);
       }
   };
 
@@ -620,7 +797,7 @@ function SingleAnnotationResult({
           
           <div 
             className={cn(
-              'transition-all duration-200 ease-in-out min-w-0',
+              'transition-all duration-200 ease-in-out min-w-0 max-w-full overflow-hidden',
               renderContext === 'table' ? '' : (
                 // Apply height restriction only when NOT expanded in non-table contexts
                 !effectiveExpanded && isPotentiallyLong && (
@@ -633,14 +810,10 @@ function SingleAnnotationResult({
               effectiveExpanded && isPotentiallyLong && renderContext !== 'table' && 'max-h-[500px] overflow-y-auto'
             )}
           >
-            <div className={cn(renderContext === 'table' ? '' : 'space-y-0')}>
+            <div className={cn(renderContext === 'table' ? 'min-w-0 max-w-full' : 'space-y-0 min-w-0 max-w-full')}>
               {fieldsToDisplay.map((schemaField, idx) => {
-                  if (targetFieldKey) {
-                      if (schemaField.name !== targetFieldKey) return null;
-                  }
-                  else if (compact && idx > 0) {
-                      return null;
-                  }
+                  // Note: filtering is already handled in fieldsToDisplay useMemo
+                  // No need for additional filtering here
 
                   const justificationValue = (() => {
                     if (typeof result.value === 'object' && result.value !== null) {
@@ -681,21 +854,29 @@ function SingleAnnotationResult({
                   
                   return (
                       <div key={idx} className={cn(
-                        renderContext === 'table' ? 'mb-1' : 'space-y-1',
-                        renderContext !== 'table' && 'border-b border-dashed border-border/30 last:border-b-0',
-                        // Arrays get block layout in table context, single values use flex-wrap for proper wrapping
-                        renderContext === 'table' && isArrayField ? 'flex flex-col gap-0.5' : renderContext === 'table' ? 'flex flex-wrap items-start gap-x-1' : ''
+                        renderContext === 'table' ? 'mb-1 min-w-0 max-w-full' : 'space-y-1 min-w-0 max-w-full',
+                        renderContext !== 'table' && 'border-b border-dashed border-border/30 last:border-b-0'
                       )}>
-                          <div className={cn(
-                            renderContext === 'table' ? 'inline-flex items-center gap-0.5 flex-shrink-0' : ''
-                          )}>
+                          {/* Use flexible layout: allow values to wrap to new line for long content */}
+                          {/* In unfolded column mode (table + compact + targetFieldKey), skip field names - headers show them */}
+                          {renderContext === 'table' && compact && targetFieldKey ? (
+                            // Unfolded column: show value + justification icon if available
+                            <div className="min-w-0 max-w-full">
+                              {formatFieldValueWithTypeIndicator(result.value, schemaField, highlightValue, renderContext, true, justificationValue)}
+                            </div>
+                          ) : (
+                            // Regular mode: show field name + value
                             <div className={cn(
-                              "flex items-center gap-1",
-                              renderContext === 'table' ? 'text-xs text-muted-foreground whitespace-nowrap' : 'text-xs text-muted-foreground font-medium inline-flex mr-2'
+                              "min-w-0 max-w-full",
+                              renderContext === 'table' ? 'flex flex-wrap items-start gap-x-1 gap-y-0.5' : 'flex items-start gap-1'
                             )}>
-                              <span className={cn(renderContext === 'table' && 'leading-tight')}>
-                                {formatFieldNameForDisplay(schemaField.name)}:
-                              </span>
+                              <div className={cn(
+                                "flex items-center gap-1 flex-shrink-0",
+                                renderContext === 'table' ? 'text-xs text-muted-foreground' : 'text-xs text-muted-foreground font-medium'
+                              )}>
+                                <span className={cn(renderContext === 'table' && 'leading-tight', "whitespace-nowrap")}>
+                                  {formatFieldNameForDisplay(schemaField.name)}:
+                                </span>
                               {/* Show justification tooltip - in table context only for compact/column mode */}
                               {justificationValue && (renderContext !== 'table' || compact) && (
                                   <TooltipProvider delayDuration={100}>
@@ -776,23 +957,14 @@ function SingleAnnotationResult({
                                     </Tooltip>
                                   </TooltipProvider>
                               )}
-                            </div>
-                            {/* For non-array single values in table context, keep inline */}
-                            {renderContext === 'table' && !isArrayField && (
-                              <div className="leading-snug break-words min-w-0">
+                              </div>
+                              {/* Value container - flexible and can wrap to new line for long content */}
+                              <div className={cn(
+                                "leading-snug min-w-0 overflow-hidden",
+                                renderContext === 'table' ? 'flex-1' : 'flex-1'
+                              )}>
                                 {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
                               </div>
-                            )}
-                            {renderContext !== 'table' && (
-                              <div className="leading-snug inline-block text-xs">
-                                {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
-                              </div>
-                            )}
-                          </div>
-                          {/* For array fields in table context, display values on new line with indent */}
-                          {renderContext === 'table' && isArrayField && (
-                            <div className="pl-2 leading-snug">
-                              {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
                             </div>
                           )}
                       </div>
