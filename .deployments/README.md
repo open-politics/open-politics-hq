@@ -11,7 +11,7 @@ All options support the same flexibility: run everything locally, use managed se
 > [!IMPORTANT]
 > The Kubernetes deployment is not yet tested with our updated OSS geocoder (Nominatim).
 > Memory requirements for importing the large PostgreSQL database are substantial. Since we run on Hetzner rather than hyperscale providers, we're reviewing autoscaling strategies for these temporary workloads.
-> Until testing is complete, a proprietary geocoder remains available in our [providers](../backend/app/api/providers).
+> Until testing is complete, a proprietary will be available in our [providers](../backend/app/api/providers).
 
 ## Resources
 
