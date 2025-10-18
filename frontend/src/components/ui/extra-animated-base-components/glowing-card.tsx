@@ -85,7 +85,7 @@ const GlowingCard: React.FC<GlowingCardProps> = ({
   );
 
   const sharedMotionProps = {
-    className: "w-full h-full rounded-xl cursor-pointer relative overflow-hidden transition-all duration-300",
+    className: "w-full h-full rounded-md cursor-pointer relative overflow-hidden transition-all duration-300",
     style: { scale },
     onMouseMove: handleMouseMove,
     onMouseEnter: handleMouseEnter,

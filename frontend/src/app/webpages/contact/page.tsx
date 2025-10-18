@@ -51,7 +51,7 @@ const ContactPage: React.FC = () => {
             className=""
           >
             <div className="relative h-full">
-              <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden">
+              <div className="absolute inset-0 -z-10 rounded-md overflow-hidden">
                 <GradientFlow
                   duration={15}
                   colors={['var(--dot-color-1)', 'var(--dot-color-2)', 'var(--dot-color-3)']}
@@ -93,7 +93,7 @@ const ContactPage: React.FC = () => {
             className=""
           >
             <div className="relative h-full">
-              <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden">
+              <div className="absolute inset-0 -z-10 rounded-md overflow-hidden">
                 <GradientFlow
                   duration={15}
                   colors={['var(--dot-color-5)', 'var(--dot-color-4)', 'var(--dot-color-3)']}

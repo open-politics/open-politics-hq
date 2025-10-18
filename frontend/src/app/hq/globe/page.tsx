@@ -183,7 +183,7 @@ const GlobePage = () => {
                 transition={{ duration: 0.3 }}
               >
                 <motion.div
-                  className="rounded-xl w-full h-full shadow-lg"
+                  className="rounded-md w-full h-full shadow-lg"
                   initial={{ scale: 0.9 }}
                   animate={{ scale: 1 }}
                   exit={{ scale: 0.9 }}

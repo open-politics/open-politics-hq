@@ -14,8 +14,8 @@ const Footer = () => {
               Open Source Political Intelligence.
             </p>
             <div className="flex space-x-4 mt-4">
-              <a href="https://www.ngisearch.eu/view/Main/"><Image src="/logos/ngi-logo.svg" alt="NGI Logo" width={80} height={80} /></a>
-              <a href="https://europa.eu/"><Image src="/logos/eu-logo.png" alt="EU Logo" width={80} height={100} /></a>
+              <a href="https://www.ngisearch.eu/view/Main/"><Image src="/logos/ngi-logo.svg" alt="NGI Logo" width={60} height={60} /></a>
+              <a href="https://europa.eu/"><Image src="/logos/eu-logo.png" alt="EU Logo" width={60} height={75} /></a>
             </div>
             <p className="text-sm pt-2 text-gray-500">Supported by NGI Search</p>
           </div>

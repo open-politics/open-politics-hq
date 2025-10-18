@@ -307,7 +307,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
               </div>
               
               {mode !== 'watch' && (
-                <div className="bg-gradient-to-r from-primary/5 to-primary/10 border-2 border-primary/20 rounded-xl p-5 shadow-sm">
+                <div className="bg-gradient-to-r from-primary/5 to-primary/10 border-2 border-primary/20 rounded-md p-5 shadow-sm">
                     <div className="flex items-center gap-3 mb-4">
                         <div className="bg-primary/10 p-2 rounded-full">
                             <div className={cn("h-3 w-3 rounded-full transition-colors", 
@@ -657,7 +657,7 @@ const PropertyInspector: React.FC<{
 
     if (!node) {
         return (
-            <div className="flex flex-col items-center justify-center h-64 text-center p-6 border-2 border-dashed rounded-xl bg-muted/20">
+            <div className="flex flex-col items-center justify-center h-64 text-center p-6 border-2 border-dashed rounded-md bg-muted/20">
                 <div className="bg-primary/10 p-4 rounded-full mb-4">
                     <FileJson className="h-8 w-8 text-primary" />
                 </div>
@@ -714,7 +714,7 @@ const PropertyInspector: React.FC<{
         const sectionInfo = getSectionInfo();
 
         return (
-             <div className={cn("space-y-4 p-5 border-2 rounded-xl", sectionInfo.color)}>
+             <div className={cn("space-y-4 p-5 border-2 rounded-md", sectionInfo.color)}>
                 <div className="flex items-center gap-3">
                     {sectionInfo.icon}
                     <div>
@@ -749,7 +749,7 @@ const PropertyInspector: React.FC<{
         return (
             <div className="space-y-6">
                 {/* Field Header */}
-                <div className="bg-card/50 border-2 rounded-xl p-4">
+                <div className="bg-card/50 border-2 rounded-md p-4">
                     <div className="flex items-center gap-3 mb-3">
                         <div className="bg-primary/10 p-2 rounded-lg">
                             <FileJson className="h-5 w-5 text-primary" />

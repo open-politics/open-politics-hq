@@ -60,13 +60,13 @@ export const ExpoTest: React.FC = () => {
             et ea rebum.{" "}
           </div>
           <div className="flex gap-1 pr-20 mt-3 whitespace-nowrap">
-            <div className="justify-center px-3 py-1 rounded-xl bg-neutral-600 bg-opacity-80">
+            <div className="justify-center px-3 py-1 rounded-md bg-neutral-600 bg-opacity-80">
               so
             </div>
-            <div className="justify-center px-3 py-1 rounded-xl bg-neutral-600 bg-opacity-80">
+            <div className="justify-center px-3 py-1 rounded-md bg-neutral-600 bg-opacity-80">
               ein
             </div>
-            <div className="justify-center px-3 py-1 rounded-xl bg-neutral-600 bg-opacity-80">
+            <div className="justify-center px-3 py-1 rounded-md bg-neutral-600 bg-opacity-80">
               feuerball
             </div>
           </div>
@@ -80,13 +80,13 @@ export const ExpoTest: React.FC = () => {
             et ea rebum.{" "}
           </div>
           <div className="flex gap-1 pr-20 mt-3 whitespace-nowrap">
-            <div className="justify-center px-3 py-1 rounded-xl bg-neutral-600 bg-opacity-80">
+            <div className="justify-center px-3 py-1 rounded-md bg-neutral-600 bg-opacity-80">
               so
             </div>
-            <div className="justify-center px-3 py-1 rounded-xl bg-neutral-600 bg-opacity-80">
+            <div className="justify-center px-3 py-1 rounded-md bg-neutral-600 bg-opacity-80">
               ein
             </div>
-            <div className="justify-center px-3 py-1 rounded-xl bg-neutral-600 bg-opacity-80">
+            <div className="justify-center px-3 py-1 rounded-md bg-neutral-600 bg-opacity-80">
               feuerball
             </div>
           </div>

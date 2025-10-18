@@ -305,7 +305,7 @@ export default function PricingPage() {
               >
                 {index === 0 ? (
                   <div className="relative h-full">
-                    <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden">
+                    <div className="absolute inset-0 -z-10 rounded-md overflow-hidden">
                       <GradientFlow
                         duration={15}
                         colors={['#7AEFFF', '#7CFF7A', '#FEEC90']}
@@ -363,7 +363,7 @@ export default function PricingPage() {
                   </div>
                 ) : (
                   <div className="relative h-full">
-                    <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900">
+                    <div className="absolute inset-0 -z-10 rounded-md overflow-hidden bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900">
                       <div className="absolute inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-overlay pointer-events-none" />
                     </div>
                     <Card className="h-full transition-[border-color] duration-200 border border-zinc-200/30 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600">
@@ -419,7 +419,7 @@ export default function PricingPage() {
               >
                 {index === 0 ? (
                   <div className="relative h-full">
-                    <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden">
+                    <div className="absolute inset-0 -z-10 rounded-md overflow-hidden">
                       <GradientFlow
                         duration={15}
                         colors={['#E478FF', '#FFC978', '#FEEC90']}
@@ -477,7 +477,7 @@ export default function PricingPage() {
                   </div>
                 ) : (
                   <div className="relative h-full">
-                    <div className="absolute inset-0 -z-10 rounded-xl overflow-hidden bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900">
+                    <div className="absolute inset-0 -z-10 rounded-md overflow-hidden bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900">
                       <div className="absolute inset-0 bg-[url('/noise.png')] opacity-30 mix-blend-overlay pointer-events-none" />
                     </div>
                     <Card className="h-full transition-[border-color] duration-200 border border-zinc-200/30 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600">

@@ -327,7 +327,7 @@ const AnnotationSchemaManager: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-3">
-                        <div className="p-2.5 flex items-center gap-2 rounded-xl bg-sky-50/20 dark:bg-sky-950/10 border border-sky-200 dark:border-sky-800 shadow-sm">
+                        <div className="p-2.5 flex items-center gap-2 rounded-md bg-sky-50/20 dark:bg-sky-950/10 border border-sky-200 dark:border-sky-800 shadow-sm">
                             <Microscope className="h-6 w-6 text-sky-700 dark:text-sky-400" />
                             <Blocks className="h-6 w-6 text-sky-700 dark:text-sky-400" />
                         </div>

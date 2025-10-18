@@ -195,7 +195,7 @@ const JustificationSidebar: React.FC<JustificationSidebarProps> = ({
         }
       }}
       className={cn(
-        "p-3 rounded-xl border transition-all scroll-mt-4 hover:shadow-md relative",
+        "p-3 rounded-md border transition-all scroll-mt-4 hover:shadow-md relative",
         isActive 
           ? "border-primary bg-gradient-to-br from-primary/10 to-primary/15 shadow-lg ring-2 ring-primary/30" 
           : "border-border bg-background hover:border-primary/30 hover:bg-muted/20"

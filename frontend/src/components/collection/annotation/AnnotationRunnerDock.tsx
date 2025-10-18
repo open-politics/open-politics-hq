@@ -438,7 +438,7 @@ export default function AnnotationRunnerDock({
             "flex items-center justify-center w-full h-full",
             isMinimized ? "sm:flex" : "sm:hidden"
           )}>
-            <div className="p-1.5 flex items-center justify-center rounded bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+            <div className="p-1.5 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent border border-blue-200 dark:border-blue-800 shadow-sm">
               <Terminal className="h-7 w-7 text-blue-700 dark:text-blue-400" />
             </div>
           </div>
@@ -447,7 +447,7 @@ export default function AnnotationRunnerDock({
           {!isMinimized && (
             <>
               <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0 md:pt-1">
-                <div className="p-2 flex items-center gap-2 bg-blue-50/20">
+                <div className="p-2 flex items-center gap-2">
                   <Terminal className="h-5 w-5 text-blue-700 dark:text-blue-400" />
                   <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
                 </div>

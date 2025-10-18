@@ -111,7 +111,7 @@ export default function EditInfospaceOverlay({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-xl shadow-inner"
+              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-md shadow-inner"
               placeholder="Infospace Name"
             />
           </div>
@@ -122,7 +122,7 @@ export default function EditInfospaceOverlay({
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-xl shadow-inner"
+              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-md shadow-inner"
               placeholder="Infospace Description"
             />
           </div>
@@ -133,7 +133,7 @@ export default function EditInfospaceOverlay({
               type="text"
               value={sources}
               onChange={(e) => setSources(e.target.value)}
-              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-xl shadow-inner"
+              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-md shadow-inner"
               placeholder="http://example.com, http://another.com"
             />
           </div>
@@ -143,7 +143,7 @@ export default function EditInfospaceOverlay({
             <Textarea
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
-              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-xl shadow-inner text-sm font-mono"
+              className="w-full p-3 bg-primary-800 border border-secondary-700 rounded-md shadow-inner text-sm font-mono"
               placeholder="Enter general instructions for AI classifications within this Infospace..."
               rows={4}
             />

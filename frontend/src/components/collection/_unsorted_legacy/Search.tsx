@@ -113,7 +113,7 @@ const Search: React.FC<SearchProps> = ({ setResults, setCountry, setSummary, glo
   }, [inputValue, search]);
 
   return (
-    <div className="relative w-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 rounded-xl p-2">
+    <div className="relative w-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 rounded-md p-2">
       <h2 className="text-xl mb-2 text-left ml-1">Search news from around the globe</h2>
       {loading && (
         <div className="absolute left-1/4 right-0 flex justify-center top-0">

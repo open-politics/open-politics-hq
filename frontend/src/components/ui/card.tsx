@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 // Card variants - "outline" is borderless, "default" keeps existing border
 const cardVariants = cva(
-  "rounded-xl bg-card text-card-foreground shadow",
+  "rounded-md bg-card text-card-foreground shadow",
   {
     variants: {
       variant: {

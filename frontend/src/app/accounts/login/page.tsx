@@ -66,7 +66,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex items-center justify-center min-h-screen p-4">
-      <Card className="w-full max-w-4xl grid md:grid-cols-2 shadow-2xl bg-transparent bg-opacity-95 backdrop-blur-lg rounded-xl overflow-hidden">
+      <Card className="w-full max-w-4xl grid md:grid-cols-2 bg-background/60 backdrop-blur-lg rounded-md overflow-hidden">
         <div className="p-8 md:p-12 lg:p-16 space-y-6">
           <CardHeader className="p-0">
             <CardTitle className="text-3xl font-bold">Login</CardTitle>

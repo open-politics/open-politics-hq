@@ -22,7 +22,6 @@ import {
   useSidebar
 } from "@/components/ui/sidebar"; 
 import { NavUser } from '../../ui/nav-user';
-import Image from 'next/image';
 
 const Header = () => {
   const { theme, setTheme, systemTheme, resolvedTheme } = useTheme();
@@ -48,47 +47,47 @@ const Header = () => {
   }
 
   return (
-    <nav className="fixed top-0 z-50 w-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="w-full mx-auto px-2">
-        <div className="flex h-14 items-center justify-between mx-auto">
+    <nav className="fixed top-0 z-50 w-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border/40">
+      <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between">
           {/* Logo */}
-          <Link href="/" className="flex items-center space-x-1 relative h-8">
-            <Image 
-              src={currentTheme === 'dark' ? "/logos/logo-opp-dark3.jpeg" : "/logos/logo-opp-light3.jpeg"}
-              alt="Open Politics Project" 
-              width={450} 
-              height={60} 
-              className="opacity-90"
-              priority
-            />
+          <Link href="/" className="flex items-center group transition-all">
+            <span className="text-xl tracking-tight text-foreground group-hover:text-foreground/70 transition-colors">
+              <span className="font-bold">Open Politics</span> <span className="font-light">Project</span>
+            </span>
           </Link>
 
           {/* Navigation Links and Icons */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {/* Desktop Navigation */}
-            <div className="hidden md:flex items-center gap-1">
-              <Button variant="ghost" asChild className="text-gray-900 dark:text-gray-100">
+            <div className="hidden md:flex items-center gap-1.5">
+              <Button variant="ghost" asChild className="font-medium">
                 <Link href="/webpages/about">About</Link>
               </Button>
-              <Button variant="ghost" asChild className="text-gray-900 dark:text-gray-100">
+              <Button variant="ghost" asChild className="font-medium">
                 <Link href="https://docs.open-politics.org">Documentation</Link>
               </Button>
-              {/* <Button variant="ghost" asChild>
-                <Link href="/accounts/pricing">Pricing</Link>
-              </Button> */}
 
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" className="text-gray-900 dark:text-gray-100">Contact</Button>
+                  <Button variant="ghost" className="font-medium">Contact</Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-48 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
+                <PopoverContent className="w-52 rounded-lg border bg-popover p-1.5">
                   <div className="flex flex-col space-y-0.5">
-                    <a href="https://forum.open-politics.org" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
-                      <MessageSquare className="h-4 w-4" />
-                      <span>Forum/ Chat/ Discussion</span>
+                    <a 
+                      href="https://forum.open-politics.org" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    >
+                      <MessageSquare className="h-4 w-4 shrink-0" />
+                      <span>Forum / Discussion</span>
                     </a>
-                    <a href="mailto:engage@open-politics.org" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
-                      <Mail className="h-4 w-4" />
+                    <a 
+                      href="mailto:engage@open-politics.org" 
+                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    >
+                      <Mail className="h-4 w-4 shrink-0" />
                       <span>Email</span>
                     </a>
                   </div>
@@ -98,18 +97,28 @@ const Header = () => {
               {/* GitHub Links */}
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 px-0 text-gray-900 dark:text-gray-100">
-                    <FaGithub />
+                  <Button variant="ghost" size="icon" className="h-9 w-9">
+                    <FaGithub className="h-4 w-4" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-48 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
+                <PopoverContent className="w-52 rounded-lg border bg-popover p-1.5">
                   <div className="flex flex-col space-y-0.5">
-                    <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
-                      <Code className="h-4 w-4" />
+                    <a 
+                      href="https://github.com/open-politics/open-politics" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    >
+                      <Code className="h-4 w-4 shrink-0" />
                       <span>Webapp (HQ)</span>
                     </a>
-                    <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer" className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground">
-                      <Database className="h-4 w-4" />
+                    <a 
+                      href="https://github.com/open-politics/opol" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    >
+                      <Database className="h-4 w-4 shrink-0" />
                       <span>Data Engine (OPOL)</span>
                     </a>
                   </div>
@@ -118,21 +127,21 @@ const Header = () => {
 
               {/* Auth Navigation */}
               {isLoggedIn && !isLoggingOut ? (
-                <div className="flex items-center space-x-2">
-                  <Button variant="outline" asChild className="border-blue-500/50 hover:border-blue-500 hover:bg-blue-500/5 transition-all duration-300">
-                    <Link href="/hq">
-                      <span className="font-semibold">HQ</span>
-                    </Link>
-                  </Button>
-                </div>
+                <Button 
+                  variant="outline" 
+                  asChild 
+                  className="ml-2 font-semibold border-primary/30 bg-primary/5 hover:border-primary/50 hover:bg-primary/10 transition-all"
+                >
+                  <Link href="/hq">HQ</Link>
+                </Button>
               ) : (
-                <Button variant="ghost" asChild className="text-gray-900 dark:text-gray-100">
+                <Button variant="ghost" asChild className="ml-2 font-medium">
                   <Link href="/accounts/login">Login</Link>
                 </Button>
               )}
               
-              {/* Manual theme switcher (not mode-switcher  ) */}
-              <Button variant="ghost" onClick={toggleTheme} className="text-gray-900 dark:text-gray-100">
+              {/* Theme switcher */}
+              <Button variant="ghost" size="icon" onClick={toggleTheme} className="h-9 w-9">
                 {resolvedTheme === "dark" ? (
                   <Sun className="h-4 w-4" />
                 ) : (
@@ -147,128 +156,123 @@ const Header = () => {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="h-9 w-9"
                   onClick={toggleSidebar}
                 >
                   <Menu className="h-4 w-4" />
                   <span className="sr-only">Toggle Navigation Menu</span>
                 </Button>
                 <Sidebar collapsible="icon" side="right" variant="floating" className='md:hidden' >
-                  <SidebarHeader className="h-16 flex items-center px-4 border-b">
+                  <SidebarHeader className="h-16 flex items-center px-4 border-b border-border/50">
                     <SidebarMenu>
                       <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
-                          <Link href="/hq" className="flex items-center space-x-2">
-                            <span className="font-semibold">Open Politics</span>
+                          <Link href="/" className="flex items-center">
+                            <span className="font-bold">Open Politics</span>
+                            <span className="font-light ml-1.5">Project</span>
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     </SidebarMenu>
                   </SidebarHeader>
                   
-                  <SidebarContent className="flex-1 px-4 py-2">
-                    <SidebarMenu>
+                  <SidebarContent className="flex-1 px-3 py-3">
+                    <SidebarMenu className="space-y-1">
                       <SidebarMenuItem>
-                        <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                          <Link href="/webpages/about">
-                            <span>About</span>
-                          </Link>
+                        <SidebarMenuButton asChild>
+                          <Link href="/webpages/about">About</Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
-                      {/* <SidebarMenuItem>
-                        <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                          <Link href="/accounts/pricing">
-                            <span>Pricing</span>
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem> */}
                       <SidebarMenuItem>
-                        <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                          <Link href="https://docs.open-politics.org">
-                            <span>Documentation</span>
-                          </Link>
+                        <SidebarMenuButton asChild>
+                          <Link href="https://docs.open-politics.org">Documentation</Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
 
-                      <div className="my-2 border-t border-border"></div> 
+                      <div className="my-3 border-t border-border/50"></div> 
 
                       <SidebarMenuItem>
-                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                              <a href="https://forum.open-politics.org" target="_blank" rel="noopener noreferrer">
-                                  <MessageSquare className="h-4 w-4 mr-2" />
-                                  <span>Forum/ Discussion</span>
-                              </a>
-                          </SidebarMenuButton>
+                        <SidebarMenuButton asChild>
+                          <a href="https://forum.open-politics.org" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                            <MessageSquare className="h-4 w-4 shrink-0" />
+                            <span>Forum / Discussion</span>
+                          </a>
+                        </SidebarMenuButton>
                       </SidebarMenuItem>
                       <SidebarMenuItem>
-                        <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                          <a href="mailto:engage@open-politics.org">
-                            <Mail className="h-4 w-4 mr-2" />
+                        <SidebarMenuButton asChild>
+                          <a href="mailto:engage@open-politics.org" className="flex items-center gap-2">
+                            <Mail className="h-4 w-4 shrink-0" />
                             <span>Email Contact</span>
                           </a>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
 
+                      <div className="my-3 border-t border-border/50"></div>
+
                       <SidebarMenuItem>
-                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                              <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer">
-                                  <Code className="h-4 w-4 mr-2" />
-                                  <span>GitHub (HQ)</span>
-                              </a>
-                          </SidebarMenuButton>
+                        <SidebarMenuButton asChild>
+                          <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                            <Code className="h-4 w-4 shrink-0" />
+                            <span>GitHub (HQ)</span>
+                          </a>
+                        </SidebarMenuButton>
                       </SidebarMenuItem>
                       <SidebarMenuItem>
-                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                              <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer">
-                                  <Database className="h-4 w-4 mr-2" />
-                                  <span>GitHub (OPOL)</span>
-                              </a>
-                          </SidebarMenuButton>
+                        <SidebarMenuButton asChild>
+                          <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                            <Database className="h-4 w-4 shrink-0" />
+                            <span>GitHub (OPOL)</span>
+                          </a>
+                        </SidebarMenuButton>
                       </SidebarMenuItem>
 
-                      <div className="my-2 border-t border-border"></div>
+                      <div className="my-3 border-t border-border/50"></div>
 
                       {isLoggedIn && !isLoggingOut ? (
-                        <>
-                          <SidebarMenuItem>
-                            <SidebarMenuButton asChild className="border-blue-500/50 hover:border-blue-500 hover:bg-blue-500/5 transition-all duration-300">
-                              <Link href="/hq">
-                                <span className="font-semibold">HQ</span>
-                              </Link>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                          {/* Not needed, is in the main nav user */}
-                          {/* <SidebarMenuItem>
-                            <SidebarMenuButton onClick={logout} className="w-full justify-start">
-                              Logout
-                            </SidebarMenuButton>
-                          </SidebarMenuItem> */}
-                        </>
+                        <SidebarMenuItem>
+                          <SidebarMenuButton 
+                            asChild 
+                            className="border-primary/30 bg-primary/5 hover:border-primary/50 hover:bg-primary/10 transition-all"
+                          >
+                            <Link href="/hq">
+                              <span className="font-semibold">HQ</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
                       ) : (
                         <SidebarMenuItem>
-                          <SidebarMenuButton asChild className="flex items-center space-x-2 w-full">
-                            <Link href="/accounts/login">
-                              <span>Login</span>
-                            </Link>
+                          <SidebarMenuButton asChild>
+                            <Link href="/accounts/login">Login</Link>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       )}
                       
-                      <div className="my-2 border-t border-border"></div>
+                      <div className="my-3 border-t border-border/50"></div>
 
-                      <div className="flex items-center justify-between py-2">
-                        <Button variant="ghost" onClick={toggleTheme} className="text-gray-900 dark:text-gray-100">
+                      <SidebarMenuItem>
+                        <Button 
+                          variant="ghost" 
+                          onClick={toggleTheme} 
+                          className="w-full justify-start"
+                        >
                           {resolvedTheme === "dark" ? (
-                            <Sun className="h-4 w-4" />
+                            <>
+                              <Sun className="h-4 w-4 mr-2" />
+                              <span>Light Mode</span>
+                            </>
                           ) : (
-                            <Moon className="h-4 w-4" />
+                            <>
+                              <Moon className="h-4 w-4 mr-2" />
+                              <span>Dark Mode</span>
+                            </>
                           )}
                         </Button>
-                      </div>
+                      </SidebarMenuItem>
                     </SidebarMenu>
                   </SidebarContent>
 
-                  <SidebarFooter className="border-t p-4">
+                  <SidebarFooter className="border-t border-border/50 p-4">
                     {isLoggedIn && !isLoggingOut && (
                       <NavUser user={{
                         name: user?.full_name || 'User',

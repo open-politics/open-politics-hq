@@ -1,6 +1,7 @@
 import React from 'react'
 import Link from 'next/link'
-import { SiDiscord, SiGithub, SiX } from 'react-icons/si'
+import { SiGithub } from 'react-icons/si'
+import { MessageSquare } from 'lucide-react'
 import { Button } from '../ui/button'
 
 const Footer: React.FC = () => {
@@ -12,8 +13,8 @@ const Footer: React.FC = () => {
           size={'icon'}
           className="text-muted-foreground/50"
         >
-          <Link href="https://discord.gg/AhqmEUr99T" target="_blank">
-            <SiDiscord size={18} />
+          <Link href="https://forum.open-politics.org" target="_blank">
+            <MessageSquare size={18} />
           </Link>
         </Button>
         <Button
@@ -21,16 +22,7 @@ const Footer: React.FC = () => {
           size={'icon'}
           className="text-muted-foreground/50"
         >
-          <Link href="https://x.com/morphic_ai" target="_blank">
-            <SiX size={18} />
-          </Link>
-        </Button>
-        <Button
-          variant={'ghost'}
-          size={'icon'}
-          className="text-muted-foreground/50"
-        >
-          <Link href="https://git.new/morphic" target="_blank">
+          <Link href="https://github.com/open-politics/open-politics-hq" target="_blank">
             <SiGithub size={18} />
           </Link>
         </Button>

@@ -377,7 +377,7 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
         <div className="mb-8">
           <div className="flex items-start justify-between mb-4">
             <div className="flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 shadow-sm">
+              <div className="p-3 rounded-md bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 shadow-sm">
                 <Play className="h-8 w-8 text-primary" />
               </div>
               <div>

@@ -77,127 +77,107 @@ const FavoriteRunCard: React.FC<{
 
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
-      case 'completed': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
-      case 'running': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'pending': return 'bg-amber-100 text-amber-600 border-amber-300';
-      case 'failed': return 'bg-red-100 text-red-800 border-red-300';
-      case 'completed_with_errors': return 'bg-orange-100 text-orange-800 border-orange-300';
-      default: return 'bg-slate-100 text-slate-800 border-slate-300';
+      case 'completed': return 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800';
+      case 'running': return 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800';
+      case 'pending': return 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800';
+      case 'failed': return 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800';
+      case 'completed_with_errors': return 'bg-orange-50 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-800';
+      default: return 'bg-muted text-muted-foreground border-border';
     }
   };
 
   return (
     <div 
       className={cn(
-        "group relative p-3 sm:p-6 rounded-xl cursor-pointer transition-all duration-200 border",
-        "bg-gradient-to-br from-blue-50/60 via-blue-50/40 to-blue-50/30 dark:from-blue-950/40 dark:via-blue-950/30 dark:to-blue-950/20",
-        "hover:from-blue-100/50 hover:via-blue-100/30 hover:to-blue-100/40 dark:hover:from-blue-900/30 dark:hover:via-blue-900/20 dark:hover:to-blue-900/25",
-        "hover:shadow-lg hover:scale-[1.02] border-blue-200 dark:border-blue-700",
-        "backdrop-blur-sm",
+        "group relative p-4 sm:p-5 rounded-lg cursor-pointer transition-all duration-200 flex-shrink-0 w-[300px] sm:w-[340px]",
+        "border bg-background/80 hover:bg-accent/50 hover:shadow-md",
         activeRunId === run.id 
-          ? "border-blue-400 dark:border-blue-500 shadow-xl ring-2 ring-blue-200/60 dark:ring-blue-600/60 bg-blue-100/60 dark:bg-blue-900/40" 
-          : "hover:border-blue-300 dark:hover:border-blue-600"
+          ? "border-primary ring-2 ring-primary/20 shadow-lg" 
+          : "border-border hover:border-border/80"
       )}
       onClick={() => onSelectRun(run.id)}
     >
-      {/* Action Buttons - Positioned absolutely */}
-      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 flex gap-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={(e) => {
-            e.stopPropagation();
-            onShare(run.id);
-          }}
-          className="h-8 w-8 hover:bg-blue-200/50 dark:hover:bg-blue-800/50"
+      {/* Header Row - Status + Actions */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <Badge 
+          className={cn(
+            "capitalize font-medium text-xs px-2.5 py-1 rounded-md border",
+            getStatusColor(run.status ?? '')
+          )}
         >
-          <Share2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={(e) => {
-            e.stopPropagation();
-            onExport(run.id);
-          }}
-          className="h-8 w-8 hover:bg-blue-200/50 dark:hover:bg-blue-800/50"
-        >
-          <Download className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleFavorite(run);
-          }}
-          className="h-8 w-8 hover:bg-amber-200/50 dark:hover:bg-amber-800/50"
-        >
-          <Star className="h-4 w-4 fill-amber-500 text-amber-600 dark:text-amber-400" />
-        </Button>
+          {(run.status ?? '').replace(/_/g, ' ')}
+        </Badge>
+        
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+            <Button 
+              variant="ghost" 
+              size="icon"
+              className="h-8 w-8 -mr-2 -mt-1 opacity-70 group-hover:opacity-100 transition-opacity"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onShare(run.id); }}>
+              <Share2 className="mr-2 h-4 w-4" /> Share
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onExport(run.id); }}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onToggleFavorite(run); }}>
+              <Star className="mr-2 h-4 w-4 fill-amber-500" /> Remove from Favorites
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      {/* Content */}
-      <div className="flex flex-col h-24 sm:h-40 pr-10 sm:pr-14">
-        <div className="flex items-start gap-2 sm:gap-4 mb-2 sm:mb-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-sm sm:text-base text-gray-900 dark:text-gray-100 truncate" title={run.name}>
-                {run.name}
-              </h3>
-              {isRecurring && (
-                <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Repeat className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Recurring Run (Task ID: {recurringTaskIdNumber})</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-            </div>
-            {/* Fixed height container for description to maintain consistent layout */}
-            <div className="h-6 sm:h-12 mb-1 sm:mb-3">
-              {run.description && (
-                <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 line-clamp-1 sm:line-clamp-2">{run.description}</p>
-              )}
-            </div>
+      {/* Title + Recurring Badge */}
+      <div className="mb-2">
+        <div className="flex items-center gap-2 mb-1.5">
+          <h3 className="font-semibold text-base text-foreground line-clamp-1" title={run.name}>
+            {run.name}
+          </h3>
+          {isRecurring && (
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="p-1 rounded-full bg-purple-100 dark:bg-purple-900/50 border border-purple-200 dark:border-purple-700">
+                    <Repeat className="h-3 w-3 text-purple-600 dark:text-purple-400" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Recurring Run (Task ID: {recurringTaskIdNumber})</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+        
+        {run.description && (
+          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+            {run.description}
+          </p>
+        )}
+      </div>
+
+      {/* Stats + Date Row */}
+      <div className="flex items-center justify-between pt-3 mt-3 border-t border-border/50">
+        <div className="flex items-center gap-3 text-sm">
+          <div className="flex items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+            <span className="font-medium text-foreground">{run.documentCount}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+            <span className="font-medium text-foreground">{run.schemeCount}</span>
           </div>
         </div>
-
-        {/* Bottom row - always positioned at the bottom */}
-        <div className="flex items-center justify-between mt-auto">
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Status badge */}
-            <Badge 
-              variant="outline" 
-              className={cn("text-xs font-medium whitespace-nowrap h-5", getStatusColor(run.status ?? ''))}
-            >
-              {(run.status ?? '').replace(/_/g, ' ')}
-            </Badge>
-            {/* Stats row */}
-            <div className="flex items-center gap-1 sm:gap-2 text-xs text-gray-600 dark:text-gray-400">
-              <span className="flex items-center gap-0.5 sm:gap-1">
-                <FileText className="h-3 w-3 text-green-600 dark:text-green-400" />
-                <span className="hidden sm:inline">{run.documentCount}</span>
-                <span className="sm:hidden">{run.documentCount}</span>
-              </span>
-              <span className="flex items-center gap-0.5 sm:gap-1">
-                <Microscope className="h-3 w-3 text-sky-600 dark:text-sky-400" />
-                <span className="hidden sm:inline">{run.schemeCount}</span>
-                <span className="sm:hidden">{run.schemeCount}</span>
-              </span>
-            </div>
-          </div>
-          <div className="text-right text-xs text-gray-500 dark:text-gray-500 flex-shrink-0">
-            <div className="flex items-center gap-0.5 sm:gap-1 justify-end">
-              <Calendar className="h-3 w-3" />
-              <span className="hidden sm:inline">{format(parseISO(run.created_at), 'MMM d, yyyy')}</span>
-              <span className="sm:hidden">{format(parseISO(run.created_at), 'MMM d')}</span>
-            </div>
-          </div>
+        
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Calendar className="h-3 w-3" />
+          <span>{format(parseISO(run.created_at), 'MMM d, yyyy')}</span>
         </div>
       </div>
     </div>
@@ -243,12 +223,13 @@ const RunTableRow: React.FC<{
     <TableRow 
       className={cn(
         "group cursor-pointer transition-all duration-300 border-0 bg-background hover:bg-gradient-to-r hover:from-muted/50 hover:via-background hover:to-muted/50",
-        "hover:shadow-lg hover:shadow-foreground/5 hover:-translate-y-0.5",
+        "hover:-translate-y-0.5",
+        "border-b border-border/60",
         activeRunId === run.id && "bg-gradient-to-r from-primary/5 via-primary/2 to-primary/5 shadow-lg shadow-primary/10 border-l-4 border-l-primary"
       )}
       onClick={() => onSelectRun(run.id)}
     >
-      <TableCell className="w-16 pl-6">
+      <TableCell className="w-16 pl-6 py-6">
         <div className="flex items-center justify-center">
           <Button
             variant="ghost"
@@ -259,8 +240,7 @@ const RunTableRow: React.FC<{
             }}
             className={cn(
               "h-9 w-9 rounded-full transition-all duration-200",
-              "hover:bg-gradient-to-br hover:from-amber-100 hover:to-yellow-100 dark:hover:from-amber-900/50 dark:hover:to-yellow-900/50",
-              "hover:shadow-md hover:shadow-amber-200/50 dark:hover:shadow-amber-800/30 hover:scale-110",
+              "hover:bg-amber-50 dark:hover:bg-amber-900/50",
               "border border-transparent hover:border-amber-200 dark:hover:border-amber-700"
             )}
           >
@@ -268,11 +248,9 @@ const RunTableRow: React.FC<{
           </Button>
         </div>
       </TableCell>
-      <TableCell className="font-medium py-6">
-        <div className="flex items-center gap-3">
-        <div className="p-3 flex items-center gap-2">
-                <Play className="h-4 w-4 text-blue-700 dark:text-blue-400" />
-              </div>
+      <TableCell className="py-6 pl-2">
+        <div className="flex items-center gap-2">
+          <Play className="h-4 w-4 text-blue-700 dark:text-blue-400 flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-semibold text-foreground truncate group-hover:text-foreground/80 transition-colors" title={run.name}>
@@ -299,11 +277,11 @@ const RunTableRow: React.FC<{
           </div>
         </div>
       </TableCell>
-      <TableCell className="py-6">
+      <TableCell className="w-32 py-6 text-center">
         <div className="flex items-center justify-center">
           <Badge 
             className={cn(
-              "capitalize font-medium text-xs px-3 py-1.5 rounded-full border shadow-sm pointer-events-none",
+              "capitalize font-medium text-xs px-3 py-1.5 rounded-lg border shadow-sm pointer-events-none",
               getStatusColor(run.status ?? '')
             )}
           >
@@ -311,29 +289,29 @@ const RunTableRow: React.FC<{
           </Badge>
         </div>
       </TableCell>
-      <TableCell className="text-center py-6">
+      <TableCell className="w-20 text-center py-6">
         <div className="flex items-center justify-center gap-1.5">
-          <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
+          <div className="p-1.5 rounded-md">
             <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
           </div>
           <span className="font-semibold text-foreground">{run.documentCount}</span>
         </div>
       </TableCell>
-      <TableCell className="text-center py-6">
+      <TableCell className="w-20 text-center py-6">
         <div className="flex items-center justify-center gap-1.5">
-          <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-900/50 border border-sky-100 dark:border-sky-800">
+          <div className="p-1.5 rounded-md">
             <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
           </div>
           <span className="font-semibold text-foreground">{run.schemeCount}</span>
         </div>
       </TableCell>
-      <TableCell className="text-right text-sm text-muted-foreground py-6 pr-6">
+      <TableCell className="w-40 text-right text-sm text-muted-foreground py-6 pr-6">
         <div className="flex items-center gap-1.5 justify-end">
           <Calendar className="h-3.5 w-3.5 text-muted-foreground/70" />
           <span className="font-medium">{format(parseISO(run.created_at), 'MMM d, yyyy')}</span>
         </div>
       </TableCell>
-      <TableCell className="text-right py-6 pr-6">
+      <TableCell className="w-20 text-right py-6 pr-6">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="h-8 w-8 p-0">
@@ -511,13 +489,13 @@ const RunHistoryPanel: React.FC<{
   return (
     <div className="flex flex-col h-full">
       {/* Fixed Header Section */}
-      <div className="flex-shrink-0 border-b border-border/20">
+      <div className="flex-shrink-0">
         <div className="p-4 pb-0">
           {/* Main Header Row */}
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
             {/* Left Side - Title and Icon */}
             <div className="flex items-center gap-4 pl-0">
-              <div className="p-3 flex items-center gap-2 ">
+              <div className="p-3 flex items-center gap-2">
                 <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
                 <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
                 <History className="h-6 w-6 text-blue-700 dark:text-blue-400" />
@@ -594,42 +572,42 @@ const RunHistoryPanel: React.FC<{
 
           {/* Favorites Section */}
           {favoriteRunsFromList.length > 0 && (
-            <div className="space-y-4 mb-2">
-              <div 
-                className="flex items-center justify-between cursor-pointer hover:bg-muted/30 rounded-lg transition-colors"
+            <div className="space-y-3 mb-6">
+              <button
+                className="flex items-center gap-2.5 px-2 py-1.5 hover:bg-muted/30 rounded-lg transition-colors group w-full"
                 onClick={() => setIsFavoritesExpanded(!isFavoritesExpanded)}
               >
-                <div className="flex items-center gap-2 px-2">
-                  <Star className="h-5 w-5 text-amber-500 fill-amber-400" />
-                  <h2 className="text-lg font-semibold text-amber-600">Favorite Runs</h2>
-                  <Badge variant="secondary" className="bg-amber-100 text-amber-600">
-                    {favoriteRunsFromList.length}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-amber-700 hover:text-amber-600 hover:bg-amber-50"
-                  >
-                    {isFavoritesExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  </Button>
+                <Star className="h-5 w-5 text-amber-500 fill-amber-400 flex-shrink-0" />
+                <h2 className="text-lg font-semibold text-foreground">Favorite Runs</h2>
+                <Badge variant="secondary" className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700">
+                  {favoriteRunsFromList.length}
+                </Badge>
+                <div className="ml-auto">
+                  {isFavoritesExpanded ? (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+                  )}
                 </div>
-              </div>
+              </button>
               
               <Collapsible open={isFavoritesExpanded}>
                 <CollapsibleContent>
-                  <div className="max-h-64 overflow-y-auto scrollbar-thin rounded-lg p-0 sm:p-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-4 pb-2">
-                      {favoriteRunsFromList.map((run) => (
-                        <FavoriteRunCard
-                          key={`favorite-${run.id}`}
-                          run={run}
-                          activeRunId={activeRunId}
-                          onSelectRun={onSelectRun}
-                          onToggleFavorite={handleToggleFavoriteRun}
-                          onShare={handleShareRun}
-                          onExport={handleExportRun}
-                        />
-                      ))}
+                  <div className="relative rounded-lg border border-border/60 bg-accent/60 overflow-hidden">
+                    <div className="w-full overflow-x-auto">
+                      <div className="flex gap-3 sm:gap-4 p-4">
+                        {favoriteRunsFromList.map((run) => (
+                          <FavoriteRunCard
+                            key={`favorite-${run.id}`}
+                            run={run}
+                            activeRunId={activeRunId}
+                            onSelectRun={onSelectRun}
+                            onToggleFavorite={handleToggleFavoriteRun}
+                            onShare={handleShareRun}
+                            onExport={handleExportRun}
+                          />
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </CollapsibleContent>
@@ -643,9 +621,9 @@ const RunHistoryPanel: React.FC<{
       <div className="flex-1 flex flex-col min-h-0">
 
         {/* All Runs Table - Scrollable Content */}
-        <div className="flex-1 overflow-hidden p-2 sm:p-8 backdrop-blur-sm scrollbar-hide ">
+        <div className="flex-1 overflow-hidden p-2 sm:p-4 backdrop-blur-sm scrollbar-hide ">
           {nonFavoriteRuns.length > 0 ? (
-            <div className="bg-gradient-to-br from-background via-muted/50 to-background rounded-xl border border-border/60 overflow-hidden h-full flex flex-col">
+            <div className="bg-background/60 rounded border border-border/60 overflow-hidden h-full flex flex-col">
               {/* Mobile Card Layout */}
               <div className="sm:hidden flex-1 overflow-y-auto p-2 space-y-2 pb-20">
                 {nonFavoriteRuns.map((run) => {
@@ -732,79 +710,47 @@ const RunHistoryPanel: React.FC<{
               </div>
 
               {/* Desktop Table Layout */}
-              <div className="hidden sm:block flex-1 flex flex-col">
-                {/* Sticky Header */}
-                <div className="flex-shrink-0 border-b border-border/20">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-gradient-to-r from-muted/80 via-muted/60 to-muted/80">
-                        <TableHead className="w-16 pl-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          <div className="flex items-center justify-center">
-                          </div>
-                        </TableHead>
-                        <TableHead className="py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2.5 rounded-md">
-                            </div>
-                           Name
-                          </div>
-                        </TableHead>
-                        <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/50 border border-emerald-100 dark:border-emerald-800">
-                              <div className="w-3.5 h-3.5 rounded-full bg-emerald-500"></div>
-                            </div>
-                            Status
-                          </div>
-                        </TableHead>
-                        <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <div className="p-1.5 rounded-lg bg-green-50 dark:bg-green-900/50 border border-green-100 dark:border-green-800">
-                              <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-                            </div>
-                            Assets
-                          </div>
-                        </TableHead>
-                        <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-900/50 border border-sky-100 dark:border-sky-800">
-                              <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-                            </div>
-                            Schemas
-                          </div>
-                        </TableHead>
-                        <TableHead className="w-40 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-muted-foreground/70" />
-                            Created
-                          </div>
-                        </TableHead>
-                        <TableHead className="w-20 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Actions
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                  </Table>
-                </div>
-                
-                {/* Scrollable Body */}
-                <div className="flex-1 overflow-y-auto">
-                  <Table>
-                    <TableBody className="divide-y divide-border/60">
-                      {nonFavoriteRuns.map((run, index) => (
-                        <RunTableRow
-                          key={run.id}
-                          run={run}
-                          activeRunId={activeRunId}
-                          onSelectRun={onSelectRun}
-                          onToggleFavorite={handleToggleFavoriteRun}
-                          onShare={handleShareRun}
-                          onExport={handleExportRun}
-                        />
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+              <div className="hidden sm:block flex-1 overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-accent/40">
+                    <TableRow>
+                      <TableHead className="w-16 pl-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-center">
+                        Fav
+                      </TableHead>
+                      <TableHead className="py-4 pl-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Name
+                      </TableHead>
+                      <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-center">
+                        Status
+                      </TableHead>
+                      <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Assets
+                      </TableHead>
+                      <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Schemas
+                      </TableHead>
+                      <TableHead className="w-40 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Created
+                      </TableHead>
+                      <TableHead className="w-20 text-right py-4 pr-6 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="divide-y divide-border/60">
+                    {nonFavoriteRuns.map((run) => (
+                      <RunTableRow
+                        key={run.id}
+                        run={run}
+                        activeRunId={activeRunId}
+                        onSelectRun={onSelectRun}
+                        onToggleFavorite={handleToggleFavoriteRun}
+                        onShare={handleShareRun}
+                        onExport={handleExportRun}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             </div>
           ) : (

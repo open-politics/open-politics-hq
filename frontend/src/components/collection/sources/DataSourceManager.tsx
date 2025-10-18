@@ -213,7 +213,7 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
               <ChevronLeft className="h-5 w-5" />
             </Button>
           )}
-          <div className="p-2.5 flex items-center gap-2 rounded-xl bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
+          <div className="p-2.5 flex items-center gap-2 rounded-md bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
             <RadioTower className="h-6 w-6 text-blue-700 dark:text-blue-400" />
             <Repeat className="h-6 w-6 text-blue-700 dark:text-blue-400" />
           </div>
