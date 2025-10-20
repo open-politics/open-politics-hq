@@ -12,9 +12,10 @@ import {
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
 import useAuth from "@/hooks/useAuth"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
+import { useUserPreferencesStore } from "@/zustand_stores/storeUserPreferences"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
 import { useEffect, useState, useRef } from 'react';
-// import createGlobe from "cobe";
+import createGlobe from "cobe";
 import { useTheme } from "next-themes"; 
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
@@ -63,12 +64,21 @@ function useBreadcrumbs(activeInfospace: any) {
 // Component that uses the sidebar context
 function SidebarContent({ children, user }: { children: React.ReactNode, user: any }) {
   const { open, isMobile } = useSidebar();
-  // const { resolvedTheme } = useTheme();
-  // const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { resolvedTheme } = useTheme();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const breadcrumbs = useBreadcrumbs(activeInfospace);
-  const [isMobileBannerDismissed, setIsMobileBannerDismissed] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
+  
+  // User preferences
+  const { preferences, initializePreferences, togglePreference, updatePreference } = useUserPreferencesStore();
+  
+  // Initialize preferences from user data
+  useEffect(() => {
+    if (user?.ui_preferences) {
+      initializePreferences(user.ui_preferences);
+    }
+  }, [user, initializePreferences]);
 
   // Keyboard shortcut to focus main content (Ctrl+F)
   useEffect(() => {
@@ -94,7 +104,45 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Shift is now handled purely via CSS using peer state and CSS variables.
+  // Initialize and animate the globe (only if enabled)
+  useEffect(() => {
+    if (!canvasRef.current || !preferences.globe_enabled) return;
+
+    // Set to Berlin
+    let phi = 52.5;
+    let width = 0;
+    const onResize = () => canvasRef.current && (width = canvasRef.current.offsetWidth);
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    const globe = createGlobe(canvasRef.current, {
+      devicePixelRatio: 2,
+      width: width * 2,
+      height: width * 2,
+      phi: 0,
+      theta: 0.3,
+      dark: resolvedTheme === 'dark' ? 1 : 0,
+      diffuse: 3,
+      mapSamples: 16000,
+      mapBrightness: 1.2,
+      baseColor: resolvedTheme === 'dark' ? [0.3, 0.3, 0.3] : [1, 1, 1],
+      markerColor: [251 / 255, 100 / 255, 21 / 255],
+      glowColor: resolvedTheme === 'dark' ? [0.1, 0.1, 0.1] : [0.5, 0.5, 0.5],
+      markers: [],
+      onRender: (state) => {
+        state.phi = phi;
+        phi += 0.001; // Slower rotation speed
+        state.width = width * 2;
+        state.height = width * 2;
+      }
+    });
+
+    setTimeout(() => canvasRef.current && (canvasRef.current.style.opacity = '1'));
+    return () => {
+      globe.destroy();
+      window.removeEventListener('resize', onResize);
+    };
+  }, [resolvedTheme, preferences.globe_enabled]);
 
   return (
     <>
@@ -110,22 +158,25 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
               : "calc(var(--sidebar-width-icon)/2)",
         } as React.CSSProperties}
       >
-        {/* Background Globe */}
-        {/* <div className="fixed top-1/2 left-1/2 pointer-events-none z-0 -translate-x-1/2 -translate-y-1/2 ">
-          <div className="transition-transform 
-                      duration-300 ease-out transform-gpu will-change-transform translate-x-[var(--globe-shift)]
-                      dark:scale-105 opacity-50 dark:opacity-80">
-            <canvas
-              ref={canvasRef}
-              style={{ 
-                width: 1000,    
-                height: 1000, 
-                aspectRatio: 1,
-                
-              }}
-            />
+        {/* Background Globe - Only render if enabled */}
+        {preferences.globe_enabled && (
+          <div className="fixed top-1/2 left-1/2 pointer-events-none z-[1] -translate-x-1/2 -translate-y-1/2">
+            <div className="transition-transform 
+                        duration-300 ease-out transform-gpu will-change-transform translate-x-[var(--globe-shift)]
+                        dark:scale-105 opacity-40 dark:opacity-60">
+              <canvas
+                ref={canvasRef}
+                style={{ 
+                  width: 1000,    
+                  height: 1000, 
+                  aspectRatio: 1,
+                  opacity: 0,
+                  transition: 'opacity 1s ease'
+                }}
+              />
+            </div>
           </div>
-        </div> */}
+        )}
         
         <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-2 px-4 relative z-10">
           <SidebarTrigger className="-ml-1" />
@@ -144,25 +195,36 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
               </BreadcrumbList>
             </Breadcrumb>
           </div>
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md flex-shrink-0">
-            <Link 
-              href="https://docs.open-politics.org" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-200 transition-colors font-medium"
-            >
-              <span className="text-sm">📚 Check out our updated docs</span>
-              <ExternalLink className="h-3 w-3" />
-            </Link>
-            <span className="text-blue-400">•</span>
-            <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full font-semibold">
-              v0.9.9
-            </span>
-          </div>
+          
+          {/* Docs Banner - Desktop */}
+          {!preferences.docs_banner_dismissed && (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md flex-shrink-0">
+              <Link 
+                href="https://docs.open-politics.org" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-200 transition-colors font-medium"
+              >
+                <span className="text-sm">📚 Check out our updated docs</span>
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+              <span className="text-blue-400">•</span>
+              <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full font-semibold">
+                v0.9.9
+              </span>
+              <button
+                onClick={() => updatePreference('docs_banner_dismissed', true)}
+                className="ml-1 p-0.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200 transition-colors"
+                aria-label="Dismiss banner"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
         </header>
         
         {/* Mobile Info Banner */}
-        {isMobile && !isMobileBannerDismissed && (
+        {isMobile && !preferences.docs_banner_dismissed && (
           <div className="sm:hidden mx-3 mb-2 relative">
             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md">
               <Link 
@@ -179,7 +241,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
                 v0.9.9
               </span>
               <button
-                onClick={() => setIsMobileBannerDismissed(true)}
+                onClick={() => updatePreference('docs_banner_dismissed', true)}
                 className="ml-1 p-0.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200 transition-colors flex-shrink-0"
                 aria-label="Dismiss banner"
               >

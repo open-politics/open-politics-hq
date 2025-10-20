@@ -6,10 +6,19 @@ import { FaGithub } from "react-icons/fa6";
 import { Menu, X, ChevronRight, Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Code, Database } from "lucide-react";
 import { Mail, MessageSquare } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { useRouter } from 'next/navigation';
+import {
+  NavigationMenu,
+  NavigationMenuContent,
+  NavigationMenuItem,
+  NavigationMenuLink,
+  NavigationMenuList,
+  NavigationMenuTrigger,
+  navigationMenuTriggerStyle,
+} from "@/components/ui/navigation-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -22,10 +31,11 @@ import {
   useSidebar
 } from "@/components/ui/sidebar"; 
 import { NavUser } from '../../ui/nav-user';
+import { RippleButton } from '@/components/ui/ripple-button';
 
 const Header = () => {
   const { theme, setTheme, systemTheme, resolvedTheme } = useTheme();
-
+  const router = useRouter();
   const toggleTheme = React.useCallback(() => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark")
   }, [resolvedTheme, setTheme])
@@ -61,84 +71,105 @@ const Header = () => {
           <div className="flex items-center gap-2">
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-1.5">
-              <Button variant="ghost" asChild className="font-medium">
-                <Link href="/webpages/about">About</Link>
-              </Button>
-              <Button variant="ghost" asChild className="font-medium">
-                <Link href="https://docs.open-politics.org">Documentation</Link>
-              </Button>
+              <NavigationMenu>
+                <NavigationMenuList>
+                  <NavigationMenuItem>
+                    <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
+                      <Link href="/webpages/about">About</Link>
+                    </NavigationMenuLink>
+                  </NavigationMenuItem>
+                  
+                  <NavigationMenuItem>
+                    <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
+                      <Link href="https://docs.open-politics.org">Documentation</Link>
+                    </NavigationMenuLink>
+                  </NavigationMenuItem>
 
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" className="font-medium">Contact</Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-52 rounded-lg border bg-popover p-1.5">
-                  <div className="flex flex-col space-y-0.5">
-                    <a 
-                      href="https://forum.open-politics.org" 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <MessageSquare className="h-4 w-4 shrink-0" />
-                      <span>Forum / Discussion</span>
-                    </a>
-                    <a 
-                      href="mailto:engage@open-politics.org" 
-                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <Mail className="h-4 w-4 shrink-0" />
-                      <span>Email</span>
-                    </a>
-                  </div>
-                </PopoverContent>
-              </Popover>
-              
-              {/* GitHub Links */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-9 w-9">
-                    <FaGithub className="h-4 w-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-52 rounded-lg border bg-popover p-1.5">
-                  <div className="flex flex-col space-y-0.5">
-                    <a 
-                      href="https://github.com/open-politics/open-politics" 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <Code className="h-4 w-4 shrink-0" />
-                      <span>Webapp (HQ)</span>
-                    </a>
-                    <a 
-                      href="https://github.com/open-politics/opol" 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <Database className="h-4 w-4 shrink-0" />
-                      <span>Data Engine (OPOL)</span>
-                    </a>
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  <NavigationMenuItem>
+                    <NavigationMenuTrigger>Contact</NavigationMenuTrigger>
+                    <NavigationMenuContent>
+                      <div className="w-52 p-2">
+                        <NavigationMenuLink asChild>
+                          <a 
+                            href="https://forum.open-politics.org" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                          >
+                            <MessageSquare className="h-4 w-4 shrink-0" />
+                            <span>Forum / Discussion</span>
+                          </a>
+                        </NavigationMenuLink>
+                        <NavigationMenuLink asChild>
+                          <a 
+                            href="mailto:engage@open-politics.org" 
+                            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                          >
+                            <Mail className="h-4 w-4 shrink-0" />
+                            <span>Email</span>
+                          </a>
+                        </NavigationMenuLink>
+                      </div>
+                    </NavigationMenuContent>
+                  </NavigationMenuItem>
 
-              {/* Auth Navigation */}
-              {isLoggedIn && !isLoggingOut ? (
-                <Button 
-                  variant="outline" 
-                  asChild 
-                  className="ml-2 font-semibold border-primary/30 bg-primary/5 hover:border-primary/50 hover:bg-primary/10 transition-all"
-                >
-                  <Link href="/hq">HQ</Link>
-                </Button>
-              ) : (
-                <Button variant="ghost" asChild className="ml-2 font-medium">
-                  <Link href="/accounts/login">Login</Link>
-                </Button>
-              )}
+                  <NavigationMenuItem>
+                    <NavigationMenuTrigger>
+                      <FaGithub className="h-4 w-4" />
+                    </NavigationMenuTrigger>
+                    <NavigationMenuContent>
+                      <div className="w-52 p-2">
+                        <NavigationMenuLink asChild>
+                          <a 
+                            href="https://github.com/open-politics/open-politics" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                          >
+                            <Code className="h-4 w-4 shrink-0" />
+                            <span>Webapp (HQ)</span>
+                          </a>
+                        </NavigationMenuLink>
+                        <NavigationMenuLink asChild>
+                          <a 
+                            href="https://github.com/open-politics/opol" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                          >
+                            <Database className="h-4 w-4 shrink-0" />
+                            <span>Data Engine (OPOL)</span>
+                          </a>
+                        </NavigationMenuLink>
+                      </div>
+                    </NavigationMenuContent>
+                  </NavigationMenuItem>
+
+                  {/* Auth Navigation */}
+                  {isLoggedIn && !isLoggingOut ? (
+                    <NavigationMenuItem>
+                      <div className="flex items-center gap-2 text-sm">
+                        <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
+                          <RippleButton
+                            duration="600ms"
+                            rippleColor="#3b82f6"
+                            className="h-8 font-bold"
+                            onClick={() => router.push('/hq')}
+                          >
+                            <span>HQ</span>
+                          </RippleButton>
+                        </NavigationMenuLink>
+                      </div>
+                    </NavigationMenuItem>
+                  ) : (
+                    <NavigationMenuItem>
+                      <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
+                        <Link href="/accounts/login">Login</Link>
+                      </NavigationMenuLink>
+                    </NavigationMenuItem>
+                  )}
+                </NavigationMenuList>
+              </NavigationMenu>
               
               {/* Theme switcher */}
               <Button variant="ghost" size="icon" onClick={toggleTheme} className="h-9 w-9">
@@ -231,13 +262,15 @@ const Header = () => {
 
                       {isLoggedIn && !isLoggingOut ? (
                         <SidebarMenuItem>
-                          <SidebarMenuButton 
-                            asChild 
-                            className="border-primary/30 bg-primary/5 hover:border-primary/50 hover:bg-primary/10 transition-all"
-                          >
-                            <Link href="/hq">
-                              <span className="font-semibold">HQ</span>
-                            </Link>
+                          <SidebarMenuButton asChild>
+                            <RippleButton
+                              duration="600ms"
+                              rippleColor="#3b82f6"
+                              className="h-8 font-bold"
+                              onClick={() => router.push('/hq')}
+                            >
+                              <span>HQ</span>
+                            </RippleButton>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       ) : (

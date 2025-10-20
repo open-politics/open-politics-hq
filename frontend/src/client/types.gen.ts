@@ -287,7 +287,7 @@ export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | '
 /**
  * A lightweight public representation of an Asset.
  */
-export type AssetPreview = {
+export type AssetPreview_Input = {
     id: number;
     title: string;
     kind: AssetKind;
@@ -298,7 +298,24 @@ export type AssetPreview = {
     source_metadata?: ({
     [key: string]: unknown;
 } | null);
-    children?: Array<AssetPreview>;
+    children?: Array<AssetPreview_Input>;
+};
+
+/**
+ * A lightweight public representation of an Asset.
+ */
+export type AssetPreview_Output = {
+    id: number;
+    title: string;
+    kind: AssetKind;
+    created_at: string;
+    updated_at: string;
+    text_content?: (string | null);
+    blob_path?: (string | null);
+    source_metadata?: ({
+    [key: string]: unknown;
+} | null);
+    children?: Array<AssetPreview_Output>;
     /**
      * Helper to know if this asset might have children (e.g., PDF, CSV).
      */
@@ -454,6 +471,10 @@ export type Body_sso_complete_discourse_sso = {
     sig: string;
 };
 
+export type Body_users_upload_background_image = {
+    file: Blob | File;
+};
+
 export type Body_users_upload_profile_picture = {
     file: Blob | File;
 };
@@ -518,13 +539,25 @@ export type BundleMoveRequest = {
 /**
  * A lightweight public representation of a Bundle.
  */
-export type BundlePreview = {
+export type BundlePreview_Input = {
     id: number;
     name: string;
     description?: (string | null);
     created_at: string;
     updated_at: string;
-    assets: Array<AssetPreview>;
+    assets: Array<AssetPreview_Input>;
+};
+
+/**
+ * A lightweight public representation of a Bundle.
+ */
+export type BundlePreview_Output = {
+    id: number;
+    name: string;
+    description?: (string | null);
+    created_at: string;
+    updated_at: string;
+    assets: Array<AssetPreview_Output>;
 };
 
 export type BundleRead = {
@@ -1515,7 +1548,7 @@ export type SharedResourcePreview = {
     resource_type: ResourceType;
     name: string;
     description?: (string | null);
-    content: (AssetPreview | BundlePreview | AnnotationRunPreview);
+    content: (AssetPreview_Output | BundlePreview_Output | AnnotationRunPreview);
 };
 
 export type SourceCreateRequest = {
@@ -1673,6 +1706,12 @@ export type TreeNode = {
     child_bundle_count?: (number | null);
     processing_status?: (ProcessingStatus | null);
     stub?: (boolean | null);
+    source_metadata?: ({
+    [key: string]: unknown;
+} | null);
+    preview?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 /**
@@ -1789,6 +1828,9 @@ export type UserOut = {
     id: number;
     is_active?: boolean;
     is_superuser?: boolean;
+    ui_preferences?: ({
+    [key: string]: unknown;
+} | null);
     created_at: string;
     updated_at: string;
 };
@@ -1848,6 +1890,9 @@ export type UserUpdate = {
     profile_picture_url?: (string | null);
     bio?: (string | null);
     description?: (string | null);
+    ui_preferences?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 export type UserUpdateMe = {
@@ -1862,6 +1907,9 @@ export type UserUpdateMe = {
      * Longer description (max 2000 characters)
      */
     description?: (string | null);
+    ui_preferences?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 export type ValidationError = {
@@ -4227,6 +4275,12 @@ export type UploadProfilePictureData = {
 
 export type UploadProfilePictureResponse = (UserOut);
 
+export type UploadBackgroundImageData = {
+    formData: Body_users_upload_background_image;
+};
+
+export type UploadBackgroundImageResponse = (UserOut);
+
 export type GetUserPublicProfileData = {
     userId: number;
 };
@@ -4239,6 +4293,15 @@ export type GetProfilePictureData = {
 };
 
 export type GetProfilePictureResponse = (unknown);
+
+export type GetBackgroundImageData = {
+    filename: string;
+    userId: number;
+};
+
+export type GetBackgroundImageResponse = (unknown);
+
+export type DeleteBackgroundImageResponse = (UserOut);
 
 export type ListUserProfilesData = {
     limit?: number;
@@ -4336,6 +4399,8 @@ export type BrowseRssFeedData = {
 
 export type BrowseRssFeedResponse = (unknown);
 
+export type GetUnifiedProvidersResponse = (unknown);
+
 export type GetProvidersResponse = (ProviderListResponse);
 
 export type PullOllamaModelData = {
@@ -4359,11 +4424,23 @@ export type RemoveOllamaModelData = {
 
 export type RemoveOllamaModelResponse = (Message);
 
+export type GetGeocodingProvidersResponse = (unknown);
+
 export type GeocodeLocationData = {
+    language?: (string | null);
     location: string;
 };
 
 export type GeocodeLocationResponse = (unknown);
+
+export type GeocodeLocationWithProviderData = {
+    apiKey?: (string | null);
+    language?: (string | null);
+    location: string;
+    providerType: string;
+};
+
+export type GeocodeLocationWithProviderResponse = (unknown);
 
 export type GetCountryDataData = {
     country: unknown;

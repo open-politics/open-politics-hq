@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Open Politics Project",
+    "title": "HQ",
     "version": "0.1.0"
   },
   "paths": {
@@ -13628,6 +13628,53 @@
         ]
       }
     },
+    "/api/v1/users/me/upload-background-image": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Upload Background Image",
+        "description": "Upload a custom background image for the current user's UI preferences.",
+        "operationId": "upload_background_image",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_users-upload_background_image"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/users/profile/{user_id}": {
       "get": {
         "tags": [
@@ -13719,6 +13766,88 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/users/background-image/{user_id}/{filename}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get Background Image",
+        "description": "Serve user background images (requires authentication - user can only access their own background).",
+        "operationId": "get_background_image",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/delete-background-image": {
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete Background Image",
+        "description": "Delete the current user's custom background image.",
+        "operationId": "delete_background_image",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/api/v1/users/profiles": {
@@ -14624,6 +14753,27 @@
         }
       }
     },
+    "/api/v1/utils/providers/unified": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Get Unified Providers",
+        "description": "Get all providers across all capabilities (LLM, embedding, search, geocoding) in a unified format.\nThis provides metadata about requirements (API keys, local, etc.) and capabilities.",
+        "operationId": "get_unified_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/utils/providers": {
       "get": {
         "tags": [
@@ -14631,7 +14781,7 @@
           "Utilities"
         ],
         "summary": "Get Providers",
-        "description": "Returns a dynamic list of available classification providers and their models.\nDiscovers models from all configured providers (Ollama, OpenAI, Gemini).",
+        "description": "Returns a dynamic list of available classification providers and their models.\nDiscovers models from all configured providers (Ollama, OpenAI, Gemini).\n\nLEGACY: Use /providers/unified for a better structured response.",
         "operationId": "get_providers",
         "responses": {
           "200": {
@@ -14802,6 +14952,27 @@
         }
       }
     },
+    "/api/v1/utils/geocoding-providers": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Get Geocoding Providers",
+        "description": "Get available geocoding providers and their configuration requirements.\nHelps frontend display provider options and understand what credentials are needed.\nUses registry service to dynamically discover providers.",
+        "operationId": "get_geocoding_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/utils/geocode_location": {
       "get": {
         "tags": [
@@ -14809,6 +14980,7 @@
           "Utilities"
         ],
         "summary": "Geocode Location",
+        "description": "Public geocoding endpoint - no authentication required.\n\nUses local Nominatim container with automatic fallback to public Nominatim API.\nFor proprietary providers (Mapbox, etc.) use /geocode_location_with_provider endpoint.\n\nStrategy:\n1. Try local Nominatim container first (fast, no rate limits)\n2. If local fails, fallback to public Nominatim API (rate limited but reliable)\n\nArgs:\n    location: Location name or address to geocode\n    language: Language code for results (default: 'en')",
         "operationId": "geocode_location",
         "parameters": [
           {
@@ -14818,6 +14990,112 @@
             "schema": {
               "type": "string",
               "title": "Location"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "en",
+              "title": "Language"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/utils/geocode_location_with_provider": {
+      "get": {
+        "tags": [
+          "utils",
+          "Utilities"
+        ],
+        "summary": "Geocode Location With Provider",
+        "description": "Authenticated geocoding endpoint with custom provider selection.\nRequires authentication to use proprietary providers with user's API keys.\n\nSupported providers:\n- local: Local Nominatim container (no API key)\n- nominatim_api: Public Nominatim API (no API key, rate limited)\n- mapbox: Mapbox Geocoding API (requires api_key parameter)\n\nArgs:\n    location: Location name or address to geocode\n    provider_type: Provider to use ('local', 'nominatim_api', 'mapbox')\n    api_key: API key for proprietary providers (required for 'mapbox')\n    language: Language code for results (default: 'en')\n    current_user: Authenticated user (injected)",
+        "operationId": "geocode_location_with_provider",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "location",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Location"
+            }
+          },
+          {
+            "name": "provider_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Type"
+            }
+          },
+          {
+            "name": "api_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api Key"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "en",
+              "title": "Language"
             }
           }
         ],
@@ -17493,7 +17771,7 @@
         ],
         "title": "AssetKind"
       },
-      "AssetPreview": {
+      "AssetPreview-Input": {
         "properties": {
           "id": {
             "type": "integer",
@@ -17552,7 +17830,84 @@
           },
           "children": {
             "items": {
-              "$ref": "#/components/schemas/AssetPreview"
+              "$ref": "#/components/schemas/AssetPreview-Input"
+            },
+            "type": "array",
+            "title": "Children",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "kind",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AssetPreview",
+        "description": "A lightweight public representation of an Asset."
+      },
+      "AssetPreview-Output": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AssetKind"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "text_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Content"
+          },
+          "blob_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blob Path"
+          },
+          "source_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Metadata"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AssetPreview-Output"
             },
             "type": "array",
             "title": "Children",
@@ -18261,6 +18616,20 @@
         ],
         "title": "Body_sso-complete_discourse_sso"
       },
+      "Body_users-upload_background_image": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_users-upload_background_image"
+      },
       "Body_users-upload_profile_picture": {
         "properties": {
           "file": {
@@ -18573,7 +18942,7 @@
         "type": "object",
         "title": "BundleMoveRequest"
       },
-      "BundlePreview": {
+      "BundlePreview-Input": {
         "properties": {
           "id": {
             "type": "integer",
@@ -18606,7 +18975,57 @@
           },
           "assets": {
             "items": {
-              "$ref": "#/components/schemas/AssetPreview"
+              "$ref": "#/components/schemas/AssetPreview-Input"
+            },
+            "type": "array",
+            "title": "Assets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at",
+          "assets"
+        ],
+        "title": "BundlePreview",
+        "description": "A lightweight public representation of a Bundle."
+      },
+      "BundlePreview-Output": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetPreview-Output"
             },
             "type": "array",
             "title": "Assets"
@@ -19565,6 +19984,43 @@
             "type": "boolean",
             "title": "Auto Save",
             "default": false
+          },
+          "display_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Content"
+          },
+          "context_assets": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Assets"
+          },
+          "context_depth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Depth"
           }
         },
         "type": "object",
@@ -23266,10 +23722,10 @@
           "content": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AssetPreview"
+                "$ref": "#/components/schemas/AssetPreview-Output"
               },
               {
-                "$ref": "#/components/schemas/BundlePreview"
+                "$ref": "#/components/schemas/BundlePreview-Output"
               },
               {
                 "$ref": "#/components/schemas/AnnotationRunPreview"
@@ -23997,6 +24453,30 @@
               }
             ],
             "title": "Stub"
+          },
+          "source_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Metadata"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
           }
         },
         "type": "object",
@@ -24623,6 +25103,18 @@
             "title": "Is Superuser",
             "default": false
           },
+          "ui_preferences": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ui Preferences"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -24898,6 +25390,18 @@
               }
             ],
             "title": "Description"
+          },
+          "ui_preferences": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ui Preferences"
           }
         },
         "type": "object",
@@ -24965,6 +25469,18 @@
             ],
             "title": "Description",
             "description": "Longer description (max 2000 characters)"
+          },
+          "ui_preferences": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ui Preferences"
           }
         },
         "type": "object",

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 
 interface GeocodeResult {
   longitude: number;
@@ -13,14 +14,26 @@ export type { GeocodeResult };
 const useGeocode = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { selections, apiKeys } = useProvidersStore();
+  
+  // Get active geocoding provider
+  const activeGeocodingProvider = selections.geocoding?.providerId || 'nominatim_local';
 
   const geocodeLocation = async (location: string): Promise<GeocodeResult | null> => {
     setLoading(true);
     setError(null);
-    console.log(`Starting geocode for location: ${location}`);
+    console.log(`Starting geocode for location: ${location} with provider: ${activeGeocodingProvider}`);
     try {
+      // Check if we need to pass API key for this provider
+      const providerApiKey = apiKeys[activeGeocodingProvider];
+      
+      // Use default endpoint (handles fallback automatically) or provider-specific endpoint
       const response = await axios.get('/api/v1/utils/geocode_location', {
-        params: { location }
+        params: { 
+          location,
+          // If user has overridden with their own key, we could add provider_type and api_key params
+          // For now, the backend uses the default configured provider with env fallback
+        }
       });
       console.log('Response received:', response.data);
       

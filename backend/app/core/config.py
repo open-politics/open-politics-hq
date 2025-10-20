@@ -60,7 +60,6 @@ class AppSettings(BaseSettings):
     ] = ["http://localhost:3000", "http://localhost:8000"]
 
     PROJECT_NAME: str = "OSINT Kernel"
-    SENTRY_DSN: Optional[HttpUrl] = None
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str
@@ -150,7 +149,13 @@ class AppSettings(BaseSettings):
     # === Provider Configurations ===
 
     # --- GeoCoding Provider ---
-    GEOCODING_PROVIDER_TYPE: Literal["nominatim", "mapbox"] = Field(default="nominatim", env="GEOCODING_PROVIDER_TYPE")
+    # Default provider for geocoding - can be overridden per-request from frontend
+    GEOCODING_PROVIDER_TYPE: Literal["local", "nominatim_api", "mapbox"] = Field(default="local", env="GEOCODING_PROVIDER_TYPE")
+    NOMINATIM_BASE_URL: str = Field(default="http://nominatim:8080", env="NOMINATIM_BASE_URL")
+    # User agent for API requests (Nominatim requires this per usage policy)
+    GEOCODING_USER_AGENT: str = Field(default="OpenPoliticsHQ/1.0", env="GEOCODING_USER_AGENT")
+    # Optional: Mapbox token as fallback (prefer runtime from frontend)
+    MAPBOX_ACCESS_TOKEN: Optional[str] = Field(default=None, env="MAPBOX_ACCESS_TOKEN")
 
     # --- Storage Provider ---
     STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
@@ -184,9 +189,20 @@ class AppSettings(BaseSettings):
     # OpenAI embedding settings (for future use)
     OPENAI_EMBEDDING_MODEL: str = Field(default="text-embedding-ada-002", env="OPENAI_EMBEDDING_MODEL")
 
-    # --- Celery / Redis ---
-    CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/0", env="CELERY_BROKER_URL")
-    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/0", env="CELERY_RESULT_BACKEND")
+    # --- Redis Configuration ---
+    REDIS_HOST: str = Field(default="redis", env="REDIS_HOST")
+    REDIS_PORT: int = Field(default=6379, env="REDIS_PORT")
+    REDIS_DB: int = Field(default=0, env="REDIS_DB")
+    # Optional: Override with full URL (takes precedence if set)
+    REDIS_URL: Optional[str] = Field(default=None, env="REDIS_URL")
+    
+    @computed_field  # type: ignore[misc]
+    @property
+    def redis_url(self) -> str:
+        # Use explicit REDIS_URL if provided, otherwise construct from components
+        if self.REDIS_URL:
+            return self.REDIS_URL
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # Tavily API Key
     TAVILY_API_KEY: Optional[str] = Field(default=None, env="TAVILY_API_KEY")
@@ -205,6 +221,9 @@ class AppSettings(BaseSettings):
     MAX_ANNOTATION_CONCURRENCY: int = Field(default=20, env="MAX_ANNOTATION_CONCURRENCY")
     # Enable/disable parallel processing (fallback to sequential if disabled)
     ENABLE_PARALLEL_ANNOTATION_PROCESSING: bool = Field(default=True, env="ENABLE_PARALLEL_ANNOTATION_PROCESSING")
+    
+    # --- Development & Testing ---
+    INSPECT_PROMPTS_ON_STARTUP: bool = Field(default=False, env="INSPECT_PROMPTS_ON_STARTUP")
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

@@ -44,6 +44,7 @@ class UserOut(UserBase):
     id: int
     is_active: bool = True
     is_superuser: bool = False
+    ui_preferences: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -84,6 +85,7 @@ class UserUpdate(SQLModel):
     profile_picture_url: Optional[str] = None
     bio: Optional[str] = None
     description: Optional[str] = None
+    ui_preferences: Optional[Dict[str, Any]] = None
 
 class UserUpdateMe(SQLModel):
     full_name: Optional[str] = Field(None, max_length=100)
@@ -91,6 +93,7 @@ class UserUpdateMe(SQLModel):
     profile_picture_url: Optional[str] = Field(None, max_length=500)
     bio: Optional[str] = Field(None, max_length=500, description="Short bio (max 500 characters)")
     description: Optional[str] = Field(None, max_length=2000, description="Longer description (max 2000 characters)")
+    ui_preferences: Optional[Dict[str, Any]] = None
 
 class UserProfileUpdate(SQLModel):
     """Dedicated schema for profile-only updates (no email/password)."""
@@ -106,6 +109,25 @@ class UserProfileStats(SQLModel):
     assets_count: int
     annotations_count: int
     member_since: datetime
+
+class UserUIPreferences(SQLModel):
+    """Structured schema for user UI preferences and settings."""
+    # Globe animation
+    globe_enabled: bool = False
+    
+    # Banners and notifications
+    docs_banner_dismissed: bool = False
+    
+    # Tutorial and onboarding
+    tutorial_completed: bool = False
+    tutorial_step: Optional[int] = None
+    
+    # Visual customization
+    custom_background_url: Optional[str] = None
+    
+    # Future settings can be added here
+    # theme: Optional[str] = None
+    # sidebar_collapsed: Optional[bool] = None
 
 class UpdatePassword(SQLModel):
     current_password: str

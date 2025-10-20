@@ -177,6 +177,7 @@ async def intelligence_chat(
                     stream=True,
                     thinking_enabled=request.thinking_enabled,
                     api_keys=request.api_keys,
+                    conversation_id=request.conversation_id,
                     **kwargs
                 ):
                     # Store for later saving
@@ -238,6 +239,7 @@ async def intelligence_chat(
                 stream=False,
                 thinking_enabled=request.thinking_enabled,
                 api_keys=request.api_keys,
+                conversation_id=request.conversation_id,
                 **kwargs
             )
             

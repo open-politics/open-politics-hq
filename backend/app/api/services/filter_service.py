@@ -283,19 +283,3 @@ class FilterService:
 
 # Global filter service instance
 filter_service = FilterService()
-
-# Pre-built common filters
-filter_service.save_filter(
-    "high_priority", 
-    FilterFactory.create_threshold_filter("priority_score", 7.0)
-)
-
-filter_service.save_filter(
-    "threat_indicators",
-    FilterFactory.create_keyword_filter("content", ["threat", "attack", "breach", "vulnerability"])
-)
-
-filter_service.save_filter(
-    "english_content",
-    FilterFactory.create_whitelist_filter("language", ["en", "en-US", "en-GB"])
-) 

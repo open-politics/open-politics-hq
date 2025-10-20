@@ -16,4 +16,6 @@ data:
   MINIO_HOST: "{{ .Values.env.config.MINIO_HOST }}"
   MINIO_PORT: "{{ .Values.env.config.MINIO_PORT }}"
   MINIO_SECURE: "{{ .Values.env.config.MINIO_SECURE }}"
+  NOMINATIM_PORT: "{{ .Values.nominatim.service.port }}"
+  NOMINATIM_DOMAIN: "nominatim"
 

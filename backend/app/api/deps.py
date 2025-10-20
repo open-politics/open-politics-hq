@@ -21,6 +21,7 @@ from app.api.providers.base import (
     ScrapingProvider, 
     SearchProvider,
     GeospatialProvider,
+    GeocodingProvider,
     EmbeddingProvider
 )
 from app.api.providers.model_registry import ModelRegistryService
@@ -30,6 +31,7 @@ from app.api.providers.factory import (
     create_search_provider,
     create_embedding_provider,
     create_geospatial_provider,
+    create_geocoding_provider,
     create_model_registry,
 )
 from app.api.services.annotation_service import AnnotationService
@@ -167,6 +169,9 @@ def get_search_provider_dependency(settings: SettingsDep) -> SearchProvider:
 def get_geospatial_provider_dependency(settings: SettingsDep) -> GeospatialProvider:
     return create_geospatial_provider(settings)
 
+def get_geocoding_provider_dependency(settings: SettingsDep) -> GeocodingProvider:
+    return create_geocoding_provider(settings)
+
 def get_embedding_provider_dependency(settings: SettingsDep) -> EmbeddingProvider:
     return create_embedding_provider(settings)
 
@@ -181,6 +186,7 @@ StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dep
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dependency)]
 SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dependency)]
 GeospatialProviderDep = Annotated[GeospatialProvider, Depends(get_geospatial_provider_dependency)]
+GeocodingProviderDep = Annotated[GeocodingProvider, Depends(get_geocoding_provider_dependency)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider_dependency)]
 ModelRegistryDep = Annotated['ModelRegistryService', Depends(get_model_registry_dependency)]
 

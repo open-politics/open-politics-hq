@@ -134,6 +134,7 @@ def get_services():
     
     user_id = int(access_token.claims.get("sub"))
     infospace_id = access_token.claims.get("infospace_id")
+    conversation_id = access_token.claims.get("conversation_id")  # Optional conversation ID
 
     if not user_id or not infospace_id:
         raise PermissionError("Invalid authentication token")
@@ -161,6 +162,7 @@ def get_services():
             "session": session,
             "user_id": user_id,
             "infospace_id": infospace_id,
+            "conversation_id": conversation_id,  # Pass conversation ID to tools
             "runtime_api_keys": runtime_api_keys,
             "asset_service": asset_service,
             "annotation_service": annotation_service,
@@ -1952,12 +1954,34 @@ async def tasks(ctx: Context) -> ToolResult:
     - Pending tasks (what's coming up)
     - Recently completed tasks
     
+    Tasks are stored in conversation metadata for reliable persistence.
+    
     Use add_task() to create new tasks.
     """
-    if not hasattr(ctx, "_task_list"):
-        ctx._task_list = []
-    
-    tasks_list = ctx._task_list
+    with get_services() as services:
+        if not services["conversation_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse add_task('description') to create your first task.")],
+                structured_content={"tasks": [], "summary": "empty"}
+            )
+        
+        # Load conversation and its metadata
+        from app.models import ChatConversation
+        from sqlmodel import select
+        
+        conversation = services["session"].exec(
+            select(ChatConversation)
+            .where(ChatConversation.id == services["conversation_id"])
+        ).first()
+        
+        if not conversation or not conversation.conversation_metadata:
+            return ToolResult(
+                content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse add_task('description') to create your first task.")],
+                structured_content={"tasks": [], "summary": "empty"}
+            )
+        
+        tasks_list = conversation.conversation_metadata.get("tasks", [])
+        await ctx.info(f"Loaded {len(tasks_list)} tasks from conversation metadata")
     
     if not tasks_list:
         return ToolResult(
@@ -2020,34 +2044,68 @@ async def add_task(
     Tasks start as 'pending' unless start_now=True.
     Use start_task(id) to begin working on a pending task.
     """
-    if not hasattr(ctx, "_task_list"):
-        ctx._task_list = []
-    
-    # Generate simple numeric ID
-    task_id = len(ctx._task_list) + 1
-    
-    # Auto-pause any in-progress tasks if starting this one
-    if start_now:
-        for task in ctx._task_list:
-            if task["status"] == "in_progress":
-                task["status"] = "pending"
-    
-    new_task = {
-        "id": task_id,
-        "description": description,
-        "status": "in_progress" if start_now else "pending",
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    
-    ctx._task_list.append(new_task)
-    
-    status_emoji = "🔵" if start_now else "⚪"
-    status_text = "Started" if start_now else "Added"
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=f"{status_emoji} {status_text} task #{task_id}: {description}")],
-        structured_content={"task": new_task}
-    )
+    with get_services() as services:
+        if not services["conversation_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
+                structured_content={"error": "No conversation_id provided"}
+            )
+        
+        # Load conversation and its metadata
+        from app.models import ChatConversation
+        from sqlmodel import select
+        
+        conversation = services["session"].exec(
+            select(ChatConversation)
+            .where(ChatConversation.id == services["conversation_id"])
+        ).first()
+        
+        if not conversation:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ Conversation not found")],
+                structured_content={"error": "Conversation not found"}
+            )
+        
+        # Initialize or load tasks from metadata
+        if not conversation.conversation_metadata:
+            conversation.conversation_metadata = {}
+        
+        tasks = conversation.conversation_metadata.get("tasks", [])
+        
+        # Generate next task ID
+        task_id = max([t["id"] for t in tasks], default=0) + 1
+        
+        # Create new task
+        new_task = {
+            "id": task_id,
+            "description": description,
+            "status": "in_progress" if start_now else "pending",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Auto-pause other in-progress tasks if starting this one
+        if start_now:
+            for task in tasks:
+                if task["status"] == "in_progress":
+                    task["status"] = "pending"
+        
+        # Add to task list
+        tasks.append(new_task)
+        conversation.conversation_metadata["tasks"] = tasks
+        
+        # Save to database
+        services["session"].add(conversation)
+        services["session"].commit()
+        
+        await ctx.info(f"Added task #{task_id} to conversation metadata")
+        
+        status_emoji = "🔵" if start_now else "⚪"
+        status_text = "Started" if start_now else "Added"
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=f"{status_emoji} {status_text} task #{task_id}: {description}")],
+            structured_content={"task": new_task}
+        )
 
 
 @mcp.tool(tags=["tasks", "productivity"])
@@ -2063,40 +2121,65 @@ async def start_task(
     Example:
       start_task(3)
     """
-    if not hasattr(ctx, "_task_list"):
-        ctx._task_list = []
-    
-    task = next((t for t in ctx._task_list if t["id"] == task_id), None)
-    if not task:
+    with get_services() as services:
+        if not services["conversation_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
+                structured_content={"error": "No conversation_id provided"}
+            )
+        
+        # Load conversation and tasks
+        from app.models import ChatConversation
+        from sqlmodel import select
+        
+        conversation = services["session"].exec(
+            select(ChatConversation)
+            .where(ChatConversation.id == services["conversation_id"])
+        ).first()
+        
+        if not conversation or not conversation.conversation_metadata:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ No tasks found")],
+                structured_content={"error": "No tasks"}
+            )
+        
+        tasks = conversation.conversation_metadata.get("tasks", [])
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        
+        if not task:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
+                structured_content={"error": "task_not_found"}
+            )
+        
+        if task["status"] == "completed":
+            return ToolResult(
+                content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
+                structured_content={"status": "already_completed"}
+            )
+        
+        # Pause other in-progress tasks
+        paused = []
+        for t in tasks:
+            if t["status"] == "in_progress" and t["id"] != task_id:
+                t["status"] = "pending"
+                paused.append(t["id"])
+        
+        task["status"] = "in_progress"
+        task["started_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save to database
+        services["session"].add(conversation)
+        services["session"].commit()
+        
+        msg = f"🔵 Started task #{task_id}: {task['description']}"
+        if paused:
+            msg += f"\n⏸️  Paused tasks: {', '.join(f'#{id}' for id in paused)}"
+        
         return ToolResult(
-            content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
-            structured_content={"error": "task_not_found"}
+            content=[TextContent(type="text", text=msg)],
+            structured_content={"task": task, "paused": paused}
         )
-    
-    if task["status"] == "completed":
-        return ToolResult(
-            content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
-            structured_content={"status": "already_completed"}
-        )
-    
-    # Pause other in-progress tasks
-    paused = []
-    for t in ctx._task_list:
-        if t["status"] == "in_progress" and t["id"] != task_id:
-            t["status"] = "pending"
-            paused.append(t["id"])
-    
-    task["status"] = "in_progress"
-    task["started_at"] = datetime.now(timezone.utc).isoformat()
-    
-    msg = f"🔵 Started task #{task_id}: {task['description']}"
-    if paused:
-        msg += f"\n⏸️  Paused tasks: {', '.join(f'#{id}' for id in paused)}"
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=msg)],
-        structured_content={"task": task, "paused": paused}
-    )
 
 
 @mcp.tool(tags=["tasks", "productivity"])
@@ -2112,39 +2195,64 @@ async def finish_task(
     
     Use tasks() to see your progress.
     """
-    if not hasattr(ctx, "_task_list"):
-        ctx._task_list = []
-    
-    task = next((t for t in ctx._task_list if t["id"] == task_id), None)
-    if not task:
+    with get_services() as services:
+        if not services["conversation_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
+                structured_content={"error": "No conversation_id provided"}
+            )
+        
+        # Load conversation and tasks
+        from app.models import ChatConversation
+        from sqlmodel import select
+        
+        conversation = services["session"].exec(
+            select(ChatConversation)
+            .where(ChatConversation.id == services["conversation_id"])
+        ).first()
+        
+        if not conversation or not conversation.conversation_metadata:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ No tasks found")],
+                structured_content={"error": "No tasks"}
+            )
+        
+        tasks = conversation.conversation_metadata.get("tasks", [])
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        
+        if not task:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
+                structured_content={"error": "task_not_found"}
+            )
+        
+        if task["status"] == "completed":
+            return ToolResult(
+                content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
+                structured_content={"status": "already_completed"}
+            )
+        
+        task["status"] = "completed"
+        task["completed_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Count remaining
+        remaining = len([t for t in tasks if t["status"] in ["pending", "in_progress"]])
+        completed_count = len([t for t in tasks if t["status"] == "completed"])
+        
+        # Save to database
+        services["session"].add(conversation)
+        services["session"].commit()
+        
+        msg = f"✅ Completed task #{task_id}: {task['description']}"
+        if remaining > 0:
+            msg += f"\n\n📊 Progress: {completed_count} done, {remaining} remaining"
+        else:
+            msg += f"\n\n🎉 All tasks completed!"
+        
         return ToolResult(
-            content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
-            structured_content={"error": "task_not_found"}
+            content=[TextContent(type="text", text=msg)],
+            structured_content={"task": task, "progress": {"completed": completed_count, "remaining": remaining}}
         )
-    
-    if task["status"] == "completed":
-        return ToolResult(
-            content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
-            structured_content={"status": "already_completed"}
-        )
-    
-    task["status"] = "completed"
-    task["completed_at"] = datetime.now(timezone.utc).isoformat()
-    
-    # Count remaining
-    remaining = len([t for t in ctx._task_list if t["status"] in ["pending", "in_progress"]])
-    completed_count = len([t for t in ctx._task_list if t["status"] == "completed"])
-    
-    msg = f"✅ Completed task #{task_id}: {task['description']}"
-    if remaining > 0:
-        msg += f"\n\n📊 Progress: {completed_count} done, {remaining} remaining"
-    else:
-        msg += f"\n\n🎉 All tasks completed!"
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=msg)],
-        structured_content={"task": task, "progress": {"completed": completed_count, "remaining": remaining}}
-    )
 
 
 @mcp.tool(tags=["tasks", "productivity"])
@@ -2158,23 +2266,48 @@ async def cancel_task(
     Example:
       cancel_task(5)
     """
-    if not hasattr(ctx, "_task_list"):
-        ctx._task_list = []
-    
-    task = next((t for t in ctx._task_list if t["id"] == task_id), None)
-    if not task:
+    with get_services() as services:
+        if not services["conversation_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
+                structured_content={"error": "No conversation_id provided"}
+            )
+        
+        # Load conversation and tasks
+        from app.models import ChatConversation
+        from sqlmodel import select
+        
+        conversation = services["session"].exec(
+            select(ChatConversation)
+            .where(ChatConversation.id == services["conversation_id"])
+        ).first()
+        
+        if not conversation or not conversation.conversation_metadata:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ No tasks found")],
+                structured_content={"error": "No tasks"}
+            )
+        
+        tasks = conversation.conversation_metadata.get("tasks", [])
+        task = next((t for t in tasks if t["id"] == task_id), None)
+        
+        if not task:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
+                structured_content={"error": "task_not_found"}
+            )
+        
+        task["status"] = "cancelled"
+        task["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save to database
+        services["session"].add(conversation)
+        services["session"].commit()
+        
         return ToolResult(
-            content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
-            structured_content={"error": "task_not_found"}
+            content=[TextContent(type="text", text=f"❌ Cancelled task #{task_id}: {task['description']}")],
+            structured_content={"task": task}
         )
-    
-    task["status"] = "cancelled"
-    task["cancelled_at"] = datetime.now(timezone.utc).isoformat()
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=f"❌ Cancelled task #{task_id}: {task['description']}")],
-        structured_content={"task": task}
-    )
 
 
 @mcp.tool(tags=["memory", "context"])

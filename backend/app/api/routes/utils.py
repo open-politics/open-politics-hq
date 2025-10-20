@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 import requests
 from datetime import datetime, timezone
 
-from app.api.deps import get_current_active_superuser, get_current_user, ContentIngestionServiceDep, SessionDep
+from app.api.deps import get_current_active_superuser, get_current_user, ContentIngestionServiceDep, SessionDep, CurrentUser
 from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
 from app.utils import generate_test_email, send_email
 from app.core.opol_config import opol
@@ -324,11 +324,64 @@ async def browse_rss_feed(feed_url: str, limit: int = 20):
             detail=f"Failed to browse RSS feed: {str(e)}"
         )
 
+@router.get("/providers/unified")
+async def get_unified_providers():
+    """
+    Get all providers across all capabilities (LLM, embedding, search, geocoding) in a unified format.
+    This provides metadata about requirements (API keys, local, etc.) and capabilities.
+    """
+    try:
+        from app.api.providers.unified_registry import get_unified_registry
+        
+        registry = get_unified_registry()
+        
+        # Get providers grouped by capability
+        grouped = registry.get_providers_grouped_by_capability()
+        
+        # Convert to JSON-serializable format
+        result = {}
+        capabilities_list = []
+        
+        for capability, providers in grouped.items():
+            capabilities_list.append(capability)
+            result[capability] = [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "description": p.description,
+                    "requires_api_key": p.requires_api_key,
+                    "api_key_name": p.api_key_name,
+                    "api_key_url": p.api_key_url,
+                    "is_local": p.is_local,
+                    "is_oss": p.is_oss,
+                    "is_free": p.is_free,
+                    "has_env_fallback": p.has_env_fallback,
+                    "features": p.features or [],
+                    "rate_limited": p.rate_limited,
+                    "rate_limit_info": p.rate_limit_info,
+                }
+                for p in providers
+            ]
+        
+        return {
+            "providers": result,
+            "capabilities": capabilities_list,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get unified providers: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load provider configuration: {str(e)}"
+        )
+
+
 @router.get("/providers", response_model=ProviderListResponse, status_code=status.HTTP_200_OK)
 async def get_providers() -> ProviderListResponse:
     """
     Returns a dynamic list of available classification providers and their models.
     Discovers models from all configured providers (Ollama, OpenAI, Gemini).
+    
+    LEGACY: Use /providers/unified for a better structured response.
     """
     logger.info("Route: Discovering classification providers and models.")
     
@@ -645,111 +698,174 @@ async def remove_ollama_model(
             status_code=500,
             detail=f"Failed to remove model {model_name}: {str(e)}"
         )
+
+@router.get("/geocoding-providers")
+async def get_geocoding_providers():
+    """
+    Get available geocoding providers and their configuration requirements.
+    Helps frontend display provider options and understand what credentials are needed.
+    Uses registry service to dynamically discover providers.
+    """
+    from app.api.providers.geocoding_registry import GeocodingProviderRegistryService
     
-def call_nominatim_api(location, lang=None):
-    """
-    Call Nominatim search API for geocoding. Handles varied location formats from LLM.
-    Nominatim's search endpoint is flexible and works with various location formats.
-    """
-    custom_mappings = {
-        "europe": {
-            'coordinates': [13.405, 52.52],
-            'location_type': 'continent',
-            'bbox': [-24.539906, 34.815009, 69.033946, 81.85871],
-            'area': 1433.861436
-        },
-    }
-
-    if location.lower() in custom_mappings:
-        return custom_mappings[location.lower()]
-
-    try:
-        # Nominatim's /search endpoint is the most flexible - handles cities, countries, addresses, etc.
-        # The mediagis/nominatim image always uses port 8080 internally regardless of PORT env var
-        url = f"http://nominatim:8080/search"
-        params = {
-            'q': location,
-            'format': 'json',
-            'limit': 1,
-            'addressdetails': 1,
-            'extratags': 1,
-            'namedetails': 1
+    registry = GeocodingProviderRegistryService()
+    available_providers = registry.get_available_providers()
+    
+    # Build detailed provider information
+    providers_info = []
+    
+    for provider_name in available_providers:
+        config = registry.get_provider_info(provider_name)
+        if not config:
+            continue
+        
+        # Provider-specific metadata
+        provider_meta = {
+            "id": provider_name,
+            "requires_api_key": config.requires_api_key,
+            "enabled": config.enabled
         }
-        if lang:
-            params['accept-language'] = lang
-
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                top_result = data[0]
-                lat = float(top_result.get('lat'))
-                lon = float(top_result.get('lon'))
-                boundingbox = top_result.get('boundingbox', [])
-                
-                # Map Nominatim's type/class to our location_type
-                osm_type = top_result.get('type', 'location')
-                osm_class = top_result.get('class', '')
-                location_type = _map_nominatim_type(osm_type, osm_class)
-                
-                # Calculate approximate area from bounding box (in degrees squared, rough estimate)
-                area = None
-                if len(boundingbox) == 4:
-                    bbox_floats = [float(b) for b in boundingbox]
-                    # bbox format: [min_lat, max_lat, min_lon, max_lon]
-                    lat_diff = bbox_floats[1] - bbox_floats[0]
-                    lon_diff = bbox_floats[3] - bbox_floats[2]
-                    area = lat_diff * lon_diff
-                
-                return {
-                    'coordinates': [lon, lat],  # [lon, lat] format
-                    'location_type': location_type,
-                    'bbox': boundingbox if boundingbox else None,
-                    'area': area
-                }
-            else:
-                logger.warning(f"No data returned from Nominatim for location: {location}")
-        else:
-            logger.error(f"Nominatim API call failed with status code: {response.status_code}")
-    except requests.RequestException as e:
-        logger.error(f"Nominatim API call exception for location {location}: {str(e)}")
-    except Exception as e:
-        logger.error(f"Unexpected error for location {location}: {str(e)}")
-    return None
-
-def _map_nominatim_type(osm_type, osm_class):
-    """Map Nominatim's OSM type/class to our location_type."""
-    type_mapping = {
-        'country': 'country',
-        'state': 'state',
-        'province': 'state',
-        'city': 'city',
-        'town': 'city',
-        'village': 'locality',
-        'hamlet': 'locality',
-        'suburb': 'locality',
-        'neighbourhood': 'locality',
-        'county': 'county',
-        'region': 'region'
+        
+        # Add specific metadata per provider
+        if provider_name == "local":
+            provider_meta.update({
+                "name": "Local Nominatim",
+                "description": "Self-hosted Nominatim instance (compose/kubernetes)",
+                "rate_limited": False,
+                "supports_polygons": True,
+            })
+        elif provider_name == "nominatim_api":
+            provider_meta.update({
+                "name": "Nominatim Public API",
+                "description": "OpenStreetMap's free public geocoding API",
+                "rate_limited": True,
+                "rate_limit": "1 request/second",
+                "supports_polygons": True,
+            })
+        elif provider_name == "mapbox":
+            provider_meta.update({
+                "name": "Mapbox Geocoding",
+                "description": "Mapbox commercial geocoding API",
+                "api_key_name": "Mapbox Access Token",
+                "rate_limited": True,
+                "rate_limit": "600 requests/minute (free tier)",
+                "supports_polygons": False,
+                "docs_url": "https://docs.mapbox.com/api/search/geocoding/",
+                "env_configured": bool(settings.MAPBOX_ACCESS_TOKEN)
+            })
+        
+        providers_info.append(provider_meta)
+    
+    return {
+        "providers": providers_info,
+        "default_strategy": "local with fallback to nominatim_api"
     }
-    return type_mapping.get(osm_type.lower(), 'location')
 
 
 @router.get("/geocode_location")
-def geocode_location(location: str):
-    logger.info(f"Geocoding location: {location}")
-    coordinates = call_nominatim_api(location, lang='en')
-    logger.warning(f"Coordinates: {coordinates}")
-
-    if coordinates:
+async def geocode_location(
+    location: str,
+    language: Optional[str] = 'en'
+):
+    """
+    Public geocoding endpoint - no authentication required.
+    
+    Uses local Nominatim container with automatic fallback to public Nominatim API.
+    For proprietary providers (Mapbox, etc.) use /geocode_location_with_provider endpoint.
+    
+    Strategy:
+    1. Try local Nominatim container first (fast, no rate limits)
+    2. If local fails, fallback to public Nominatim API (rate limited but reliable)
+    
+    Args:
+        location: Location name or address to geocode
+        language: Language code for results (default: 'en')
+    """
+    from app.api.providers.geocoding_registry import GeocodingProviderRegistryService
+    
+    logger.info(f"Geocoding location (public): {location}")
+    
+    # Use registry service for automatic fallback
+    registry = GeocodingProviderRegistryService()
+    result = await registry.geocode_with_fallback(location, language=language)
+    
+    if result:
         return {
-            "coordinates": coordinates['coordinates'],
-            "location_type": coordinates['location_type'],
-            "bbox": coordinates.get('bbox'),
-            "area": coordinates.get('area')
+            "coordinates": result['coordinates'],
+            "location_type": result['location_type'],
+            "bbox": result.get('bbox'),
+            "area": result.get('area'),
+            "display_name": result.get('display_name'),
+            "geometry": result.get('geometry'),
+            "provider": result.get('provider')
+        }
+    
+    # All providers failed
+    logger.warning(f"Unable to geocode location: {location}")
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Unable to geocode location: {location}"
+    )
+
+
+@router.get("/geocode_location_with_provider")
+async def geocode_location_with_provider(
+    location: str,
+    provider_type: str,
+    api_key: Optional[str] = None,
+    language: Optional[str] = 'en',
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Authenticated geocoding endpoint with custom provider selection.
+    Requires authentication to use proprietary providers with user's API keys.
+    
+    Supported providers:
+    - local: Local Nominatim container (no API key)
+    - nominatim_api: Public Nominatim API (no API key, rate limited)
+    - mapbox: Mapbox Geocoding API (requires api_key parameter)
+    
+    Args:
+        location: Location name or address to geocode
+        provider_type: Provider to use ('local', 'nominatim_api', 'mapbox')
+        api_key: API key for proprietary providers (required for 'mapbox')
+        language: Language code for results (default: 'en')
+        current_user: Authenticated user (injected)
+    """
+    from app.api.providers.geocoding_registry import GeocodingProviderRegistryService
+    
+    logger.info(f"Geocoding location (authenticated): {location} with provider: {provider_type} for user: {current_user.email}")
+    
+    # Create provider using registry service
+    registry = GeocodingProviderRegistryService()
+    
+    try:
+        provider = registry.create_provider(provider_type, api_key=api_key)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
+    result = await provider.geocode(location, language=language)
+    
+    if result:
+        logger.info(f"Geocoded '{location}' using {provider_type}")
+        return {
+            "coordinates": result['coordinates'],
+            "location_type": result['location_type'],
+            "bbox": result.get('bbox'),
+            "area": result.get('area'),
+            "display_name": result.get('display_name'),
+            "geometry": result.get('geometry'),
+            "provider": provider_type
         }
     else:
-        return {"error": "Unable to geocode location"}
+        logger.warning(f"Unable to geocode location: {location}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unable to geocode location: {location}"
+        )
 
 @router.get("/get_country_data")
 def get_country_data(country):

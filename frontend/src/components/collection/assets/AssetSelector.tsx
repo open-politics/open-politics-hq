@@ -961,7 +961,7 @@ export default function AssetSelector({
         <div key={item.id}>
           <div
             data-item-index={itemIndex}
-            className={cn("group flex items-center mb-0.5 justify-between gap-2 hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", compact ? "py-1 px-2" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500", isFocused && "ring-2 ring-primary")}
+            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", compact ? "py-1 px-2 max-w-full overflow-hidden" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500", isFocused && "ring-1 ring-inset ring-primary")}
             style={getIndentationStyle(item.level)}
             onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}
             onDragOver={(e) => { 
@@ -1012,7 +1012,7 @@ export default function AssetSelector({
             }}
           >
             <div className="w-4 h-4 flex items-center justify-center">
-              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>} </Button>}
+              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0 pl-2.5" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>} </Button>}
             </div>
             <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4 rounded-full", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
             <div className="w-4 h-4 flex items-center justify-center">
@@ -1119,7 +1119,7 @@ export default function AssetSelector({
       <div key={item.id}>
         <div
           data-item-index={itemIndex}
-          className={cn("group flex items-center gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-2 ring-primary")}
+          className={cn("group flex items-center gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", compact ? "py-1 px-2 max-w-[70vw] md:max-w-[50vw] overflow-hidden" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-1 ring-inset ring-primary")}
           style={getIndentationStyle(item.level)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}

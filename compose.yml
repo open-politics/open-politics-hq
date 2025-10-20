@@ -23,35 +23,6 @@ services:
     env_file:
       - .env
     command: ["fastapi", "run", "--workers", "4", "--host", "0.0.0.0", "--port", "${BACKEND_PORT}"]
-    environment:
-      - PORT=${BACKEND_PORT}
-      - DOMAIN=${DOMAIN}
-      - ENVIRONMENT=${ENVIRONMENT}
-      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
-      - SECRET_KEY=${SECRET_KEY?Variable not set}
-      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
-      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
-      - USERS_OPEN_REGISTRATION=${USERS_OPEN_REGISTRATION}
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_USER=${SMTP_USER}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - POSTGRES_SERVER=${POSTGRES_SERVER}
-      - POSTGRES_PORT=${POSTGRES_PORT}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - POSTGRES_SSL_MODE=${POSTGRES_SSL_MODE}
-      - SENTRY_DSN=${SENTRY_DSN}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_USE_SSL=${MINIO_USE_SSL}
-      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
     build:
       context: ./backend
       args:
@@ -59,14 +30,15 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/app/alembic/versions:/app/app/alembic/versions
+      
   redis:
     image: redis:alpine
     ports:
-      - '6380:6380'
+      - '${REDIS_PORT:-6379}:${REDIS_PORT:-6379}'
     volumes:
       - redis_data:/data
       - ./.store/redis.conf:/usr/local/etc/redis/redis.conf
-    command: redis-server /usr/local/etc/redis/redis.conf --appendonly yes
+    command: redis-server /usr/local/etc/redis/redis.conf --port ${REDIS_PORT:-6379} --appendonly yes
     networks:
       - default
 
@@ -76,30 +48,15 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-    environment:
-      - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://backend:${BACKEND_PORT}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - USE_LOCAL_REDIS=true
-      - LOCAL_REDIS_URL=${LOCAL_REDIS_URL}
-      - SEARXNG_API_URL=${SEARXNG_API_URL}
-      - SEARCH_API=${SEARCH_API}
-      - SEARXNG_SECRET=${SEARXNG_SECRET}
-      - SEARXNG_PORT=${SEARXNG_PORT}
-      - SEARXNG_BIND_ADDRESS=${SEARXNG_BIND_ADDRESS}
-      - SEARXNG_IMAGE_PROXY=${SEARXNG_IMAGE_PROXY}
-      - SEARXNG_LIMITER=${SEARXNG_LIMITER}
-      - SEARXNG_DEFAULT_DEPTH=${SEARXNG_DEFAULT_DEPTH}
-      - SEARXNG_MAX_RESULTS=${SEARXNG_MAX_RESULTS}
-      - SEARXNG_ENGINES=${SEARXNG_ENGINES}
-      - SEARXNG_TIME_RANGE=${SEARXNG_TIME_RANGE}
-      - SEARXNG_SAFESEARCH=${SEARXNG_SAFESEARCH}
     networks:
       - default
 
   celery_worker:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    build:
+      context: ./backend
+      args:
+        INSTALL_DEV: ${INSTALL_DEV-false}
     restart: always
     networks:
       - default
@@ -109,19 +66,6 @@ services:
       - backend
     env_file:
       - .env
-    environment:
-      - POSTGRES_SERVER=db
-      - POSTGRES_PORT=${POSTGRES_PORT}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_USE_SSL=${MINIO_USE_SSL}
-      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=4"]
     volumes:
       - ./backend:/app

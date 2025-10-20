@@ -8,9 +8,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import useAuth from "@/hooks/useAuth";
-import { Shield, User, Key, Trash2, Camera, Upload, CheckCircle2, XCircle } from 'lucide-react';
+import { Shield, User, Key, Trash2, Camera, Upload, CheckCircle2, XCircle, Sparkles, Image as ImageIcon, X, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
 import { UsersService } from '@/client';
+import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
  
 
 export default function AccountSettingsPage() {
@@ -26,6 +27,10 @@ export default function AccountSettingsPage() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [statusBanner, setStatusBanner] = useState<{ type: 'loading' | 'success' | 'error'; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backgroundInputRef = useRef<HTMLInputElement>(null);
+  
+  // User preferences
+  const { preferences, initializePreferences, updatePreference, uploadBackgroundImage, deleteBackgroundImage } = useUserPreferencesStore();
   
   // Populate fields when user data loads/changes
   useEffect(() => {
@@ -35,8 +40,13 @@ export default function AccountSettingsPage() {
       setEmail(user.email || '');
       setBio(user.bio || '');
       setDescription(user.description || '');
+      
+      // Initialize preferences
+      if (user.ui_preferences) {
+        initializePreferences(user.ui_preferences);
+      }
     }
-  }, [user]);
+  }, [user, initializePreferences]);
   
   const showStatus = (type: 'loading' | 'success' | 'error', message: string, autoHideMs?: number) => {
     setStatusBanner({ type, message });
@@ -134,6 +144,64 @@ export default function AccountSettingsPage() {
     } catch (err) {
       showStatus('error', 'Failed to update password', 4000);
     }
+  };
+
+  const handleBackgroundImageUpload = async (file: File) => {
+    if (!file) return;
+    
+    // Validate file type and size
+    if (!file.type.startsWith('image/')) {
+      showStatus('error', 'Please select an image file', 3000);
+      return;
+    }
+    
+    if (file.size > 10 * 1024 * 1024) { // 10MB limit
+      showStatus('error', 'Image size must be less than 10MB', 3000);
+      return;
+    }
+    
+    showStatus('loading', 'Uploading background image...');
+    
+    try {
+      await uploadBackgroundImage(file);
+      showStatus('success', 'Background image uploaded successfully!', 2000);
+      
+      // Force page reload after a short delay to refresh user data and background
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err: any) {
+      const errorMsg = err?.body?.detail || 'Failed to upload background image';
+      showStatus('error', errorMsg, 4000);
+    }
+  };
+
+  const handleBackgroundFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleBackgroundImageUpload(file);
+    }
+  };
+
+  const handleDeleteBackground = async () => {
+    if (!confirm('Are you sure you want to remove your custom background image?')) {
+      return;
+    }
+    
+    showStatus('loading', 'Removing background image...');
+    
+    try {
+      await deleteBackgroundImage();
+      showStatus('success', 'Background image removed', 2000);
+    } catch (err: any) {
+      const errorMsg = err?.body?.detail || 'Failed to remove background image';
+      showStatus('error', errorMsg, 4000);
+    }
+  };
+
+  const handleResetDocsBanner = async () => {
+    await updatePreference('docs_banner_dismissed', false);
+    showStatus('success', 'Docs banner reset - you\'ll see it again in the header', 2000);
   };
 
   return (
@@ -291,6 +359,96 @@ export default function AccountSettingsPage() {
               )}
             </Button>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* UI Preferences Section */}
+      <Card id="ui-preferences" className="w-full max-w-2xl">
+        <CardHeader>
+          <CardTitle className="text-2xl font-bold flex items-center gap-2">
+            <Sparkles className="h-6 w-6" />
+            UI Preferences
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Background Image Section */}
+          <div className="space-y-4 p-4 border rounded-lg">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <ImageIcon className="h-4 w-4" />
+                <Label className="text-base font-medium">Custom Background Image</Label>
+              </div>
+              <p className="text-sm text-muted-foreground mb-4">
+                Upload a custom background image for your interface (max 10MB)
+              </p>
+            </div>
+
+            {preferences.custom_background_url ? (
+              <div className="space-y-3">
+                <div className="relative w-full h-32 rounded-md overflow-hidden bg-muted">
+                  <img
+                    src={preferences.custom_background_url}
+                    alt="Custom background preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => backgroundInputRef.current?.click()}
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Replace Image
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDeleteBackground}
+                  >
+                    <X className="h-4 w-4 mr-2" />
+                    Remove Image
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => backgroundInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Upload Background Image
+              </Button>
+            )}
+
+            <input
+              ref={backgroundInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleBackgroundFileSelect}
+            />
+          </div>
+
+          {/* Reset Docs Banner */}
+          {preferences.docs_banner_dismissed && (
+            <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/30">
+              <div className="space-y-0.5">
+                <Label className="text-base font-medium">Documentation Banner</Label>
+                <p className="text-sm text-muted-foreground">
+                  You've dismissed the docs banner. Click to show it again.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetDocsBanner}
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Reset
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

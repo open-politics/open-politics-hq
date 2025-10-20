@@ -13,7 +13,6 @@ psycopg[binary]
 sqlmodel>=0.0.16
 bcrypt
 pydantic-settings
-sentry-sdk[fastapi]
 pyjwt
 python-jose
 beautifulsoup4

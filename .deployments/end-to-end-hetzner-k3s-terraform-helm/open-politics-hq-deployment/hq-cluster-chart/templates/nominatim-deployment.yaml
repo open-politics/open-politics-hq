@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nominatim
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.image.nominatim.nodes }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nominatim
+  template:
+    metadata:
+      labels:
+        app: nominatim
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+        - name: nominatim-data
+          persistentVolumeClaim:
+            claimName: nominatim-data-pvc
+        - name: nominatim-work
+          persistentVolumeClaim:
+            claimName: nominatim-work-pvc
+      initContainers:
+        - name: download-osm
+          image: alpine:latest
+          command:
+            - sh
+            - -c
+            - |
+              # Install curl
+              apk add --no-cache curl
+              
+              # Download OSM file if it doesn't exist or is incomplete
+              OSM_FILE="/nominatim/data.osm.pbf"
+              OSM_URL="{{ .Values.nominatim.pbfUrl }}"
+              
+              if [ -f "$OSM_FILE" ]; then
+                echo "OSM file already exists, checking integrity..."
+                FILE_SIZE=$(stat -c%s "$OSM_FILE" 2>/dev/null || stat -f%z "$OSM_FILE" 2>/dev/null || echo "0")
+                # Europe file should be ~33GB, accept anything over 32GB as complete
+                if [ "$FILE_SIZE" -gt 32000000000 ]; then
+                  echo "OSM file looks complete ($FILE_SIZE bytes), skipping download"
+                  exit 0
+                else
+                  echo "OSM file seems incomplete or corrupted ($FILE_SIZE bytes), re-downloading..."
+                  rm -f "$OSM_FILE"
+                fi
+              fi
+              
+              echo "Downloading OSM extract from $OSM_URL (no resume)..."
+              curl -L -A "mediagis/nominatim-docker:5.1.0" --fail-with-body \
+                -o "$OSM_FILE" \
+                "$OSM_URL"
+              
+              echo "Download complete!"
+              ls -lh "$OSM_FILE"
+          volumeMounts:
+            - name: nominatim-work
+              mountPath: /nominatim
+              subPath: nominatim
+      containers:
+        - name: nominatim
+          image: "{{ .Values.image.nominatim.image }}:{{ .Values.image.nominatim.tag }}"
+          imagePullPolicy: {{ .Values.image.nominatim.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PBF_PATH
+              value: "/nominatim/data.osm.pbf"
+            - name: REPLICATION_URL
+              value: "{{ .Values.nominatim.replicationUrl }}"
+            - name: IMPORT_STYLE
+              value: "{{ .Values.nominatim.importStyle }}"
+            - name: UPDATE_MODE
+              value: "none"
+            - name: FREEZE
+              value: "false"
+            - name: THREADS
+              value: "4"
+            - name: GUNICORN_WORKERS
+              value: "4"
+            - name: IMPORT_WIKIPEDIA
+              value: "false"
+            - name: IMPORT_GB_POSTCODES
+              value: "false"
+            - name: POSTGRES_SHARED_BUFFERS
+              value: "512MB"
+            - name: POSTGRES_MAINTENANCE_WORK_MEM
+              value: "1GB"
+            - name: POSTGRES_WORK_MEM
+              value: "50MB"
+            - name: POSTGRES_EFFECTIVE_CACHE_SIZE
+              value: "2GB"
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+            - name: nominatim-data
+              mountPath: /var/lib/postgresql/16/main
+              subPath: pgdata
+            - name: nominatim-work
+              mountPath: /nominatim
+              subPath: nominatim
+          resources: {}
+            # Resources intentionally left empty to avoid OOM kills during import
+            # The import process has variable memory requirements
+            # After import completes, you can add limits for runtime stability
+          startupProbe:
+            httpGet:
+              path: /status
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            # Allow up to 2 hours for initial import (240 checks * 30s = 7200s = 120min)
+            failureThreshold: 240
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: 8080
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 3
+

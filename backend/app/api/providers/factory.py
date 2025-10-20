@@ -9,6 +9,7 @@ from app.api.providers.base import (
     SearchProvider,
     GeospatialProvider,
     EmbeddingProvider,
+    GeocodingProvider,
 )
 
 # Import concrete provider implementations
@@ -42,6 +43,11 @@ from app.api.providers.impl.embedding_voyage import VoyageAIEmbeddingProvider
 from app.api.providers.embedding_registry import EmbeddingProviderRegistryService
 
 from app.api.providers.impl.geospatial_opol import OpolGeospatialProvider
+
+# Geocoding provider implementations
+from app.api.providers.impl.geocoding_nominatim_local import NominatimLocalGeocodingProvider
+from app.api.providers.impl.geocoding_nominatim_api import NominatimAPIGeocodingProvider
+from app.api.providers.impl.geocoding_mapbox import MapboxGeocodingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +217,41 @@ def create_geospatial_provider(settings: AppSettings) -> GeospatialProvider:
         return OpolGeospatialProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
     else:
         raise ValueError(f"Unsupported geospatial provider type configured: {provider_type}") 
+
+
+def create_geocoding_provider(settings: AppSettings) -> GeocodingProvider:
+    """
+    Create default geocoding provider based on settings.
+    
+    Note: Endpoint can override provider at runtime with user-supplied API keys.
+    This factory creates the default provider with settings/env fallback.
+    
+    Supports three modes:
+    - local: Local Nominatim instance (compose/kubernetes) - no API key needed
+    - nominatim_api: Public Nominatim API (rate-limited, free) - no API key needed
+    - mapbox: Mapbox Geocoding API (requires MAPBOX_ACCESS_TOKEN env var as fallback)
+    """
+    provider_type = settings.GEOCODING_PROVIDER_TYPE.lower()
+    logger.info(f"Factory: Creating default geocoding provider of type: {provider_type}")
+    
+    if provider_type == "local":
+        # Local Nominatim instance (compose/kubernetes)
+        return NominatimLocalGeocodingProvider(base_url=settings.NOMINATIM_BASE_URL)
+    
+    elif provider_type == "nominatim_api":
+        # Public Nominatim API (rate-limited to 1 req/sec)
+        return NominatimAPIGeocodingProvider(user_agent=settings.GEOCODING_USER_AGENT)
+    
+    elif provider_type == "mapbox":
+        # Mapbox Geocoding API - try env fallback, but frontend should provide API key
+        if not settings.MAPBOX_ACCESS_TOKEN:
+            logger.warning("Mapbox provider configured but no MAPBOX_ACCESS_TOKEN in env. Runtime API key from frontend required.")
+            # Create with placeholder - will fail unless runtime API key provided
+            return MapboxGeocodingProvider(api_key="placeholder_requires_runtime_key")
+        return MapboxGeocodingProvider(api_key=settings.MAPBOX_ACCESS_TOKEN)
+    
+    else:
+        raise ValueError(f"Unsupported geocoding provider type: {provider_type}")
 
 
 # Global embedding registry instance

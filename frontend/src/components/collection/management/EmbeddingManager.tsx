@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Sparkles, Database, RefreshCw, Play, Info, Trash2, Settings, Key, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { InfospaceRead, InfospacesService, EmbeddingsService } from '@/client';
 import { toast } from 'sonner';
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import {
   Dialog,
   DialogContent,
@@ -50,7 +50,7 @@ interface EmbeddingManagerProps {
 }
 
 export default function EmbeddingManager({ infospace, onInfospaceUpdate }: EmbeddingManagerProps) {
-  const { apiKeys, setApiKey } = useApiKeysStore();
+  const { apiKeys, setApiKey } = useProvidersStore();
   const [availableModels, setAvailableModels] = useState<EmbeddingModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>(infospace.embedding_model || '');
   const [isLoadingModels, setIsLoadingModels] = useState(false);

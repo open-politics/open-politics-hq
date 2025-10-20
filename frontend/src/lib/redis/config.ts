@@ -5,14 +5,25 @@ export type RedisConfig = {
   useLocalRedis: boolean
   upstashRedisRestUrl?: string
   upstashRedisRestToken?: string
-  localRedisUrl?: string
+  redisHost: string
+  redisPort: number
+  redisDb: number
+  redisUrl: string
 }
+
+const redisHost = process.env.REDIS_HOST || 'redis'
+const redisPort = parseInt(process.env.REDIS_PORT || '6379', 10)
+const redisDb = parseInt(process.env.REDIS_DB || '0', 10)
 
 export const redisConfig: RedisConfig = {
   useLocalRedis: process.env.USE_LOCAL_REDIS === 'true',
   upstashRedisRestUrl: process.env.UPSTASH_REDIS_REST_URL,
   upstashRedisRestToken: process.env.UPSTASH_REDIS_REST_TOKEN,
-  localRedisUrl: process.env.LOCAL_REDIS_URL || 'redis://redis:6379'
+  redisHost: redisHost,
+  redisPort: redisPort,
+  redisDb: redisDb,
+  // Use explicit REDIS_URL if provided, otherwise construct from components
+  redisUrl: process.env.REDIS_URL || `redis://${redisHost}:${redisPort}/${redisDb}`
 }
 
 let localRedisClient: RedisClientType | null = null
@@ -208,39 +219,38 @@ export async function getRedisClient(): Promise<RedisWrapper> {
 
   if (redisConfig.useLocalRedis) {
     if (!localRedisClient) {
-      const localRedisUrl =
-        redisConfig.localRedisUrl || 'redis://localhost:6379'
+      const redisUrl = redisConfig.redisUrl || 'redis://localhost:6379'
       try {
-        localRedisClient = createClient({ url: localRedisUrl })
+        localRedisClient = createClient({ url: redisUrl })
         await localRedisClient.connect()
       } catch (error) {
         if (error instanceof Error) {
           if (error.message.includes('ECONNREFUSED')) {
             console.error(
-              `Failed to connect to local Redis at ${localRedisUrl}: Connection refused. Is Redis running?`
+              `Failed to connect to Redis at ${redisUrl}: Connection refused. Is Redis running?`
             )
           } else if (error.message.includes('ETIMEDOUT')) {
             console.error(
-              `Failed to connect to local Redis at ${localRedisUrl}: Connection timed out. Check your network or Redis server.`
+              `Failed to connect to Redis at ${redisUrl}: Connection timed out. Check your network or Redis server.`
             )
           } else if (error.message.includes('ENOTFOUND')) {
             console.error(
-              `Failed to connect to local Redis at ${localRedisUrl}: Host not found. Check your Redis URL.`
+              `Failed to connect to Redis at ${redisUrl}: Host not found. Check your Redis URL.`
             )
           } else {
             console.error(
-              `Failed to connect to local Redis at ${localRedisUrl}:`,
+              `Failed to connect to Redis at ${redisUrl}:`,
               error.message
             )
           }
         } else {
           console.error(
-            `An unexpected error occurred while connecting to local Redis at ${localRedisUrl}:`,
+            `An unexpected error occurred while connecting to Redis at ${redisUrl}:`,
             error
           )
         }
         throw new Error(
-          'Failed to connect to local Redis. Check your configuration and ensure Redis is running.'
+          'Failed to connect to Redis. Check your configuration and ensure Redis is running.'
         )
       }
     }

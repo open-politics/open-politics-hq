@@ -23,7 +23,7 @@ import {
 import { useBookMarkStore } from '@/zustand_stores/storeBookmark';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { CoreContentModel } from '@/lib/content';
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { toast } from "@/components/ui/use-toast";
 import { AnnotationSchemaRead } from '@/client';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
@@ -98,7 +98,8 @@ export function ContentCard({
 }: ContentCardProps) {
   const { addBookmark, removeBookmark, isOperationPending } = useBookMarkStore();
   const { activeInfospace } = useInfospaceStore();
-  const { apiKeys, selectedProvider } = useApiKeysStore();
+  const { apiKeys, selections } = useProvidersStore();
+  const selectedProvider = selections.llm?.providerId || null;
 
   // Use the annotation system hook instead of classification system
   const {

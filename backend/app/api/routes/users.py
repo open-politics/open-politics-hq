@@ -218,6 +218,78 @@ async def upload_profile_picture(
         )
 
 
+@router.post("/me/upload-background-image", response_model=UserOut)
+async def upload_background_image(
+    session: SessionDep,
+    current_user: CurrentUser,
+    storage_provider: StorageProviderDep,
+    file: UploadFile = File(...)
+) -> Any:
+    """
+    Upload a custom background image for the current user's UI preferences.
+    """
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=400,
+            detail="Only image files are allowed"
+        )
+    
+    # Validate file size (10MB limit for backgrounds)
+    max_size = 10 * 1024 * 1024  # 10MB
+    file.file.seek(0, 2)  # Seek to end to get size
+    file_size = file.file.tell()
+    file.file.seek(0)  # Reset to beginning
+    
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail="File size too large. Maximum size is 10MB"
+        )
+    
+    # Generate unique object name for storage
+    file_extension = file.filename.split('.')[-1] if file.filename and '.' in file.filename else 'jpg'
+    object_name = f"background-images/{current_user.id}/{uuid.uuid4().hex}.{file_extension}"
+    
+    try:
+        # Delete old background image if exists
+        if current_user.ui_preferences and current_user.ui_preferences.get('custom_background_url'):
+            try:
+                old_url = current_user.ui_preferences.get('custom_background_url')
+                # URL format: /api/v1/users/background-image/{user_id}/{filename}
+                url_parts = old_url.split('/')
+                if len(url_parts) >= 2:
+                    filename = url_parts[-1]
+                    old_object_name = f"background-images/{current_user.id}/{filename}"
+                    await storage_provider.delete_file(old_object_name)
+            except Exception as e:
+                # Log but don't fail if old file deletion fails
+                print(f"Warning: Could not delete old background image: {e}")
+        
+        # Upload new file to storage
+        await storage_provider.upload_file(file, object_name)
+        
+        # Generate public URL for the uploaded file
+        background_url = f"/api/v1/users/background-image/{current_user.id}/{object_name.split('/')[-1]}"
+        
+        # Update ui_preferences
+        if not current_user.ui_preferences:
+            current_user.ui_preferences = {}
+        current_user.ui_preferences['custom_background_url'] = background_url
+        
+        session.add(current_user)
+        session.commit()
+        session.refresh(current_user)
+        
+        return current_user
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload background image: {str(e)}"
+        )
+
+
 @router.get("/profile/{user_id}", response_model=UserPublicProfile)
 def get_user_public_profile(user_id: int, session: SessionDep) -> Any:
     """
@@ -293,6 +365,105 @@ async def get_profile_picture(user_id: int, filename: str, session: SessionDep) 
         raise HTTPException(status_code=404, detail="Profile picture not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error serving profile picture: {str(e)}")
+
+
+@router.get("/background-image/{user_id}/{filename}")
+async def get_background_image(user_id: int, filename: str, session: SessionDep, current_user: CurrentUser) -> StreamingResponse:
+    """
+    Serve user background images (requires authentication - user can only access their own background).
+    """
+    # Verify the user exists and is active
+    user = session.get(User, user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Verify the requesting user is the same as the resource owner
+    if current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this background image")
+    
+    # Construct the object name in storage
+    object_name = f"background-images/{user_id}/{filename}"
+    
+    try:
+        # Get storage provider
+        from app.api.providers.factory import create_storage_provider
+        storage_provider = create_storage_provider(settings)
+        
+        # Get file stream from storage
+        file_stream = await storage_provider.get_file(object_name)
+        
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type or not content_type.startswith('image/'):
+            content_type = "image/jpeg"  # Default for background images
+        
+        # Create async generator for streaming
+        async def generate():
+            try:
+                chunk_size = 8192  # 8KB chunks
+                while True:
+                    chunk = file_stream.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                if hasattr(file_stream, 'close'):
+                    file_stream.close()
+        
+        return StreamingResponse(
+            generate(),
+            media_type=content_type,
+            headers={
+                "Cache-Control": "private, max-age=86400",  # Private cache for 24 hours
+                "Content-Disposition": f"inline; filename={filename}"
+            }
+        )
+        
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Background image not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error serving background image: {str(e)}")
+
+
+@router.delete("/me/delete-background-image", response_model=UserOut)
+async def delete_background_image(
+    session: SessionDep,
+    current_user: CurrentUser,
+    storage_provider: StorageProviderDep,
+) -> Any:
+    """
+    Delete the current user's custom background image.
+    """
+    # Check if user has a background image
+    if not current_user.ui_preferences or not current_user.ui_preferences.get('custom_background_url'):
+        raise HTTPException(
+            status_code=404,
+            detail="No background image found"
+        )
+    
+    try:
+        # Extract filename from URL and delete from storage
+        background_url = current_user.ui_preferences.get('custom_background_url')
+        url_parts = background_url.split('/')
+        if len(url_parts) >= 2:
+            filename = url_parts[-1]
+            object_name = f"background-images/{current_user.id}/{filename}"
+            await storage_provider.delete_file(object_name)
+        
+        # Remove from ui_preferences
+        current_user.ui_preferences['custom_background_url'] = None
+        
+        session.add(current_user)
+        session.commit()
+        session.refresh(current_user)
+        
+        return current_user
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete background image: {str(e)}"
+        )
 
 
 @router.get("/profiles", response_model=List[UserPublicProfile])

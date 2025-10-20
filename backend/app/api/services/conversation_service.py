@@ -168,6 +168,7 @@ class IntelligenceConversationService:
                                stream: bool = False,
                                thinking_enabled: bool = False,
                                api_keys: Optional[Dict[str, str]] = None,
+                               conversation_id: Optional[int] = None,
                                **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Intelligence analysis chat with full tool orchestration.
@@ -180,6 +181,7 @@ class IntelligenceConversationService:
             user_id: ID of the user
             infospace_id: ID of the infospace for intelligence context
             stream: Whether to stream the response
+            conversation_id: Optional conversation ID for task persistence
             **kwargs: Additional model parameters
         
         Returns:
@@ -190,7 +192,7 @@ class IntelligenceConversationService:
         
         # Create a secure context token for this conversation with API keys encoded
         from app.api.mcp.client import create_mcp_context_token_with_api_keys
-        context_token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys or {})
+        context_token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys or {}, conversation_id)
         
         # Check if the model exists and get its capabilities
         model_info = await self.model_registry.get_model_info(model_name)

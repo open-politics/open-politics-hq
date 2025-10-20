@@ -103,8 +103,8 @@ env:
     FRONTEND_PORT: "3000"
     BACKEND_PORT: "8022"
     REDIS_PORT: "6379"
-    PROJECT_NAME: "HQ Application"
-    STACK_NAME: "hq-prod-stack"
+    PROJECT_NAME: "HQ"
+    STACK_NAME: "hq-stack"
     BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173,https://localhost,https://localhost:3000,http://localhost.tiangolo.com,http://your-domain.com,https://your-domain.com,https://your-domain.com:80,https://your-domain.com:443"
     MINIO_ENDPOINT: "nbg1.your-objectstorage.com"
     MINIO_HOST: "minio"
@@ -125,6 +125,9 @@ env:
     POSTGRES_PORT: "5432"
     POSTGRES_PASSWORD: "xxx"
     POSTGRES_SSL_MODE: ""
+    REDIS_HOST: "redis"
+    REDIS_PORT: "6379"
+    REDIS_DB: "0"
     GOOGLE_API_KEY: "xxx"
     USE_LOCAL_REDIS: "True"
     LOCAL_REDIS_URL: "redis://redis:6379"
@@ -229,16 +232,6 @@ resources:
       cpu: 100m
       memory: 512Mi
 
-
-peliasPlaceholder:
-  service:
-    type: ClusterIP
-    port: 8721
-  persistence:
-    enabled: true
-    storageClass: "local-path"
-    size: 10Gi
-    accessMode: ReadWriteOnce
 
 # Node affinity (optional - spread across nodes)
 nodeAffinity:

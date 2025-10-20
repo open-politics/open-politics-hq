@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from 'react'
 import { IntelligenceChatService } from '@/client'
 import { ChatRequest, ChatResponse, ToolCallRequest } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys'
+import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
 import { OpenAPI } from '@/client/core/OpenAPI'
 
@@ -54,7 +54,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
   const [error, setError] = useState<string | null>(null)
   const [activeToolExecutions, setActiveToolExecutions] = useState<ToolExecution[]>([])
   const { activeInfospace } = useInfospaceStore()
-  const { apiKeys } = useApiKeysStore()
+  const { apiKeys } = useProvidersStore()
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const sendMessage = useCallback(async (

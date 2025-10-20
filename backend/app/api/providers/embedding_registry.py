@@ -14,6 +14,7 @@ from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
 from app.api.providers.impl.embedding_openai import OpenAIEmbeddingProvider
 from app.api.providers.impl.embedding_voyage import VoyageAIEmbeddingProvider
 from app.api.providers.impl.embedding_jina import JinaEmbeddingProvider
+from app.api.providers.embedding_config import embedding_models_config
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -222,22 +223,29 @@ class EmbeddingProviderRegistryService:
                 logger.error(f"Failed to discover models from ollama: {e}")
                 results["ollama"] = []
         
-        # Discover from providers with runtime API keys
+        # Discover from cloud providers using static configuration (no API keys needed for discovery)
         for provider_name in ["openai", "voyage", "jina"]:
-            if provider_name in runtime_api_keys and runtime_api_keys[provider_name]:
-                try:
-                    provider = self.create_provider(provider_name, runtime_api_keys[provider_name])
-                    models = await provider.discover_models()
-                    results[provider_name] = models
-                    
-                    # Update cache
-                    for model in models:
-                        self.models_cache[model["name"]] = model
-                    
-                    logger.info(f"Discovered {len(models)} models from {provider_name}")
-                except Exception as e:
-                    logger.error(f"Failed to discover models from {provider_name}: {e}")
-                    results[provider_name] = []
+            try:
+                # Use static configuration - no API keys needed for discovery
+                provider_models = embedding_models_config.get_provider_models(provider_name)
+                
+                discovered_models = []
+                for model_name, model_config in provider_models.items():
+                    model_info = {
+                        "name": model_name,
+                        "provider": provider_name,
+                        "dimension": model_config.get("dimension"),
+                        "description": model_config.get("description", f"{provider_name.title()} {model_name}"),
+                        "max_sequence_length": model_config.get("max_sequence_length")
+                    }
+                    discovered_models.append(model_info)
+                    self.models_cache[model_name] = model_info
+                
+                results[provider_name] = discovered_models
+                logger.info(f"Discovered {len(discovered_models)} models from {provider_name} (static config)")
+            except Exception as e:
+                logger.error(f"Failed to discover models from {provider_name}: {e}")
+                results[provider_name] = []
         
         return results
     
@@ -288,40 +296,64 @@ class EmbeddingProviderRegistryService:
                 provider = self.providers.get("ollama") or self.create_provider("ollama")
                 return provider, provider_name
             
-            # For other providers, need runtime API key
-            if provider_name in runtime_api_keys:
-                api_key = runtime_api_keys[provider_name]
-                if api_key:
-                    try:
-                        provider = self.create_provider(provider_name, api_key)
-                        return provider, provider_name
-                    except Exception as e:
-                        logger.error(f"Failed to create provider {provider_name}: {e}")
-                        return None, None
+            # For other providers, need runtime API key or environment fallback
+            api_key = runtime_api_keys.get(provider_name)
+            
+            # Fall back to environment variables if no runtime key
+            if not api_key:
+                if provider_name == "openai" and settings.OPENAI_API_KEY:
+                    api_key = settings.OPENAI_API_KEY
+                    logger.info(f"Using environment OPENAI_API_KEY for {model_name}")
+                elif provider_name == "jina" and settings.JINA_API_KEY:
+                    api_key = settings.JINA_API_KEY
+                    logger.info(f"Using environment JINA_API_KEY for {model_name}")
+            
+            if api_key:
+                try:
+                    provider = self.create_provider(provider_name, api_key)
+                    return provider, provider_name
+                except Exception as e:
+                    logger.error(f"Failed to create provider {provider_name}: {e}")
+                    return None, None
         
         # Model not in cache - try to infer provider from model name
         inferred_provider = self._infer_provider_from_model_name(model_name)
         
-        if inferred_provider and inferred_provider in runtime_api_keys:
-            # We can infer the provider and have an API key - try targeted discovery
+        # Check if we can infer the provider
+        if inferred_provider:
+            # Use static configuration for discovery (no API key needed)
             logger.info(f"Model '{model_name}' not in cache, attempting targeted discovery from '{inferred_provider}' provider")
-            api_key = runtime_api_keys[inferred_provider]
-            if api_key:
-                try:
-                    provider = self.create_provider(inferred_provider, api_key)
-                    models = await provider.discover_models()
+            try:
+                provider_models = embedding_models_config.get_provider_models(inferred_provider)
+                
+                # Update cache with all models from this provider
+                for model_name_cfg, model_config in provider_models.items():
+                    model_info = {
+                        "name": model_name_cfg,
+                        "provider": inferred_provider,
+                        "dimension": model_config.get("dimension"),
+                        "description": model_config.get("description"),
+                        "max_sequence_length": model_config.get("max_sequence_length")
+                    }
+                    self.models_cache[model_name_cfg] = model_info
+                
+                logger.info(f"Discovered {len(provider_models)} models from {inferred_provider} (static config)")
+                
+                # Check if our model was found
+                if model_name in self.models_cache:
+                    # Now create the provider with API key for actual usage
+                    api_key = runtime_api_keys.get(inferred_provider)
+                    if not api_key:
+                        if inferred_provider == "openai" and settings.OPENAI_API_KEY:
+                            api_key = settings.OPENAI_API_KEY
+                        elif inferred_provider == "jina" and settings.JINA_API_KEY:
+                            api_key = settings.JINA_API_KEY
                     
-                    # Update cache with discovered models
-                    for model in models:
-                        self.models_cache[model["name"]] = model
-                    
-                    logger.info(f"Discovered {len(models)} models from {inferred_provider}")
-                    
-                    # Check if our model was found
-                    if model_name in self.models_cache:
+                    if api_key:
+                        provider = self.create_provider(inferred_provider, api_key)
                         return provider, inferred_provider
-                except Exception as e:
-                    logger.error(f"Targeted discovery from {inferred_provider} failed: {e}")
+            except Exception as e:
+                logger.error(f"Targeted discovery from {inferred_provider} failed: {e}")
         
         # Fall back to discovering from all providers
         logger.info(f"Model '{model_name}' not found via targeted discovery, attempting full discovery")

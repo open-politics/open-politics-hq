@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
 import EditInfospaceOverlay from '@/components/collection/management/EditInfospaceOverlay';
 import EmbeddingManager from '@/components/collection/management/EmbeddingManager';
 import { InfospaceRowData } from '@/components/collection/tables/columns';
@@ -67,6 +68,9 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
     isLoading,
     infospaces,
   } = useInfospaceStore();
+  
+  // Easter egg: Globe toggle
+  const { preferences, togglePreference } = useUserPreferencesStore();
 
   const [isCreateOverlayOpen, setIsCreateOverlayOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -393,7 +397,7 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
     <div className="space-y-4 w-full">
       <div className="flex justify-between items-center">
         {/* Bulk Actions - shown when items are selected */}
-        {selectedCount > 0 ? (
+        {selectedCount > 0 && (
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">
               {selectedCount} infospace{selectedCount > 1 ? 's' : ''} selected
@@ -412,8 +416,6 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
               Delete Selected
             </Button>
           </div>
-        ) : (
-          <div /> // Empty div to maintain layout
         )}
 
         {/* Regular Actions */}
@@ -450,6 +452,7 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-medium">Quick Actions for "{activeInfospace.name}"</h3>
+                
                 <p className="text-sm text-muted-foreground">Manage backups for your active infospace</p>
               </div>
               <div className="flex gap-2">
@@ -654,6 +657,19 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
             defaultIcon={InfospaceToEdit.icon ?? ''}
       />
       )}
+      <div className="flex items-center gap-1">
+            {/* Hidden easter egg: Click the sparkles to toggle globe */}
+            <button
+              onClick={() => {
+                togglePreference('globe_enabled');
+                toast.success(preferences.globe_enabled ? 'Globe disabled ✨' : 'Globe enabled ✨');
+              }}
+              className="text-lg hover:scale-110 transition-transform cursor-pointer"
+              title="✨"
+            >
+              ✨
+            </button>
+          </div>
     </div>
   );
 }

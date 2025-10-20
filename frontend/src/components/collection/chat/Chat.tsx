@@ -23,7 +23,7 @@ import {
 import {
   Loader2, Send, Bot, User, Search, FileText, BarChart3, Database,
   History, Pin, Archive, Trash2, MessageSquare, ChevronLeft, ChevronRight, RefreshCw, Copy, X, Settings, PanelLeftClose, PanelLeft, Plus,
-  Paperclip, Globe, Square
+  Paperclip, Globe, Square, Check
 } from 'lucide-react'
 import {
   PromptInput,
@@ -41,9 +41,10 @@ import { ToolExecutionList } from './ToolExecutionIndicator'
 import { MessageContentWithToolResults } from './ChatMessage'
 import { AssistantMessageRenderer } from './MessageRenderer'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
-import { IntelligenceChatService } from '@/client'
-import { ModelInfo } from '@/client'
-import ProviderModelSelector from '@/components/collection/_unsorted_legacy/ProviderModelSelector'
+import { IntelligenceChatService, EmbeddingsService } from '@/client'
+import { ModelInfo, SemanticSearchResponse2 } from '@/client'
+import ProviderSelector from '@/components/collection/management/ProviderSelector'
+import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import AssetDetailOverlay from '@/components/collection/assets/Views/AssetDetailOverlay'
@@ -58,6 +59,7 @@ import {
 import {
   ButtonGroup,
   ButtonGroupSeparator,
+  ButtonGroupText,
 } from '@/components/ui/button-group'
 import {
   Select,
@@ -77,19 +79,11 @@ interface IntelligenceChatProps {
 
 type ContextDepth = 'titles' | 'previews' | 'full'
 
-// Helper to copy text to clipboard and show toast
-const copyToClipboard = async (text: string, toastMsg = 'Copied!') => {
-  try {
-    await navigator.clipboard.writeText(text)
-    toast.success(toastMsg)
-  } catch (err) {
-    toast.error('Failed to copy')
-  }
-}
-
 export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [input, setInput] = useState('')
-  const [selectedModel, setSelectedModel] = useState('')
+  const { selections, setSelection } = useProvidersStore()
+  const selectedModel = selections.llm?.modelId || ''
+  const selectedProvider = selections.llm?.providerId || ''
   const [models, setModels] = useState<ModelInfo[]>([])
   const [isLoadingModels, setIsLoadingModels] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
@@ -122,6 +116,33 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [showInlinePicker, setShowInlinePicker] = useState(false)
   const [inlinePickerQuery, setInlinePickerQuery] = useState('')
   const [inlinePickerPosition, setInlinePickerPosition] = useState<{ top: number; left: number } | null>(null)
+  
+  // Vector search (# tag) state - simplified, no active tracking
+  const [detectedHashTags, setDetectedHashTags] = useState<string[]>([])
+  
+  // Get API keys from providers store for embedding searches
+  const { apiKeys } = useProvidersStore()
+  
+  // Copy feedback state - tracks which items were just copied
+  const [copiedItems, setCopiedItems] = useState<Set<string>>(new Set())
+  
+  // Helper to copy text to clipboard with subtle visual feedback
+  const copyToClipboard = async (text: string, itemId: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedItems(prev => new Set(prev).add(itemId))
+      // Reset after 2 seconds
+      setTimeout(() => {
+        setCopiedItems(prev => {
+          const next = new Set(prev)
+          next.delete(itemId)
+          return next
+        })
+      }, 2000)
+    } catch (err) {
+      toast.error('Failed to copy')
+    }
+  }
   
   // Bundle detail handler - just show info for now
   const handleBundleClick = (bundleId: number) => {
@@ -182,37 +203,43 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
 
         // Set default model if none selected
         if (!selectedModel && response.models && response.models.length > 0) {
-          // Try to find openai/gpt-5-nano, else fallback to tool-supporting, then ollama, then any
+          // Prefer Sonnet 4.5, then any sonnet, then tool-supporting models, then any
           let defaultModel: ModelInfo | undefined
+          
+          // Try to find Sonnet 4.5 (Claude Sonnet 4.5)
           defaultModel = response.models.find(
-            m =>
-              (m.provider === 'openai' && m.name.toLowerCase().includes('gpt-5-nano')) ||
-              m.name.toLowerCase() === 'gpt-5-nano'
+            m => m.name.toLowerCase().includes('sonnet') && 
+                 m.name.toLowerCase().includes('4') && 
+                 m.name.toLowerCase().includes('5')
           )
+          
           if (!defaultModel) {
-            defaultModel = response.models.find(m => m.provider === 'openai')
+            // Try to find any Sonnet model
+            defaultModel = response.models.find(m => m.name.toLowerCase().includes('sonnet'))
           }
+          
           if (!defaultModel) {
+            // Try to find Anthropic models
+            defaultModel = response.models.find(m => m.provider.toLowerCase().includes('anthropic'))
+          }
+          
+          if (!defaultModel) {
+            // Fallback to tool-supporting models
             const toolModels = response.models.filter(m => m.supports_tools)
             defaultModel = toolModels[0]
           }
-          if (!defaultModel) {
-            const ollamaModels = response.models.filter(m => m.provider === 'ollama')
-            defaultModel = ollamaModels[0]
-          }
+          
           if (!defaultModel) {
             defaultModel = response.models[0]
           }
-          setSelectedModel(defaultModel?.name || '')
-          // If openai/gpt-5-nano, set streaming off by default
-          if (
-            defaultModel &&
-            (
-              (defaultModel.provider === 'openai' && defaultModel.name.toLowerCase().includes('gpt-5-nano')) ||
-              defaultModel.name.toLowerCase() === 'gpt-5-nano'
-            )
-          ) {
-            setStreamEnabled(false)
+          
+          // Only set if we don't already have a selection
+          if (defaultModel && !selectedModel) {
+            setSelection('llm', { 
+              providerId: defaultModel.provider, 
+              modelId: defaultModel.name 
+            });
+            // Streaming and thinking are enabled by default (lines 100-101)
           }
         }
       } catch (err) {
@@ -289,7 +316,14 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
 
       // Update model if stored in conversation
       if (conversation.model_name) {
-        setSelectedModel(conversation.model_name)
+        // Find the provider for this model
+        const modelInfo = models.find(m => m.name === conversation.model_name);
+        if (modelInfo) {
+          setSelection('llm', { 
+            providerId: modelInfo.provider, 
+            modelId: conversation.model_name 
+          });
+        }
       }
       if (conversation.temperature !== null && conversation.temperature !== undefined) {
         setTemperature(conversation.temperature.toString())
@@ -457,7 +491,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     return coordinates
   }
 
-  // Handle input change and detect "@" for inline tagging
+  // Handle input change and detect "@" for inline tagging and "#" for vector search
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
     const oldValue = input
@@ -534,11 +568,37 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       setInlinePickerPosition(null)
     }
     
+    // Simply detect all #tags in the input for display purposes
+    const tags = extractHashTags(newValue)
+    setDetectedHashTags(tags)
+    
     setLastInputLength(newValue.length)
   }
   
   // Get assets from tree store for mention detection
   const { fullAssetsCache } = useTreeStore()
+  
+  // Helper to extract #tags from text - supports both #word and #"multi word phrases"
+  const extractHashTags = React.useCallback((text: string): string[] => {
+    const tags: string[] = []
+    
+    // Pattern matches:
+    // #word (simple word tag)
+    // #"multi word phrase" (quoted phrase)
+    // #'multi word phrase' (single quoted phrase)
+    const hashPattern = /#(?:"([^"]+)"|'([^']+)'|(\w+))/g
+    let match
+    
+    while ((match = hashPattern.exec(text)) !== null) {
+      // match[1] = double quoted, match[2] = single quoted, match[3] = word
+      const tag = match[1] || match[2] || match[3]
+      if (tag) {
+        tags.push(tag)
+      }
+    }
+    
+    return tags
+  }, [])
   
   // Helper to extract @mentions from text - handles multi-word asset titles
   const extractMentions = React.useCallback((text: string, knownAssets: AssetRead[]): string[] => {
@@ -650,6 +710,51 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     setShowInlinePicker(false)
     setInlinePickerQuery('')
     setInlinePickerPosition(null)
+  }
+
+  // Auto-search all #tags and add top results to context (on submit)
+  const handleAutoSearchTags = async (tags: string[]): Promise<Map<number, AssetRead>> => {
+    if (tags.length === 0 || !activeInfospace?.id) return new Map()
+    
+    const allResults = new Map<number, AssetRead>()
+    
+    try {
+      // Search for each tag
+      for (const tag of tags) {
+        if (tag.trim().length === 0) continue
+        
+        const response = await EmbeddingsService.semanticSearch({
+          infospaceId: activeInfospace.id,
+          requestBody: {
+            query: tag,
+            limit: 3, // Top 3 results per tag
+            distance_threshold: 0.6, // Slightly lower threshold for auto-search
+            api_keys: apiKeys // Pass API keys for cloud providers
+          }
+        })
+        
+        // Get full asset data for top results
+        const { getFullAsset } = useTreeStore.getState()
+        for (const result of response.results.slice(0, 3)) {
+          const assetId = result.asset_id as number
+          if (!allResults.has(assetId)) {
+            const fullAsset = await getFullAsset(assetId)
+            if (fullAsset) {
+              allResults.set(assetId, fullAsset)
+            }
+          }
+        }
+      }
+      
+      if (allResults.size > 0) {
+        toast.success(`Found ${allResults.size} assets from #tags: ${tags.join(', ')}`)
+      }
+    } catch (error) {
+      console.error('Auto tag search failed:', error)
+      // Don't show error toast - this is background operation
+    }
+    
+    return allResults
   }
 
   // Clear context
@@ -774,8 +879,20 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       return
     }
 
+    // Extract #tags from message
+    const hashTags = extractHashTags(userInput)
+    
+    // Auto-search #tags and add results to context (if any)
+    let tagSearchResults = new Map<number, AssetRead>()
+    if (hashTags.length > 0) {
+      tagSearchResults = await handleAutoSearchTags(hashTags)
+    }
+
     // Clear input field immediately after validation
     setInput('')
+    
+    // Reset tag detection state
+    setDetectedHashTags([])
 
     let conversationIdToUse = currentConversationId
 
@@ -805,11 +922,16 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       }
     }
 
-    // Merge mentioned assets with explicitly attached context
+    // Merge mentioned assets, tag search results, and explicitly attached context
     const allContextAssets = new Map(contextAssetDetails)
     for (const mentionedAsset of mentionedAssets) {
       if (!allContextAssets.has(mentionedAsset.id)) {
         allContextAssets.set(mentionedAsset.id, mentionedAsset)
+      }
+    }
+    for (const [assetId, asset] of tagSearchResults) {
+      if (!allContextAssets.has(assetId)) {
+        allContextAssets.set(assetId, asset)
       }
     }
 
@@ -849,20 +971,6 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     }
   }
 
-  const handleModelChange = (modelName: string) => {
-    setSelectedModel(modelName)
-    // If user selects openai/gpt-5-nano, set streaming off by default
-    const m = models.find(mm => mm.name === modelName)
-    if (
-      m &&
-      (
-        (m.provider === 'openai' && m.name.toLowerCase().includes('gpt-5-nano')) ||
-        m.name.toLowerCase() === 'gpt-5-nano'
-      )
-    ) {
-      setStreamEnabled(false)
-    }
-  }
 
   const getToolIcon = (toolName: string) => {
     switch (toolName) {
@@ -993,13 +1101,22 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="opacity-60 hover:opacity-100 h-6 w-6 sm:h-7 sm:w-7"
+                      className={cn(
+                        "h-6 w-6 sm:h-7 sm:w-7 transition-all",
+                        copiedItems.has(`msg-${message.id}`) 
+                          ? "opacity-100 text-green-600 dark:text-green-400" 
+                          : "opacity-60 hover:opacity-100"
+                      )}
                       title="Copy message"
-                      onClick={() => copyToClipboard(message.content, 'Message copied!')}
+                      onClick={() => copyToClipboard(message.content, `msg-${message.id}`)}
                       tabIndex={-1}
                       type="button"
                     >
-                      <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      {copiedItems.has(`msg-${message.id}`) ? (
+                        <Check className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      ) : (
+                        <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      )}
                     </Button>
                     {isUser && (
                       <Button
@@ -1195,10 +1312,11 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       {/* Main Chat Card */}
       <Card variant="no-border" className="flex flex-col flex-1 w-full shadow-none">
         <CardHeader className="flex-none border-b py-2 sm:py-2.5 px-2 sm:px-3 md:px-4">
-          {/* three rows on mobile, two on medium, one row on desktop */}
+          {/* two rows on mobile: (1) nav+toggles+actions (2) model selector; one row on large with distinct sections */}
           <div className="flex flex-col lg:flex-row lg:items-center gap-2 sm:gap-2.5 md:gap-2 lg:gap-3">
-            {/* Row 1: Navigation + Title */}
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
+            {/* Mobile Row 1: Navigation on left, Toggles + Actions on right */}
+            <div className="flex items-center gap-1.5 sm:gap-2 justify-between lg:hidden">
+              {/* Left side: History + New */}
               {!showConversations && (
                 <ButtonGroup>
                   <TooltipProvider>
@@ -1248,31 +1366,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                 </ButtonGroup>
               )}
 
-              {/* Title - shown on mobile/medium, hidden on large when everything is in one row */}
-              <div className="min-w-0 flex-1 lg:hidden">
-                {currentConversationTitle ? (
-                  <div className="text-xs sm:text-sm font-medium truncate">
-                    {currentConversationTitle}
-                  </div>
-                ) : (
-                  ""
-                )}
-              </div>
-            </div>
-
-            {/* Row 2 & 3: Model + Toggles + Actions (combined into 1 row on medium+) */}
-            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 sm:gap-2.5 md:gap-2 lg:gap-2.5 shrink-0">
-              {/* Model Selector */}
-              <ProviderModelSelector
-                value={selectedModel}
-                onChange={handleModelChange}
-                className="text-xs sm:text-sm"
-                setThinkingEnabled={setThinkingEnabled}
-                setStreamEnabled={setStreamEnabled}
-              />
-              
-              {/* Toggles + Actions container */}
-              <div className="flex items-center gap-1.5 sm:gap-2 md:gap-1.5 lg:gap-2 shrink-0 overflow-x-auto">
+              {/* Right side: Toggles + Actions */}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {/* Compact Toggles */}
               <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md bg-muted/30">
                 <TooltipProvider>
@@ -1311,7 +1406,159 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                         Stream
                       </button>
                     </TooltipTrigger>
+                    <TooltipContent className='max-w-64'>
+                      <p>Stream responses in real-time</p>
+                      Note:
+                      Some providers (like OpenAI) chose to only allow streaming for most of their models now
+                      if you or your organisation is verified. Once you decide to do that streaming should work for you again.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+
+                {/* Action Buttons */}
+                <ButtonGroup>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => copyToClipboard(formatAllMessagesForCopy(messages), 'chat-all')}
+                    disabled={messages.length === 0}
+                    className={cn(
+                      "h-8 w-8 shrink-0 transition-all",
+                      copiedItems.has('chat-all') && "text-green-600 dark:text-green-400"
+                    )}
+                    title="Copy chat"
+                  >
+                    {copiedItems.has('chat-all') ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                  
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowSettings(v => !v)}
+                    className={cn("h-8 w-8 shrink-0", showSettings && "bg-muted")}
+                    title="Settings"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                </ButtonGroup>
+              </div>
+            </div>
+
+            {/* Desktop Layout: Three distinct sections */}
+            {/* Section 1: Navigation */}
+            {!showConversations && (
+              <div className="hidden lg:block">
+                <ButtonGroup>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowConversations(true)}
+                          className="h-8 px-3 gap-1.5"
+                          title="Show conversations"
+                        >
+                          <History className="h-4 w-4" />
+                          <span className="text-xs">History</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="flex items-center gap-1.5">
+                          <span>Conversations</span>
+                          <Kbd>Ctrl+H</Kbd>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleStartNewChat}
+                          className="h-8 px-3 gap-1.5"
+                        >
+                          <Plus className="h-4 w-4" />
+                          <span className="text-xs">New</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="flex items-center gap-1.5">
+                          <span>New Chat</span>
+                          <Kbd>Ctrl+N</Kbd>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </ButtonGroup>
+              </div>
+            )}
+
+            {/* Section 2: Model Selector - shown on desktop, row 2 on mobile */}
+            <div className="lg:flex-1 lg:flex lg:justify-center">
+              <div className="lg:hidden">
+                <ProviderSelector
+                  showModels={true}
+                  className="text-xs sm:text-sm"
+                />
+              </div>
+              <div className="hidden lg:block">
+                <ProviderSelector
+                  showModels={true}
+                  className="text-xs sm:text-sm"
+                />
+              </div>
+            </div>
+
+            {/* Section 3: Toggles + Actions (desktop only, mobile has it in row 1) */}
+            <div className="hidden lg:flex items-center gap-2 shrink-0">
+              {/* Compact Toggles */}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/30">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setThinkingEnabled(!thinkingEnabled)}
+                        className={cn(
+                          "px-2.5 py-0.5 rounded text-xs font-medium transition-colors whitespace-nowrap",
+                          thinkingEnabled 
+                            ? "bg-primary text-primary-foreground" 
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Thinking
+                      </button>
+                    </TooltipTrigger>
                     <TooltipContent>
+                      <p>Enable reasoning trace</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setStreamEnabled(!streamEnabled)}
+                        className={cn(
+                          "px-2.5 py-0.5 rounded text-xs font-medium transition-colors whitespace-nowrap",
+                          streamEnabled 
+                            ? "bg-primary text-primary-foreground" 
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Stream
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className='max-w-64'>
                       <p>Stream responses in real-time</p>
                       Note:
                       Some providers (like OpenAI) chose to only allow streaming for most of their models now
@@ -1322,27 +1569,35 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               </div>
 
               {/* Action Buttons */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => copyToClipboard(formatAllMessagesForCopy(messages), 'Chat copied!')}
-                disabled={messages.length === 0}
-                className="h-8 w-8 shrink-0"
-                title="Copy chat"
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-              
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowSettings(v => !v)}
-                className={cn("h-8 w-8 shrink-0", showSettings && "bg-muted")}
-                title="Settings"
-              >
-                <Settings className="h-4 w-4" />
-              </Button>
-              </div>
+              <ButtonGroup>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => copyToClipboard(formatAllMessagesForCopy(messages), 'chat-all')}
+                  disabled={messages.length === 0}
+                  className={cn(
+                    "h-8 w-8 shrink-0 transition-all",
+                    copiedItems.has('chat-all') && "text-green-600 dark:text-green-400"
+                  )}
+                  title="Copy chat"
+                >
+                  {copiedItems.has('chat-all') ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+                
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowSettings(v => !v)}
+                  className={cn("h-8 w-8 shrink-0", showSettings && "bg-muted")}
+                  title="Settings"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </ButtonGroup>
             </div>
           </div>
 
@@ -1397,19 +1652,25 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       <div className="flex flex-col gap-1.5 text-xs">
                         <div className="flex items-center gap-2">
                           <Kbd>@</Kbd>
-                          <span>Add context assets</span>
+                          <span>add context assets</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Kbd>#word</Kbd>
+                          <span>or</span>
+                          <Kbd>#"phrase"</Kbd>
+                          <span>auto vector search in your information space</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Kbd>/</Kbd>
-                          <span>Focus input</span>
+                          <span>focus input</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Kbd>Ctrl+N</Kbd>
-                          <span>New chat</span>
+                          <span>new chat</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Kbd>Ctrl+H</Kbd>
-                          <span>Toggle history</span>
+                          <span>toggle history</span>
                         </div>
                       </div>
                     </div>
@@ -1451,6 +1712,23 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
           </Conversation>
 
           <div className="flex-none p-2 sm:p-4 border-t">
+            {/* Tags detected indicator */}
+            {detectedHashTags.length > 0 && (
+              <div className="mb-2 p-2.5 rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 backdrop-blur-sm">
+                <div className="flex items-center gap-2 text-sm flex-wrap">
+                  <Search className="h-4 w-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                  <span className="text-purple-900 dark:text-purple-100">
+                    Will search: 
+                  </span>
+                  {detectedHashTags.map((tag, idx) => (
+                    <Badge key={idx} variant="secondary" className="bg-purple-100 dark:bg-purple-900/50 text-xs">
+                      #{tag}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            
             {/* Context chips - assets attached to message */}
             {contextAssetDetails.size > 0 && (
               <div className="mb-2 p-2.5 rounded-lg bg-accent/80 border border-border backdrop-blur-sm">
@@ -1548,6 +1826,11 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                         <span className="text-[10px]">context</span>
                       </div>
                       <div className="flex items-center gap-1">
+                        <Kbd>#word</Kbd>
+                        <Kbd>#"phrase"</Kbd>
+                        <span className="text-[10px]">search</span>
+                      </div>
+                      <div className="flex items-center gap-1">
                         <Kbd>/</Kbd>
                         <span className="text-[10px]">focus</span>
                       </div>
@@ -1570,55 +1853,100 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       aria-hidden="true"
                     >
                       {(() => {
-                        // Smart highlighting that handles multi-word mentions
+                        // Smart highlighting that handles @ mentions and # vector searches
                         const parts: React.ReactNode[] = []
                         const allAssetTitles = Array.from(contextAssetDetails.values())
                           .map(asset => asset.title || '')
                           .filter(title => title.length > 0)
-                          // Sort by length descending to match longest first
                           .sort((a, b) => b.length - a.length)
                         
                         let currentIndex = 0
                         let partKey = 0
                         
                         while (currentIndex < input.length) {
+                          // Find next @ or #
                           const atIndex = input.indexOf('@', currentIndex)
+                          const hashIndex = input.indexOf('#', currentIndex)
                           
-                          if (atIndex === -1) {
-                            // No more @, add remaining text
+                          // Determine which comes first
+                          let nextSpecialChar = -1
+                          let isAt = false
+                          
+                          if (atIndex !== -1 && hashIndex !== -1) {
+                            nextSpecialChar = Math.min(atIndex, hashIndex)
+                            isAt = atIndex < hashIndex
+                          } else if (atIndex !== -1) {
+                            nextSpecialChar = atIndex
+                            isAt = true
+                          } else if (hashIndex !== -1) {
+                            nextSpecialChar = hashIndex
+                            isAt = false
+                          }
+                          
+                          if (nextSpecialChar === -1) {
+                            // No more special chars, add remaining text
                             parts.push(<span key={partKey++}>{input.slice(currentIndex)}</span>)
                             break
                           }
                           
-                          // Add text before @
-                          if (atIndex > currentIndex) {
-                            parts.push(<span key={partKey++}>{input.slice(currentIndex, atIndex)}</span>)
+                          // Add text before special char
+                          if (nextSpecialChar > currentIndex) {
+                            parts.push(<span key={partKey++}>{input.slice(currentIndex, nextSpecialChar)}</span>)
                           }
                           
-                          // Try to match against known asset titles
-                          let matched = false
-                          for (const title of allAssetTitles) {
-                            const potentialMention = input.slice(atIndex + 1, atIndex + 1 + title.length)
-                            if (potentialMention.toLowerCase() === title.toLowerCase()) {
-                              // Found a match - highlight it
-                              parts.push(
-                                <span 
-                                  key={partKey++}
-                                  className="bg-blue-100 dark:bg-blue-900/40 rounded-md px-1 py-0.5"
-                                >
-                                  @{potentialMention}
-                                </span>
-                              )
-                              currentIndex = atIndex + 1 + title.length
-                              matched = true
-                              break
+                          if (isAt) {
+                            // Handle @ mention
+                            let matched = false
+                            for (const title of allAssetTitles) {
+                              const potentialMention = input.slice(nextSpecialChar + 1, nextSpecialChar + 1 + title.length)
+                              if (potentialMention.toLowerCase() === title.toLowerCase()) {
+                                parts.push(
+                                  <span 
+                                    key={partKey++}
+                                    className="bg-blue-100 dark:bg-blue-900/40 rounded-md px-1 py-0.5"
+                                  >
+                                    @{potentialMention}
+                                  </span>
+                                )
+                                currentIndex = nextSpecialChar + 1 + title.length
+                                matched = true
+                                break
+                              }
                             }
-                          }
-                          
-                          // If no match, just add the @ and continue
-                          if (!matched) {
-                            parts.push(<span key={partKey++}>@</span>)
-                            currentIndex = atIndex + 1
+                            
+                            if (!matched) {
+                              parts.push(<span key={partKey++}>@</span>)
+                              currentIndex = nextSpecialChar + 1
+                            }
+                          } else {
+                            // Handle # tags - match against detected tags (word or quoted phrase)
+                            const restOfText = input.slice(nextSpecialChar)
+                            // Match: #word or #"phrase" or #'phrase'
+                            const tagMatch = restOfText.match(/^#(?:"([^"]+)"|'([^']+)'|(\w+))/)
+                            
+                            if (tagMatch) {
+                              const fullTag = tagMatch[0] // Includes # and quotes
+                              const tagContent = tagMatch[1] || tagMatch[2] || tagMatch[3] // The actual tag text
+                              
+                              // Highlight if this tag is detected
+                              if (detectedHashTags.includes(tagContent)) {
+                                parts.push(
+                                  <span 
+                                    key={partKey++}
+                                    className="bg-purple-100 dark:bg-purple-900/40 rounded-md px-1 py-0.5"
+                                  >
+                                    {fullTag}
+                                  </span>
+                                )
+                                currentIndex = nextSpecialChar + fullTag.length
+                              } else {
+                                parts.push(<span key={partKey++}>#</span>)
+                                currentIndex = nextSpecialChar + 1
+                              }
+                            } else {
+                              parts.push(<span key={partKey++}>#</span>)
+                              currentIndex = nextSpecialChar + 1
+                            }
                           }
                         }
                         
@@ -1636,17 +1964,6 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       style={{ zIndex: 1 }}
                     />
                   </div>
-                    {/* Keyboard shortcuts hint */}
-                    <div className="hidden sm:flex absolute top-2 right-2 sm:flex items-center gap-2 mr-1 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Kbd>@</Kbd>
-                        <span className="text-[10px]">context</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Kbd>/</Kbd>
-                        <span className="text-[10px]">focus</span>
-                      </div>
-                    </div>
                 </PromptInputBody>
                 <PromptInputToolbar>
                   <PromptInputTools>
@@ -1717,17 +2034,19 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                     Select assets to include as context. Documents structured for optimal analysis.
                   </p>
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <Label htmlFor="depth-select" className="text-xs">Detail:</Label>
-                    <Select value={contextDepth} onValueChange={(v) => setContextDepth(v as ContextDepth)}>
-                      <SelectTrigger id="depth-select" className="h-8 text-xs w-[140px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="titles">Titles (Light)</SelectItem>
-                        <SelectItem value="previews">Previews</SelectItem>
-                        <SelectItem value="full">Full Content</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <ButtonGroup className="w-full max-w-[280px]">
+                      <ButtonGroupText className="text-xs">Detail:</ButtonGroupText>
+                      <Select value={contextDepth} onValueChange={(v) => setContextDepth(v as ContextDepth)}>
+                        <SelectTrigger id="depth-select" className="h-9 text-xs flex-1 rounded-l-none">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="titles">Titles (Light)</SelectItem>
+                          <SelectItem value="previews">Previews</SelectItem>
+                          <SelectItem value="full">Full Content</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </ButtonGroup>
                   </div>
                 </div>
                 <div className="flex-1 overflow-hidden">
@@ -1737,21 +2056,23 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                     renderItemActions={() => null}
                   />
                 </div>
-                <div className="px-4 py-3 border-t flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setShowContextSelector(false)
-                      // Reset to current context (don't clear existing context)
-                      setContextAssets(new Set(contextAssetDetails.keys()))
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button size="sm" onClick={handleConfirmContext}>
-                    Add {contextAssets.size} asset{contextAssets.size !== 1 ? 's' : ''}
-                  </Button>
+                <div className="px-4 py-3 border-t flex justify-end">
+                  <ButtonGroup>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowContextSelector(false)
+                        // Reset to current context (don't clear existing context)
+                        setContextAssets(new Set(contextAssetDetails.keys()))
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={handleConfirmContext}>
+                      Add {contextAssets.size} asset{contextAssets.size !== 1 ? 's' : ''}
+                    </Button>
+                  </ButtonGroup>
                 </div>
               </PopoverContent>
             </Popover>

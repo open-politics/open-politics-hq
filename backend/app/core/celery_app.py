@@ -6,8 +6,8 @@ from celery import Celery
 from celery.schedules import crontab 
 from app.core.config import settings
 
-# Get Redis URL from environment variable, default if not set
-redis_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+# Get Redis URL from settings (uses computed property)
+redis_url = settings.redis_url
 
 # Initialize Celery with minimal configuration 
 celery = Celery(

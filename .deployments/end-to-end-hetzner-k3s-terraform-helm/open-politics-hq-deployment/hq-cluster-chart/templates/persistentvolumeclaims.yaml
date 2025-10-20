@@ -46,18 +46,31 @@ spec:
       storage: {{ .Values.minio.persistence.size }}
 {{- end }}
 
-{{- if .Values.peliasPlaceholder.persistence.enabled }}
+{{- if .Values.nominatim.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: pelias-placeholder-pvc
+  name: nominatim-data-pvc
   namespace: {{ .Values.namespace }}
 spec:
   accessModes:
-    - {{ .Values.peliasPlaceholder.persistence.accessMode }}
-  storageClassName: {{ .Values.peliasPlaceholder.persistence.storageClass }}
+    - {{ .Values.nominatim.persistence.accessMode }}
+  storageClassName: {{ .Values.nominatim.persistence.storageClass }}
   resources:
     requests:
-      storage: {{ .Values.peliasPlaceholder.persistence.size }}
+      storage: {{ .Values.nominatim.persistence.dataSize }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nominatim-work-pvc
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - {{ .Values.nominatim.persistence.accessMode }}
+  storageClassName: {{ .Values.nominatim.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.nominatim.persistence.workSize }}
 {{- end }}

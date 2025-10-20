@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import useAuth from '@/hooks/useAuth';
 import { SearchService, AssetRead } from '@/client';
 import { cn } from '@/lib/utils';
@@ -103,7 +103,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
   const [viewingAsAsset, setViewingAsAsset] = useState<{sessionId: string; resultIndex: number} | null>(null);
   
   const { activeInfospace } = useInfospaceStore();
-  const { apiKeys } = useApiKeysStore();
+  const { apiKeys } = useProvidersStore();
   const { isLoggedIn } = useAuth();
   
   const inputRef = useRef<HTMLInputElement>(null);

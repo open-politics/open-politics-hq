@@ -21,7 +21,7 @@ import { SchemePreview } from './schemaCreation/SchemePreview';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import AssetSelector from '../assets/AssetSelector';
 import { toast } from 'sonner';
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import ProviderSelector from '../management/ProviderSelector';
 import { useFavoriteRunsStore } from '@/zustand_stores/storeFavoriteRuns';
 import { AnnotationRunRead } from '@/client';
@@ -142,7 +142,9 @@ export default function AnnotationRunnerDock({
   const [justificationOverride, setJustificationOverride] = useState<'schema' | 'all'>('schema');
   const [tempApiKey, setTempApiKey] = useState('');
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
-  const { apiKeys, selectedProvider, selectedModel, setApiKey, setSelectedProvider } = useApiKeysStore();
+  const { apiKeys, selections, setApiKey } = useProvidersStore();
+  const selectedProvider = selections.llm?.providerId || null;
+  const selectedModel = selections.llm?.modelId || null;
   const { isFavorite } = useFavoriteRunsStore();
 
   // Sort runs with favorites first, then by most recent

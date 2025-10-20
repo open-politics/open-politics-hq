@@ -257,6 +257,54 @@ class GeospatialProvider(Protocol):
         pass
 
 
+@runtime_checkable
+class GeocodingProvider(Protocol):
+    """
+    Abstract interface for geocoding providers.
+    Converts location names/addresses to coordinates and vice versa.
+    """
+    async def geocode(self, location: str, language: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Geocode a location string to coordinates and metadata.
+        
+        Args:
+            location: Location name or address to geocode
+            language: Optional language code for results (e.g., 'en', 'es')
+            
+        Returns:
+            Dictionary with:
+            - coordinates: [lon, lat] array (centroid/representative point)
+            - location_type: Type classification (country, city, etc.)
+            - bbox: Bounding box [min_lat, max_lat, min_lon, max_lon] (legacy, simple approximation)
+            - area: Approximate area in square degrees
+            - display_name: Full formatted address/name
+            - geometry: Optional GeoJSON geometry object for complex shapes
+                       (Polygon, MultiPolygon, etc.) - future-ready for precise borders
+            Returns None if location cannot be geocoded
+        """
+        pass
+    
+    async def reverse_geocode(self, lat: float, lon: float, language: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Reverse geocode coordinates to location information.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            language: Optional language code for results
+            
+        Returns:
+            Dictionary with location information including:
+            - display_name: Full formatted address
+            - address: Address components dictionary
+            - location_type: Type classification
+            - coordinates: [lon, lat] of the queried point
+            - geometry: Optional GeoJSON geometry if available
+            Returns None if coordinates cannot be reverse geocoded
+        """
+        pass
+
+
 
 # ─────────────────────────────────────────── Language Models ──── #
 

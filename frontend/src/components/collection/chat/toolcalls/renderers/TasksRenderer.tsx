@@ -167,6 +167,18 @@ function TasksDisplay({ result, compact }: ToolResultRenderProps) {
     if (typedResult.task && !typedResult.tasks) {
       const statusDisplay = getStatusDisplay(typedResult.task.status);
       
+      // Ultra compact for single operations (PersistentTaskTracker shows full state)
+      if (compact) {
+        return (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <div className={cn("shrink-0", statusDisplay.color)}>
+              {statusDisplay.icon}
+            </div>
+            <span>Task #{typedResult.task.id}</span>
+          </div>
+        );
+      }
+      
       return (
         <div className={cn(
           "flex items-center gap-2 px-3 py-2 rounded-md border text-sm",
@@ -205,15 +217,17 @@ function TasksDisplay({ result, compact }: ToolResultRenderProps) {
     const total = typedResult.tasks.length;
     const completedCount = completed.length;
     
-    // Compact view - just status bar
+    // Compact view - ultra minimal (PersistentTaskTracker handles the full display)
     if (compact) {
       return (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md border bg-muted/30">
-          <ListTodo className="h-4 w-4 text-purple-500" />
-          <ProgressBar completed={completedCount} total={total} />
-          <Badge variant="outline" className="text-xs">
-            {inProgress.length} active
-          </Badge>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <ListTodo className="h-3 w-3" />
+          <span>
+            {inProgress.length > 0 && `${inProgress.length} active`}
+            {inProgress.length > 0 && pending.length > 0 && ', '}
+            {pending.length > 0 && `${pending.length} pending`}
+            {completed.length > 0 && `, ${completed.length} done`}
+          </span>
         </div>
       );
     }
@@ -344,6 +358,9 @@ function TasksDisplay({ result, compact }: ToolResultRenderProps) {
 
 /**
  * Main Tasks Renderer Configuration
+ * 
+ * Tasks are managed in PersistentTaskTracker (sticky header).
+ * This renderer shows minimal inline indicators only.
  */
 export const TasksRenderer: ToolResultRenderer = {
   toolName: 'tasks',
@@ -368,7 +385,45 @@ export const TasksRenderer: ToolResultRenderer = {
   },
   
   render: (props: ToolResultRenderProps) => {
-    return <TasksDisplay {...props} />;
+    const typedResult = props.result as TasksResult;
+    
+    // ALWAYS render as ultra-compact (tasks shown in header tracker)
+    // Just show a subtle italic action line
+    if (typedResult.task && !typedResult.tasks) {
+      // Single task operation
+      const statusEmoji = {
+        'pending': '○',
+        'in_progress': '●',
+        'completed': '✓',
+        'cancelled': '✕'
+      }[typedResult.task.status] || '○';
+      
+      return (
+        <div className="text-xs italic text-muted-foreground/80 py-0.5">
+          {statusEmoji} Task #{typedResult.task.id} {typedResult.task.status.replace('_', ' ')}
+        </div>
+      );
+    }
+    
+    if (typedResult.tasks && typedResult.tasks.length > 0) {
+      // Task list view
+      const inProgress = typedResult.tasks.filter(t => t.status === 'in_progress').length;
+      const pending = typedResult.tasks.filter(t => t.status === 'pending').length;
+      const completed = typedResult.tasks.filter(t => t.status === 'completed').length;
+      
+      return (
+        <div className="text-xs italic text-muted-foreground/80 py-0.5">
+          ✓ Tasks: {inProgress} active, {pending} pending, {completed} done
+        </div>
+      );
+    }
+    
+    // No tasks
+    return (
+      <div className="text-xs italic text-muted-foreground/80 py-0.5">
+        No tasks yet
+      </div>
+    );
   },
 };
 

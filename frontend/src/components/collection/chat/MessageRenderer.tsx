@@ -260,6 +260,11 @@ export function AssistantMessageRenderer({
             case 'tool':
               if (!section.toolExecution) return null
               
+              // Task tools are handled by PersistentTaskTracker - show minimal inline
+              const isTaskTool = ['tasks', 'add_task', 'start_task', 'finish_task', 'cancel_task'].includes(
+                section.toolExecution.tool_name
+              )
+              
               const isOperatorTool = ['navigate', 'organize', 'semantic_search', 'search_web'].includes(
                 section.toolExecution.tool_name
               )
@@ -268,7 +273,7 @@ export function AssistantMessageRenderer({
                 <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
                   <ToolExecutionIndicator
                     execution={section.toolExecution}
-                    compact={!isOperatorTool}
+                    compact={!isOperatorTool || isTaskTool}
                     onAssetClick={onAssetClick}
                     onBundleClick={onBundleClick}
                   />

@@ -40,15 +40,20 @@ def create_mcp_context_token(user_id: int, infospace_id: int) -> str:
     return encoded_jwt
 
 
-def create_mcp_context_token_with_api_keys(user_id: int, infospace_id: int, api_keys: Dict[str, str]) -> str:
+def create_mcp_context_token_with_api_keys(user_id: int, infospace_id: int, api_keys: Dict[str, str], conversation_id: Optional[int] = None) -> str:
     """Creates a short-lived JWT with API keys encoded in claims for MCP server."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {
         "exp": expire,
         "sub": str(user_id),
         "infospace_id": infospace_id,
-        "api_keys": api_keys  # Encode API keys in JWT claims
+        "api_keys": api_keys,  # Encode API keys in JWT claims
     }
+    
+    # Include conversation_id if provided (for task persistence)
+    if conversation_id is not None:
+        to_encode["conversation_id"] = conversation_id
+    
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
     return encoded_jwt
 

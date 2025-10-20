@@ -1,8 +1,0 @@
-apiVersion: v2
-icon: https://example.com/favicon.ico
-name: cluster-chart
-description: A Helm chart for deploying the HQ application stack
-type: application
-version: 0.1.0
-appVersion: "1.0"
-email: "admin@example.com"

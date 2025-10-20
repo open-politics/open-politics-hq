@@ -1,7 +1,9 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { RippleButton } from '@/components/ui/ripple-button';
 import LandingLayout from './landing_layout';
 import { Announcement } from '@/components/collection/_unsorted_legacy/announcement';
 import { Play } from 'lucide-react';
@@ -70,7 +72,7 @@ interface HiProps {
 const HomePage: React.FC<HiProps> = () => {
   const { user, isLoggedIn } = useAuth();
   const words = ['looking', 'researching', 'rooting', 'developing', 'asking', '']; 
-
+  const router = useRouter();
   return (
     <LandingLayout>
       <div className="flex flex-col mt-16 md:mt-0 md:min-h-screen justify-between">
@@ -108,16 +110,21 @@ const HomePage: React.FC<HiProps> = () => {
           </div>
          ) : (
           <div className="mt-2 text-center">
-            <p className="text-main-styled-text font-bold mb-3">Welcome back{user?.full_name ? `, ${user?.full_name}` : ''  }!</p>
-            <Button 
-              variant="outline" 
-              asChild 
-              className="border-blue-500/50 hover:border-blue-500 hover:bg-blue-500/5 transition-all duration-300"
-            >
-              <Link href="/hq">
-                <span className="font-semibold">Enter HQ</span>
-              </Link>
-            </Button>
+            {user?.full_name && (
+              <h3 className="text-main-styled-text font-bold mb-4 text-2xl">
+                Welcome back, {user?.full_name}!
+              </h3>
+            )}
+            <div className="inline-flex items-center justify-center">
+              <RippleButton
+                onClick={() => router.push('/hq')}
+                duration="600ms"
+                rippleColor="#3b82f6"
+                className="h-10 font-bold"
+              >
+                <span className="mr-2">Enter HQ</span>
+              </RippleButton>
+            </div>
           </div>
          )}
         </section>

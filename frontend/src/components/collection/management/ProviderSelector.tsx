@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { ButtonGroup } from "@/components/ui/button-group"
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { UtilsService } from '@/client';
 import { ProviderInfo, ProviderModel } from '@/client';
 import { toast } from 'sonner';
@@ -19,27 +20,55 @@ interface ProviderSelectorProps {
 
 export default function ProviderSelector({ showModels = true, className = '' }: ProviderSelectorProps) {
   const { 
-    selectedProvider, 
-    selectedModel, 
-    setSelectedProvider, 
-    setSelectedModel 
-  } = useApiKeysStore();
+    selections,
+    setSelection,
+  } = useProvidersStore();
+  
+  const selectedProvider = selections.llm?.providerId || null;
+  const selectedModel = selections.llm?.modelId || null;
+  
+  const setSelectedProvider = (provider: string) => {
+    setSelection('llm', { providerId: provider });
+  };
+  
+  const setSelectedModel = (model: string) => {
+    if (selectedProvider) {
+      setSelection('llm', { providerId: selectedProvider, modelId: model });
+    }
+  };
+  
   const [providers, setProviders] = useState<Provider[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchProviders = async () => {
       try {
-        const response = await UtilsService.getProviders();
-        const providerList: Provider[] = response.providers.map((p: ProviderInfo) => ({
-          name: p.provider_name,
-          models: p.models.map((m: ProviderModel) => m.name),
+        const response = await UtilsService.getUnifiedProviders() as any;
+        const llmProviders = response.providers?.llm || [];
+        
+        // Fetch models for LLM providers
+        const legacyResponse = await UtilsService.getProviders();
+        const providerModels = new Map(
+          legacyResponse.providers.map((p: ProviderInfo) => [
+            p.provider_name, 
+            p.models.map((m: ProviderModel) => m.name)
+          ])
+        );
+        
+        const providerList: Provider[] = llmProviders.map((provider: any) => ({
+          name: provider.id,
+          models: providerModels.get(provider.id) || []
         }));
+        
         setProviders(providerList);
         
         // If no provider is selected, or if the selected provider is no longer valid, set a default.
         if (!selectedProvider || !providerList.some(p => p.name === selectedProvider)) {
-          const defaultProvider = providerList.find(p => p.name === 'gemini_native') || providerList[0];
+          // Prefer Anthropic (Claude) providers first, then others
+          const defaultProvider = 
+            providerList.find(p => p.name.toLowerCase().includes('anthropic')) ||
+            providerList.find(p => p.name === 'gemini') || 
+            providerList[0];
           if (defaultProvider) {
             setSelectedProvider(defaultProvider.name);
             // The model will be set by the other useEffect hook.
@@ -52,8 +81,8 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
     };
 
     fetchProviders();
-    // Intentionally run only once on mount
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally run only once on mount
 
   useEffect(() => {
     // Update available models when the selectedProvider or the list of providers changes.
@@ -63,24 +92,41 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
 
     // If there are models, but no model is selected or the current one is invalid, set a default.
     if (models.length > 0 && (!selectedModel || !models.includes(selectedModel))) {
-      const defaultModel = models.find(m => m.includes('flash')) || models[0];
-      if (defaultModel) {
-        setSelectedModel(defaultModel);
+      // Prefer Sonnet 4.5, then any 4.5, then any sonnet, then first model
+      let defaultModel = models.find(m => 
+        m.toLowerCase().includes('sonnet') && m.toLowerCase().includes('4') && m.toLowerCase().includes('5')
+      );
+      if (!defaultModel) {
+        defaultModel = models.find(m => m.toLowerCase().includes('4') && m.toLowerCase().includes('5'));
+      }
+      if (!defaultModel) {
+        defaultModel = models.find(m => m.toLowerCase().includes('sonnet'));
+      }
+      if (!defaultModel) {
+        defaultModel = models[0];
+      }
+      
+      if (defaultModel && defaultModel !== selectedModel) {
+        // Only update if it's actually different to avoid infinite loops
+        if (selectedProvider) {
+          setSelection('llm', { providerId: selectedProvider, modelId: defaultModel });
+        }
       }
     }
-  }, [selectedProvider, providers, selectedModel, setSelectedModel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProvider, providers]);
 
   const handleProviderChange = (providerName: string) => {
-    setSelectedProvider(providerName);
-    // When provider changes, clear the model selection so the useEffect can set a new default.
-    setSelectedModel('');
+    // When provider changes, clear the model selection and set new provider
+    // This ensures the useEffect picks up the change and loads the correct models
+    setSelection('llm', { providerId: providerName, modelId: undefined });
   };
 
   return (
-    <div className={`flex flex-col md:flex-row gap-4 ${className}`}>
-      <div className={showModels ? 'w-full md:w-1/2' : 'w-full'}>
+    <div className={`flex flex-row gap-2 ${className}`}>
+      <ButtonGroup>
         <Select value={selectedProvider || undefined} onValueChange={handleProviderChange}>
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-auto min-w-[110px] h-8">
             <SelectValue placeholder="Select provider" />
           </SelectTrigger>
           <SelectContent>
@@ -91,12 +137,12 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
             ))}
           </SelectContent>
         </Select>
-      </div>
+      </ButtonGroup>
       
       {showModels && (
-        <div className="w-full md:w-1/2">
+        <ButtonGroup>
           <Select value={selectedModel || ''} onValueChange={setSelectedModel} disabled={availableModels.length === 0}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-auto min-w-[170px] h-8">
               <SelectValue placeholder="Select model" />
             </SelectTrigger>
             <SelectContent>
@@ -110,7 +156,7 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
               )}
             </SelectContent>
           </Select>
-        </div>
+        </ButtonGroup>
       )}
     </div>
   );

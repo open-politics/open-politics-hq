@@ -33,7 +33,7 @@
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.21 0.006 285.885);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.9913 0.0044 214.33);
+  --sidebar-accent: oklch(0.96 0.004 286.32);
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.914 0.005 264.542);
   --sidebar-ring: oklch(0.705 0.015 286.067);
@@ -56,8 +56,8 @@
   --accent: oklch(0.22 0.02 230);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(0.15 0.02 230 / 15%);
+  --border: oklch(1 0 0 / 20%);
+  --input: oklch(1 0.02 230 / 15%);
   --ring: oklch(0.552 0.016 285.938);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
@@ -68,9 +68,9 @@
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.15 0.02 230);
+  --sidebar-accent: oklch(0.22 0.02 230);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: oklch(1 0 0 / 20%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
   --main-styled-text: oklch(0.985 0 0);
 }
@@ -522,7 +522,18 @@ svg:has(#shimmer) {
       height: 0;
     }
   }
-}
+
+  --animate-rippling: rippling var(--duration) ease-out
+;
+  @keyframes rippling {
+  0% {
+    opacity: 1;
+    }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+    }
+  }}
 
 /* Minimal and responsive table styles for markdown tables in chat */
 .prose table {
@@ -565,5 +576,14 @@ svg:has(#shimmer) {
     display: block;
     overflow-x: auto;
     white-space: nowrap;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }

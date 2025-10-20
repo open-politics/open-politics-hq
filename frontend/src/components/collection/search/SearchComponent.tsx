@@ -13,7 +13,7 @@ import { Loader2, Search, ExternalLink, Plus, CheckCircle, AlertCircle, FileText
 import { toast } from 'sonner';
 import { useSourceStore } from '@/zustand_stores/storeSources';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import useAuth from '@/hooks/useAuth';
 import { SearchService, AssetRead } from '@/client';
 import { formatDistanceToNow } from 'date-fns';
@@ -61,7 +61,7 @@ export default function SearchComponent({
   
   const { createSource } = useSourceStore();
   const { activeInfospace } = useInfospaceStore();
-  const { apiKeys } = useApiKeysStore();
+  const { apiKeys } = useProvidersStore();
   const { isLoggedIn } = useAuth();
 
   // Debug: Log button state on every render

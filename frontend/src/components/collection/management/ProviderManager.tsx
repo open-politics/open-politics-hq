@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Bot, Search, Key, Trash2 } from "lucide-react";
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { UtilsService } from '@/client';
 import { ProviderInfo, ProviderModel } from '@/client';
 import { toast } from 'sonner';
@@ -34,48 +34,77 @@ interface ProviderManagerProps {
 export default function ProviderManager({ className = '' }: ProviderManagerProps) {
   const { 
     apiKeys,
-    selectedProvider, 
-    selectedModel, 
+    selections,
     setApiKey,
-    setSelectedProvider, 
-    setSelectedModel 
-  } = useApiKeysStore();
+    setSelection,
+  } = useProvidersStore();
+  
+  const selectedProvider = selections.llm?.providerId || null;
+  const selectedModel = selections.llm?.modelId || null;
+  
+  const setSelectedProvider = (provider: string) => {
+    setSelection('llm', { providerId: provider });
+  };
+  
+  const setSelectedModel = (model: string) => {
+    if (selectedProvider) {
+      setSelection('llm', { providerId: selectedProvider, modelId: model });
+    }
+  };
   
   const [llmProviders, setLlmProviders] = useState<LLMProvider[]>([]);
-  const [searchProviders] = useState<SearchProvider[]>([
-    { name: 'tavily', description: 'AI-powered web search', type: 'search', requiresApiKey: true },
-    { name: 'opol', description: 'Privacy-focused search', type: 'search', requiresApiKey: false },
-  ]);
+  const [searchProviders, setSearchProviders] = useState<SearchProvider[]>([]);
   
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [tempApiKey, setTempApiKey] = useState('');
   const [selectedProviderType, setSelectedProviderType] = useState<'llm' | 'search'>('llm');
 
-  const fetchLLMProviders = async () => {
+  const fetchProviders = async () => {
     try {
-      const response = await UtilsService.getProviders();
-      const providerList: LLMProvider[] = response.providers.map((p: ProviderInfo) => ({
-        name: p.provider_name,
-        models: p.models.map((m: ProviderModel) => m.name),
+      const response = await UtilsService.getUnifiedProviders() as any;
+      
+      // Fetch LLM providers
+      const llmProvidersData = response.providers?.llm || [];
+      const legacyResponse = await UtilsService.getProviders();
+      const providerModels = new Map(
+        legacyResponse.providers.map((p: ProviderInfo) => [
+          p.provider_name, 
+          p.models.map((m: ProviderModel) => m.name)
+        ])
+      );
+      
+      const llmList: LLMProvider[] = llmProvidersData.map((provider: any) => ({
+        name: provider.id,
+        models: providerModels.get(provider.id) || [],
         type: 'llm' as const,
       }));
-      setLlmProviders(providerList);
+      setLlmProviders(llmList);
+      
+      // Fetch Search providers from unified registry
+      const searchProvidersData = response.providers?.search || [];
+      const searchList: SearchProvider[] = searchProvidersData.map((provider: any) => ({
+        name: provider.id,
+        description: provider.description,
+        type: 'search' as const,
+        requiresApiKey: provider.requires_api_key
+      }));
+      setSearchProviders(searchList);
       
       // Set default LLM provider if none selected
       if (!selectedProvider || selectedProviderType === 'llm') {
-        const defaultProvider = providerList.find(p => p.name === 'gemini') || providerList[0];
+        const defaultProvider = llmList.find(p => p.name === 'gemini') || llmList[0];
         if (defaultProvider) {
           setSelectedProvider(defaultProvider.name);
         }
       }
     } catch (error: any) {
-      console.error('Error fetching LLM providers:', error);
-      toast.error('Failed to fetch LLM providers.');
+      console.error('Error fetching providers:', error);
+      toast.error('Failed to fetch providers.');
     }
   };
 
   useEffect(() => {
-    fetchLLMProviders();
+    fetchProviders();
   }, []);
 
   // Update available models when provider changes

@@ -189,6 +189,12 @@ class User(SQLModel, table=True):
     bio: Optional[str] = Field(default=None, max_length=500)  # Short bio
     description: Optional[str] = Field(default=None, sa_column=Column(Text))  # Longer description
     
+    # UI preferences and settings
+    ui_preferences: Optional[Dict[str, Any]] = Field(
+        default_factory=dict, 
+        sa_column=Column(JSONB)
+    )
+    
     # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Loader2, Download, Trash2, RefreshCw, Filter } from "lucide-react";
-import { useApiKeysStore } from '@/zustand_stores/storeApiKeys';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { UtilsService } from '@/client';
 import { ProviderInfo, ProviderModel } from '@/client';
 import { toast } from 'sonner';
@@ -46,11 +46,23 @@ interface ModelManagerProps {
 
 export default function ModelManager({ showModels = true, className = '', showProviderSelector = true }: ModelManagerProps) {
   const { 
-    selectedProvider, 
-    selectedModel, 
-    setSelectedProvider, 
-    setSelectedModel 
-  } = useApiKeysStore();
+    selections,
+    setSelection,
+  } = useProvidersStore();
+  
+  // Get LLM provider selection
+  const selectedProvider = selections.llm?.providerId || null;
+  const selectedModel = selections.llm?.modelId || null;
+  
+  const setSelectedProvider = (provider: string) => {
+    setSelection('llm', { providerId: provider });
+  };
+  
+  const setSelectedModel = (model: string) => {
+    if (selectedProvider) {
+      setSelection('llm', { providerId: selectedProvider, modelId: model });
+    }
+  };
   
   const [providers, setProviders] = useState<Provider[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -71,12 +83,29 @@ export default function ModelManager({ showModels = true, className = '', showPr
   const fetchProviders = async () => {
     console.log('🔍 Fetching providers...');
     try {
-      const response = await UtilsService.getProviders();
-      console.log('📦 Received providers response:', response);
-      const providerList: Provider[] = response.providers.map((p: ProviderInfo) => ({
-        name: p.provider_name,
-        models: p.models.map((m: ProviderModel) => m.name),
-      }));
+      const response = await UtilsService.getUnifiedProviders() as any;
+      console.log('📦 Received unified providers response:', response);
+      
+      const llmProviders = response.providers?.llm || [];
+      const providerList: Provider[] = [];
+      
+      // For now, we need to fetch models separately for LLM providers
+      // The unified endpoint gives us metadata, but models need discovery
+      const legacyResponse = await UtilsService.getProviders();
+      const providerModels = new Map(
+        legacyResponse.providers.map((p: ProviderInfo) => [
+          p.provider_name, 
+          p.models.map((m: ProviderModel) => m.name)
+        ])
+      );
+      
+      for (const provider of llmProviders) {
+        providerList.push({
+          name: provider.id,
+          models: providerModels.get(provider.id) || []
+        });
+      }
+      
       console.log(`✅ Setting ${providerList.length} providers:`, providerList.map(p => `${p.name} (${p.models.length} models)`));
       setProviders(providerList);
       

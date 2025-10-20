@@ -1,8 +1,10 @@
 apiVersion: v2
 icon: https://example.com/favicon.ico
-name: cluster-chart
-description: A Helm chart for deploying the HQ application stack
+name: hq-cluster-chart
+description: A cloud-agnostic Helm chart for deploying the HQ application stack
 type: application
 version: 0.1.0
 appVersion: "1.0"
-email: "admin@example.com"
+maintainers:
+  - name: HQ Maintainers
+    email: "admin@example.com"
