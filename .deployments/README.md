@@ -18,7 +18,8 @@ All options support the same flexibility: run everything locally, use managed se
 ### 🐳 Docker Compose
 - **Location:** [docker-compose/](./docker-compose)
 - **Best for:** Local development, single-server deployments
-- **Setup time:** ~5 minutes
+- **Requirements:** 8GB RAM, 4 CPU cores, 300GB disk (Nominatim geocoding requires ~265GB; without it ~30GB)
+- **Setup time:** ~5 minutes (+ ~30 minutes for geocoding dataset import)
 
 ### ☸️ Helm Chart (Standalone)
 - **Location:** [end-to-end-hetzner-k3s-terraform-helm/open-politics-hq-deployment/hq-cluster-chart](./end-to-end-hetzner-k3s-terraform-helm/open-politics-hq-deployment/hq-cluster-chart)
