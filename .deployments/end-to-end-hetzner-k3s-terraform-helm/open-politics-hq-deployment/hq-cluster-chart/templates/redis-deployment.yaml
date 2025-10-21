@@ -35,9 +35,6 @@ spec:
             - --rename-command
             - SLAVEOF
             - ""
-            - --rename-command
-            - CONFIG
-            - ""
           env:
             - name: REDIS_PASSWORD
               valueFrom:

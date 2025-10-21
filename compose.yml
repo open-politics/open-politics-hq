@@ -35,7 +35,7 @@ services:
     image: redis:alpine
     volumes:
       - redis_data:/data
-      - ./.store/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./.config/redis.conf:/usr/local/etc/redis/redis.conf
     command: >
       redis-server /usr/local/etc/redis/redis.conf
       --port ${REDIS_PORT:-6379}
@@ -43,7 +43,6 @@ services:
       --requirepass ${REDIS_PASSWORD}
       --rename-command REPLICAOF ""
       --rename-command SLAVEOF ""
-      --rename-command CONFIG ""
     networks:
       - default
 
