@@ -33,12 +33,17 @@ services:
       
   redis:
     image: redis:alpine
-    ports:
-      - '${REDIS_PORT:-6379}:${REDIS_PORT:-6379}'
     volumes:
       - redis_data:/data
       - ./.store/redis.conf:/usr/local/etc/redis/redis.conf
-    command: redis-server /usr/local/etc/redis/redis.conf --port ${REDIS_PORT:-6379} --appendonly yes
+    command: >
+      redis-server /usr/local/etc/redis/redis.conf
+      --port ${REDIS_PORT:-6379}
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --rename-command REPLICAOF ""
+      --rename-command SLAVEOF ""
+      --rename-command CONFIG ""
     networks:
       - default
 
@@ -75,8 +80,6 @@ services:
     image: mediagis/nominatim:5.1
     restart: always
     shm_size: 4g
-    ports:
-      - "8721:8080"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
       interval: 30s

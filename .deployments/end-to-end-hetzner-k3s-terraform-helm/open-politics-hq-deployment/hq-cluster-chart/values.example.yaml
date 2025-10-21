@@ -1,15 +1,16 @@
 replicaCount: 1
 
-email: "admin@example.com"
+email: ""
 
 # Namespace for the deployment
-namespace: hq
+namespace: ""
 
 image:
   backend:
     repository: openpoliticsproject/backend
     tag: "latest"
     pullPolicy: Always
+    nodes: 1
   frontend: 
     repository: openpoliticsproject/frontend
     tag: "latest"
@@ -32,9 +33,10 @@ image:
     tag: "latest"
     pullPolicy: IfNotPresent
     nodes: 0
-  peliasPlaceholder:
-    image: pelias/placeholder
-    tag: "latest"
+  nominatim:
+    nodes: 0
+    image: mediagis/nominatim
+    tag: "5.1"
     pullPolicy: IfNotPresent
 
 # Image pull secrets (if using private registry)
@@ -55,13 +57,13 @@ ingress:
     traefik.ingress.kubernetes.io/router.tls.certresolver: "letsencrypt"
     traefik.ingress.kubernetes.io/router.entrypoints: "web,websecure"
     # Explicit domain specification for Traefik v3+
-    traefik.ingress.kubernetes.io/router.tls.domains.0.main: "your-domain.com"
-    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: "www.your-domain.com"
+    traefik.ingress.kubernetes.io/router.tls.domains.0.main: ""
+    traefik.ingress.kubernetes.io/router.tls.domains.0.sans: "www."
     # Traefik handles HTTP→HTTPS redirect via boot.sh HelmChartConfig
     # Session affinity
     traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
-    traefik.ingress.kubernetes.io/service.sticky.cookie.name: "hq-session"
-  host: your-domain.com
+    traefik.ingress.kubernetes.io/service.sticky.cookie.name: "open-politics-session"
+  host: ""
   path: /
   tls:
     # Let Traefik ACME manage TLS; leave secretName unset
@@ -76,7 +78,7 @@ postgres:
   # Persistent storage for Postgres
   persistence:
     enabled: true
-    storageClass: "local-path"
+    storageClass: "hcloud-volumes"
     size: 20Gi
     accessMode: ReadWriteOnce
 
@@ -98,80 +100,68 @@ configmaps:
 
 env:
   config:
-    DOMAIN: "your-domain.com"
+    DOMAIN: "open-politics.org"
     ENVIRONMENT: "production"
     FRONTEND_PORT: "3000"
     BACKEND_PORT: "8022"
     REDIS_PORT: "6379"
-    PROJECT_NAME: "HQ"
-    STACK_NAME: "hq-stack"
-    BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173,https://localhost,https://localhost:3000,http://localhost.tiangolo.com,http://your-domain.com,https://your-domain.com,https://your-domain.com:80,https://your-domain.com:443"
-    MINIO_ENDPOINT: "nbg1.your-objectstorage.com"
+    PROJECT_NAME: "Open Politics Project"
+    STACK_NAME: "open-politics-prod-stack"
+    BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173,https://localhost,https://localhost:3000,http://localhost.tiangolo.com,http://open-politics.org,https://open-politics.org,https://open-politics.org:80,https://open-politics.org:443"
+    MINIO_ENDPOINT: ""
     MINIO_HOST: "minio"
     MINIO_PORT: "9000"
     MINIO_SECURE: "true"
   secrets:
     SECRET_KEY: ""
-    FIRST_SUPERUSER: "admin@example.com"
+    FIRST_SUPERUSER: "jimvw@open-politics.org"
     FIRST_SUPERUSER_PASSWORD: ""
-    USERS_OPEN_REGISTRATION: "True"
-    OPOL_API_KEY: ""
-    OPOL_MODE: "remote"
-    LOCAL_LLM: "False"
-    LOCAL_LLM_MODEL: "llama3.2:latest"
+    USERS_OPEN_REGISTRATION: "false"
     POSTGRES_SERVER: "postgres"
     POSTGRES_DB: "opp_app_users_prod"
     POSTGRES_USER: "postgres"
     POSTGRES_PORT: "5432"
-    POSTGRES_PASSWORD: "xxx"
+    POSTGRES_PASSWORD: ""
     POSTGRES_SSL_MODE: ""
-    REDIS_HOST: "redis"
-    REDIS_PORT: "6379"
-    REDIS_DB: "0"
-    GOOGLE_API_KEY: "xxx"
-    USE_LOCAL_REDIS: "True"
-    LOCAL_REDIS_URL: "redis://redis:6379"
-    UPSTASH_REDIS_REST_URL: "https://api.upstash.com/v2/redis/namespaces/default/streams"
-    UPSTASH_REDIS_REST_TOKEN: "xxx"
-    CELERY_BROKER_URL: "redis://redis:6379/0"
-    CELERY_RESULT_BACKEND: "redis://redis:6379/0"
-    DISCOURSE_CONNECT_ENABLED: "True"
-    DISCOURSE_CONNECT_SECRET: "xxx"
-    DISCOURSE_CONNECT_URL: "https://forum.any.domain.org"
-    MAPBOX_ACCESS_TOKEN: "xxx"
-    MINIO_ROOT_USER: "xxx"
-    MINIO_ROOT_PASSWORD: "xxx"
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    REDIS_DB: 0
+    REDIS_PASSWORD: ""
+    # Optional: Override with full URL (takes precedence if set)
+    ## Optional Redis override
+    #REDIS_URL=redis://my-redis-host.aws.com:6379/0
+    # or rediss://... for TLS
+    # or redis://user:pass@host:port/db for auth
+    DISCOURSE_CONNECT_ENABLED: "false"
+    DISCOURSE_CONNECT_SECRET: ""
+    DISCOURSE_CONNECT_URL: ""
+    MAPBOX_ACCESS_TOKEN: ""
+    MINIO_ROOT_USER: ""
+    MINIO_ROOT_PASSWORD: ""
     MINIO_BUCKET_NAME: "hq-user-storage-prod"
     MINIO_REGION: "eu-central"
-    MINIO_ACCESS_KEY: "xxx"
-    MINIO_SECRET_KEY: "xxx"
+    MINIO_ACCESS_KEY: ""
+    MINIO_SECRET_KEY: ""
     MINIO_USE_SSL: "true"
-    MINIO_SITE_NAME: "any"
-    MINIO_SITE_REGION: "any"
-    SEARXNG_API_URL: "http://searxng:8080"
-    SEARCH_API: "tavily"
-    SEARXNG_PORT: "8080"
-    SEARXNG_BIND_ADDRESS: "0.0.0.0"
-    SEARXNG_IMAGE_PROXY: "true"
-    SEARXNG_LIMITER: "false"
-    SEARXNG_DEFAULT_DEPTH: "basic"
-    SEARXNG_MAX_RESULTS: "50"
-    SEARXNG_ENGINES: "google,bing,duckduckgo,wikipedia"
-    SEARXNG_TIME_RANGE: "None"
-    SEARXNG_SAFESEARCH: "0"
+    MINIO_SITE_NAME: "nbg1"
+    MINIO_SITE_REGION: "eu-central"
     SMTP_HOST: "smtp.protonmail.ch"
     SMTP_PORT: "587"
     SMTP_TLS: "true"
-    SMTP_USER: "admin@example.com"
-    SMTP_PASSWORD: "changeThis"
-    EMAILS_FROM_EMAIL: "admin@example.com"
+    SMTP_USER: ""
+    SMTP_PASSWORD: ""
+    EMAILS_FROM_EMAIL: ""
     SMTP_SSL: "false"
-    EMAILS_FROM_NAME: "HQ Application"
-    REQUIRE_EMAIL_VERIFICATION: "true"
+    EMAILS_FROM_NAME: "HQ"
+    REQUIRE_EMAIL_VERIFICATION: "false"
     SENTRY_DSN: ""
-    OPENAI_API_KEY: "xxx"
-    TAVILY_API_KEY: "xxx"
+    OPENAI_API_KEY: ""
+    GOOGLE_API_KEY: ""
+    TAVILY_API_KEY: ""
     WIPE_DB: "False"
+
+# Traefik Configuration (k3s native)
+# Using Traefik with built-in ACME for maximum efficiency - no cert-manager needed!
 
 # MinIO Configuration (local deployment)
 minio:
@@ -232,6 +222,25 @@ resources:
       cpu: 100m
       memory: 512Mi
 
+
+nominatim:
+  service:
+    type: ClusterIP
+    port: 8721
+  # For Europe detailed (10 min import, address-level)
+  pbfUrl: "https://download.geofabrik.de/europe-latest.osm.pbf"
+  replicationUrl: "https://download.geofabrik.de/europe-updates/"
+  importStyle: "admin"
+  # For world coarse (2h import, city/district-level) - DEFAULT alternative:
+  # pbfUrl: "https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf"
+  # replicationUrl: "https://planet.openstreetmap.org/replication/day/"
+  # importStyle: "admin"
+  persistence:
+    enabled: true
+    storageClass: "hcloud-volumes"
+    dataSize: 100Gi
+    workSize: 80Gi
+    accessMode: ReadWriteOnce
 
 # Node affinity (optional - spread across nodes)
 nodeAffinity:

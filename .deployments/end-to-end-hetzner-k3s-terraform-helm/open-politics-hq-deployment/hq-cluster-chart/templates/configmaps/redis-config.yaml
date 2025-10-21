@@ -9,5 +9,7 @@ data:
     protected-mode no
     maxmemory 6gb
     maxmemory-policy allkeys-lru
-    appendonly yes
+    save 900 1
+    save 300 10
+    save 60 10000
     port {{ .Values.env.config.REDIS_PORT }}

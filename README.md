@@ -112,6 +112,8 @@ The easiest way to start. We host the infrastructure, you bring your own LLM API
 
 For privacy, customization, or institutional requirements. Run everything on your own infrastructure.
 
+**Minimum requirements:** 8GB RAM, 4 CPU cores, 300GB disk (primarily for Nominatim geocoding database; ~30GB without it).
+
 ```bash
 git clone https://github.com/open-politics/open-politics-hq.git
 cd open-politics-hq

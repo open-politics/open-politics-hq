@@ -193,6 +193,7 @@ class AppSettings(BaseSettings):
     REDIS_HOST: str = Field(default="redis", env="REDIS_HOST")
     REDIS_PORT: int = Field(default=6379, env="REDIS_PORT")
     REDIS_DB: int = Field(default=0, env="REDIS_DB")
+    REDIS_PASSWORD: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
     # Optional: Override with full URL (takes precedence if set)
     REDIS_URL: Optional[str] = Field(default=None, env="REDIS_URL")
     
@@ -202,6 +203,11 @@ class AppSettings(BaseSettings):
         # Use explicit REDIS_URL if provided, otherwise construct from components
         if self.REDIS_URL:
             return self.REDIS_URL
+        
+        # Build URL with password if provided
+        if self.REDIS_PASSWORD:
+            # Password in URL format: redis://:password@host:port/db
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # Tavily API Key

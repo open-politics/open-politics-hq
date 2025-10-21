@@ -3,8 +3,6 @@ services:
     restart: "no"
     env_file:
       - .env
-    ports:
-      - "${POSTGRES_PORT}:80"
 
   # adminer:
   #   restart: "no"
