@@ -454,7 +454,7 @@ export default function AnnotationRunnerDock({
                   <Play className="h-5 w-5 text-blue-700 dark:text-blue-400" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate mb-0.5">Annotation Runner</h3>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate ">Annotation Runner</h3>
                   <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
                     {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
                   </p>
@@ -522,7 +522,7 @@ export default function AnnotationRunnerDock({
               </div>
               
               {/* Desktop: Action buttons */}
-              <div className="hidden sm:flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2 py-0.5 pt-1">
                 {activeRunId && (
                   <Button 
                     variant="ghost" 

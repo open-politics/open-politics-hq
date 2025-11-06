@@ -246,11 +246,18 @@ class AnnotationService:
         
         # Queue the retry task
         try:
+            # Debug: Log Celery broker config at the moment of queueing
+            from app.core.celery_app import celery
+            logger.info(f"About to queue task. Celery broker URL: {celery.conf.broker_url}")
+            logger.info(f"Celery app: {celery}")
+            
             retry_failed_annotations.delay(run.id)
             logger.info(f"Queued retry task for run {run.id}")
             return True
         except Exception as e:
             logger.error(f"Failed to queue retry task for run {run.id}: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
     def get_annotations_for_asset(

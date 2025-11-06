@@ -15,7 +15,7 @@ from app.api.deps import (
     StorageProviderDep,
 )
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
+from app.core.security import get_password_hash, verify_password, encrypt_credentials, decrypt_credentials
 from app.models import (
     User,
     Infospace,
@@ -23,6 +23,8 @@ from app.models import (
     Annotation,
 )
 from app.schemas import Message, UserCreate, UserOut, UserUpdate, UserUpdateMe, UserCreateOpen, UsersOut, UpdatePassword, UserPublicProfile, UserProfileUpdate, UserProfileStats
+from pydantic import BaseModel
+from typing import Dict
 from app.utils import (
     generate_new_account_email, 
     send_email, 
@@ -140,6 +142,80 @@ def update_password_me(
     session.add(current_user)
     session.commit()
     return Message(message="Password updated successfully")
+
+
+# ============================================================================
+# ENCRYPTED CREDENTIALS MANAGEMENT
+# ============================================================================
+# Securely store user's provider API keys for scheduled/background tasks
+# Supports dual-mode: runtime keys (immediate operations) + stored keys (background)
+
+class SaveCredentialsRequest(BaseModel):
+    """Request to save encrypted provider credentials."""
+    credentials: Dict[str, str]  # {provider_id: api_key}
+
+
+@router.post("/me/credentials", response_model=Message)
+def save_credentials(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    request: SaveCredentialsRequest
+) -> Any:
+    """
+    Save encrypted provider credentials for background tasks.
+    
+    Stores API keys encrypted with Fernet (AES-128 + HMAC) for use in 
+    scheduled tasks, recurring jobs, and background operations.
+    
+    Runtime keys provided during immediate operations take precedence over stored keys.
+    """
+    # Merge with existing credentials
+    existing = decrypt_credentials(current_user.encrypted_credentials)
+    existing.update(request.credentials)
+    
+    # Encrypt and save
+    current_user.encrypted_credentials = encrypt_credentials(existing)
+    session.add(current_user)
+    session.commit()
+    
+    return Message(message="Credentials saved securely")
+
+
+@router.get("/me/credentials/providers")
+def list_credential_providers(current_user: CurrentUser) -> List[str]:
+    """
+    List which providers have saved credentials.
+    
+    Returns provider IDs only, not actual keys.
+    """
+    stored = decrypt_credentials(current_user.encrypted_credentials)
+    return list(stored.keys())
+
+
+@router.delete("/me/credentials/{provider_id}", response_model=Message)
+def delete_credential(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    provider_id: str
+) -> Any:
+    """
+    Delete a specific provider's stored credential.
+    
+    Scheduled tasks using this provider will fail until new credential is provided.
+    """
+    stored = decrypt_credentials(current_user.encrypted_credentials)
+    
+    if provider_id not in stored:
+        raise HTTPException(status_code=404, detail=f"No credential found for provider '{provider_id}'")
+    
+    del stored[provider_id]
+    current_user.encrypted_credentials = encrypt_credentials(stored)
+    session.add(current_user)
+    session.commit()
+    
+    return Message(message=f"Credential for {provider_id} deleted")
 
 
 @router.get("/me", response_model=UserOut)

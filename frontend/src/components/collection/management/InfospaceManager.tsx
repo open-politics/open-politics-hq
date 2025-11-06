@@ -35,6 +35,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { formatDistanceToNow, format } from 'date-fns';
 
 interface InfospaceManagerProps {
@@ -659,16 +665,24 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
       )}
       <div className="flex items-center gap-1">
             {/* Hidden easter egg: Click the sparkles to toggle globe */}
-            <button
-              onClick={() => {
-                togglePreference('globe_enabled');
-                toast.success(preferences.globe_enabled ? 'Globe disabled ✨' : 'Globe enabled ✨');
-              }}
-              className="text-lg hover:scale-110 transition-transform cursor-pointer"
-              title="✨"
-            >
-              ✨
-            </button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => {
+                      togglePreference('globe_enabled');
+                      toast.success(preferences.globe_enabled ? 'Globe disabled ✨' : 'Globe enabled ✨');
+                    }}
+                    className="text-lg hover:scale-110 transition-transform cursor-pointer"
+                  >
+                    ✨
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Toggle globe visualization</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
     </div>
   );

@@ -28,26 +28,13 @@ import os
 logger = logging.getLogger(__name__)
 
 
-def create_mcp_context_token(user_id: int, infospace_id: int) -> str:
+def create_mcp_context_token(user_id: int, infospace_id: int, conversation_id: Optional[int] = None) -> str:
     """Creates a short-lived JWT to securely pass context to the MCP server."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {
         "exp": expire,
         "sub": str(user_id),
         "infospace_id": infospace_id
-    }
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
-    return encoded_jwt
-
-
-def create_mcp_context_token_with_api_keys(user_id: int, infospace_id: int, api_keys: Dict[str, str], conversation_id: Optional[int] = None) -> str:
-    """Creates a short-lived JWT with API keys encoded in claims for MCP server."""
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode = {
-        "exp": expire,
-        "sub": str(user_id),
-        "infospace_id": infospace_id,
-        "api_keys": api_keys,  # Encode API keys in JWT claims
     }
     
     # Include conversation_id if provided (for task persistence)
@@ -56,6 +43,17 @@ def create_mcp_context_token_with_api_keys(user_id: int, infospace_id: int, api_
     
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=security.ALGORITHM)
     return encoded_jwt
+
+
+def create_mcp_context_token_with_api_keys(user_id: int, infospace_id: int, api_keys: Dict[str, str], conversation_id: Optional[int] = None) -> str:
+    """
+    Creates a short-lived JWT for MCP server authentication.
+    
+    Note: API keys are NO LONGER stored in JWT. Server looks up stored credentials.
+    This function signature kept for backwards compatibility but ignores api_keys parameter.
+    """
+    # Call the simple token creation (no API keys in JWT)
+    return create_mcp_context_token(user_id, infospace_id, conversation_id)
 
 
 class IntelligenceMCPClient:
@@ -289,14 +287,13 @@ async def get_mcp_client(
     api_keys: Optional[Dict[str, str]] = None
 ):
     """
-    Context manager for getting an initialized MCP client with optional API keys.
+    Context manager for getting an initialized MCP client.
+    
+    Note: api_keys parameter is ignored - server looks up stored credentials.
     """
-    # Create token with API keys if provided
-    if api_keys:
-        token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys)
-        client = IntelligenceMCPClient(user_id=user_id, infospace_id=infospace_id, context_token=token)
-    else:
-        client = IntelligenceMCPClient(user_id=user_id, infospace_id=infospace_id)
+    # Create simple token (no API keys)
+    token = create_mcp_context_token(user_id, infospace_id)
+    client = IntelligenceMCPClient(user_id=user_id, infospace_id=infospace_id, context_token=token)
     
     async with client as connected_client:
         yield connected_client

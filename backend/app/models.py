@@ -204,6 +204,15 @@ class User(SQLModel, table=True):
     email_verification_token: Optional[str] = Field(default=None, index=True)
     email_verification_sent_at: Optional[datetime] = Field(default=None)
     email_verification_expires_at: Optional[datetime] = Field(default=None)
+    
+    # Encrypted provider credentials for background tasks
+    # Stores user's API keys encrypted with Fernet (AES-128 + HMAC)
+    # Format: {provider_id: api_key} encrypted as JSON string
+    encrypted_credentials: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text),
+        description="Fernet-encrypted JSON of provider API keys for scheduled/background tasks"
+    )
 
     infospaces: List["Infospace"] = Relationship(back_populates="owner")
     datasets: List["Dataset"] = Relationship(back_populates="user")
@@ -330,7 +339,7 @@ class Asset(SQLModel, table=True):
         back_populates="children_assets",
         sa_relationship_kwargs=dict(
             foreign_keys="[Asset.parent_asset_id]",
-            remote_side="Asset.id",
+            remote_side="[Asset.id]",
         ),
     )
     children_assets: List["Asset"] = Relationship(
@@ -345,7 +354,7 @@ class Asset(SQLModel, table=True):
         back_populates="next_versions",
         sa_relationship_kwargs=dict(
             foreign_keys="[Asset.previous_asset_id]",
-            remote_side="Asset.id",
+            remote_side="[Asset.id]",
         ),
     )
     next_versions: List["Asset"] = Relationship(
@@ -864,8 +873,14 @@ class UserBackup(SQLModel, table=True):
         return self.status == BackupStatus.COMPLETED and not self.is_expired
 
     # Relationships
-    target_user: Optional[User] = Relationship(sa_relationship_kwargs={"foreign_keys": "[UserBackup.target_user_id]"})
-    created_by_user: Optional[User] = Relationship(sa_relationship_kwargs={"foreign_keys": "[UserBackup.created_by_user_id]"})
+    target_user: Optional[User] = Relationship(
+        back_populates="user_backups",
+        sa_relationship_kwargs={"foreign_keys": "[UserBackup.target_user_id]"}
+    )
+    created_by_user: Optional[User] = Relationship(
+        back_populates="created_user_backups",
+        sa_relationship_kwargs={"foreign_keys": "[UserBackup.created_by_user_id]"}
+    )
 
     __table_args__ = (
         Index("ix_userbackup_target_created", "target_user_id", "created_by_user_id"),

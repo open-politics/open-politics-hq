@@ -6,9 +6,10 @@ from typing import List, Dict, Any, Optional
 from sqlmodel import Session, select
 from sqlalchemy import func
 
-from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, EmbeddingProvider as EmbeddingProviderEnum, AssetKind
+from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, EmbeddingProvider as EmbeddingProviderEnum, AssetKind, User
 from app.api.services.chunking_service import ChunkingService
 from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
+from app.core.security import merge_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,14 @@ logger = logging.getLogger(__name__)
 class EmbeddingService:
     """Service for generating and managing embeddings for assets."""
     
-    def __init__(self, session: Session, runtime_api_keys: Optional[Dict[str, str]] = None):
+    def __init__(
+        self, 
+        session: Session,
+        user_id: Optional[int] = None,
+        runtime_api_keys: Optional[Dict[str, str]] = None
+    ):
         self.session = session
+        self.user_id = user_id
         self.chunking_service = ChunkingService(session)
         self.runtime_api_keys = runtime_api_keys or {}
         
@@ -26,15 +33,36 @@ class EmbeddingService:
             "ollama": OllamaEmbeddingProvider()
         }
     
+    def _get_all_api_keys(self) -> Dict[str, str]:
+        """
+        Get all API keys (runtime + stored), with runtime taking precedence.
+        
+        This enables dual-mode:
+        - Immediate operations: Use runtime keys from frontend
+        - Background tasks: Use stored encrypted keys
+        - Runtime keys always override stored (user intent)
+        """
+        if not self.user_id:
+            return self.runtime_api_keys
+        
+        user = self.session.get(User, self.user_id)
+        if not user:
+            return self.runtime_api_keys
+        
+        # Merge: stored + runtime (runtime takes precedence)
+        return merge_credentials(user.encrypted_credentials, self.runtime_api_keys)
+    
     async def _get_provider(self, provider_name: str, model_name: Optional[str] = None):
         """
-        Get embedding provider instance.
+        Get embedding provider instance with automatic credential resolution.
         
-        If runtime API keys are available, use the registry for provider resolution.
-        Otherwise, fall back to legacy provider lookup.
+        Uses merged credentials (stored + runtime) for provider creation.
         """
-        # Try registry-based provider resolution if we have runtime API keys or need non-Ollama provider
-        if self.runtime_api_keys or provider_name.lower() != "ollama":
+        # Get all available API keys (merged stored + runtime)
+        api_keys = self._get_all_api_keys()
+        
+        # Try registry-based provider resolution
+        if api_keys or provider_name.lower() != "ollama":
             try:
                 from app.api.providers.factory import get_embedding_registry
                 registry = get_embedding_registry()
@@ -43,13 +71,13 @@ class EmbeddingService:
                 if model_name:
                     provider, resolved_provider_name = await registry.get_provider_for_model(
                         model_name,
-                        runtime_api_keys=self.runtime_api_keys
+                        runtime_api_keys=api_keys
                     )
                     if provider:
                         return provider
                 
                 # Otherwise, try to create provider by name
-                return registry.create_provider(provider_name, self.runtime_api_keys.get(provider_name))
+                return registry.create_provider(provider_name, api_keys.get(provider_name))
                 
             except Exception as e:
                 logger.warning(f"Failed to get provider from registry: {e}, falling back to legacy")

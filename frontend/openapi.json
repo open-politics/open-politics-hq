@@ -783,6 +783,98 @@
         }
       }
     },
+    "/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/export/csv": {
+      "get": {
+        "tags": [
+          "annotation_jobs",
+          "Runs"
+        ],
+        "summary": "Export Run Annotations Csv",
+        "description": "Export annotation run results as CSV.\n\nFlattens nested JSON into columns like:\n- value.field_name\n- value.nested.field\n- value.items[0].property\n\nPerfect for loading into pandas, Excel, or ML tools like lazypredict.",
+        "operationId": "export_run_annotations_csv",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "flatten_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Flatten nested JSON fields into dot-notation columns",
+              "default": true,
+              "title": "Flatten Json"
+            },
+            "description": "Flatten nested JSON fields into dot-notation columns"
+          },
+          {
+            "name": "include_metadata",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include asset and schema metadata",
+              "default": true,
+              "title": "Include Metadata"
+            },
+            "description": "Include asset and schema metadata"
+          },
+          {
+            "name": "include_justifications",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include justification text (adds columns)",
+              "default": false,
+              "title": "Include Justifications"
+            },
+            "description": "Include justification text (adds columns)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/annotation_schemas/": {
       "post": {
         "tags": [
@@ -13581,6 +13673,132 @@
         ]
       }
     },
+    "/api/v1/users/me/credentials": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Save Credentials",
+        "description": "Save encrypted provider credentials for background tasks.\n\nStores API keys encrypted with Fernet (AES-128 + HMAC) for use in \nscheduled tasks, recurring jobs, and background operations.\n\nRuntime keys provided during immediate operations take precedence over stored keys.",
+        "operationId": "save_credentials",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveCredentialsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/credentials/providers": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List Credential Providers",
+        "description": "List which providers have saved credentials.\n\nReturns provider IDs only, not actual keys.",
+        "operationId": "list_credential_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Users-List Credential Providers"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/credentials/{provider_id}": {
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete Credential",
+        "description": "Delete a specific provider's stored credential.\n\nScheduled tasks using this provider will fail until new credential is provided.",
+        "operationId": "delete_credential",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me/upload-profile-picture": {
       "post": {
         "tags": [
@@ -23002,6 +23220,23 @@
           "completed_with_errors"
         ],
         "title": "RunStatus"
+      },
+      "SaveCredentialsRequest": {
+        "properties": {
+          "credentials": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Credentials"
+          }
+        },
+        "type": "object",
+        "required": [
+          "credentials"
+        ],
+        "title": "SaveCredentialsRequest",
+        "description": "Request to save encrypted provider credentials."
       },
       "SearchAndIngestResponse": {
         "properties": {

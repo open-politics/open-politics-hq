@@ -51,12 +51,13 @@ def check_recurring_tasks():
             logger.error(f"Error in check_recurring_tasks: {e}", exc_info=True)
 
 def _dispatch_ingest_task(task: Task):
-    """Dispatch an INGEST task to process_source"""
+    """Dispatch an INGEST task to process_source with user context."""
     target_source_id = task.configuration.get("target_source_id")
     if target_source_id:
         from app.api.tasks.ingest import process_source
-        process_source.delay(target_source_id)
-        logger.info(f"Dispatched INGEST task {task.id} for source {target_source_id}")
+        # Pass task.user_id for credential lookup
+        process_source.delay(target_source_id, user_id=task.user_id)
+        logger.info(f"Dispatched INGEST task {task.id} for source {target_source_id} (user {task.user_id})")
         _update_task_status(task.id, "running", "Task dispatched to process_source")
     else:
         logger.error(f"INGEST task {task.id} missing target_source_id")

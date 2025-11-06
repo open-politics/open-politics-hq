@@ -33,7 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle, Download } from 'lucide-react';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -149,6 +149,8 @@ interface AnnotationResultsTableProps {
   // NEW: Cross-panel navigation
   onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
   onLocationClick?: (location: string, fieldKey: string) => void;
+  // CSV Export
+  runId?: number;
 }
 
 // --- UTILITY FUNCTIONS (Keep existing helpers like getHeaderClassName) --- //
@@ -211,6 +213,8 @@ export function AnnotationResultsTable({
   // NEW: Cross-panel navigation
   onTimestampClick,
   onLocationClick,
+  // CSV Export
+  runId,
 }: AnnotationResultsTableProps) {
   const [sorting, setSorting] = useState<SortingState>(() => {
     if (initialTableConfig?.sorting) {
@@ -387,6 +391,57 @@ export function AnnotationResultsTable({
     setCurationState({ isOpen: false, payloads: [] });
   };
 
+  // CSV Export handler
+  const [isExporting, setIsExporting] = useState(false);
+  
+  const handleExportCSV = useCallback(async () => {
+    if (!runId || !activeInfospace?.id) {
+      console.error('Missing runId or infospace for export');
+      return;
+    }
+    
+    setIsExporting(true);
+    
+    try {
+      const response = await fetch(
+        `/api/v1/annotation_jobs/infospaces/${activeInfospace.id}/runs/${runId}/export/csv?flatten_json=true&include_metadata=true`,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+      
+      // Get filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `annotations_run_${runId}.csv`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('CSV export failed:', error);
+      // TODO: Add toast notification
+    } finally {
+      setIsExporting(false);
+    }
+  }, [runId, activeInfospace?.id]);
 
   // Debounced function to notify parent of config changes
   const debouncedConfigUpdate = useCallback((config: any) => {
@@ -1332,6 +1387,33 @@ export function AnnotationResultsTable({
          </div>
          
          <div className="flex items-center gap-0.5">
+           {/* CSV Export Button */}
+           {runId && (
+             <TooltipProvider delayDuration={100}>
+               <Tooltip>
+                 <TooltipTrigger asChild>
+                   <Button 
+                     variant="ghost"
+                     size="sm" 
+                     className="h-6 px-2 gap-1 text-xs"
+                     onClick={handleExportCSV}
+                     disabled={isExporting}
+                   >
+                     {isExporting ? (
+                       <Loader2 className="h-3 w-3 animate-spin" />
+                     ) : (
+                       <Download className="h-3 w-3" />
+                     )}
+                     <span>CSV</span>
+                   </Button>
+                 </TooltipTrigger>
+                 <TooltipContent side="bottom">
+                   <p className="text-xs">Export annotations as CSV for analysis</p>
+                 </TooltipContent>
+               </Tooltip>
+             </TooltipProvider>
+           )}
+           
            {/* Unfold Fields Toggle */}
            <TooltipProvider delayDuration={100}>
              <Tooltip>

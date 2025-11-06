@@ -139,11 +139,6 @@ def get_services():
     if not user_id or not infospace_id:
         raise PermissionError("Invalid authentication token")
     
-    # Extract runtime API keys from JWT claims (passed from frontend)
-    # These are used for cloud providers (OpenAI, Anthropic, Tavily, etc.)
-    api_keys = access_token.claims.get('api_keys', {})
-    runtime_api_keys = api_keys if isinstance(api_keys, dict) else {}
-
     # Initialize database session
     from app.core.db import engine
     from sqlmodel import Session

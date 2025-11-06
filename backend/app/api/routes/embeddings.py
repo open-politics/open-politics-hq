@@ -113,17 +113,21 @@ async def generate_infospace_embeddings(
         )
     
     if request.async_processing:
-        # Start background task with API keys
+        # Start background task (uses stored credentials)
         embed_infospace_task.delay(
             infospace_id=infospace_id,
+            user_id=current_user.id,
             overwrite=request.overwrite,
-            asset_kinds=request.asset_kinds,
-            runtime_api_keys=request.api_keys
+            asset_kinds=request.asset_kinds
         )
         return Message(message=f"Embedding generation started in background for infospace {infospace_id}")
     else:
-        # Synchronous processing
-        service = EmbeddingService(session, runtime_api_keys=request.api_keys)
+        # Synchronous processing (supports runtime + stored credentials)
+        service = EmbeddingService(
+            session,
+            user_id=current_user.id,
+            runtime_api_keys=request.api_keys
+        )
         
         # Convert asset_kinds strings to enum
         kinds = None
@@ -174,17 +178,21 @@ async def generate_asset_embeddings(
         )
     
     if request.async_processing:
-        # Start background task
+        # Start background task (uses stored credentials)
         embed_asset_task.delay(
             asset_id=asset_id,
             infospace_id=infospace.id,
-            overwrite=request.overwrite,
-            runtime_api_keys=request.api_keys
+            user_id=current_user.id,
+            overwrite=request.overwrite
         )
         return Message(message=f"Embedding generation started for asset {asset_id}")
     else:
-        # Synchronous processing
-        service = EmbeddingService(session, runtime_api_keys=request.api_keys)
+        # Synchronous processing (supports runtime + stored credentials)
+        service = EmbeddingService(
+            session,
+            user_id=current_user.id,
+            runtime_api_keys=request.api_keys
+        )
         result = await service.generate_embeddings_for_asset(
             asset_id=asset_id,
             infospace_id=infospace.id,

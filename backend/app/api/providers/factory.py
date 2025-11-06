@@ -88,17 +88,15 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     """
     registry = ModelRegistryService()
     
-    # Configure OpenAI if available (server environment variable)
-    # Runtime API keys can also be provided per-request
-    if settings.OPENAI_API_KEY:
-        from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
-        registry.configure_provider(
-            "openai",
-            OpenAILanguageModelProvider,
-            {"api_key": settings.OPENAI_API_KEY},
-            enabled=True
-        )
-        logger.info("Configured OpenAI provider with server API key")
+    # Configure OpenAI - always available, uses runtime API key from frontend if no server key
+    from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
+    registry.configure_provider(
+        "openai",
+        OpenAILanguageModelProvider,
+        {"api_key": settings.OPENAI_API_KEY or "placeholder"},  # Placeholder if no server key
+        enabled=True
+    )
+    logger.info("Configured OpenAI provider (requires runtime API key from frontend)" if not settings.OPENAI_API_KEY else "Configured OpenAI provider with server API key")
     
     # Configure Anthropic provider - requires runtime API key from frontend
     registry.configure_provider(

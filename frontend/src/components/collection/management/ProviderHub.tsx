@@ -7,6 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { 
   Brain, 
   Search, 
@@ -21,11 +27,14 @@ import {
   Cloud,
   AlertCircle,
   Heart,
-  Code2
+  Code2,
+  Lock,
+  Upload,
+  Info
 } from "lucide-react";
 import { useProvidersStore, ProviderCapability, ProviderMetadata } from '@/zustand_stores/storeProviders';
 import { toast } from 'sonner';
-import { UtilsService } from '@/client';
+import { UtilsService, UsersService } from '@/client';
 
 interface ProviderHubProps {
   className?: string;
@@ -69,10 +78,14 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>('llm');
   const [tempApiKeys, setTempApiKeys] = useState<Record<string, string>>({});
+  const [storedProviders, setStoredProviders] = useState<string[]>([]); // Providers with backend-stored keys
+  const [isSavingToBackend, setIsSavingToBackend] = useState<string | null>(null);
+  const [isTransferringAll, setIsTransferringAll] = useState(false);
 
-  // Fetch unified providers on mount
+  // Fetch unified providers and stored credentials on mount
   useEffect(() => {
     fetchProviders();
+    fetchStoredCredentials();
   }, []);
 
   const fetchProviders = async () => {
@@ -106,21 +119,114 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
     }
   };
 
-  const handleSaveApiKey = (providerId: string) => {
+  const fetchStoredCredentials = async () => {
+    try {
+      const providers = await UsersService.listCredentialProviders();
+      setStoredProviders(providers);
+    } catch (error) {
+      console.error('Failed to fetch stored credentials:', error);
+      // Don't show error toast - user might not have any stored credentials yet
+    }
+  };
+
+  const handleSaveApiKey = (providerId: string, saveToBackend: boolean = false) => {
     const key = tempApiKeys[providerId]?.trim();
     if (!key) {
       toast.error('Please enter an API key');
       return;
     }
 
-    setApiKey(providerId, key);
-    setTempApiKeys((prev) => ({ ...prev, [providerId]: '' }));
-    toast.success(`API key saved for ${getProvider(providerId)?.name}`);
+    if (saveToBackend) {
+      handleSaveToBackend(providerId, key);
+    } else {
+      // Save to frontend only (runtime key)
+      setApiKey(providerId, key);
+      setTempApiKeys((prev) => ({ ...prev, [providerId]: '' }));
+      toast.success(`Runtime API key saved for ${getProvider(providerId)?.name}`);
+    }
+  };
+
+  const handleSaveToBackend = async (providerId: string, key?: string) => {
+    const apiKey = key || tempApiKeys[providerId]?.trim();
+    if (!apiKey) {
+      toast.error('Please enter an API key');
+      return;
+    }
+
+    setIsSavingToBackend(providerId);
+    try {
+      await UsersService.saveCredentials({
+        requestBody: {
+          credentials: { [providerId]: apiKey }
+        }
+      });
+      
+      toast.success(`API key saved securely for ${getProvider(providerId)?.name} (available for scheduled tasks)`);
+      setTempApiKeys((prev) => ({ ...prev, [providerId]: '' }));
+      setStoredProviders((prev) => [...new Set([...prev, providerId])]);
+    } catch (error) {
+      console.error('Failed to save credential:', error);
+      toast.error('Failed to save API key to backend');
+    } finally {
+      setIsSavingToBackend(null);
+    }
   };
 
   const handleRemoveApiKey = (providerId: string) => {
     removeApiKey(providerId);
-    toast.success(`API key removed for ${getProvider(providerId)?.name}`);
+    toast.success(`Runtime API key removed for ${getProvider(providerId)?.name}`);
+  };
+
+  const handleRemoveStoredKey = async (providerId: string) => {
+    if (!confirm(`Remove stored API key for ${getProvider(providerId)?.name}? Scheduled tasks using this provider will fail.`)) {
+      return;
+    }
+
+    try {
+      await UsersService.deleteCredential({ providerId });
+      toast.success(`Stored API key removed for ${getProvider(providerId)?.name}`);
+      setStoredProviders((prev) => prev.filter(id => id !== providerId));
+    } catch (error) {
+      console.error('Failed to delete credential:', error);
+      toast.error('Failed to remove stored API key');
+    }
+  };
+
+  const handleTransferAllToBackend = async () => {
+    // Get all runtime keys that aren't already stored
+    const keysToTransfer = Object.entries(apiKeys).filter(
+      ([providerId, key]) => key && !storedProviders.includes(providerId)
+    );
+
+    if (keysToTransfer.length === 0) {
+      toast.info('No runtime keys to transfer');
+      return;
+    }
+
+    if (!confirm(`Transfer ${keysToTransfer.length} runtime key(s) to encrypted backend storage for scheduled tasks?`)) {
+      return;
+    }
+
+    setIsTransferringAll(true);
+    try {
+      // Build credentials object
+      const credentials = Object.fromEntries(keysToTransfer);
+      
+      await UsersService.saveCredentials({
+        requestBody: { credentials }
+      });
+
+      const providerNames = keysToTransfer.map(([id]) => getProvider(id)?.name || id).join(', ');
+      toast.success(`Transferred ${keysToTransfer.length} key(s) to backend: ${providerNames}`);
+      
+      // Update stored providers list
+      setStoredProviders((prev) => [...new Set([...prev, ...keysToTransfer.map(([id]) => id)])]);
+    } catch (error) {
+      console.error('Failed to transfer keys:', error);
+      toast.error('Failed to transfer runtime keys to backend');
+    } finally {
+      setIsTransferringAll(false);
+    }
   };
 
   const handleSelectProvider = (capability: ProviderCapability, providerId: string) => {
@@ -130,9 +236,10 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
 
   const renderProviderCard = (provider: ProviderMetadata, capability: ProviderCapability) => {
     const isSelected = selections[capability]?.providerId === provider.id;
-    const hasKey = hasApiKey(provider.id);
+    const hasRuntimeKey = hasApiKey(provider.id);
+    const hasStoredKey = storedProviders.includes(provider.id);
     const needsKey = needsApiKey(provider.id);
-    const showApiKeyWarning = needsKey && !hasKey;
+    const showApiKeyWarning = needsKey && !hasRuntimeKey && !hasStoredKey;
 
     return (
       <Card 
@@ -215,10 +322,11 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
           {/* API Key Management */}
           {provider.requires_api_key && (
             <div className="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              {/* Header with Get Key link */}
               <div className="flex items-center justify-between gap-2">
-                <Label className="text-xs font-medium flex items-center gap-1 min-w-0">
+                <Label className="text-xs font-medium flex items-center gap-1 text-gray-700 dark:text-gray-300">
                   <Key className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{provider.api_key_name || 'API Key'}</span>
+                  {provider.api_key_name || 'API Key'}
                 </Label>
                 {provider.api_key_url && (
                   <a
@@ -233,57 +341,120 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                 )}
               </div>
 
-              {/* Server env fallback info */}
-              {provider.has_env_fallback && !hasKey && (
-                <div className="text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/20 p-2 rounded border border-green-200 dark:border-green-800">
-                  ✓ Server configured (you can add your own key to override)
+              {/* Show warning first if no keys at all */}
+              {showApiKeyWarning && (
+                <div className="flex items-center gap-1.5 px-2 py-1.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  <span>API key required to use this provider</span>
                 </div>
               )}
 
-              {/* API Key Input/Display */}
-              {hasKey ? (
-                <div className="flex items-center justify-between gap-2 p-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
-                  <div className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-400 min-w-0">
-                    <CheckCircle className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{provider.has_env_fallback ? 'Using your API key (overriding server)' : 'API key configured'}</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemoveApiKey(provider.id)}
-                    className="h-7 text-xs shrink-0"
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <Input
-                      type="password"
-                      placeholder={provider.has_env_fallback ? "Enter your key to override" : "Enter API key"}
-                      value={tempApiKeys[provider.id] || ''}
-                      onChange={(e) => setTempApiKeys((prev) => ({
-                        ...prev,
-                        [provider.id]: e.target.value,
-                      }))}
-                      className="text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => handleSaveApiKey(provider.id)}
-                      disabled={!tempApiKeys[provider.id]?.trim()}
-                      className="shrink-0"
-                    >
-                      Save
-                    </Button>
-                  </div>
-                  {showApiKeyWarning && (
-                    <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                      <AlertCircle className="w-3 h-3" />
-                      API key required to use this provider
+              {/* Current Keys Status */}
+              {(hasStoredKey || hasRuntimeKey) && (
+                <div className="space-y-1.5">
+                  {/* Stored Key */}
+                  {hasStoredKey && (
+                    <div className="flex items-center justify-between gap-2 px-2 py-1.5 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded">
+                      <div className="flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400 min-w-0">
+                        <Lock className="w-3 h-3 shrink-0" />
+                        <span className="truncate font-medium">Encrypted for scheduled tasks</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveStoredKey(provider.id)}
+                        className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 shrink-0"
+                      >
+                        Remove
+                      </Button>
                     </div>
                   )}
+
+                  {/* Runtime Key */}
+                  {hasRuntimeKey && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 px-2 py-1.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
+                        <div className="flex items-center gap-1.5 text-xs text-blue-700 dark:text-blue-400 min-w-0">
+                          <CheckCircle className="w-3 h-3 shrink-0" />
+                          <span className="truncate font-medium">Runtime key (this session)</span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRemoveApiKey(provider.id)}
+                          className="h-6 px-2 text-xs shrink-0"
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                      {/* Transfer option if runtime key exists but not stored */}
+                      {!hasStoredKey && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const runtimeKey = apiKeys[provider.id];
+                            if (runtimeKey) {
+                              handleSaveToBackend(provider.id, runtimeKey);
+                            }
+                          }}
+                          disabled={isSavingToBackend === provider.id}
+                          className="w-full h-7 text-xs"
+                        >
+                          {isSavingToBackend === provider.id ? (
+                            <>
+                              <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-3 h-3 mr-1.5" />
+                              Save to Backend for Scheduled Tasks
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Add Key Input - only show if no keys exist */}
+              {!hasRuntimeKey && !hasStoredKey && (
+                <div className="space-y-1.5">
+                  <Input
+                    type="password"
+                    placeholder="Enter API key"
+                    value={tempApiKeys[provider.id] || ''}
+                    onChange={(e) => setTempApiKeys((prev) => ({
+                      ...prev,
+                      [provider.id]: e.target.value,
+                    }))}
+                    className="h-8 text-xs"
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleSaveApiKey(provider.id, false)}
+                      disabled={!tempApiKeys[provider.id]?.trim()}
+                      className="flex-1 h-7 text-xs"
+                    >
+                      Runtime Only
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => handleSaveApiKey(provider.id, true)}
+                      disabled={!tempApiKeys[provider.id]?.trim() || isSavingToBackend === provider.id}
+                      className="flex-1 h-7 text-xs"
+                    >
+                      {isSavingToBackend === provider.id ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        'Save for Tasks'
+                      )}
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
@@ -301,15 +472,69 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
     );
   }
 
+  const hasRuntimeKeysToTransfer = Object.entries(apiKeys).some(
+    ([providerId, key]) => key && !storedProviders.includes(providerId)
+  );
+
   return (
     <div className={`space-y-4 w-full ${className}`}>
-      <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
-          Provider Configuration
-        </h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Configure AI providers for different capabilities. Local providers run on your infrastructure, cloud providers require API keys.
-        </p>
+      {/* Action Buttons */}
+      <div className="flex items-center justify-between gap-2">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-help">
+                <Info className="w-4 h-4" />
+                <span className="text-xs">About API Keys</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start" className="max-w-xs">
+              <div className="space-y-2 text-xs">
+                <p className="font-semibold">Two ways to use API keys:</p>
+                <div>
+                  <span className="font-medium text-blue-400 dark:text-blue-400">Runtime Keys:</span>
+                  <p className="">One-time use for immediate operations (chat, ad-hoc annotation run). Stored in your browser only, not saved to backend.</p>
+                </div>
+                <div>
+                  <span className="font-medium text-green-400 dark:text-green-400">Stored Keys:</span>
+                  <p className="">Encrypted and saved for scheduled tasks, background embeddings, and recurring jobs. Required when you're away.</p>
+                </div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <div className="flex gap-2 shrink-0">
+          {hasRuntimeKeysToTransfer && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleTransferAllToBackend}
+              disabled={isTransferringAll}
+            >
+              {isTransferringAll ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Transferring...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Transfer All to Backend
+                </>
+              )}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.location.href = '/accounts/settings#api-keys'}
+            className="shrink-0"
+          >
+            <Lock className="w-4 h-4 mr-2" />
+            Manage Stored Keys
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeCapability} onValueChange={(v) => setActiveCapability(v as ProviderCapability)} className="w-full">

@@ -397,10 +397,10 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
                 {showApiKeysDialog && (
                   <Alert>
                     <Key className="h-4 w-4" />
-                    <AlertTitle>API Keys for Cloud Providers</AlertTitle>
+                    <AlertTitle>Runtime API Keys for Cloud Providers</AlertTitle>
                     <AlertDescription className="space-y-3 mt-2">
                       <p className="text-xs">
-                        Enter API keys to access cloud embedding providers. Keys are stored securely in your browser.
+                        Enter API keys to use cloud embedding providers for this immediate operation. For background tasks, save keys in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a> or the Provider Hub.
                       </p>
                       
                       {/* OpenAI */}
@@ -770,13 +770,13 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
           {apiKeys.openai || apiKeys.voyage || apiKeys.jina ? (
             <Alert>
               <Key className="h-4 w-4" />
-              <AlertTitle>API Keys Detected</AlertTitle>
+              <AlertTitle>Runtime API Keys Detected</AlertTitle>
               <AlertDescription>
-                Using API keys from provider settings: 
+                Using runtime keys for: 
                 {apiKeys.openai && ' OpenAI'}
                 {apiKeys.voyage && ' Voyage AI'}
                 {apiKeys.jina && ' Jina AI'}
-                . Click "Discover Models" to refresh the list.
+                . These are for this session only. For background tasks, save keys in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a>.
               </AlertDescription>
             </Alert>
           ) : (
@@ -784,7 +784,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
               <Info className="h-4 w-4" />
               <AlertTitle>Add API Keys for Cloud Providers</AlertTitle>
               <AlertDescription>
-                To access OpenAI, Voyage AI, or Jina AI models, add your API keys in the Provider Manager or click "Enable" to access the full setup.
+                To access OpenAI, Voyage AI, or Jina AI models, add runtime keys in the Provider Hub, or save them permanently in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a> for background tasks.
               </AlertDescription>
             </Alert>
           )}

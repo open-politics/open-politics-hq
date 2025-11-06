@@ -160,6 +160,16 @@ class AppSettings(BaseSettings):
     # --- Storage Provider ---
     STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
 
+    # --- Encryption ---
+    # Master key for encrypting user provider credentials
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # REQUIRED in production for storing user API keys securely
+    ENCRYPTION_MASTER_KEY: str = Field(
+        default="",
+        env="ENCRYPTION_MASTER_KEY",
+        description="Master encryption key for user API key storage (REQUIRED in production)"
+    )
+    
     # Credentials (ensure these environment variables are set for the chosen provider)
     GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
@@ -204,11 +214,22 @@ class AppSettings(BaseSettings):
         if self.REDIS_URL:
             return self.REDIS_URL
         
+        # Validate required components
+        if not self.REDIS_HOST:
+            raise ValueError("REDIS_HOST is required when REDIS_URL is not provided")
+        
         # Build URL with password if provided
-        if self.REDIS_PASSWORD:
-            # Password in URL format: redis://:password@host:port/db
-            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        # Redis simple auth uses just password (no username) - format: redis://:password@host:port/db
+        if self.REDIS_PASSWORD and self.REDIS_PASSWORD.strip():
+            from urllib.parse import quote_plus
+            # URL-encode password to handle special characters
+            encoded_password = quote_plus(self.REDIS_PASSWORD)
+            # Note the colon BEFORE password with empty username section
+            url = f"redis://:{encoded_password}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        else:
+            url = f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        
+        return url
 
     # Tavily API Key
     TAVILY_API_KEY: Optional[str] = Field(default=None, env="TAVILY_API_KEY")

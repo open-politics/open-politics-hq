@@ -1032,6 +1032,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   // NEW: Cross-panel navigation
                   onTimestampClick={onTimestampClick ? (timestamp, fieldKey) => onTimestampClick(timestamp, fieldKey, panel.id) : undefined}
                   onLocationClick={onLocationClick ? (location, fieldKey) => onLocationClick(location, fieldKey, panel.id) : undefined}
+                  // CSV Export
+                  runId={activeRunId}
                 />
               </AssetDetailProvider>
             </div>

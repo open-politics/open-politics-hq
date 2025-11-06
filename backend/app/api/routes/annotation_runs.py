@@ -1,13 +1,18 @@
 """Routes for annotation runs."""
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+import csv
+import io
 
 from app.models import (
     AnnotationRun,
     RunStatus,
     Annotation,
+    Asset,
+    AnnotationSchema,
 )
 from app.schemas import (
     AnnotationRunRead,
@@ -424,4 +429,200 @@ async def create_package_from_run_endpoint(
         raise he
     except Exception as e:
         logger.exception(f"Route: Unexpected error creating package from run {run_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while creating package from run") 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while creating package from run")
+
+
+def _flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
+    """
+    Flatten nested dict into dot-notation keys for CSV export.
+    
+    Examples:
+        {"name": "John", "address": {"city": "NYC"}} 
+        -> {"name": "John", "address.city": "NYC"}
+        
+        {"tags": ["a", "b"]} -> {"tags": "a|b"}
+        {"items": [{"id": 1}, {"id": 2}]} -> {"items[0].id": 1, "items[1].id": 2}
+    """
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(_flatten_dict(v, new_key, sep=sep).items())
+        elif isinstance(v, list):
+            # Handle lists by indexing if they contain dicts, otherwise join
+            if v and isinstance(v[0], dict):
+                for i, item in enumerate(v):
+                    items.extend(_flatten_dict(item, f"{new_key}[{i}]", sep=sep).items())
+            else:
+                items.append((new_key, "|".join(map(str, v))))
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+@router.get("/{run_id}/export/csv")
+def export_run_annotations_csv(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    run_id: int,
+    session: SessionDep,
+    annotation_service: AnnotationService = Depends(get_annotation_service),
+    flatten_json: bool = Query(True, description="Flatten nested JSON fields into dot-notation columns"),
+    include_metadata: bool = Query(True, description="Include asset and schema metadata"),
+    include_justifications: bool = Query(False, description="Include justification text (adds columns)"),
+) -> StreamingResponse:
+    """
+    Export annotation run results as CSV.
+    
+    Flattens nested JSON into columns like:
+    - value.field_name
+    - value.nested.field
+    - value.items[0].property
+    
+    Perfect for loading into pandas, Excel, or ML tools like lazypredict.
+    """
+    logger.info(f"Route: Exporting run {run_id} annotations as CSV (flatten={flatten_json}, include_metadata={include_metadata})")
+    
+    try:
+        # Validate infospace access
+        validate_infospace_access(session, infospace_id, current_user.id)
+        
+        # Get the run
+        run = session.get(AnnotationRun, run_id)
+        if not run:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Run not found"
+            )
+        
+        # Verify run belongs to infospace
+        if run.infospace_id != infospace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Run not found in this infospace"
+            )
+        
+        # Get all annotations for this run (no pagination)
+        annotations = annotation_service.get_annotations_for_run(
+            run_id=run_id,
+            user_id=current_user.id,
+            infospace_id=infospace_id,
+            skip=0,
+            limit=1_000_000  # Get all annotations
+        )
+        
+        if not annotations:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No annotations found for this run"
+            )
+        
+        logger.info(f"Route: Found {len(annotations)} annotations to export")
+        
+        # Build CSV rows
+        rows = []
+        for ann in annotations:
+            row = {
+                'annotation_id': ann.id,
+                'annotation_uuid': ann.uuid,
+                'asset_id': ann.asset_id,
+                'schema_id': ann.schema_id,
+                'run_id': ann.run_id,
+                'status': ann.status.value,
+                'timestamp': ann.timestamp.isoformat() if ann.timestamp else None,
+                'event_timestamp': ann.event_timestamp.isoformat() if ann.event_timestamp else None,
+            }
+            
+            # Add metadata if requested
+            if include_metadata:
+                # Get asset info
+                asset = session.get(Asset, ann.asset_id)
+                if asset:
+                    row['asset_title'] = asset.title
+                    row['asset_kind'] = asset.kind.value
+                    row['asset_uuid'] = asset.uuid
+                    row['source_id'] = asset.source_id
+                    row['asset_created_at'] = asset.created_at.isoformat() if asset.created_at else None
+                    
+                    # Add parent info if available
+                    if asset.parent_asset_id:
+                        row['parent_asset_id'] = asset.parent_asset_id
+                        row['part_index'] = asset.part_index
+                
+                # Get schema info
+                schema = session.get(AnnotationSchema, ann.schema_id)
+                if schema:
+                    row['schema_name'] = schema.name
+                    row['schema_version'] = schema.version
+            
+            # Add justifications if requested
+            if include_justifications and ann.justifications:
+                justification_texts = []
+                for j in ann.justifications:
+                    if j.reasoning:
+                        field_label = f"{j.field_name}:" if j.field_name else ""
+                        justification_texts.append(f"{field_label}{j.reasoning}")
+                row['justifications'] = " | ".join(justification_texts)
+            
+            # Handle annotation value
+            if flatten_json and ann.value:
+                # Flatten nested JSON into dot-notation columns
+                flattened = _flatten_dict(ann.value, parent_key='value')
+                row.update(flattened)
+            else:
+                # Just stringify the JSON
+                row['value_json'] = str(ann.value)
+            
+            rows.append(row)
+        
+        if not rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No data to export"
+            )
+        
+        # Collect all unique fieldnames from all rows (annotations may have different fields)
+        all_fieldnames = set()
+        for row in rows:
+            all_fieldnames.update(row.keys())
+        
+        # Sort fieldnames for consistent output (metadata first, then value fields)
+        metadata_fields = [f for f in all_fieldnames if not f.startswith('value.')]
+        value_fields = sorted([f for f in all_fieldnames if f.startswith('value.')])
+        fieldnames = sorted(metadata_fields) + value_fields
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+        
+        # Get CSV content as bytes
+        output.seek(0)
+        csv_content = output.getvalue().encode('utf-8')
+        
+        # Generate filename
+        safe_run_name = run.name.replace(' ', '_').replace('/', '_')[:50]
+        filename = f"annotations_run_{run_id}_{safe_run_name}.csv"
+        
+        logger.info(f"Route: Exporting {len(rows)} rows to {filename}")
+        
+        # Return as downloadable file
+        return StreamingResponse(
+            io.BytesIO(csv_content),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(len(csv_content))
+            }
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.exception(f"Route: Error exporting run {run_id} to CSV: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating CSV export: {str(e)}"
+        ) 

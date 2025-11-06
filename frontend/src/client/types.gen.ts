@@ -1368,6 +1368,15 @@ export type RssSourceCreateRequest = {
 
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'completed_with_errors';
 
+/**
+ * Request to save encrypted provider credentials.
+ */
+export type SaveCredentialsRequest = {
+    credentials: {
+        [key: string]: string;
+    };
+};
+
 export type SearchAndIngestResponse = {
     query: string;
     provider: string;
@@ -2022,6 +2031,25 @@ export type CreatePackageFromRunEndpointData = {
 };
 
 export type CreatePackageFromRunEndpointResponse = (PackageRead);
+
+export type ExportRunAnnotationsCsvData = {
+    /**
+     * Flatten nested JSON fields into dot-notation columns
+     */
+    flattenJson?: boolean;
+    /**
+     * Include justification text (adds columns)
+     */
+    includeJustifications?: boolean;
+    /**
+     * Include asset and schema metadata
+     */
+    includeMetadata?: boolean;
+    infospaceId: number;
+    runId: number;
+};
+
+export type ExportRunAnnotationsCsvResponse = (unknown);
 
 export type CreateAnnotationData = {
     infospaceId: number;
@@ -4268,6 +4296,20 @@ export type UpdatePasswordMeData = {
 };
 
 export type UpdatePasswordMeResponse = (Message);
+
+export type SaveCredentialsData = {
+    requestBody: SaveCredentialsRequest;
+};
+
+export type SaveCredentialsResponse = (Message);
+
+export type ListCredentialProvidersResponse = (Array<string>);
+
+export type DeleteCredentialData = {
+    providerId: string;
+};
+
+export type DeleteCredentialResponse = (Message);
 
 export type UploadProfilePictureData = {
     formData: Body_users_upload_profile_picture;

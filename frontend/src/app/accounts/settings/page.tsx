@@ -12,6 +12,7 @@ import { Shield, User, Key, Trash2, Camera, Upload, CheckCircle2, XCircle, Spark
 import Link from 'next/link';
 import { UsersService } from '@/client';
 import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
+import ApiKeySettings from '@/components/settings/ApiKeySettings';
  
 
 export default function AccountSettingsPage() {
@@ -449,6 +450,19 @@ export default function AccountSettingsPage() {
               </Button>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* API Keys Section */}
+      <Card id="api-keys" className="w-full max-w-2xl">
+        <CardHeader>
+          <CardTitle className="text-xl font-semibold flex items-center gap-2">
+            <Key className="h-5 w-5" />
+            API Keys
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ApiKeySettings />
         </CardContent>
       </Card>
 

@@ -17,24 +17,27 @@ logger = logging.getLogger(__name__)
 @celery.task(name="embed_asset")
 def embed_asset_task(
     asset_id: int, 
-    infospace_id: int, 
-    overwrite: bool = False,
-    runtime_api_keys: Optional[Dict[str, str]] = None
+    infospace_id: int,
+    user_id: int,
+    overwrite: bool = False
 ):
     """
     Celery task to generate embeddings for a single asset.
     
+    Uses user's stored encrypted credentials for provider access.
+    
     Args:
         asset_id: Asset ID to embed
         infospace_id: Infospace ID (for configuration)
+        user_id: User ID (for credential lookup)
         overwrite: Whether to regenerate existing embeddings
-        runtime_api_keys: Optional runtime API keys for cloud providers
     """
-    logger.info(f"Starting embedding task for asset {asset_id}")
+    logger.info(f"Starting embedding task for asset {asset_id} (user {user_id})")
     
     async def _embed_asset():
         with Session(engine) as session:
-            service = EmbeddingService(session, runtime_api_keys=runtime_api_keys)
+            # Service uses user_id to look up stored credentials
+            service = EmbeddingService(session, user_id=user_id)
             result = await service.generate_embeddings_for_asset(
                 asset_id=asset_id,
                 infospace_id=infospace_id,
@@ -58,29 +61,32 @@ def embed_asset_task(
 @celery.task(name="embed_infospace")
 def embed_infospace_task(
     infospace_id: int,
+    user_id: int,
     overwrite: bool = False,
     asset_kinds: Optional[List[str]] = None,
-    task_id: Optional[int] = None,
-    runtime_api_keys: Optional[Dict[str, str]] = None
+    task_id: Optional[int] = None
 ):
     """
     Celery task to generate embeddings for all assets in an infospace.
     
+    Uses user's stored encrypted credentials for provider access.
+    
     Args:
         infospace_id: Infospace ID
+        user_id: User ID (for credential lookup)
         overwrite: Whether to regenerate existing embeddings
         asset_kinds: Optional filter for specific asset types
         task_id: Optional recurring task ID for status updates
-        runtime_api_keys: Optional runtime API keys for cloud providers
     """
-    logger.info(f"Starting infospace embedding task for infospace {infospace_id}")
+    logger.info(f"Starting infospace embedding task for infospace {infospace_id} (user {user_id})")
     
     if task_id:
         update_task_status(task_id, "running", "Generating embeddings for infospace")
     
     async def _embed_infospace():
         with Session(engine) as session:
-            service = EmbeddingService(session, runtime_api_keys=runtime_api_keys)
+            # Service uses user_id to look up stored credentials
+            service = EmbeddingService(session, user_id=user_id)
             
             # Convert asset_kinds strings to enum
             kinds = None
