@@ -41,7 +41,7 @@ import { ToolExecutionList } from './ToolExecutionIndicator'
 import { MessageContentWithToolResults } from './ChatMessage'
 import { AssistantMessageRenderer } from './MessageRenderer'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
-import { IntelligenceChatService, EmbeddingsService } from '@/client'
+import { IntelligenceChatService, EmbeddingsService, OpenAPI } from '@/client'
 import { ModelInfo, SemanticSearchResponse2 } from '@/client'
 import ProviderSelector from '@/components/collection/management/ProviderSelector'
 import { useProvidersStore } from '@/zustand_stores/storeProviders'
@@ -949,17 +949,17 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
         
         try {
           // Upload image to storage
-          const { FileUploadService, AssetsService } = await import('@/client')
+          const { FilestorageService, AssetsService } = await import('@/client')
           
           // Upload file
-          const uploadResponse = await FileUploadService.uploadFile({
+          const uploadResponse = await FilestorageService.fileUpload({
             formData: {
               file: file
             }
           })
 
-          if (!uploadResponse.blob_path) {
-            throw new Error('Upload failed: no blob_path returned')
+          if (!uploadResponse.object_name) {
+            throw new Error('Upload failed: no object_name returned')
           }
 
           // Create asset
@@ -968,8 +968,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
             requestBody: {
               title: file.name.replace(/\.[^/.]+$/, '') || 'Pasted Image',
               kind: 'image',
-              source_url: null,
-              blob_path: uploadResponse.blob_path,
+              blob_path: uploadResponse.object_name,
               source_metadata: {
                 mime_type: file.type,
                 size: file.size
