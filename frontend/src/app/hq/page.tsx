@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Brain, Microscope, FileText, Search, Activity, Terminal, Settings, MessageSquare, Database, Sparkles } from "lucide-react"
 import Link from "next/link"
 import ProviderHub from '@/components/collection/management/ProviderHub'
+import ModelManager from '@/components/collection/management/ModelManager'
 import withAuth from '@/hooks/withAuth'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { Badge } from '@/components/ui/badge'
@@ -137,8 +138,11 @@ function DesksPage() {
                   Manage AI, search, embedding, and geocoding providers
                 </CardDescription>
               </CardHeader>
-              <CardContent className="pt-0">
+              <CardContent className="pt-0 space-y-4">
                 <ProviderHub />
+                <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <ModelManager showModels={true} showProviderSelector={false} />
+                </div>
               </CardContent>
             </Card>
           </div>

@@ -287,7 +287,7 @@ export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | '
 /**
  * A lightweight public representation of an Asset.
  */
-export type AssetPreview_Input = {
+export type AssetPreview = {
     id: number;
     title: string;
     kind: AssetKind;
@@ -298,24 +298,7 @@ export type AssetPreview_Input = {
     source_metadata?: ({
     [key: string]: unknown;
 } | null);
-    children?: Array<AssetPreview_Input>;
-};
-
-/**
- * A lightweight public representation of an Asset.
- */
-export type AssetPreview_Output = {
-    id: number;
-    title: string;
-    kind: AssetKind;
-    created_at: string;
-    updated_at: string;
-    text_content?: (string | null);
-    blob_path?: (string | null);
-    source_metadata?: ({
-    [key: string]: unknown;
-} | null);
-    children?: Array<AssetPreview_Output>;
+    children?: Array<AssetPreview>;
     /**
      * Helper to know if this asset might have children (e.g., PDF, CSV).
      */
@@ -539,25 +522,13 @@ export type BundleMoveRequest = {
 /**
  * A lightweight public representation of a Bundle.
  */
-export type BundlePreview_Input = {
+export type BundlePreview = {
     id: number;
     name: string;
     description?: (string | null);
     created_at: string;
     updated_at: string;
-    assets: Array<AssetPreview_Input>;
-};
-
-/**
- * A lightweight public representation of a Bundle.
- */
-export type BundlePreview_Output = {
-    id: number;
-    name: string;
-    description?: (string | null);
-    created_at: string;
-    updated_at: string;
-    assets: Array<AssetPreview_Output>;
+    assets: Array<AssetPreview>;
 };
 
 export type BundleRead = {
@@ -751,6 +722,7 @@ export type ChatRequest = {
     [key: string]: unknown;
 }> | null);
     context_depth?: (string | null);
+    image_asset_ids?: (Array<number> | null);
 };
 
 /**
@@ -1557,7 +1529,7 @@ export type SharedResourcePreview = {
     resource_type: ResourceType;
     name: string;
     description?: (string | null);
-    content: (AssetPreview_Output | BundlePreview_Output | AnnotationRunPreview);
+    content: (AssetPreview | BundlePreview | AnnotationRunPreview);
 };
 
 export type SourceCreateRequest = {

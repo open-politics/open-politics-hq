@@ -17989,7 +17989,7 @@
         ],
         "title": "AssetKind"
       },
-      "AssetPreview-Input": {
+      "AssetPreview": {
         "properties": {
           "id": {
             "type": "integer",
@@ -18048,84 +18048,7 @@
           },
           "children": {
             "items": {
-              "$ref": "#/components/schemas/AssetPreview-Input"
-            },
-            "type": "array",
-            "title": "Children",
-            "default": []
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "title",
-          "kind",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "AssetPreview",
-        "description": "A lightweight public representation of an Asset."
-      },
-      "AssetPreview-Output": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/AssetKind"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          },
-          "text_content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text Content"
-          },
-          "blob_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blob Path"
-          },
-          "source_metadata": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Metadata"
-          },
-          "children": {
-            "items": {
-              "$ref": "#/components/schemas/AssetPreview-Output"
+              "$ref": "#/components/schemas/AssetPreview"
             },
             "type": "array",
             "title": "Children",
@@ -19160,7 +19083,7 @@
         "type": "object",
         "title": "BundleMoveRequest"
       },
-      "BundlePreview-Input": {
+      "BundlePreview": {
         "properties": {
           "id": {
             "type": "integer",
@@ -19193,57 +19116,7 @@
           },
           "assets": {
             "items": {
-              "$ref": "#/components/schemas/AssetPreview-Input"
-            },
-            "type": "array",
-            "title": "Assets"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "created_at",
-          "updated_at",
-          "assets"
-        ],
-        "title": "BundlePreview",
-        "description": "A lightweight public representation of a Bundle."
-      },
-      "BundlePreview-Output": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          },
-          "assets": {
-            "items": {
-              "$ref": "#/components/schemas/AssetPreview-Output"
+              "$ref": "#/components/schemas/AssetPreview"
             },
             "type": "array",
             "title": "Assets"
@@ -20239,6 +20112,20 @@
               }
             ],
             "title": "Context Depth"
+          },
+          "image_asset_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Asset Ids"
           }
         },
         "type": "object",
@@ -23957,10 +23844,10 @@
           "content": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AssetPreview-Output"
+                "$ref": "#/components/schemas/AssetPreview"
               },
               {
-                "$ref": "#/components/schemas/BundlePreview-Output"
+                "$ref": "#/components/schemas/BundlePreview"
               },
               {
                 "$ref": "#/components/schemas/AnnotationRunPreview"

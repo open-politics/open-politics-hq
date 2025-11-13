@@ -56,6 +56,16 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
   const resultToDisplay = execution.structured_content || execution.result;
   const hasResult = execution.status === 'completed' && resultToDisplay != null;
   
+  // Debug logging for search_web tool
+  if (execution.tool_name === 'search_web' && hasResult) {
+    console.log('[ToolExecutionIndicator] search_web result:', {
+      hasStructuredContent: !!execution.structured_content,
+      hasResult: !!execution.result,
+      resultToDisplay,
+      canHandle: hasRegisteredRenderer(execution.tool_name, resultToDisplay)
+    });
+  }
+  
   // Check if we can use the new registry system
   const useRegistryRenderer = hasResult && hasRegisteredRenderer(execution.tool_name, resultToDisplay);
 

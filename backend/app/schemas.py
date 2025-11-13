@@ -1283,6 +1283,8 @@ class ChatRequest(SQLModel):
     display_content: Optional[str] = None  # Original user input without XML formatting
     context_assets: Optional[List[Dict[str, Any]]] = None  # Assets attached as context
     context_depth: Optional[str] = None  # Context depth level: 'titles', 'previews', 'full'
+    # Image attachments for vision models
+    image_asset_ids: Optional[List[int]] = None  # Asset IDs of images to include in the conversation
 
 class ChatResponse(SQLModel):
     """Response from intelligence analysis chat."""

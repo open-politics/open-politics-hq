@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal, Minimize2 } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal, Minimize2, Image as ImageIcon } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -141,6 +141,7 @@ export default function AnnotationRunnerDock({
   const [enableParallelProcessing, setEnableParallelProcessing] = useState(true);
   const [justificationOverride, setJustificationOverride] = useState<'schema' | 'all'>('schema');
   const [tempApiKey, setTempApiKey] = useState('');
+  const [enableVisionProcessing, setEnableVisionProcessing] = useState(false);
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
   const { apiKeys, selections, setApiKey } = useProvidersStore();
   const selectedProvider = selections.llm?.providerId || null;
@@ -161,6 +162,34 @@ export default function AnnotationRunnerDock({
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
   }, [allRuns, isFavorite]);
+
+  // Auto-detect when vision processing should be enabled
+  useEffect(() => {
+    const selectedAssets = Array.from(selectedAssetItems)
+      .filter(id => id.startsWith('asset-'))
+      .map(id => {
+        const assetId = parseInt(id.replace('asset-', ''));
+        return allAssets.find(a => a.id === assetId);
+      })
+      .filter(Boolean);
+    
+    const hasImages = selectedAssets.some(asset => 
+      asset?.kind === 'image' || 
+      asset?.kind === 'pdf_page' || 
+      asset?.kind === 'image_region'
+    );
+    
+    const selectedSchemas = allSchemes.filter(s => selectedSchemeIds.has(s.id));
+    const hasPerImageSchema = selectedSchemas.some(schema => {
+      const contract = schema.output_contract;
+      return contract && typeof contract === 'object' && 'per_image' in contract;
+    });
+    
+    // Auto-enable if images detected or schema requires images
+    if (hasImages || hasPerImageSchema) {
+      setEnableVisionProcessing(true);
+    }
+  }, [selectedAssetItems, selectedSchemeIds, allAssets, allSchemes]);
 
   // Helper function to check if AI is properly configured
   const isAiConfigured = useMemo(() => {
@@ -198,7 +227,7 @@ export default function AnnotationRunnerDock({
     }));
   };
 
-  const handleRunClick = async () => {
+  const handleRunClick = useCallback(async () => {
     if (selectedAssetItems.size === 0) {
       toast.error("Please select at least one asset to annotate.");
       return;
@@ -234,6 +263,7 @@ export default function AnnotationRunnerDock({
     configuration.enable_parallel_processing = enableParallelProcessing;
     configuration.ai_provider = selectedProvider;
     configuration.ai_model = selectedModel;
+    configuration.include_images = enableVisionProcessing;
     // Pass API keys from frontend to backend for runtime provider creation
     configuration.api_keys = apiKeys;
     
@@ -252,7 +282,7 @@ export default function AnnotationRunnerDock({
     setIsExpanded(false);
     setNewRunName('');
     setNewRunDescription('');
-  };
+  }, [selectedAssetItems, selectedSchemeIds, isAiConfigured, selectedProvider, justificationOverride, csvRowProcessing, includeThoughts, annotationConcurrency, enableParallelProcessing, selectedModel, enableVisionProcessing, apiKeys, newRunName, newRunDescription, onCreateRun]);
 
   const handleSchemeToggle = (id: number) => {
     if (selectedSchemeIds.has(id)) {
@@ -412,11 +442,28 @@ export default function AnnotationRunnerDock({
           toast.info(`Loaded: ${sortedRuns[nextIndex].name}`);
         }
       }
+      
+      // Ctrl+Enter to start the run
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        // Only trigger if we're not in an input/textarea (unless it's a single-line input where Enter is expected)
+        const activeElement = document.activeElement;
+        const isInInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+        const isTextarea = activeElement?.tagName === 'TEXTAREA';
+        
+        // Allow Ctrl+Enter in textareas (common pattern for submit), but prevent in single-line inputs
+        if (!isInInput || isTextarea) {
+          e.preventDefault();
+          // Check if run can be started (same conditions as button disabled state)
+          if (!isCreatingRun && selectedAssetItems.size > 0 && selectedSchemeIds.size > 0 && isAiConfigured) {
+            handleRunClick();
+          }
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded, isMinimized, activeRunId, onClearRun, sortedRuns, onSelectRun]);
+  }, [isExpanded, isMinimized, activeRunId, onClearRun, sortedRuns, onSelectRun, handleRunClick, isCreatingRun, selectedAssetItems.size, selectedSchemeIds.size, isAiConfigured]);
 
   return (
     <TooltipProvider>
@@ -455,7 +502,7 @@ export default function AnnotationRunnerDock({
                 </div>
                 <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate ">Annotation Runner</h3>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 truncate pb-1">
                     {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
                   </p>
                 </div>
@@ -476,6 +523,14 @@ export default function AnnotationRunnerDock({
                       <KbdGroup>
                         <Kbd className="h-5 px-1.5">Ctrl</Kbd>
                         <Kbd className="h-5 px-1.5">N</Kbd>
+                      </KbdGroup>
+                    </div>
+                    <div className="w-px h-4 bg-border"></div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground font-medium">Start</span>
+                      <KbdGroup>
+                        <Kbd className="h-5 px-1.5">Ctrl</Kbd>
+                        <Kbd className="h-5 px-1.5">↵</Kbd>
                       </KbdGroup>
                     </div>
                     <div className="w-px h-4 bg-border"></div>
@@ -919,6 +974,30 @@ export default function AnnotationRunnerDock({
                                 </p>
                               </div>
                             </div>
+                          </div>
+                        )}
+                        {/* Vision Processing Toggle */}
+                        {(Array.from(selectedAssetItems).some(id => {
+                          if (!id.startsWith('asset-')) return false;
+                          const asset = allAssets.find(a => a.id === parseInt(id.replace('asset-', '')));
+                          return asset?.kind === 'image' || asset?.kind === 'pdf_page' || asset?.kind === 'image_region';
+                        }) || Array.from(selectedSchemeIds).some(schemaId => {
+                          const schema = allSchemes.find(s => s.id === schemaId);
+                          return schema?.output_contract && typeof schema.output_contract === 'object' && 'per_image' in schema.output_contract;
+                        })) && (
+                          <div className="flex items-center justify-between mt-2 p-2 rounded-md bg-purple-50 border border-purple-200 dark:bg-purple-950/20 dark:border-purple-800">
+                            <div className="flex items-center gap-2">
+                              <ImageIcon className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                              <Label htmlFor="vision-toggle" className="text-xs font-medium text-purple-700 dark:text-purple-400 cursor-pointer">
+                                Vision Processing {enableVisionProcessing && "(Auto-enabled)"}
+                              </Label>
+                            </div>
+                            <Switch
+                              id="vision-toggle"
+                              checked={enableVisionProcessing}
+                              onCheckedChange={setEnableVisionProcessing}
+                              className="scale-75"
+                            />
                           </div>
                         )}
                       </div>

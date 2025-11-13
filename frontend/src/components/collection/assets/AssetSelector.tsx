@@ -661,15 +661,69 @@ export default function AssetSelector({
   };
 
   const toggleSelected = useCallback((itemId: string, multiSelect?: boolean) => {
+    const newSet = new Set(selectedItems);
+    const wasSelected = newSet.has(itemId);
+    
     if (!multiSelect) {
-      onSelectionChange(new Set([itemId]));
+      // Single select mode - replace selection
+      newSet.clear();
+      newSet.add(itemId);
     } else {
-      const newSet = new Set(selectedItems);
-      if (newSet.has(itemId)) newSet.delete(itemId);
-      else newSet.add(itemId);
-      onSelectionChange(newSet);
+      // Multi-select mode - toggle this item
+      if (wasSelected) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
     }
-  }, [selectedItems, onSelectionChange]);
+    
+    // NEW: Auto-select child images when parent article/web asset is selected
+    // Find the item in the tree to check its type and children
+    const findItemInTree = (items: AssetTreeItem[], id: string): AssetTreeItem | null => {
+      for (const item of items) {
+        if (item.id === id) return item;
+        if (item.children) {
+          const found = findItemInTree(item.children, id);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    const item = findItemInTree(filteredTree, itemId);
+    if (item && item.type === 'asset' && item.asset) {
+      const asset = item.asset;
+      const isArticleOrWeb = asset.kind === 'article' || asset.kind === 'web';
+      
+      // Only auto-select if item was just selected (not deselected)
+      if (isArticleOrWeb && !wasSelected && newSet.has(itemId)) {
+        // Parent selected - auto-select child images
+        const childImages = item.children?.filter(
+          child => child.type === 'asset' && 
+          child.asset?.kind === 'image'
+        ) || [];
+        
+        let autoSelectedCount = 0;
+        childImages.forEach(child => {
+          if (child.id && !newSet.has(child.id)) {
+            newSet.add(child.id);
+            autoSelectedCount++;
+          }
+        });
+        
+        if (autoSelectedCount > 0) {
+          // Show toast notification for auto-selected images
+          toast.info(`Auto-selected ${autoSelectedCount} image${autoSelectedCount > 1 ? 's' : ''}`, {
+            duration: 2000,
+          });
+        }
+      }
+      // Note: We don't auto-deselect children when parent is deselected
+      // to give users more control
+    }
+    
+    onSelectionChange(newSet);
+  }, [selectedItems, onSelectionChange, filteredTree]);
 
   const handleItemClick = useCallback(async (item: AssetTreeItem) => {
     if (!onItemView) return;

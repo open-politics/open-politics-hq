@@ -136,12 +136,12 @@ class IntelligenceMCPClient:
         
         FastMCP ToolResult provides two streams:
         - content: Concise text for LLM conversation (~200-500 chars)
-        - data: Full structured data for frontend rendering
+        - structured_content: Full structured data for frontend rendering
         
         Returns:
             Dict with:
             - content: Concise text for LLM (from result.content)
-            - structured_content: Full data for frontend (from result.data)
+            - structured_content: Full data for frontend (from result.structured_content)
             - error: Error message if tool failed
         """
         if not self._is_connected:
@@ -166,8 +166,15 @@ class IntelligenceMCPClient:
                 content_text = "\n".join(text_parts) if text_parts else None
             
             # Extract structured data for frontend (what user should see in UI)
+            # FastMCP ToolResult exposes structured_content (not data)
             structured_data = None
-            if hasattr(result, 'data') and result.data is not None:
+            if hasattr(result, 'structured_content') and result.structured_content is not None:
+                if hasattr(result.structured_content, 'model_dump'):
+                    structured_data = result.structured_content.model_dump()
+                else:
+                    structured_data = result.structured_content
+            elif hasattr(result, 'data') and result.data is not None:
+                # Fallback to data attribute for backward compatibility
                 if hasattr(result.data, 'model_dump'):
                     structured_data = result.data.model_dump()
                 else:

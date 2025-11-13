@@ -142,6 +142,7 @@ def get_services():
     # Initialize database session
     from app.core.db import engine
     from sqlmodel import Session
+    from app.models import User
         
     session = Session(engine)
     
@@ -152,13 +153,19 @@ def get_services():
         model_registry = create_model_registry(settings)
         annotation_service = AnnotationService(session, model_registry, asset_service)
         content_ingestion_service = ContentIngestionService(session)
+        
+        # Retrieve user's stored API keys (no runtime keys in JWT anymore)
+        user = session.get(User, user_id)
+        api_keys = {}
+        if user and user.encrypted_credentials:
+            api_keys = security.decrypt_credentials(user.encrypted_credentials)
                 
         yield {
             "session": session,
             "user_id": user_id,
             "infospace_id": infospace_id,
             "conversation_id": conversation_id,  # Pass conversation ID to tools
-            "runtime_api_keys": runtime_api_keys,
+            "runtime_api_keys": api_keys,  # Use stored API keys from database
             "asset_service": asset_service,
             "annotation_service": annotation_service,
             "content_ingestion_service": content_ingestion_service,
@@ -1132,7 +1139,13 @@ async def search_web(
         except Exception as e:
             return ToolResult(
                 content=[TextContent(type="text", text=f"Error: Could not initialize {provider} search provider: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
+                structured_content={
+                    "error": str(e),
+                    "status": "failed",
+                    "query": query,
+                    "provider": provider,
+                    "message": f"Search failed: {str(e)}"
+                }
             )
         
         # Build search parameters
@@ -1156,7 +1169,15 @@ async def search_web(
             logger.error(f"Search failed: {e}", exc_info=True)
             return ToolResult(
                 content=[TextContent(type="text", text=f"Search failed: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
+                structured_content={
+                    "error": str(e),
+                    "status": "failed",
+                    "query": query,
+                    "provider": provider,
+                    "message": f"Search failed: {str(e)}",
+                    "results": [],
+                    "total_found": 0
+                }
             )
         
         # Concise summary for model

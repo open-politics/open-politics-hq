@@ -164,7 +164,7 @@ export default function AssetDetailOverlay({
         showAnnotations ? "max-w-[95vw]" : "max-w-4xl",
         // Mobile: full screen
         "max-h-[90vh] sm:max-h-[90vh]",
-        "w-[100vw] sm:w-auto"
+        "w-auto md:w-[100vw]"
       )}>
         <DialogHeader className="flex flex-row items-center justify-between p-3 sm:p-4 border-b flex-shrink-0">
           <DialogTitle className="text-sm sm:text-base">

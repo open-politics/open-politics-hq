@@ -23,7 +23,8 @@ import {
   Search,
   Sparkles,
   ExternalLink,
-  Link as LinkIcon
+  Link as LinkIcon,
+  XCircle
 } from 'lucide-react';
 import { SearchResultViewer, SearchResultData } from '../../SearchResultViewer';
 import { SearchResultIngestor } from '../../SearchResultIngestor';
@@ -59,6 +60,26 @@ export const SearchWebRenderer = {
     const [viewingResult, setViewingResult] = useState<SearchResultData | null>(null);
     const [showIngestor, setShowIngestor] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    
+    // Handle error cases
+    if ((searchResult as any).status === 'failed' || (searchResult as any).error) {
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs sm:text-sm text-red-600 dark:text-red-400">
+            <XCircle className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span className="font-medium">Search failed</span>
+          </div>
+          <div className="p-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded text-[10px] sm:text-xs text-red-700 dark:text-red-400">
+            <strong>Error:</strong> {(searchResult as any).error || 'Unknown error occurred'}
+          </div>
+          {(searchResult as any).message && (
+            <div className="text-[10px] sm:text-xs text-muted-foreground">
+              {(searchResult as any).message}
+            </div>
+          )}
+        </div>
+      );
+    }
     
     const results = searchResult.results || [];
     const hasResults = results.length > 0;

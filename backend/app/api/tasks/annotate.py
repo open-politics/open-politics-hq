@@ -3,11 +3,11 @@ import json
 import logging
 from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
-from celery import shared_task
 from sqlmodel import Session, select
 from sqlalchemy import func
 import asyncio # Added for running async functions
 import traceback # Added for exception handling
+import imghdr  # For detecting image MIME types from bytes
 
 from app.models import (
     Annotation,
@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.schemas import AnnotationCreate
 from app.core.db import engine
+from app.core.celery_app import celery
 from app.api.providers.factory import create_model_registry, create_storage_provider
 from app.api.tasks.utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
 from app.core.config import settings
@@ -192,7 +193,12 @@ def detect_schema_structure(output_contract: dict) -> dict:
         "per_modality_fields": {}
     }
     
-    for key, value in output_contract.items():
+    # Unwrap if schema is wrapped in type/properties
+    schema_to_check = output_contract
+    if output_contract.get("type") == "object" and "properties" in output_contract:
+        schema_to_check = output_contract["properties"]
+    
+    for key, value in schema_to_check.items():
         if key == "document":
             structure["document_fields"] = value
         elif key.startswith("per_"):
@@ -216,43 +222,134 @@ def detect_schema_structure(output_contract: dict) -> dict:
     return structure
 
 async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDep') -> bytes:
-    """Fetch asset content from storage using the injected storage_provider."""
-    if not asset.blob_path:
-        logger.warning(f"Asset {asset.id} has no blob_path. Cannot fetch content.")
-        return b""
-
-    logger.info(f"Fetching content for asset {asset.id} from blob_path: {asset.blob_path}")
-    try:
-        file_stream = await storage_provider.get_file(asset.blob_path)
-        # The stream needs to be read. Minio's get_object returns a urllib3.response.HTTPResponse
-        # whose `read()` method is synchronous. We need to handle this carefully in an async context.
-        # For now, assuming `read()` can be awaited or is non-blocking, or using `asyncio.to_thread` if it's blocking.
-        # Let's assume the provider's get_file or the returned stream object handles async reading appropriately
-        # or we adapt it. For Minio, response.read() is blocking.
-        # A common pattern is to use `asyncio.to_thread` for blocking I/O in async code.
-        
-        # Simplification: if storage_provider.get_file already returns bytes or an awaitable stream that yields bytes:
-        # content = await file_stream.read() # if file_stream has an async read method
-        # For Minio, this needs care. Let's assume for now the provider has an async-compatible way to get bytes.
-        # If direct async read is not available from the stream object itself, we need a helper.
-
-        # Correct handling for Minio which returns a urllib3.response.HTTPResponse:
+    """Fetch asset content from storage or web URL using the injected storage_provider."""
+    # Priority 1: Try blob_path (downloaded content in storage)
+    if asset.blob_path:
+        logger.info(f"Fetching content for asset {asset.id} from blob_path: {asset.blob_path}")
         try:
-            content = await asyncio.to_thread(file_stream.read) 
-        finally:
-            # Ensure stream is always closed, even if read fails
+            file_stream = await storage_provider.get_file(asset.blob_path)
+            # The stream needs to be read. Minio's get_object returns a urllib3.response.HTTPResponse
+            # whose `read()` method is synchronous. We need to handle this carefully in an async context.
+            # For now, assuming `read()` can be awaited or is non-blocking, or using `asyncio.to_thread` if it's blocking.
+            # Let's assume the provider's get_file or the returned stream object handles async reading appropriately
+            # or we adapt it. For Minio, response.read() is blocking.
+            # A common pattern is to use `asyncio.to_thread` for blocking I/O in async code.
+            
+            # Simplification: if storage_provider.get_file already returns bytes or an awaitable stream that yields bytes:
+            # content = await file_stream.read() # if file_stream has an async read method
+            # For Minio, this needs care. Let's assume for now the provider has an async-compatible way to get bytes.
+            # If direct async read is not available from the stream object itself, we need a helper.
+
+            # Correct handling for Minio which returns a urllib3.response.HTTPResponse:
             try:
-                file_stream.close()
-            except Exception as close_error:
-                logger.warning(f"Error closing file stream for asset {asset.id}: {close_error}")
-        logger.info(f"Successfully fetched {len(content)} bytes for asset {asset.id}")
-        return content
-    except FileNotFoundError:
-        logger.error(f"File not found in storage for asset {asset.id} at blob_path: {asset.blob_path}")
-        return b""
-    except Exception as e:
-        logger.error(f"Failed to fetch content for asset {asset.id} from {asset.blob_path}: {e}", exc_info=True)
-        return b""
+                content = await asyncio.to_thread(file_stream.read) 
+            finally:
+                # Ensure stream is always closed, even if read fails
+                try:
+                    file_stream.close()
+                except Exception as close_error:
+                    logger.warning(f"Error closing file stream for asset {asset.id}: {close_error}")
+            logger.info(f"Successfully fetched {len(content)} bytes for asset {asset.id}")
+            return content
+        except FileNotFoundError:
+            logger.error(f"File not found in storage for asset {asset.id} at blob_path: {asset.blob_path}")
+            return b""
+        except Exception as e:
+            logger.error(f"Failed to fetch content for asset {asset.id} from {asset.blob_path}: {e}", exc_info=True)
+            return b""
+    
+    # Priority 2: Try source_identifier (web URL) for image assets without blob_path
+    # This handles RSS images and other web-referenced images
+    if asset.source_identifier:
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        if asset.kind in image_asset_kinds and asset.source_identifier.startswith(('http://', 'https://')):
+            logger.info(f"Asset {asset.id} has no blob_path but has web URL. Attempting to fetch from: {asset.source_identifier}")
+            try:
+                import httpx
+                # Set reasonable timeout and size limits
+                timeout = httpx.Timeout(30.0, connect=10.0)
+                max_size = 10 * 1024 * 1024  # 10MB limit for images
+                
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, max_redirects=5) as client:
+                    response = await client.get(asset.source_identifier)
+                    response.raise_for_status()
+                    
+                    # Validate content type
+                    content_type = response.headers.get('content-type', '').lower()
+                    if not content_type.startswith('image/'):
+                        logger.warning(
+                            f"URL {asset.source_identifier} did not return image content. "
+                            f"Content-Type: {content_type}. Skipping."
+                        )
+                        return b""
+                    
+                    # Check size
+                    content_length = response.headers.get('content-length')
+                    if content_length and int(content_length) > max_size:
+                        logger.warning(
+                            f"Image at {asset.source_identifier} exceeds size limit "
+                            f"({content_length} bytes > {max_size} bytes). Skipping."
+                        )
+                        return b""
+                    
+                    content = response.content
+                    if len(content) > max_size:
+                        logger.warning(
+                            f"Downloaded image from {asset.source_identifier} exceeds size limit "
+                            f"({len(content)} bytes > {max_size} bytes). Skipping."
+                        )
+                        return b""
+                    
+                    logger.info(f"Successfully fetched {len(content)} bytes from web URL for asset {asset.id}")
+                    return content
+                    
+            except httpx.TimeoutException:
+                logger.warning(f"Timeout fetching image from {asset.source_identifier} for asset {asset.id}")
+                return b""
+            except httpx.HTTPStatusError as e:
+                logger.warning(f"HTTP error {e.response.status_code} fetching image from {asset.source_identifier} for asset {asset.id}")
+                return b""
+            except Exception as e:
+                logger.error(f"Failed to fetch image from URL {asset.source_identifier} for asset {asset.id}: {e}", exc_info=True)
+                return b""
+    
+    # No blob_path and no valid source_identifier
+    logger.warning(f"Asset {asset.id} has no blob_path and no valid source_identifier. Cannot fetch content.")
+    return b""
+
+def detect_image_mime_type(image_bytes: bytes, fallback: str = "image/png") -> str:
+    """
+    Detect image MIME type from image bytes using magic bytes.
+    Falls back to provided fallback if detection fails.
+    """
+    if not image_bytes:
+        return fallback
+    
+    # Check magic bytes for common image formats
+    if image_bytes.startswith(b'\xff\xd8\xff'):
+        return "image/jpeg"
+    elif image_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+        return "image/png"
+    elif image_bytes.startswith(b'GIF87a') or image_bytes.startswith(b'GIF89a'):
+        return "image/gif"
+    elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[8:12]:
+        return "image/webp"
+    elif image_bytes.startswith(b'BM'):
+        return "image/bmp"  # Not supported by Anthropic, but we detect it
+    
+    # Try imghdr as fallback
+    try:
+        detected = imghdr.what(None, h=image_bytes)
+        if detected == 'jpeg':
+            return "image/jpeg"
+        elif detected == 'png':
+            return "image/png"
+        elif detected == 'gif':
+            return "image/gif"
+    except Exception:
+        pass
+    
+    return fallback
 
 async def assemble_multimodal_context(
     parent_asset: Asset,
@@ -264,16 +361,67 @@ async def assemble_multimodal_context(
     # Ensure parent_asset.uuid is a string for the prompt
     parent_asset_uuid_str = str(parent_asset.uuid) if parent_asset.uuid else "UNKNOWN_PARENT_ASSET_UUID"
     
-    text_content_header = f"Parent Document (UUID: {parent_asset_uuid_str})\n---\n"
-    text_content = f"{text_content_header}{parent_asset.text_content or ''}"
-    
     media_inputs = []
+    
+    # Check if parent asset itself is an image that should be processed
+    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+    parent_is_image = parent_asset.kind in image_asset_kinds
+    
+    if parent_is_image:
+        # Process the parent asset itself as the image to analyze
+        logger.info(f"Parent asset {parent_asset.id} is an image ({parent_asset.kind.value}), processing directly")
+        image_content_bytes = await fetch_asset_content(parent_asset, storage_provider)
+        
+        if image_content_bytes:
+            # Detect actual MIME type from image bytes
+            detected_mime_type = detect_image_mime_type(
+                image_content_bytes,
+                fallback=parent_asset.source_metadata.get("mime_type", "image/png") if parent_asset.source_metadata else "image/png"
+            )
+            
+            # Validate image size (Anthropic limit: 5MB)
+            image_size_mb = len(image_content_bytes) / (1024 * 1024)
+            if image_size_mb > 5:
+                logger.warning(
+                    f"Image asset {parent_asset.id} is {image_size_mb:.2f}MB, "
+                    f"which exceeds Anthropic's 5MB limit and may cause errors"
+                )
+            
+            # Estimate token cost (~1600 tokens per image, scales with size)
+            estimated_tokens = int(1600 * max(1, image_size_mb))
+            logger.info(f"Image asset {parent_asset.id}: {image_size_mb:.2f}MB, ~{estimated_tokens} tokens, detected MIME type: {detected_mime_type}")
+            
+            media_inputs.append({
+                "uuid": parent_asset_uuid_str,
+                "type": "image",
+                "content": image_content_bytes,
+                "mime_type": detected_mime_type,
+                "metadata": {
+                    "title": parent_asset.title,
+                    "original_kind": str(parent_asset.kind.value)
+                }
+            })
+        else:
+            logger.warning(f"Parent asset {parent_asset.id} is an image but has no content available")
+        
+        # Text content is minimal for standalone images
+        text_content = f"Image Asset (UUID: {parent_asset_uuid_str})\nTitle: {parent_asset.title or 'Untitled'}\n"
+    else:
+        # Parent is a document/text asset - use existing logic
+        text_content_header = f"Parent Document (UUID: {parent_asset_uuid_str})\n---\n"
+        text_content = f"{text_content_header}{parent_asset.text_content or ''}"
     
     # Determine if any per_modality processing is expected by the schema to guide media inclusion.
     # This is a simplified check based on run_config flags. A more advanced check could inspect schema_structure.
     # For now, we rely on explicit run_config flags like include_images, include_audio.
 
-    if run_config.get("include_images", False):
+    # Check if image processing is enabled (explicitly True or auto-enabled)
+    include_images_enabled = run_config.get("include_images", False)
+    logger.debug(
+        f"assemble_multimodal_context for Asset {parent_asset.id}: "
+        f"include_images={include_images_enabled}, parent_is_image={parent_is_image}"
+    )
+    if include_images_enabled and not parent_is_image:
         # Query for child assets of kind 'image' or 'pdf_page' if it can act as an image etc.
         # The kind should match what the LLM is expected to process as an image.
         # For now, using a list of common image-like kinds.
@@ -284,23 +432,72 @@ async def assemble_multimodal_context(
         image_children = db.query(Asset).filter(
             Asset.parent_asset_id == parent_asset.id,
             Asset.kind.in_(image_like_kind_values) 
-        ).order_by(Asset.id).all() # Consistent ordering for any positional refs in prompt
+        ).order_by(Asset.part_index, Asset.id).all()  # Order by part_index first (e.g., PDF pages), then ID
         
+        logger.info(
+            f"Found {len(image_children)} child image assets for parent Asset {parent_asset.id}. "
+            f"Will process up to {run_config.get('max_images_per_asset', 10)} images."
+        )
+        
+        images_added = 0
+        images_skipped = 0
+        added_image_uuids = []  # Track UUIDs of successfully added images
         for img_asset in image_children[:run_config.get("max_images_per_asset", 10)]:
             image_content_bytes = await fetch_asset_content(img_asset, storage_provider)
             if image_content_bytes:
+                # Detect actual MIME type from image bytes
+                detected_mime_type = detect_image_mime_type(
+                    image_content_bytes,
+                    fallback=img_asset.source_metadata.get("mime_type", "image/png") if img_asset.source_metadata else "image/png"
+                )
+                
+                # Validate image size and log token estimates
+                image_size_mb = len(image_content_bytes) / (1024 * 1024)
+                if image_size_mb > 5:
+                    logger.warning(
+                        f"Child image asset {img_asset.id} is {image_size_mb:.2f}MB, "
+                        f"which exceeds Anthropic's 5MB limit and may cause errors"
+                    )
+                estimated_tokens = int(1600 * max(1, image_size_mb))
+                logger.debug(f"Child image asset {img_asset.id}: {image_size_mb:.2f}MB, ~{estimated_tokens} tokens, detected MIME type: {detected_mime_type}")
+                
                 media_inputs.append({
                     "uuid": str(img_asset.uuid),
                     "type": "image", 
                     "content": image_content_bytes, 
-                    "mime_type": img_asset.source_metadata.get("mime_type", "image/png"),
+                    "mime_type": detected_mime_type,
                     "metadata": {
                         "title": img_asset.title,
                         "original_kind": str(img_asset.kind.value) # e.g. "pdf_page"
                     }
                 })
+                images_added += 1
+                added_image_uuids.append(str(img_asset.uuid))
+                logger.info(
+                    f"Added child image Asset {img_asset.id} (UUID: {img_asset.uuid}) to media inputs. "
+                    f"Size: {len(image_content_bytes)} bytes, MIME type: {detected_mime_type}."
+                )
             else:
-                logger.warning(f"Skipping image-like asset {img_asset.id} (Kind: {img_asset.kind.value}) due to missing content.")
+                images_skipped += 1
+                logger.warning(
+                    f"Skipping image-like asset {img_asset.id} (Kind: {img_asset.kind.value}, "
+                    f"UUID: {img_asset.uuid}) due to missing content. "
+                    f"blob_path: {img_asset.blob_path}, source_identifier: {img_asset.source_identifier}"
+                )
+        
+        logger.info(
+            f"Image processing summary for Asset {parent_asset.id}: "
+            f"{images_added} images added to media inputs, {images_skipped} skipped."
+        )
+        
+        # NEW: Append UUID information for child images to text content
+        # This is critical so the LLM knows which UUID to return for each image
+        if added_image_uuids:
+            text_content += "\n\n--- Included Images ---\n"
+            for idx, img_uuid in enumerate(added_image_uuids, 1):
+                text_content += f"Image {idx}: UUID {img_uuid}\n"
+            text_content += "\nFor each image you analyze, you MUST include the exact UUID shown above in the 'system_asset_source_uuid' field of your response."
+            logger.debug(f"Added UUID information for {len(added_image_uuids)} child images to text prompt")
     
     # Example for audio:
     if run_config.get("include_audio", False):
@@ -310,7 +507,7 @@ async def assemble_multimodal_context(
         audio_children = db.query(Asset).filter(
             Asset.parent_asset_id == parent_asset.id,
             Asset.kind.in_(audio_like_kind_values)
-        ).order_by(Asset.id).all()
+        ).order_by(Asset.part_index, Asset.id).all()  # Order by part_index first, then ID
 
         for audio_asset in audio_children[:run_config.get("max_audio_per_asset", 5)]:
             audio_content_bytes = await fetch_asset_content(audio_asset, storage_provider)
@@ -353,12 +550,56 @@ async def demultiplex_results(
     logger.info(f"DEBUG: result type: {type(result)}, content preview: {str(result)[:200] if result is not None else 'None'}")
     logger.info(f"DEBUG: schema_structure document_fields: {bool(schema_structure.get('document_fields'))}")
     
+    # Check if parent is an image being annotated with a flat schema
+    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+    parent_is_image = parent_asset.kind in image_asset_kinds
+    is_flat_schema = not schema_structure["per_modality_fields"]
+    
+    if parent_is_image and is_flat_schema:
+        # Flat schema on image: entire result goes to the image asset
+        logger.info(f"Flat schema on image asset {parent_asset.id}, storing full result as annotation")
+        annotation = Annotation(
+            asset_id=parent_asset.id,
+            schema_id=schema.id,
+            run_id=run.id,
+            value=result,  # All extracted fields go directly here
+            status=ResultStatus.SUCCESS,
+            infospace_id=run.infospace_id,
+            user_id=run.user_id
+        )
+        annotations.append(annotation)
+        return annotations  # No child processing needed for standalone images
+    
+    # NEW: Handle nested document structure where result["document"] contains {"document": {...}, "per_image": [...]}
+    # This can happen when the LLM wraps the response incorrectly
+    if "document" in result and isinstance(result["document"], dict):
+        doc_value = result["document"]
+        # Check if document contains nested document and per-modality keys
+        has_nested_doc = "document" in doc_value
+        has_nested_per_modality = any(f"per_{modality}" in doc_value for modality in schema_structure["per_modality_fields"].keys())
+        
+        if has_nested_doc or has_nested_per_modality:
+            logger.warning(
+                f"Detected nested document structure for Asset {parent_asset.id}, Run {run.id}. "
+                f"Unwrapping: document contains keys: {list(doc_value.keys())[:10]}"
+            )
+            # Unwrap: use the nested document as the actual document, and merge per-modality fields to top level
+            if has_nested_doc:
+                result["document"] = doc_value["document"]
+            # Move per-modality fields to top level
+            for modality in schema_structure["per_modality_fields"].keys():
+                per_key = f"per_{modality}"
+                if per_key in doc_value:
+                    result[per_key] = doc_value[per_key]
+                    logger.info(f"Unwrapped {per_key} from nested document structure")
+    
     # Create annotation for parent asset from document fields
     if schema_structure["document_fields"] and "document" in result:
         parent_annotation_value = result["document"]
         logger.info(f"DEBUG: Found document result, type: {type(parent_annotation_value)}, value: {parent_annotation_value}")
         
-        if isinstance(parent_annotation_value, dict):
+        # Skip empty document annotations if we have per-modality data (avoids duplicate annotations on same asset)
+        if isinstance(parent_annotation_value, dict) and (parent_annotation_value or not schema_structure["per_modality_fields"]):
             parent_annotation = Annotation(
                 asset_id=parent_asset.id,
                 schema_id=schema.id,
@@ -370,10 +611,46 @@ async def demultiplex_results(
             )
             annotations.append(parent_annotation)
             logger.info(f"DEBUG: Created parent annotation for Asset {parent_asset.id}, Run {run.id}")
+        elif isinstance(parent_annotation_value, dict) and not parent_annotation_value:
+            logger.info(f"DEBUG: Skipping empty document annotation for Asset {parent_asset.id} (has per-modality fields)")
         else:
             logger.warning(f"LLM result for 'document' in Run {run.id}, Asset {parent_asset.id} was not a dict. Got: {type(parent_annotation_value)}. Skipping parent annotation.")
     else:
         logger.info(f"DEBUG: No 'document' key in result or no document_fields. Available keys: {list(result.keys()) if result else 'None'}")
+        
+        # NEW: Handle schema envelope format that wasn't normalized earlier
+        if isinstance(result, dict) and "$schema" in result and "$content" in result:
+            logger.warning(
+                f"demultiplex_results: Received schema envelope format for Asset {parent_asset.id}, Run {run.id}. "
+                f"This should have been normalized earlier. Attempting fallback handling."
+            )
+            content_data = result.get("$content")
+            
+            # Try to parse $content if it's a string
+            if isinstance(content_data, str):
+                try:
+                    content_data = json.loads(content_data)
+                except json.JSONDecodeError:
+                    pass  # Keep as string
+            
+            # Create partial annotation with error metadata for manual review
+            fallback_annotation = Annotation(
+                asset_id=parent_asset.id,
+                schema_id=schema.id,
+                run_id=run.id,
+                value={
+                    "error": "Schema envelope format received - requires manual review",
+                    "raw_content": content_data if isinstance(content_data, dict) else str(content_data)[:500],
+                    "requires_manual_review": True,
+                    "original_format": "schema_envelope"
+                },
+                status=ResultStatus.FAILED,
+                infospace_id=run.infospace_id,
+                user_id=run.user_id
+            )
+            annotations.append(fallback_annotation)
+            logger.warning(f"Created fallback annotation with error metadata for Asset {parent_asset.id}, Run {run.id}")
+            return annotations
         
         # FALLBACK: If no hierarchical structure, treat the entire result as document-level
         if not schema_structure["per_modality_fields"] and result:
@@ -392,7 +669,7 @@ async def demultiplex_results(
     
     for modality, _ in schema_structure["per_modality_fields"].items():
         result_key_for_modality = f"per_{modality}"
-        system_uuid_field_name = "_system_asset_source_uuid" # The internal field name
+        system_uuid_field_name = "system_asset_source_uuid" # The internal field name
         
         if result_key_for_modality in result:
             modality_results = result[result_key_for_modality]
@@ -432,18 +709,24 @@ async def demultiplex_results(
                     logger.error(f"Invalid modality '{modality}' for Run {run.id}, Asset {parent_asset.id}. Skipping child annotation.")
                     continue
                 
-                found_asset = db.query(Asset).filter(
-                    Asset.uuid == llm_provided_uuid,
-                    Asset.parent_asset_id == parent_asset.id,
-                    Asset.kind == asset_kind
-                ).first()
-                
-                if found_asset:
-                    child_asset_to_annotate = found_asset
-                    logger.info(f"Mapped LLM result for modality '{modality}' item {i} to Asset ID {found_asset.id} using internal UUID '{llm_provided_uuid}'.")
+                # First check if parent asset itself matches (for standalone images)
+                if str(parent_asset.uuid) == llm_provided_uuid and parent_asset.kind == asset_kind:
+                    child_asset_to_annotate = parent_asset
+                    logger.info(f"Mapped LLM result for modality '{modality}' item {i} to parent Asset ID {parent_asset.id} (standalone image)")
                 else:
-                    logger.error(f"Critical: LLM provided internal UUID '{llm_provided_uuid}' ('{system_uuid_field_name}') for modality '{modality}', item {i}, Run {run.id}, but no matching child asset found for Parent Asset {parent_asset.id}. Skipping child annotation.")
-                    continue # Skip if no matching asset found
+                    # Otherwise look for child asset
+                    found_asset = db.query(Asset).filter(
+                        Asset.uuid == llm_provided_uuid,
+                        Asset.parent_asset_id == parent_asset.id,
+                        Asset.kind == asset_kind
+                    ).first()
+                    
+                    if found_asset:
+                        child_asset_to_annotate = found_asset
+                        logger.info(f"Mapped LLM result for modality '{modality}' item {i} to child Asset ID {found_asset.id} using internal UUID '{llm_provided_uuid}'.")
+                    else:
+                        logger.error(f"Critical: LLM provided internal UUID '{llm_provided_uuid}' ('{system_uuid_field_name}') for modality '{modality}', item {i}, Run {run.id}, but no matching child asset found for Parent Asset {parent_asset.id}. Skipping child annotation.")
+                        continue # Skip if no matching asset found
 
                 # Remove the internal UUID field before storing the value
                 final_child_value_for_storage = child_result_data_from_llm.copy()
@@ -467,7 +750,7 @@ async def demultiplex_results(
     logger.info(f"DEBUG: demultiplex_results returning {len(annotations)} annotations for Run {run.id}, Asset {parent_asset.id}")
     return annotations
 
-@shared_task
+@celery.task
 def process_annotation_run(run_id: int) -> None:
     """
     Process an annotation run using the new multi-modal engine. (sync wrapper)
@@ -537,9 +820,24 @@ async def process_single_asset_schema(
     try:
         logger.debug(f"Task: Processing Asset {asset.id} with Schema {schema.id} for Run {run.id}")
         
+        # Auto-detect if image processing should be enabled
+        run_config_enhanced = run_config.copy()
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
+        target_is_image = asset.kind in image_asset_kinds
+        
+        # Auto-enable image processing if not explicitly set
+        if "include_images" not in run_config_enhanced:
+            if has_per_image_schema or target_is_image:
+                run_config_enhanced["include_images"] = True
+                logger.info(
+                    f"Auto-enabled image processing for Asset {asset.id}: "
+                    f"asset_is_image={target_is_image}, schema_has_per_image={has_per_image_schema}"
+                )
+        
         # Assemble multimodal context for this asset (no semaphore needed - this is just local processing)
         text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
-            asset, run_config, session, storage_provider_instance
+            asset, run_config_enhanced, session, storage_provider_instance
         )
         
         full_provider_config_for_classify = {**run_config, **provider_specific_config}
@@ -591,6 +889,50 @@ async def process_single_asset_schema(
                 logger.warning(f"Provider returned empty content for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
                 logger.warning(f"Model used: {provider_response.model_used}")
                 logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
+            
+            # NEW: Normalize response format - handle schema envelope format
+            # Anthropic sometimes returns {"$schema": {...}, "$content": "...", "$existing_data": {}}
+            # instead of the expected structured data format
+            if isinstance(parsed_data, dict):
+                if "$schema" in parsed_data and "$content" in parsed_data:
+                    logger.warning(
+                        f"Received schema envelope format for Asset {asset.id}, Schema {schema.id}, Run {run.id}. "
+                        f"Attempting to extract actual data from $content."
+                    )
+                    content_data = parsed_data.get("$content")
+                    
+                    # Try to parse $content as JSON if it's a string
+                    if isinstance(content_data, str):
+                        try:
+                            content_data = json.loads(content_data)
+                        except json.JSONDecodeError:
+                            # $content is plain text, not JSON - this is unusual
+                            logger.warning(
+                                f"$content is plain text, not JSON. This may indicate a parsing issue. "
+                                f"Content preview: {content_data[:200]}"
+                            )
+                            # Keep as string for now, demultiplex will handle it
+                    
+                    # If content_data is now a dict and looks like structured data, use it
+                    if isinstance(content_data, dict):
+                        # Check if it has expected keys (document, per_image, etc.)
+                        if any(key in content_data for key in ["document", "per_image", "per_audio", "per_video"]):
+                            logger.info(f"Successfully extracted structured data from $content")
+                            parsed_data = content_data
+                        else:
+                            # content_data doesn't have expected structure - log for investigation
+                            logger.warning(
+                                f"$content does not contain expected structure. Keys: {list(content_data.keys())[:10]}. "
+                                f"Will attempt to use as-is."
+                            )
+                            parsed_data = content_data
+                    else:
+                        # content_data is not a dict - this is problematic
+                        logger.error(
+                            f"$content is not a dict after parsing. Type: {type(content_data)}. "
+                            f"Cannot normalize response format."
+                        )
+                        # Keep original parsed_data, demultiplex will handle the error
                 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse provider response JSON for Asset {asset.id}, Schema {schema.id}, Run {run.id}: {e}")
@@ -771,9 +1113,24 @@ async def process_assets_sequential(
             try:
                 logger.debug(f"Task: Sequentially processing Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}")
                 
+                # Auto-detect if image processing should be enabled (same as parallel path)
+                run_config_enhanced = run_config.copy()
+                image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+                has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
+                target_is_image = parent_asset.kind in image_asset_kinds
+                
+                # Auto-enable image processing if not explicitly set
+                if "include_images" not in run_config_enhanced:
+                    if has_per_image_schema or target_is_image:
+                        run_config_enhanced["include_images"] = True
+                        logger.info(
+                            f"Sequential - Auto-enabled image processing for Asset {parent_asset.id}: "
+                            f"asset_is_image={target_is_image}, schema_has_per_image={has_per_image_schema}"
+                        )
+                
                 # Assemble multimodal context for this asset
                 text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
-                    parent_asset, run_config, session, storage_provider_instance
+                    parent_asset, run_config_enhanced, session, storage_provider_instance
                 )
                 
                 full_provider_config_for_classify = {**run_config, **provider_specific_config}
@@ -813,6 +1170,41 @@ async def process_assets_sequential(
                         logger.warning(f"Provider returned empty content for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
                         logger.warning(f"Model used: {provider_response.model_used}")
                         logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
+                    
+                    # NEW: Normalize response format - handle schema envelope format (same as parallel path)
+                    if isinstance(parsed_data, dict):
+                        if "$schema" in parsed_data and "$content" in parsed_data:
+                            logger.warning(
+                                f"Sequential - Received schema envelope format for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. "
+                                f"Attempting to extract actual data from $content."
+                            )
+                            content_data = parsed_data.get("$content")
+                            
+                            # Try to parse $content as JSON if it's a string
+                            if isinstance(content_data, str):
+                                try:
+                                    content_data = json.loads(content_data)
+                                except json.JSONDecodeError:
+                                    logger.warning(
+                                        f"Sequential - $content is plain text, not JSON. Content preview: {content_data[:200]}"
+                                    )
+                            
+                            # If content_data is now a dict and looks like structured data, use it
+                            if isinstance(content_data, dict):
+                                if any(key in content_data for key in ["document", "per_image", "per_audio", "per_video"]):
+                                    logger.info(f"Sequential - Successfully extracted structured data from $content")
+                                    parsed_data = content_data
+                                else:
+                                    logger.warning(
+                                        f"Sequential - $content does not contain expected structure. Keys: {list(content_data.keys())[:10]}. "
+                                        f"Will attempt to use as-is."
+                                    )
+                                    parsed_data = content_data
+                            else:
+                                logger.error(
+                                    f"Sequential - $content is not a dict after parsing. Type: {type(content_data)}. "
+                                    f"Cannot normalize response format."
+                                )
                         
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse provider response JSON for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}: {e}")
@@ -1182,8 +1574,8 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     system_mapping_prompt = (
                         "\\n\\n--- System Data Mapping Instructions ---\\n"
                         "For each item you generate that corresponds to a specific media input (e.g., an item in a 'per_image' list, 'per_audio' list, etc.), "
-                        "you MUST include a field named '_system_asset_source_uuid'. "
-                        "The value of this '_system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
+                        "you MUST include a field named 'system_asset_source_uuid'. "
+                        "The value of this 'system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
                         "This is critical for correctly associating your analysis with the source media."
                     )
                     if final_schema_instructions:
@@ -1442,8 +1834,8 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         system_mapping_prompt = (
                             "\\n\\n--- System Data Mapping Instructions ---\\n"
                             "For each item you generate that corresponds to a specific media input (e.g., an item in a 'per_image' list, 'per_audio' list, etc.), "
-                            "you MUST include a field named '_system_asset_source_uuid'. "
-                            "The value of this '_system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
+                            "you MUST include a field named 'system_asset_source_uuid'. "
+                            "The value of this 'system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
                             "This is critical for correctly associating your analysis with the source media."
                         )
                         if final_schema_instructions:
@@ -1532,7 +1924,7 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                 session.commit()
 
 
-@shared_task
+@celery.task
 def retry_failed_annotations(run_id: int) -> None:
     """
     Retry failed annotations in a run using actual LLM re-processing.

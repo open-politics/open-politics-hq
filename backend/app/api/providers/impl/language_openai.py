@@ -433,11 +433,13 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                     })
                     
                     # Record execution with FULL data for frontend
+                    # Include both result (for backward compatibility) and structured_content (for frontend renderers)
                     all_tool_executions.append({
                         "id": tc["id"],
                         "tool_name": name,
                         "arguments": args,
                         "result": frontend_data if not has_error else None,
+                        "structured_content": frontend_data if not has_error else None,  # Explicit structured_content for frontend
                         "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
                         "iteration": iteration

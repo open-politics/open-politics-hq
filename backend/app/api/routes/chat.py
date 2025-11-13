@@ -2,14 +2,15 @@
 Chat and Intelligence Conversation API Routes
 """
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
-from app.api.deps import CurrentUser, ConversationServiceDep, SessionDep
-from app.models import User, ChatConversation, ChatConversationMessage
+from app.api.deps import CurrentUser, ConversationServiceDep, SessionDep, StorageProviderDep
+from app.models import User, ChatConversation, ChatConversationMessage, Asset, AssetKind
 from app.schemas import (
     Message, 
     ChatMessage, 
@@ -32,7 +33,8 @@ async def intelligence_chat(
     request: ChatRequest,
     current_user: CurrentUser,
     conversation_service: ConversationServiceDep,
-    session: SessionDep
+    session: SessionDep,
+    storage_provider: StorageProviderDep
 ):
     """
     Intelligence analysis chat with tool orchestration.
@@ -132,12 +134,91 @@ async def intelligence_chat(
                 detail="At least one non-empty message is required"
             )
         
+        # Fetch images from storage if image_asset_ids provided
+        media_inputs = []
+        if request.image_asset_ids:
+            logger.info(f"Fetching {len(request.image_asset_ids)} images for chat")
+            for asset_id in request.image_asset_ids:
+                try:
+                    # Get asset from database
+                    asset = session.get(Asset, asset_id)
+                    if not asset:
+                        logger.warning(f"Image asset {asset_id} not found, skipping")
+                        continue
+                    
+                    # Verify it's an image asset
+                    if asset.kind != AssetKind.IMAGE:
+                        logger.warning(f"Asset {asset_id} is not an image (kind: {asset.kind}), skipping")
+                        continue
+                    
+                    # Verify user has access (asset belongs to same infospace)
+                    if asset.infospace_id != request.infospace_id:
+                        logger.warning(f"Asset {asset_id} does not belong to infospace {request.infospace_id}, skipping")
+                        continue
+                    
+                    # Fetch image bytes from storage
+                    if not asset.blob_path:
+                        logger.warning(f"Asset {asset_id} has no blob_path, skipping")
+                        continue
+                    
+                    try:
+                        file_stream = await storage_provider.get_file(asset.blob_path)
+                        # Read the stream (blocking operation, so use asyncio.to_thread)
+                        image_bytes = await asyncio.to_thread(file_stream.read)
+                        file_stream.close()
+                        
+                        if not image_bytes:
+                            logger.warning(f"Asset {asset_id} blob is empty, skipping")
+                            continue
+                        
+                        # Determine MIME type
+                        mime_type = asset.source_metadata.get("mime_type") if asset.source_metadata else None
+                        if not mime_type:
+                            # Try to infer from blob_path extension
+                            if asset.blob_path.lower().endswith(('.jpg', '.jpeg')):
+                                mime_type = "image/jpeg"
+                            elif asset.blob_path.lower().endswith('.png'):
+                                mime_type = "image/png"
+                            elif asset.blob_path.lower().endswith('.gif'):
+                                mime_type = "image/gif"
+                            elif asset.blob_path.lower().endswith('.webp'):
+                                mime_type = "image/webp"
+                            else:
+                                mime_type = "image/png"  # Default fallback
+                        
+                        # Add to media_inputs
+                        media_inputs.append({
+                            "uuid": str(asset.uuid),
+                            "type": "image",
+                            "content": image_bytes,
+                            "mime_type": mime_type,
+                            "metadata": {
+                                "title": asset.title,
+                                "asset_id": asset.id
+                            }
+                        })
+                        logger.info(f"Loaded image asset {asset_id} ({len(image_bytes)} bytes, {mime_type})")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to fetch image bytes for asset {asset_id}: {e}")
+                        continue
+                        
+                except Exception as e:
+                    logger.error(f"Error processing image asset {asset_id}: {e}")
+                    continue
+            
+            logger.info(f"Successfully loaded {len(media_inputs)} images for chat")
+        
         # Prepare kwargs
         kwargs = {}
         if request.temperature is not None:
             kwargs["temperature"] = request.temperature
         if request.max_tokens is not None:
             kwargs["max_tokens"] = request.max_tokens
+        
+        # Add media_inputs if we have any
+        if media_inputs:
+            kwargs["media_inputs"] = media_inputs
         
         # Default OpenAI model to gpt-5 if none provided (or empty string)
         # We treat model_name as required by schema, but harden here for safety

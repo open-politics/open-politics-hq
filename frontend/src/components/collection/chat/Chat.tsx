@@ -23,7 +23,7 @@ import {
 import {
   Loader2, Send, Bot, User, Search, FileText, BarChart3, Database,
   History, Pin, Archive, Trash2, MessageSquare, ChevronLeft, ChevronRight, RefreshCw, Copy, X, Settings, PanelLeftClose, PanelLeft, Plus,
-  Paperclip, Globe, Square, Check
+  Paperclip, Globe, Square, Check, Image as ImageIcon, Eye
 } from 'lucide-react'
 import {
   PromptInput,
@@ -112,6 +112,19 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [webSearchHint, setWebSearchHint] = useState(false)
   const [lastInputLength, setLastInputLength] = useState(0)
   
+  // Image attachment state
+  const [showImageSelector, setShowImageSelector] = useState(false)
+  const [imageAttachments, setImageAttachments] = useState<Map<number, AssetRead>>(new Map())
+  
+  // Image blob URLs for authenticated display (for attachments before sending)
+  const [imageBlobUrls, setImageBlobUrls] = useState<Map<number, string>>(new Map())
+  
+  // Image blob URLs for images in messages (after sending)
+  const [messageImageBlobUrls, setMessageImageBlobUrls] = useState<Map<string, string>>(new Map())
+  
+  // Paste upload state
+  const [isUploadingPaste, setIsUploadingPaste] = useState(false)
+  
   // Inline compact picker state
   const [showInlinePicker, setShowInlinePicker] = useState(false)
   const [inlinePickerQuery, setInlinePickerQuery] = useState('')
@@ -150,6 +163,68 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       description: 'Bundle detail view available in Asset Manager'
     })
   }
+  
+  // Helper to fetch image with authentication and create blob URL
+  const fetchAuthenticatedImage = async (blobPath: string): Promise<string | null> => {
+    try {
+      const headers: Record<string, string> = { 'Accept': 'image/*' }
+      try {
+        // Use OpenAPI.HEADERS to get auth headers
+        const maybeHeaders = (OpenAPI.HEADERS as any)
+        const resolved = typeof maybeHeaders === 'function' ? await maybeHeaders({} as any) : maybeHeaders
+        if (resolved && typeof resolved === 'object') {
+          Object.assign(headers, resolved)
+        }
+        // Fallback to localStorage token
+        if (!headers['Authorization'] && typeof window !== 'undefined') {
+          const token = localStorage.getItem('access_token')
+          if (token) headers['Authorization'] = `Bearer ${token}`
+        }
+      } catch {}
+      
+      const response = await fetch(`/api/v1/files/stream/${blobPath}`, {
+        method: 'GET',
+        headers,
+        credentials: 'include'
+      })
+      
+      if (!response.ok) {
+        console.error(`Failed to fetch image: ${response.status}`)
+        return null
+      }
+      
+      const blob = await response.blob()
+      return URL.createObjectURL(blob)
+    } catch (error) {
+      console.error('Failed to fetch authenticated image:', error)
+      return null
+    }
+  }
+  
+  // Load blob URLs for image attachments (before sending)
+  useEffect(() => {
+    const loadImageBlobUrls = async () => {
+      const newBlobUrls = new Map<number, string>()
+      
+      for (const [assetId, asset] of imageAttachments) {
+        if (asset.blob_path) {
+          const blobUrl = await fetchAuthenticatedImage(asset.blob_path)
+          if (blobUrl) {
+            newBlobUrls.set(assetId, blobUrl)
+          }
+        }
+      }
+      
+      setImageBlobUrls(newBlobUrls)
+    }
+    
+    loadImageBlobUrls()
+    
+    // Cleanup blob URLs when component unmounts or attachments change
+    return () => {
+      imageBlobUrls.forEach(url => URL.revokeObjectURL(url))
+    }
+  }, [imageAttachments]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { activeInfospace, fetchInfospaces } = useInfospaceStore()
 
@@ -190,6 +265,37 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       fetchInfospaces()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  
+  // Load blob URLs for images in messages (after sending)
+  useEffect(() => {
+    const loadMessageImageBlobUrls = async () => {
+      const newBlobUrls = new Map<string, string>()
+      
+      for (const message of messages) {
+        if (message.image_assets) {
+          for (const imageAsset of message.image_assets) {
+            const key = `${message.id}-${imageAsset.id}`
+            // Skip if already loaded
+            if (messageImageBlobUrls.has(key)) {
+              newBlobUrls.set(key, messageImageBlobUrls.get(key)!)
+              continue
+            }
+            
+            if (imageAsset.blob_path) {
+              const blobUrl = await fetchAuthenticatedImage(imageAsset.blob_path)
+              if (blobUrl) {
+                newBlobUrls.set(key, blobUrl)
+              }
+            }
+          }
+        }
+      }
+      
+      setMessageImageBlobUrls(newBlobUrls)
+    }
+    
+    loadMessageImageBlobUrls()
+  }, [messages]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load available models
   useEffect(() => {
@@ -364,6 +470,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     setWebSearchHint(false)
     setEditingMessageId(null)
     setEditedContent('')
+    // Clear image attachments
+    setImageAttachments(new Map())
     toast.info('New chat started (conversation will be created on first message)')
   }
 
@@ -775,6 +883,118 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     setContextAssetDetails(newDetails)
   }
 
+  // Image attachment handlers
+  const handleImageSelectionChange = (selectedIds: Set<string>) => {
+    const assetIds = new Set<number>()
+    selectedIds.forEach(id => {
+      if (id.startsWith('asset-')) {
+        const numId = parseInt(id.replace('asset-', ''))
+        if (!isNaN(numId)) assetIds.add(numId)
+      }
+    })
+    // We'll fetch details on confirm
+    // For now, just track IDs in a temp state
+    setContextAssets(assetIds)
+  }
+
+  const handleConfirmImages = async () => {
+    if (contextAssets.size === 0) {
+      setShowImageSelector(false)
+      return
+    }
+
+    try {
+      // Use the tree store to get full asset data
+      const { getFullAsset } = useTreeStore.getState()
+      const imageDetailsMap = new Map<number, AssetRead>()
+      
+      for (const assetId of contextAssets) {
+        const fullAsset = await getFullAsset(assetId)
+        if (fullAsset && fullAsset.kind === 'image') {
+          imageDetailsMap.set(assetId, fullAsset)
+        }
+      }
+      
+      setImageAttachments(imageDetailsMap)
+      setShowImageSelector(false)
+      // Reset context assets state
+      setContextAssets(new Set(contextAssetDetails.keys()))
+      toast.success(`Added ${imageDetailsMap.size} image(s) for vision analysis`)
+    } catch (error) {
+      console.error('Failed to fetch image details:', error)
+      toast.error('Failed to load image details')
+    }
+  }
+
+  const handleRemoveImage = (assetId: number) => {
+    const newImages = new Map(imageAttachments)
+    newImages.delete(assetId)
+    setImageAttachments(newImages)
+  }
+
+  // Handle paste event for image upload
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items || !activeInfospace?.id) return
+
+    // Check if any pasted item is an image
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault() // Prevent pasting the image as text
+        
+        const file = item.getAsFile()
+        if (!file) continue
+
+        setIsUploadingPaste(true)
+        
+        try {
+          // Upload image to storage
+          const { FileUploadService, AssetsService } = await import('@/client')
+          
+          // Upload file
+          const uploadResponse = await FileUploadService.uploadFile({
+            formData: {
+              file: file
+            }
+          })
+
+          if (!uploadResponse.blob_path) {
+            throw new Error('Upload failed: no blob_path returned')
+          }
+
+          // Create asset
+          const assetResponse = await AssetsService.createAsset({
+            infospaceId: activeInfospace.id,
+            requestBody: {
+              title: file.name.replace(/\.[^/.]+$/, '') || 'Pasted Image',
+              kind: 'image',
+              source_url: null,
+              blob_path: uploadResponse.blob_path,
+              source_metadata: {
+                mime_type: file.type,
+                size: file.size
+              }
+            }
+          })
+
+          // Add to image attachments
+          const newImages = new Map(imageAttachments)
+          newImages.set(assetResponse.id, assetResponse)
+          setImageAttachments(newImages)
+          
+          toast.success(`Pasted image attached: ${assetResponse.title}`)
+        } catch (error) {
+          console.error('Failed to upload pasted image:', error)
+          toast.error('Failed to upload pasted image')
+        } finally {
+          setIsUploadingPaste(false)
+        }
+        
+        break // Only handle first image
+      }
+    }
+  }
+
   // Format context using Anthropic's best practices
   // Documents at top, query at bottom = 30% better performance
   const formatContextForMessage = (userMessage: string, assetsToInclude?: Map<number, AssetRead>): string => {
@@ -962,8 +1182,19 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       auto_save: true,
       displayContent: userInput,  // Display original user input, not formatted
       contextAssets: contextMetadata,  // Track which files were attached
-      contextDepth: contextDepth  // Track depth level used
+      contextDepth: contextDepth,  // Track depth level used
+      imageAssetIds: imageAttachments.size > 0 ? Array.from(imageAttachments.keys()) : undefined,  // Image attachments for vision
+      imageAssets: imageAttachments.size > 0 ? Array.from(imageAttachments.values()).map(asset => ({
+        id: asset.id,
+        title: asset.title || '',
+        blob_path: asset.blob_path || ''
+      })) : undefined  // Image metadata for thumbnails
     })
+    
+    // Clear image attachments after sending
+    if (imageAttachments.size > 0) {
+      setImageAttachments(new Map())
+    }
 
     // Refresh conversation list after successful message to update message count
     if (response && activeInfospace?.id && conversationIdToUse) {
@@ -1063,6 +1294,40 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                 {isUser ? (
                   <div className="space-y-2">
                     <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                    {/* Show attached image assets with thumbnails */}
+                    {message.image_assets && message.image_assets.length > 0 && (
+                      <div className="flex flex-wrap gap-2 pt-2 border-t border-primary-foreground/20">
+                        {message.image_assets.map((imageAsset) => {
+                          const blobUrlKey = `${message.id}-${imageAsset.id}`
+                          const blobUrl = messageImageBlobUrls.get(blobUrlKey)
+                          
+                          return (
+                            <div
+                              key={imageAsset.id}
+                              className="relative group cursor-pointer rounded overflow-hidden border border-primary-foreground/20 hover:border-primary-foreground/40 transition-colors"
+                              onClick={() => setSelectedAssetId(imageAsset.id)}
+                              title={`${imageAsset.title} - Click to view full image`}
+                            >
+                              {blobUrl ? (
+                                <img
+                                  src={blobUrl}
+                                  alt={imageAsset.title || `Image ${imageAsset.id}`}
+                                  className="h-20 w-20 object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="h-20 w-20 flex items-center justify-center bg-primary-foreground/10">
+                                  <ImageIcon className="h-8 w-8 text-primary-foreground/40 animate-pulse" />
+                                </div>
+                              )}
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                                <Eye className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                     {/* Show attached context documents */}
                     {message.context_assets && message.context_assets.length > 0 && (
                       <div className="flex flex-wrap gap-1 pt-2 border-t border-primary-foreground/20">
@@ -1729,6 +1994,65 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               </div>
             )}
             
+            {/* Image attachments with thumbnail previews */}
+            {imageAttachments.size > 0 && (
+              <div className="mb-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 backdrop-blur-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  {Array.from(imageAttachments.values()).map(asset => (
+                    <div
+                      key={asset.id}
+                      className="relative group flex items-center gap-2 p-1.5 pr-2 rounded-lg bg-blue-100 dark:bg-blue-900/50 hover:bg-blue-200 dark:hover:bg-blue-900/70 border border-blue-300 dark:border-blue-700 transition-colors"
+                    >
+                      {/* Thumbnail preview */}
+                      <div 
+                        className="relative rounded overflow-hidden border border-blue-300 dark:border-blue-700 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
+                        onClick={() => setSelectedAssetId(asset.id)}
+                        title={`${asset.title} - Click to view full image`}
+                      >
+                        {imageBlobUrls.has(asset.id) ? (
+                          <img
+                            src={imageBlobUrls.get(asset.id)}
+                            alt={asset.title || `Image ${asset.id}`}
+                            className="h-12 w-12 object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="h-12 w-12 flex items-center justify-center bg-blue-100 dark:bg-blue-900">
+                            <ImageIcon className="h-6 w-6 text-blue-400 dark:text-blue-600 animate-pulse" />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                          <Eye className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                        </div>
+                      </div>
+                      
+                      {/* Image title */}
+                      <span className="max-w-[120px] truncate text-xs text-foreground font-medium">{asset.title}</span>
+                      
+                      {/* Remove button */}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(asset.id)}
+                        className="hover:bg-destructive/20 hover:text-destructive rounded-full p-1 transition-all ml-1"
+                        title="Remove image"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setImageAttachments(new Map())}
+                    className="h-6 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  >
+                    Clear all
+                  </Button>
+                </div>
+              </div>
+            )}
+            
             {/* Context chips - assets attached to message */}
             {contextAssetDetails.size > 0 && (
               <div className="mb-2 p-2.5 rounded-lg bg-accent/80 border border-border backdrop-blur-sm">
@@ -1814,27 +2138,28 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               </>
             )}
 
-            {/* New PromptInput Component with Context Selector */}
+            {/* New PromptInput Component with Context and Image Selectors */}
             <Popover open={showContextSelector} onOpenChange={setShowContextSelector}>
-              <PromptInput onSubmit={handleSubmit}>
-                <PromptInputBody className="text-left">
-                  <div className="relative w-full">
-                    {/* Keyboard shortcuts hint - desktop only */}
-                    <div className="hidden sm:flex absolute top-2 right-2 items-center gap-2 mr-1 text-xs text-muted-foreground pointer-events-none z-10">
-                      <div className="flex items-center gap-1">
-                        <Kbd>@</Kbd>
-                        <span className="text-[10px]">context</span>
+              <Popover open={showImageSelector} onOpenChange={setShowImageSelector}>
+                <PromptInput onSubmit={handleSubmit}>
+                  <PromptInputBody className="text-left">
+                    <div className="relative w-full">
+                      {/* Keyboard shortcuts hint - desktop only */}
+                      <div className="hidden sm:flex absolute top-2 right-2 items-center gap-2 mr-1 text-xs text-muted-foreground pointer-events-none z-10">
+                        <div className="flex items-center gap-1">
+                          <Kbd>@</Kbd>
+                          <span className="text-[10px]">context</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Kbd>#word</Kbd>
+                          <Kbd>#"phrase"</Kbd>
+                          <span className="text-[10px]">search</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Kbd>/</Kbd>
+                          <span className="text-[10px]">focus</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Kbd>#word</Kbd>
-                        <Kbd>#"phrase"</Kbd>
-                        <span className="text-[10px]">search</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Kbd>/</Kbd>
-                        <span className="text-[10px]">focus</span>
-                      </div>
-                    </div>
                     
                     {/* Simple highlight layer for @mentions - positioned behind textarea */}
                     <div 
@@ -1958,8 +2283,9 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       ref={textareaRef}
                       value={input}
                       onChange={handleInputChange}
-                      placeholder="Ask about your data..."
-                      disabled={isLoadingModels || !selectedModel}
+                      onPaste={handlePaste}
+                      placeholder={isUploadingPaste ? "Uploading pasted image..." : "Ask about your data..."}
+                      disabled={isLoadingModels || !selectedModel || isUploadingPaste}
                       className="relative bg-transparent text-left w-full"
                       style={{ zIndex: 1 }}
                     />
@@ -1981,6 +2307,23 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                             <span>Add assets as context or type</span>
                             <Kbd>@</Kbd>
                           </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <PopoverTrigger asChild>
+                            <PromptInputButton
+                              variant={imageAttachments.size > 0 ? "default" : "ghost"}
+                            >
+                              <ImageIcon className="size-4" />
+                            </PromptInputButton>
+                          </PopoverTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <span>Attach images for vision analysis</span>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -2018,63 +2361,112 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                 </PromptInputToolbar>
               </PromptInput>
 
-              {/* Context Selector Popover Content */}
+              {/* Image Selector Popover Content - must be inside image Popover */}
               <PopoverContent 
                 className="w-[90vw] md:w-[60vw] lg:w-[45vw] h-[60vh] md:h-[50vh] p-0 flex flex-col" 
                 align="start"
                 side="top"
               >
                 <div 
-                  className="px-4 py-3 border-b cursor-pointer hover:bg-muted/70 transition-colors"
-                  onClick={() => setShowContextSelector(false)}
+                  className="px-4 py-3 border-b bg-gradient-to-r from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30 cursor-pointer hover:opacity-90 transition-opacity"
+                  onClick={() => setShowImageSelector(false)}
                   title="Click to close"
                 >
-                  <h4 className="font-semibold text-sm mb-1">Add Assets as Context</h4>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    Select assets to include as context. Documents structured for optimal analysis.
-                  </p>
-                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <ButtonGroup className="w-full max-w-[280px]">
-                      <ButtonGroupText className="text-xs">Detail:</ButtonGroupText>
-                      <Select value={contextDepth} onValueChange={(v) => setContextDepth(v as ContextDepth)}>
-                        <SelectTrigger id="depth-select" className="h-9 text-xs flex-1 rounded-l-none">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="titles">Titles (Light)</SelectItem>
-                          <SelectItem value="previews">Previews</SelectItem>
-                          <SelectItem value="full">Full Content</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </ButtonGroup>
+                  <div className="flex items-center gap-2 mb-1">
+                    <ImageIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    <h4 className="font-semibold text-sm text-blue-900 dark:text-blue-100">Attach Images for Vision</h4>
                   </div>
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    Select image assets for the model to analyze. Supported: JPEG, PNG, GIF, WebP.
+                  </p>
                 </div>
-                <div className="flex-1 overflow-hidden">
-                  <AssetSelector
-                    selectedItems={new Set(Array.from(contextAssets).map(id => `asset-${id}`))}
-                    onSelectionChange={handleContextSelectionChange}
-                    renderItemActions={() => null}
-                  />
-                </div>
-                <div className="px-4 py-3 border-t flex justify-end">
+              <div className="flex-1 overflow-hidden">
+                {/* Note: AssetSelector's search doesn't parse "kind:image" syntax. 
+                    Users should use the type filter dropdown in the selector to filter by image type. */}
+                <AssetSelector
+                  selectedItems={new Set(Array.from(contextAssets).map(id => `asset-${id}`))}
+                  onSelectionChange={handleImageSelectionChange}
+                  renderItemActions={() => null}
+                />
+              </div>
+                <div className="px-4 py-3 border-t flex justify-end bg-gradient-to-r from-blue-50/50 to-blue-100/50 dark:from-blue-950/20 dark:to-blue-900/20">
                   <ButtonGroup>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        setShowContextSelector(false)
-                        // Reset to current context (don't clear existing context)
-                        setContextAssets(new Set(contextAssetDetails.keys()))
+                        setShowImageSelector(false)
+                        // Reset to current images (don't clear existing)
+                        setContextAssets(new Set(imageAttachments.keys()))
                       }}
                     >
                       Cancel
                     </Button>
-                    <Button size="sm" onClick={handleConfirmContext}>
-                      Add {contextAssets.size} asset{contextAssets.size !== 1 ? 's' : ''}
+                    <Button size="sm" onClick={handleConfirmImages} className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600">
+                      Attach {contextAssets.size} image{contextAssets.size !== 1 ? 's' : ''}
                     </Button>
                   </ButtonGroup>
                 </div>
               </PopoverContent>
+              </Popover>
+
+            {/* Context Selector Popover Content - must be inside context Popover */}
+            <PopoverContent 
+              className="w-[90vw] md:w-[60vw] lg:w-[45vw] h-[60vh] md:h-[50vh] p-0 flex flex-col" 
+              align="start"
+              side="top"
+            >
+              <div 
+                className="px-4 py-3 border-b cursor-pointer hover:bg-muted/70 transition-colors"
+                onClick={() => setShowContextSelector(false)}
+                title="Click to close"
+              >
+                <h4 className="font-semibold text-sm mb-1">Add Assets as Context</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Select assets to include as context. Documents structured for optimal analysis.
+                </p>
+                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <ButtonGroup className="w-full max-w-[280px]">
+                    <ButtonGroupText className="text-xs">Detail:</ButtonGroupText>
+                    <Select value={contextDepth} onValueChange={(v) => setContextDepth(v as ContextDepth)}>
+                      <SelectTrigger id="depth-select" className="h-9 text-xs flex-1 rounded-l-none">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="titles">Titles (Light)</SelectItem>
+                        <SelectItem value="previews">Previews</SelectItem>
+                        <SelectItem value="full">Full Content</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </ButtonGroup>
+                </div>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <AssetSelector
+                  selectedItems={new Set(Array.from(contextAssets).map(id => `asset-${id}`))}
+                  onSelectionChange={handleContextSelectionChange}
+                  renderItemActions={() => null}
+                />
+              </div>
+              <div className="px-4 py-3 border-t flex justify-end">
+                <ButtonGroup>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setShowContextSelector(false)
+                      // Reset to current context (don't clear existing context)
+                      setContextAssets(new Set(contextAssetDetails.keys()))
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={handleConfirmContext}>
+                    Add {contextAssets.size} asset{contextAssets.size !== 1 ? 's' : ''}
+                  </Button>
+                </ButtonGroup>
+              </div>
+            </PopoverContent>
             </Popover>
 
             {error && (

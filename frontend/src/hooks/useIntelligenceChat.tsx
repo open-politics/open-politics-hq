@@ -36,6 +36,12 @@ export interface ChatMessage {
     kind?: string
   }>  // Documents that were attached as context
   context_depth?: 'titles' | 'previews' | 'full'  // Depth level used
+  image_asset_ids?: number[]  // Image assets attached for vision models
+  image_assets?: Array<{  // Full image metadata for display
+    id: number
+    title: string
+    blob_path: string
+  }>
 }
 
 export interface UseIntelligenceChatOptions {
@@ -63,6 +69,8 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
       displayContent?: string  // Original user input for UI display
       contextAssets?: Array<{ id: number; title: string; kind?: string }>  // Context metadata
       contextDepth?: 'titles' | 'previews' | 'full'  // Depth level
+      imageAssetIds?: number[]  // Image assets for vision
+      imageAssets?: Array<{ id: number; title: string; blob_path: string }>  // Full image metadata
     }
   ): Promise<ChatMessage | null> => {
     if (!activeInfospace?.id) {
@@ -77,7 +85,9 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
       content: customOptions?.displayContent || content,  // Display original input
       timestamp: new Date(),
       context_assets: customOptions?.contextAssets,  // Store context metadata
-      context_depth: customOptions?.contextDepth  // Store depth level
+      context_depth: customOptions?.contextDepth,  // Store depth level
+      image_asset_ids: customOptions?.imageAssetIds,  // Store attached images
+      image_assets: customOptions?.imageAssets  // Store image metadata for thumbnails
     }
 
     setMessages(prev => [...prev, userMessage])
@@ -102,8 +112,10 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         // UI-specific fields for preserving display state
         display_content: customOptions?.displayContent,
         context_assets: customOptions?.contextAssets,
-        context_depth: customOptions?.contextDepth
-      }
+        context_depth: customOptions?.contextDepth,
+        // Vision features
+        image_asset_ids: customOptions?.imageAssetIds
+      } as ChatRequest
       
       if (chatRequest.stream) {
         // Manual streaming using fetch to handle SSE-like responses
@@ -143,7 +155,9 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
             content: '',
             timestamp: new Date()
           }
-          setMessages(prev => [...prev, current])
+          // Track if message was added to UI yet (only add once there's actual content)
+          let messageAddedToUI = false
+          
           while (true) {
             const { value, done } = await reader.read()
             if (done) break
@@ -190,12 +204,32 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
                 
                 // Only update state if something changed
                 if (updated) {
-                  setMessages(prev => prev.map(m => m.id === current.id ? current : m))
+                  // Check if message has actual content worth displaying
+                  const hasContent = current.content.trim().length > 0 || 
+                                    current.thinking_trace || 
+                                    (current.tool_executions && current.tool_executions.length > 0) ||
+                                    (current.tool_calls && current.tool_calls.length > 0)
+                  
+                  if (!messageAddedToUI && hasContent) {
+                    // First time we have content - add message to UI
+                    setMessages(prev => [...prev, current])
+                    messageAddedToUI = true
+                  } else if (messageAddedToUI) {
+                    // Message already in UI - update it
+                    setMessages(prev => prev.map(m => m.id === current.id ? current : m))
+                  }
+                  // If no content yet, don't show anything (no empty bubble)
                 }
               } catch (e) {
                 console.error('[useIntelligenceChat] Failed to parse streaming chunk:', e)
               }
             }
+          }
+          
+          // Ensure message is added at the end if we somehow got through the stream without adding it
+          // (edge case: stream completes but we never got content - still add the message)
+          if (!messageAddedToUI) {
+            setMessages(prev => [...prev, current])
           }
           
           // Ensure final message is saved even if connection drops

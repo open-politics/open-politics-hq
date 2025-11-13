@@ -58,6 +58,17 @@ export function StructuredToolResponse({
   const [viewingResult, setViewingResult] = useState<SearchResultData | null>(null)
   const [showIngestor, setShowIngestor] = useState(false)
   
+  // Debug logging
+  if (toolName === 'search_web') {
+    console.log('[StructuredToolResponse] search_web called with:', {
+      toolName,
+      result,
+      resultType: typeof result,
+      isArray: Array.isArray(result),
+      keys: result && typeof result === 'object' ? Object.keys(result) : []
+    })
+  }
+  
   if (!result || typeof result !== 'object') {
     return null
   }
@@ -176,7 +187,37 @@ export function StructuredToolResponse({
   )
 
   const renderSearchAndIngestResponse = (result: any) => {
-    const searchResults = result.search_results || []
+    // Debug logging for search_web
+    console.log('[StructuredToolResponse] renderSearchAndIngestResponse called with:', {
+      result,
+      hasResults: result.results,
+      hasSearchResults: result.search_results,
+      provider: result.provider,
+      total_found: result.total_found
+    })
+    
+    // Handle error cases
+    if (result.status === 'failed' || result.error) {
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            {getStatusIcon('error')}
+            <span className="text-sm font-medium">Search failed</span>
+          </div>
+          <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded text-xs text-red-700 dark:text-red-400">
+            <strong>Error:</strong> {result.error || 'Unknown error occurred'}
+          </div>
+          {result.message && (
+            <div className="text-xs text-muted-foreground">
+              {result.message}
+            </div>
+          )}
+        </div>
+      )
+    }
+    
+    // Handle both search_web format (results) and search_and_ingest format (search_results)
+    const searchResults = result.results || result.search_results || []
     const hasSearchResults = searchResults.length > 0
     const allSelected = selectedResults.size === searchResults.length && searchResults.length > 0
 
@@ -184,18 +225,21 @@ export function StructuredToolResponse({
       <>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            {getStatusIcon(result.status)}
-            <span className="text-sm font-medium">{result.message}</span>
+            {getStatusIcon(result.status || 'success')}
+            <span className="text-sm font-medium">{result.message || 'Search completed'}</span>
           </div>
           
           <div className="grid grid-cols-2 gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
               <Globe className="h-3 w-3" />
-              <span>Provider: {result.provider}</span>
+              <span>Provider: {result.provider || 'unknown'}</span>
             </div>
             <div className="flex items-center gap-1">
               <Hash className="h-3 w-3" />
-              <span>Found: {result.results_processed} | Ingested: {result.assets_created}</span>
+              <span>
+                Found: {result.total_found ?? result.results_processed ?? 0} | 
+                Ingested: {result.assets_created ?? 0}
+              </span>
             </div>
           </div>
 

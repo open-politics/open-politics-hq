@@ -7,25 +7,23 @@ from celery import Celery
 from celery.schedules import crontab 
 from app.core.config import settings
 
-# Setup logging to debug Redis connection issues
 logger = logging.getLogger(__name__)
 
-# Get Redis URL from settings (uses computed property)
 redis_url = settings.redis_url
 
-# Initialize Celery with explicit configuration to avoid parsing issues
+# Initialize Celery with explicit configuration
 celery = Celery(
-    __name__,
+    "app",
     broker=redis_url,
     backend=redis_url,
 )
 
-# Consolidated Celery configuration
+# Celery configuration
 celery.conf.update(
-    # Broker and backend URLs - set multiple times to ensure they stick
     broker_url=redis_url,
     result_backend=redis_url,
-    # Connection retry configuration
+    # Connection retry on broker failures
+
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,

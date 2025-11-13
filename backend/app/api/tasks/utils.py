@@ -137,7 +137,7 @@ def create_pydantic_model_from_json_schema(
     required_fields = set(json_schema.get("required", []))
 
     if is_per_modality_item_schema and json_schema.get("type") == "object":
-        system_uuid_field_name = "_system_asset_source_uuid"
+        system_uuid_field_name = "system_asset_source_uuid"
         if system_uuid_field_name not in schema_properties:
             fields[system_uuid_field_name] = (Optional[str], Field(default=None, description="Internal system field for mapping to source asset UUID."))
             logger.debug(f"Added internal field '{system_uuid_field_name}' to model {safe_model_name} for per-modality item.")

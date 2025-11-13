@@ -28,12 +28,12 @@ import AnnotationResultDisplay from './AnnotationResultDisplay';
 import AssetLink from '../assets/Helper/AssetLink';
 import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';
 import { ResultFilter } from './AnnotationFilterControls';
-import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition } from '@/lib/annotations/utils';
+import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle, Download } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle, Download, Image as ImageIcon, FileText } from 'lucide-react';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -629,6 +629,70 @@ export function AnnotationResultsTable({
     hasChildren?: boolean; // Indicates if this asset has children
     children?: EnrichedAssetRecord[]; // Child assets for hierarchical display
     splitValue?: string; // NEW: Split value when variable splitting is enabled
+    imageSubAssets?: EnrichedAssetRecord[]; // NEW: Image sub-assets to show as thumbnails
+    consolidatedResultsMap?: Record<number, { document?: ResultWithSourceInfo; image?: ResultWithSourceInfo }>; // NEW: Separate document and image results per schema
+  };
+
+  // Helper component for image thumbnails
+  const ImageThumbnail: React.FC<{ asset: EnrichedAssetRecord }> = ({ asset }) => {
+    const [imageSrc, setImageSrc] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const { activeInfospace } = useInfospaceStore();
+
+    useEffect(() => {
+      const loadImage = async () => {
+        setIsLoading(true);
+        try {
+          if (asset.source_identifier) {
+            setImageSrc(asset.source_identifier);
+          } else if (asset.blob_path && activeInfospace?.id) {
+            const response = await fetch(`/api/v1/files/stream/${encodeURIComponent(asset.blob_path)}`, {
+              headers: {
+                'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+              },
+            });
+            if (response.ok) {
+              const blob = await response.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              setImageSrc(blobUrl);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading image thumbnail:', error);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      if (asset.kind === 'image' || asset.kind === 'image_region') {
+        loadImage();
+      }
+    }, [asset.blob_path, asset.source_identifier, activeInfospace?.id]);
+
+    if (isLoading) {
+      return (
+        <div className="h-20 w-20 flex items-center justify-center bg-muted/50 rounded border border-border/50">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+
+    if (!imageSrc) {
+      return (
+        <div className="h-20 w-20 flex items-center justify-center bg-muted/50 rounded border border-border/50">
+          <ImageIcon className="h-6 w-6 text-muted-foreground opacity-50" />
+        </div>
+      );
+    }
+
+    return (
+      <img
+        src={imageSrc}
+        alt={asset.title || 'Image thumbnail'}
+        className="h-20 w-20 object-cover rounded border border-border/50 shadow-sm"
+        loading="lazy"
+      />
+    );
   };
 
   const tableData = useMemo((): EnrichedAssetRecord[] => {
@@ -656,8 +720,10 @@ export function AnnotationResultsTable({
     console.log('[AnnotationResultsTable] resultsByAssetId:', resultsByAssetId);
 
     // Get all assets that have results OR are CSV parents with children that have results
+    // OR are document parents with image children that have results
     const assetsWithResults = new Set<number>();
     const csvParentsWithChildren = new Set<number>();
+    const documentParentsWithImages = new Set<number>();
     
     // First pass: identify assets with direct results
     assets.forEach(asset => {
@@ -668,6 +734,11 @@ export function AnnotationResultsTable({
         if (asset.kind === 'csv_row' && asset.parent_asset_id) {
           csvParentsWithChildren.add(asset.parent_asset_id);
         }
+        
+        // If this is an image sub-asset, also include its parent
+        if ((asset.kind === 'image' || asset.kind === 'image_region') && asset.parent_asset_id) {
+          documentParentsWithImages.add(asset.parent_asset_id);
+        }
       }
     });
 
@@ -675,7 +746,9 @@ export function AnnotationResultsTable({
     const enrichedRecordsMap = new Map<number, EnrichedAssetRecord>();
     
     assets.forEach(asset => {
-      const shouldInclude = assetsWithResults.has(asset.id) || csvParentsWithChildren.has(asset.id);
+      const shouldInclude = assetsWithResults.has(asset.id) || 
+                           csvParentsWithChildren.has(asset.id) || 
+                           documentParentsWithImages.has(asset.id);
       
       if (shouldInclude) {
         const sourceInfo = typeof asset.source_id === 'number'
@@ -696,6 +769,9 @@ export function AnnotationResultsTable({
 
         const isCSVParent = asset.kind === 'csv' && csvParentsWithChildren.has(asset.id);
         const isCSVChild = asset.kind === 'csv_row';
+        const isDocumentParent = documentParentsWithImages.has(asset.id) && 
+                                 (asset.kind === 'article' || asset.kind === 'web' || asset.kind === 'text' || asset.kind === 'pdf');
+        const isImageSubAsset = (asset.kind === 'image' || asset.kind === 'image_region') && asset.parent_asset_id;
 
         // NEW: Extract split value from the first result for this asset
         const firstResult = assetResults[0] as ResultWithSourceInfo & { splitValue?: string };
@@ -709,7 +785,9 @@ export function AnnotationResultsTable({
           parentAssetId: asset.parent_asset_id || undefined,
           hasChildren: isCSVParent,
           children: [],
-          splitValue: splitValue, // NEW: Add split value
+          splitValue: splitValue,
+          imageSubAssets: isDocumentParent ? [] : undefined,
+          consolidatedResultsMap: isDocumentParent ? {} : undefined,
         };
 
         enrichedRecordsMap.set(asset.id, enrichedRecord);
@@ -721,7 +799,7 @@ export function AnnotationResultsTable({
     
     enrichedRecordsMap.forEach(record => {
       if (record.isChildRow && record.parentAssetId) {
-        // This is a child row, attach to parent
+        // This is a CSV child row, attach to parent
         const parent = enrichedRecordsMap.get(record.parentAssetId);
         if (parent) {
           parent.children = parent.children || [];
@@ -730,8 +808,53 @@ export function AnnotationResultsTable({
           // Parent not found, add as top-level
           topLevelRecords.push(record);
         }
+      } else if ((record.kind === 'image' || record.kind === 'image_region') && record.parentAssetId) {
+        // This is an image sub-asset, attach to document parent and consolidate results
+        const parent = enrichedRecordsMap.get(record.parentAssetId);
+        if (parent) {
+          // Initialize consolidatedResultsMap if it doesn't exist (parent might have been added for other reasons)
+          if (!parent.consolidatedResultsMap) {
+            parent.consolidatedResultsMap = {};
+          }
+          
+          // Initialize imageSubAssets if it doesn't exist
+          if (!parent.imageSubAssets) {
+            parent.imageSubAssets = [];
+          }
+          
+          // Add image sub-asset to parent's imageSubAssets array
+          parent.imageSubAssets.push(record);
+          
+          // Consolidate results: merge document and image results per schema
+          Object.entries(record.resultsMap).forEach(([schemaIdStr, imageResult]) => {
+            const schemaId = parseInt(schemaIdStr, 10);
+            if (!parent.consolidatedResultsMap![schemaId]) {
+              parent.consolidatedResultsMap![schemaId] = {};
+            }
+            parent.consolidatedResultsMap![schemaId].image = imageResult;
+          });
+          
+          // Also merge document results from parent
+          Object.entries(parent.resultsMap).forEach(([schemaIdStr, docResult]) => {
+            const schemaId = parseInt(schemaIdStr, 10);
+            if (!parent.consolidatedResultsMap![schemaId]) {
+              parent.consolidatedResultsMap![schemaId] = {};
+            }
+            parent.consolidatedResultsMap![schemaId].document = docResult;
+          });
+        } else {
+          // Parent not found, add as top-level
+          topLevelRecords.push(record);
+        }
       } else {
         // This is a top-level record
+        // If it's a document parent, initialize consolidated results map with its own results
+        if (record.consolidatedResultsMap) {
+          Object.entries(record.resultsMap).forEach(([schemaIdStr, docResult]) => {
+            const schemaId = parseInt(schemaIdStr, 10);
+            record.consolidatedResultsMap![schemaId] = { document: docResult };
+          });
+        }
         topLevelRecords.push(record);
       }
     });
@@ -755,6 +878,12 @@ export function AnnotationResultsTable({
         if (record.hasChildren && record.children) {
           return record.children.some(child => Object.keys(child.resultsMap).length > 0);
         }
+        // For consolidated results (document + image), check if any exist
+        if (record.consolidatedResultsMap) {
+          return Object.values(record.consolidatedResultsMap).some(consolidated => 
+            consolidated.document || consolidated.image
+          );
+        }
         // For regular assets, check if they have direct results
         return Object.keys(record.resultsMap).length > 0;
       }
@@ -768,6 +897,17 @@ export function AnnotationResultsTable({
       }
       
       // For regular assets, check direct results
+      // If consolidated results exist, check both document and image results
+      if (record.consolidatedResultsMap) {
+        const allResults: ResultWithSourceInfo[] = [];
+        Object.values(record.consolidatedResultsMap).forEach(consolidated => {
+          if (consolidated.document) allResults.push(consolidated.document);
+          if (consolidated.image) allResults.push(consolidated.image);
+        });
+        if (allResults.length === 0) return false;
+        return activeFilters.every(filter => checkFilterMatch(filter, allResults, schemas));
+      }
+      
       const assetResults = Object.values(record.resultsMap);
       if (assetResults.length === 0) return false;
       return activeFilters.every(filter => checkFilterMatch(filter, assetResults, schemas));
@@ -870,38 +1010,50 @@ export function AnnotationResultsTable({
                 </div>
               )}
               
-              {/* Compact Asset Cell - Fully vertical stack */}
-              <div className="flex-1 min-w-0 flex flex-col gap-0.5 py-1">
-                {/* Row 1: Checkbox */}
-                <div className="flex items-center">
-                  <Checkbox
-                    checked={row.getIsSelected()}
-                    onCheckedChange={(value) => row.toggleSelected(!!value)}
-                    aria-label="Select row"
-                    className="h-3.5 w-3.5 flex-shrink-0"
-                    onClick={(e) => e.stopPropagation()}
-                  />
+              {/* Compact Asset Cell - Vertical layout with thumbnail below title */}
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5 py-1">
+                {/* Content column */}
+                <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                  {/* Row 1: Checkbox */}
+                  <div className="flex items-center">
+                    <Checkbox
+                      checked={row.getIsSelected()}
+                      onCheckedChange={(value) => row.toggleSelected(!!value)}
+                      aria-label="Select row"
+                      className="h-3.5 w-3.5 flex-shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                  
+                  {/* Row 2: Title */}
+                  <AssetLink 
+                    assetId={record.id} 
+                    className="text-xs truncate hover:text-primary transition-colors"
+                  >
+                    {record.title || <span className="italic text-muted-foreground/70">No Title</span>}
+                  </AssetLink>
+                  
+                  {/* Row 3: ID Badge */}
+                  <span className="text-[10px] text-muted-foreground/70 font-mono">
+                    #{record.id}
+                  </span>
                 </div>
                 
-                {/* Row 2: Title */}
-                <AssetLink 
-                  assetId={record.id} 
-                  className="text-xs truncate hover:text-primary transition-colors"
-                >
-                  {record.title || <span className="italic text-muted-foreground/70">No Title</span>}
-                </AssetLink>
-                
-                {/* Row 3: ID Badge */}
-                <span className="text-[10px] text-muted-foreground/70 font-mono">
-                  #{record.id}
-                </span>
+                {/* Thumbnail below title (if image sub-assets exist) */}
+                {record.imageSubAssets && record.imageSubAssets.length > 0 && (
+                  <div className="flex-shrink-0">
+                    {record.imageSubAssets.map((imageAsset) => (
+                      <ImageThumbnail key={imageAsset.id} asset={imageAsset} />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
         },
-        maxSize: 140,
-        minSize: 80,
-        size: 100,
+        maxSize: 200,
+        minSize: 100,
+        size: 140,
         enableSorting: true,
         sortingFn: (rowA, rowB) => {
           // Sort by title
@@ -997,16 +1149,40 @@ export function AnnotationResultsTable({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="flex items-center gap-1 min-w-0 cursor-help">
-                    <span className="font-medium text-xs truncate">
-                      {field.name}
-                    </span>
+                    {/* Show modality icon if applicable */}
+                    {(() => {
+                      const formatted = formatFieldNameUtil(field.key);
+                      if (formatted.modality && formatted.modality !== 'document') {
+                        return (
+                          <>
+                            {getModalityIcon(formatted.modality, 'sm')}
+                            <span className="font-medium text-xs truncate">
+                              {formatted.displayName}
+                            </span>
+                          </>
+                        );
+                      }
+                      return (
+                        <span className="font-medium text-xs truncate">
+                          {field.name}
+                        </span>
+                      );
+                    })()}
                     <HelpCircle className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="top" align="start" className="max-w-sm">
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-xs">{field.name}</span>
+                      {(() => {
+                        const formatted = formatFieldNameUtil(field.key);
+                        return (
+                          <>
+                            {formatted.modality && formatted.modality !== 'document' && getModalityIcon(formatted.modality, 'sm')}
+                            <span className="font-semibold text-xs">{formatted.displayName}</span>
+                          </>
+                        );
+                      })()}
                       <Badge className="px-1 py-0">
                         {field.type}
                       </Badge>
@@ -1141,21 +1317,182 @@ export function AnnotationResultsTable({
         );
       },
       cell: ({ row }) => {
-        const resultForThisCell = row.original.resultsMap[schema.id];
+        const record = row.original;
         const fieldKeysToShow = selectedFieldsPerScheme[schema.id] || [];
-
-        // Debug logging
-        if (!resultForThisCell) {
-          console.log('[AnnotationResultsTable] No result for schema', schema.id, 'in row', row.original.id, 'resultsMap:', row.original.resultsMap);
-        } else {
-          console.log('[AnnotationResultsTable] Found result for schema', schema.id, 'with', fieldKeysToShow.length, 'fields to show');
-        }
+        
+        // Use consolidated results map if available (for document + image consolidation)
+        const consolidatedResults = record.consolidatedResultsMap?.[schema.id];
+        const hasConsolidatedResults = consolidatedResults && (consolidatedResults.document || consolidatedResults.image);
+        
+        // Fallback to regular resultsMap if no consolidated results
+        const resultForThisCell = hasConsolidatedResults ? null : record.resultsMap[schema.id];
 
         // FIXED: Hide cell content when zero fields are selected
         if (fieldKeysToShow.length === 0) {
           return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">Hidden</div>;
         }
 
+        // Handle consolidated results (document + image) - demultiplex fields
+        if (hasConsolidatedResults) {
+          const docResult = consolidatedResults.document;
+          const imgResult = consolidatedResults.image;
+          const docFailed = docResult?.status === 'failure';
+          const imgFailed = imgResult?.status === 'failure';
+
+          // Get all target keys for this schema to demultiplex fields
+          const allTargetKeys = getTargetKeysForScheme(schema.id, schemas);
+          const fieldsToDisplay = allTargetKeys.filter(tk => fieldKeysToShow.includes(tk.key));
+
+          // Group fields by modality (document vs image)
+          const docFields: Array<{ key: string; name: string; type: string }> = [];
+          const imgFields: Array<{ key: string; name: string; type: string }> = [];
+          
+          fieldsToDisplay.forEach(field => {
+            const formatted = formatFieldNameUtil(field.key);
+            const baseName = formatted.displayName;
+            
+            // Determine if this is a document or image field
+            const isDocField = field.key.startsWith('document.') || (!field.key.startsWith('per_image.') && !field.key.startsWith('per_audio.') && !field.key.startsWith('per_video.'));
+            const isImgField = field.key.startsWith('per_image.');
+            
+            // Check if this field exists in document or image results
+            const hasDocValue = docResult && getAnnotationFieldValue(docResult.value, field.key) !== undefined;
+            const hasImgValue = imgResult && getAnnotationFieldValue(imgResult.value, field.key) !== undefined;
+            
+            // Also check for alternative field names (document.summary vs per_image.summary)
+            const docAltKey = isImgField ? field.key.replace('per_image.', 'document.') : field.key;
+            const imgAltKey = isDocField ? field.key.replace('document.', 'per_image.') : field.key;
+            const hasDocValueAlt = docResult && getAnnotationFieldValue(docResult.value, docAltKey) !== undefined;
+            const hasImgValueAlt = imgResult && getAnnotationFieldValue(imgResult.value, imgAltKey) !== undefined;
+            
+            const finalHasDocValue = Boolean(hasDocValue || hasDocValueAlt);
+            const finalHasImgValue = Boolean(hasImgValue || hasImgValueAlt);
+            
+            if (finalHasDocValue || (isDocField && docResult)) {
+              docFields.push({ key: field.key, name: baseName, type: field.type });
+            }
+            if (finalHasImgValue || (isImgField && imgResult)) {
+              imgFields.push({ key: field.key, name: baseName, type: field.type });
+            }
+          });
+
+          return (
+            <div className={cn("relative h-full min-w-0 max-w-full overflow-hidden space-y-2 px-2 py-1.5", (docFailed || imgFailed) && "border-l-2 border-destructive pl-1")}>
+              {(docFailed || imgFailed) && (
+                <TooltipProvider delayDuration={100}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertCircle 
+                        className="h-3.5 w-3.5 text-destructive absolute top-1 right-1 opacity-75 cursor-help z-10" 
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="end">
+                      <p className="text-xs max-w-xs break-words">
+                        {docFailed && `Document failed: ${(docResult as any)?.error_message || 'Unknown error'}`}
+                        {docFailed && imgFailed && ' | '}
+                        {imgFailed && `Image failed: ${(imgResult as any)?.error_message || 'Unknown error'}`}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              
+              {/* Document modality section */}
+              {docResult && docFields.length > 0 && (
+                <div className="space-y-1">
+                  {/* Modality header */}
+                  <div className="flex items-center gap-1.5 text-xs font-medium mb-1">
+                    <FileText className="h-3 w-3 text-blue-600" aria-label="Document" />
+                    <span>Document</span>
+                  </div>
+                  {/* Document fields */}
+                  {docFields.map((field) => {
+                    const hasValue = getAnnotationFieldValue(docResult.value, field.key) !== undefined;
+                    return (
+                      <div key={field.key} className="flex items-start gap-1.5 text-xs">
+                        <div className="flex items-center gap-1 flex-shrink-0 min-w-[100px]">
+                          <span className="text-muted-foreground font-medium">{field.name}:</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {hasValue ? (
+                            <div className="-mb-1">
+                              <AnnotationResultDisplay
+                                result={docResult}
+                                schema={schema}
+                                compact={true}
+                                targetFieldKey={field.key}
+                                renderContext="table"
+                                onResultSelect={onResultSelect}
+                                forceExpanded={expandAllAnnotations}
+                                onTimestampClick={onTimestampClick}
+                                onLocationClick={onLocationClick}
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-muted-foreground/50 italic text-xs">N/A</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              
+              {/* Separator between modalities */}
+              {docResult && docFields.length > 0 && imgResult && imgFields.length > 0 && (
+                <div className="h-px bg-border/60 my-1.5" aria-hidden="true" />
+              )}
+              
+              {/* Image modality section */}
+              {imgResult && imgFields.length > 0 && (
+                <div className="space-y-1">
+                  {/* Modality header */}
+                  <div className="flex items-center gap-1.5 text-xs font-medium mb-1">
+                    <ImageIcon className="h-3 w-3 text-green-600" aria-label="Image" />
+                    <span>Image</span>
+                  </div>
+                  {/* Image fields */}
+                  {imgFields.map((field) => {
+                    const hasValue = getAnnotationFieldValue(imgResult.value, field.key) !== undefined;
+                    return (
+                      <div key={field.key} className="flex items-start gap-1.5 text-xs">
+                        <div className="flex items-center gap-1 flex-shrink-0 min-w-[100px]">
+                          <span className="text-muted-foreground font-medium">{field.name}:</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {hasValue ? (
+                            <div className="-mb-1">
+                              <AnnotationResultDisplay
+                                result={imgResult}
+                                schema={schema}
+                                compact={true}
+                                targetFieldKey={field.key}
+                                renderContext="table"
+                                onResultSelect={onResultSelect}
+                                forceExpanded={expandAllAnnotations}
+                                onTimestampClick={onTimestampClick}
+                                onLocationClick={onLocationClick}
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-muted-foreground/50 italic text-xs">N/A</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              
+              {(!docResult || docFields.length === 0) && (!imgResult || imgFields.length === 0) && (
+                <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">N/A</div>
+              )}
+            </div>
+          );
+        }
+
+        // Handle regular single result (no consolidation)
         if (!resultForThisCell) {
             return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">N/A</div>;
         }
@@ -1604,9 +1941,20 @@ export function AnnotationResultsTable({
                          });
                        } else {
                         // This is a child row or regular asset - show details if it has results
-                        const firstResult = Object.values(record.resultsMap)[0];
-                        if (firstResult && onResultSelect) {
-                           onResultSelect(firstResult);
+                        // For consolidated results (document + image), pass both results as an array
+                        if (record.consolidatedResultsMap && onResultSelect) {
+                          const consolidatedResults = Object.values(record.consolidatedResultsMap)[0];
+                          const resultsToShow: ResultWithSourceInfo[] = [];
+                          if (consolidatedResults?.document) resultsToShow.push(consolidatedResults.document);
+                          if (consolidatedResults?.image) resultsToShow.push(consolidatedResults.image);
+                          if (resultsToShow.length > 0) {
+                            onResultSelect(resultsToShow.length === 1 ? resultsToShow[0] : resultsToShow as any);
+                          }
+                        } else {
+                          const firstResult = Object.values(record.resultsMap)[0];
+                          if (firstResult && onResultSelect) {
+                            onResultSelect(firstResult);
+                          }
                         }
                       }
                     }}

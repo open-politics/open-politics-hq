@@ -10,7 +10,7 @@ import { FormattedAnnotation } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
+import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
 import { TextSpanSnippets } from '@/components/ui/highlighted-text';
 import { useAnnotationTextSpans } from '@/components/collection/contexts/TextSpanHighlightContext';
 
@@ -24,13 +24,9 @@ interface AnnotationFieldsPanelProps {
   highlightValue?: string | null;
 }
 
-// Utility function to format field names for display
+// Utility function to format field names for display (now uses shared utility)
 const formatFieldNameForDisplay = (fieldName: string): string => {
-  // Remove "document." prefix if present to make field names cleaner
-  if (fieldName.startsWith('document.')) {
-    return fieldName.substring('document.'.length);
-  }
-  return fieldName;
+  return formatFieldNameUtil(fieldName).displayName;
 };
 
 const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
@@ -433,10 +429,22 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
                     <div className="flex items-start justify-between gap-1 mb-1">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <h4 className={cn(
-                          "text-sm font-medium transition-colors flex-1 min-w-0",
+                          "text-sm font-medium transition-colors flex-1 min-w-0 flex items-center gap-1.5",
                           isActive ? "text-primary font-semibold" : "text-foreground"
                         )}>
-                          {formatFieldNameForDisplay(field.name)}
+                          {/* Show modality icon if applicable */}
+                          {(() => {
+                            const formatted = formatFieldNameUtil(field.name);
+                            if (formatted.modality && formatted.modality !== 'document') {
+                              return (
+                                <>
+                                  {getModalityIcon(formatted.modality, 'md')}
+                                  <span>{formatted.displayName}</span>
+                                </>
+                              );
+                            }
+                            return <span>{formatted.displayName}</span>;
+                          })()}
                         </h4>
                       </div>
                       {hasSelectedSpan && (

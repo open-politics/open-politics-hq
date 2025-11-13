@@ -4,9 +4,12 @@ from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+# Import celery app early to initialize Redis connection for task queueing
+from app.core.celery_app import celery  # noqa: F401
+from app.core.config import settings
+
 from app.api.main import api_router
 # from app.api.main import api_router_v2
-from app.core.config import settings
 from app.api.mcp.server import mcp as intelligence_mcp_server
 
 

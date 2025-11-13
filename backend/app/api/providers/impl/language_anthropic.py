@@ -6,12 +6,20 @@ This implementation uses the official Anthropic Python SDK for full feature supp
 - Tool use with correct content block formatting
 - Interleaved thinking support
 - Prompt caching, PDFs, citations, and all native features
+- Vision (image inputs) with proper content block formatting
 
 For tool use with extended thinking, this properly preserves thinking blocks
 as required by Anthropic's API.
+
+Image Support:
+- Images are passed via media_inputs in kwargs
+- Supports base64 image sources (jpeg, png, gif, webp)
+- Images placed before text for optimal performance
+- Tool results can include image content blocks
 """
 import logging
 import json
+import base64
 from typing import Dict, List, Optional, AsyncIterator, Union, Any, Callable, Awaitable
 
 from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationResponse
@@ -91,6 +99,80 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             logger.error(f"Failed to discover Anthropic models: {e}")
             return []
     
+    def _prepare_content_with_media(
+        self,
+        text_content: Union[str, List[Dict]],
+        media_inputs: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert text + media_inputs into Anthropic content blocks.
+        
+        Images are placed BEFORE text (Anthropic best practice for better performance).
+        
+        Args:
+            text_content: Text string or existing content blocks array
+            media_inputs: List of media items with type, content (bytes), mime_type
+            
+        Returns:
+            List of content blocks formatted for Anthropic API
+        """
+        content_blocks = []
+        
+        # Add images FIRST (Anthropic best practice)
+        for media in media_inputs:
+            if media.get("type") != "image":
+                continue  # Skip non-image media for now
+            
+            # Validate media type
+            mime_type = media.get("mime_type", "image/png")
+            allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+            
+            if mime_type not in allowed_types:
+                logger.warning(f"Unsupported image type: {mime_type}, skipping (allowed: {allowed_types})")
+                continue
+            
+            # Get image bytes
+            image_bytes = media.get("content")
+            if not isinstance(image_bytes, bytes):
+                logger.warning(f"Image content is not bytes (got {type(image_bytes)}), skipping")
+                continue
+            
+            if len(image_bytes) == 0:
+                logger.warning("Image content is empty, skipping")
+                continue
+            
+            # Convert to base64
+            try:
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            except Exception as e:
+                logger.error(f"Failed to encode image to base64: {e}")
+                continue
+            
+            # Add image block
+            content_blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": image_base64
+                }
+            })
+            
+            logger.debug(f"Added image block: {mime_type}, {len(image_bytes)} bytes")
+        
+        # Add text content AFTER images
+        if isinstance(text_content, list):
+            # Already content blocks - extend them
+            content_blocks.extend(text_content)
+        elif isinstance(text_content, str) and text_content.strip():
+            # String - wrap in text block
+            content_blocks.append({
+                "type": "text",
+                "text": text_content
+            })
+        
+        return content_blocks
+    
     async def generate(self, 
                       messages: List[Dict[str, str]],
                       model_name: str,
@@ -102,7 +184,16 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Generate response using Anthropic's native SDK.
+        
+        Supports image inputs via media_inputs in kwargs:
+        - media_inputs: List of dicts with {type: "image", content: bytes, mime_type: str}
+        - Images are added to the last user message in content blocks format
         """
+        # Extract media_inputs from kwargs
+        media_inputs = kwargs.pop("media_inputs", [])
+        if media_inputs:
+            logger.info(f"Processing {len(media_inputs)} media inputs for Anthropic")
+        
         # Extract system messages - Anthropic requires them in a separate parameter
         system_messages = []
         non_system_messages = []
@@ -119,10 +210,30 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             else:
                 non_system_messages.append(msg)
         
+        # Process messages: add media to LAST user message if media_inputs provided
+        processed_messages = []
+        last_msg_idx = len(non_system_messages) - 1
+        
+        for idx, msg in enumerate(non_system_messages):
+            # Add media only to last message if it's a user message and we have media
+            if idx == last_msg_idx and msg.get("role") == "user" and media_inputs:
+                content_blocks = self._prepare_content_with_media(
+                    msg["content"], 
+                    media_inputs
+                )
+                processed_messages.append({
+                    "role": "user",
+                    "content": content_blocks
+                })
+                logger.debug(f"Added {len([b for b in content_blocks if b.get('type') == 'image'])} images to last user message")
+            else:
+                # Keep message as-is
+                processed_messages.append(msg)
+        
         # Build the base request parameters
         base_params = {
             "model": model_name,
-            "messages": non_system_messages,
+            "messages": processed_messages,
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
         
@@ -156,6 +267,16 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                 }
                 logger.info(f"Enabled extended thinking for {model_name}")
         
+        # Anthropic enforces structured output via tool_choice (forced tool call)
+        if response_format and not tools:
+            base_params["tools"] = [{
+                "name": "extract",
+                "description": "Extract structured data",
+                "input_schema": response_format
+            }]
+            base_params["tool_choice"] = {"type": "tool", "name": "extract"}
+            logger.info("Enforcing structured output via forced tool call")
+        
         # Execute with or without tool loop
         if tool_executor and tools:
             if stream:
@@ -170,13 +291,16 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             else:
                 return await self._generate(base_params)
     
-    def _extract_tool_result_streams(self, tool_result: Any, tool_name: str) -> tuple[str, Any]:
+    def _extract_tool_result_streams(self, tool_result: Any, tool_name: str) -> tuple[Union[str, List[Dict]], Any]:
         """
         Extract separate LLM and frontend streams from tool result.
         
+        NEW: Supports Anthropic content blocks for tools that return images.
+        Tools can return: {"content_blocks": [{type: "text", ...}, {type: "image", ...}]}
+        
         Returns:
             Tuple of (llm_content, frontend_data) where:
-            - llm_content: Concise text for model conversation (~200-500 chars)
+            - llm_content: String OR array of content blocks (for images)
             - frontend_data: Full structured data for UI rendering
         """
         # Ensure serializable
@@ -189,7 +313,22 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
         is_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
         
         if isinstance(tool_result, dict) and not is_error:
-            # Extract concise content for LLM
+            # NEW: Check if tool result has Anthropic content blocks
+            # Tools can return: {"content_blocks": [{type: "text", ...}, {type: "image", ...}]}
+            if "content_blocks" in tool_result:
+                content_blocks = tool_result["content_blocks"]
+                # Validate it's a proper content blocks array
+                if isinstance(content_blocks, list) and all(
+                    isinstance(b, dict) and b.get("type") in ["text", "image"] 
+                    for b in content_blocks
+                ):
+                    # Use content blocks directly for LLM (enables image tool results!)
+                    llm_content = content_blocks
+                    frontend_data = tool_result.get("structured_content", tool_result)
+                    logger.debug(f"Tool {tool_name} returned {len(content_blocks)} content blocks")
+                    return llm_content, frontend_data
+            
+            # Original string-based extraction
             llm_content = tool_result.get("content")
             if not llm_content:
                 # No content provided - error case, don't send full structured data
@@ -434,8 +573,10 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
                         
                         # Update execution status with FULL data for frontend
+                        # Include both result (for backward compatibility) and structured_content (for frontend renderers)
                         all_tool_executions[-1].update({
                             "result": frontend_data if not has_error else None,
+                            "structured_content": frontend_data if not has_error else None,  # Explicit structured_content for frontend
                             "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                             "status": "failed" if has_error else "completed",
                         })
@@ -449,11 +590,22 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                             tool_executions=all_tool_executions,
                         )
                         
-                        # Add ONLY concise content to LLM conversation
+                        # NEW: Support both string and content blocks for tool results
+                        # Determine content format for tool_result
+                        if isinstance(llm_content, list):
+                            # Array of content blocks (includes images!)
+                            tool_result_content = llm_content
+                        elif isinstance(llm_content, str):
+                            # Simple string
+                            tool_result_content = llm_content
+                        else:
+                            # Fallback: stringify
+                            tool_result_content = json.dumps(llm_content)
+                        
                         tool_result_block = {
                             "type": "tool_result",
                             "tool_use_id": tool_use["id"],
-                            "content": llm_content,
+                            "content": tool_result_content,
                         }
                         # Only add is_error if True (it's optional)
                         if has_error:
@@ -463,8 +615,12 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         if has_error:
                             logger.warning(f"Tool {name} returned error: {tool_result.get('error') if isinstance(tool_result, dict) else tool_result}")
                         else:
-                            llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
-                            logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
+                            if isinstance(llm_content, str):
+                                logger.info(f"Tool {name} executed - sent {len(llm_content)} chars to LLM")
+                            elif isinstance(llm_content, list):
+                                logger.info(f"Tool {name} executed - sent {len(llm_content)} content blocks to LLM")
+                            else:
+                                logger.info(f"Tool {name} executed")
                         
                     except Exception as e:
                         logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
@@ -653,11 +809,13 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                     has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
                     
                     # Record execution with FULL data for frontend
+                    # Include both result (for backward compatibility) and structured_content (for frontend renderers)
                     all_tool_executions.append({
                         "id": tool_use["id"],
                         "tool_name": name,
                         "arguments": args,
                         "result": frontend_data if not has_error else None,
+                        "structured_content": frontend_data if not has_error else None,  # Explicit structured_content for frontend
                         "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
                         "iteration": iteration,
@@ -665,11 +823,22 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         "thinking_after": thinking_after,
                     })
                     
-                    # Add ONLY concise content to LLM conversation
+                    # NEW: Support both string and content blocks for tool results
+                    # Determine content format for tool_result
+                    if isinstance(llm_content, list):
+                        # Array of content blocks (includes images!)
+                        tool_result_content = llm_content
+                    elif isinstance(llm_content, str):
+                        # Simple string
+                        tool_result_content = llm_content
+                    else:
+                        # Fallback: stringify
+                        tool_result_content = json.dumps(llm_content)
+                    
                     tool_result_block = {
                         "type": "tool_result",
                         "tool_use_id": tool_use["id"],
-                        "content": llm_content,
+                        "content": tool_result_content,
                     }
                     # Only add is_error if True (it's optional)
                     if has_error:
@@ -679,8 +848,12 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                     if has_error:
                         logger.warning(f"Tool {name} returned error: {tool_result.get('error') if isinstance(tool_result, dict) else tool_result}")
                     else:
-                        llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
-                        logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
+                        if isinstance(llm_content, str):
+                            logger.info(f"Tool {name} executed - sent {len(llm_content)} chars to LLM")
+                        elif isinstance(llm_content, list):
+                            logger.info(f"Tool {name} executed - sent {len(llm_content)} content blocks to LLM")
+                        else:
+                            logger.info(f"Tool {name} executed")
                     
                 except Exception as e:
                     logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
@@ -750,6 +923,9 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                             "arguments": json.dumps(block.input)
                         }
                     })
+                    # For forced tool calls (structured output), return the input as JSON
+                    if block.name == "extract" and not content_text:
+                        content_text = json.dumps(block.input)
             
             return GenerationResponse(
                 content=content_text,

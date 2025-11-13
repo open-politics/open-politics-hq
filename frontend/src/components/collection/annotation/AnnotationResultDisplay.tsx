@@ -21,8 +21,8 @@ import {
     ResponsiveContainer,
     Legend
 } from 'recharts';
-import { HelpCircle, FileText } from 'lucide-react';
-import { getTargetKeysForScheme, getAnnotationFieldValue } from '@/lib/annotations/utils';
+import { HelpCircle, FileText, ImageIcon } from 'lucide-react';
+import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
 import { TextSpanSnippets } from '@/components/ui/highlighted-text';
 import { useAnnotationTextSpans } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { Separator } from '@/components/ui/separator';
@@ -47,13 +47,9 @@ interface SchemaField {
   config: any;
 }
 
-// Utility function to format field names for display
+// Utility function to format field names for display (now uses shared utility)
 const formatFieldNameForDisplay = (fieldName: string): string => {
-  // Remove "document." prefix if present to make field names cleaner
-  if (fieldName.startsWith('document.')) {
-    return fieldName.substring('document.'.length);
-  }
-  return fieldName;
+  return formatFieldNameUtil(fieldName).displayName;
 };
 
 // Component-level types (if needed, e.g., for props)
@@ -874,9 +870,25 @@ function SingleAnnotationResult({
                                 "flex items-center gap-1 flex-shrink-0",
                                 renderContext === 'table' ? 'text-xs text-muted-foreground' : 'text-xs text-muted-foreground font-medium'
                               )}>
-                                <span className={cn(renderContext === 'table' && 'leading-tight', "whitespace-nowrap")}>
-                                  {formatFieldNameForDisplay(schemaField.name)}:
-                                </span>
+                                {/* Show modality icon if applicable */}
+                                {(() => {
+                                  const formatted = formatFieldNameUtil(schemaField.name);
+                                  if (formatted.modality && formatted.modality !== 'document') {
+                                    return (
+                                      <span className="flex items-center gap-1">
+                                        {getModalityIcon(formatted.modality, renderContext === 'table' ? 'sm' : 'sm')}
+                                        <span className={cn(renderContext === 'table' && 'leading-tight', "whitespace-nowrap")}>
+                                          {formatted.displayName}:
+                                        </span>
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span className={cn(renderContext === 'table' && 'leading-tight', "whitespace-nowrap")}>
+                                      {formatted.displayName}:
+                                    </span>
+                                  );
+                                })()}
                               {/* Show justification tooltip - in table context only for compact/column mode */}
                               {justificationValue && (renderContext !== 'table' || compact) && (
                                   <TooltipProvider delayDuration={100}>
@@ -997,6 +1009,212 @@ function SingleAnnotationResult({
             </div>
           )}
       </div>
+  );
+};
+
+/**
+ * Component to display consolidated results from same schema but different modalities (document + image)
+ */
+interface ConsolidatedModalityViewProps {
+  results: FormattedAnnotation[];
+  schema: AnnotationSchemaRead;
+  compact?: boolean;
+  targetFieldKey?: string | null;
+  renderContext?: 'dialog' | 'table' | 'default' | 'enhanced';
+  selectedFieldKeys?: string[] | null;
+  maxFieldsToShow?: number;
+  highlightValue?: string | null;
+  asset?: AssetRead | null;
+  showAssetContent?: boolean;
+  onFieldInteraction?: (fieldKey: string, justification: any) => void;
+  activeField?: string | null;
+  onResultSelect?: (result: FormattedAnnotation) => void;
+  forceExpanded?: boolean;
+  onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
+  onLocationClick?: (location: string, fieldKey: string) => void;
+}
+
+const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
+  results,
+  schema,
+  compact = false,
+  targetFieldKey = null,
+  renderContext = 'default',
+  selectedFieldKeys = null,
+  maxFieldsToShow = 10,
+  highlightValue = null,
+  asset,
+  showAssetContent,
+  onFieldInteraction,
+  activeField,
+  onResultSelect,
+  forceExpanded = false,
+  onTimestampClick,
+  onLocationClick
+}) => {
+  // Determine which result is document vs image based on asset kind or field structure
+  const docResult = results.find(r => {
+    // First check asset kind if available
+    if (r.asset) {
+      const isDocumentAsset = r.asset.kind === 'article' || r.asset.kind === 'web' || r.asset.kind === 'text' || r.asset.kind === 'pdf';
+      if (isDocumentAsset) return true;
+      const isImageAsset = r.asset.kind === 'image' || r.asset.kind === 'image_region';
+      if (isImageAsset) return false;
+    }
+    // Fallback: check if result has document fields
+    const allKeys = getTargetKeysForScheme(schema.id, [schema]);
+    return allKeys.some(tk => {
+      const isDocField = tk.key.startsWith('document.') || (!tk.key.startsWith('per_image.') && !tk.key.startsWith('per_audio.') && !tk.key.startsWith('per_video.'));
+      return isDocField && getAnnotationFieldValue(r.value, tk.key) !== undefined;
+    });
+  }) || results[0]; // Fallback to first result
+  
+  const imgResult = results.find(r => {
+    // First check asset kind if available
+    if (r.asset) {
+      const isImageAsset = r.asset.kind === 'image' || r.asset.kind === 'image_region';
+      if (isImageAsset) return true;
+      const isDocumentAsset = r.asset.kind === 'article' || r.asset.kind === 'web' || r.asset.kind === 'text' || r.asset.kind === 'pdf';
+      if (isDocumentAsset) return false;
+    }
+    // Fallback: check if result has image fields
+    const allKeys = getTargetKeysForScheme(schema.id, [schema]);
+    return allKeys.some(tk => {
+      return tk.key.startsWith('per_image.') && getAnnotationFieldValue(r.value, tk.key) !== undefined;
+    });
+  }) || (results.length > 1 && results[0] !== docResult ? results.find(r => r !== docResult) : null);
+
+  // Get all target keys for this schema
+  const allTargetKeys = getTargetKeysForScheme(schema.id, [schema]);
+  const fieldsToDisplay = selectedFieldKeys 
+    ? allTargetKeys.filter(tk => selectedFieldKeys.includes(tk.key))
+    : allTargetKeys;
+
+  // Group fields by modality
+  const docFields: Array<{ key: string; name: string; type: string }> = [];
+  const imgFields: Array<{ key: string; name: string; type: string }> = [];
+  
+  fieldsToDisplay.forEach(field => {
+    const formatted = formatFieldNameUtil(field.key);
+    const baseName = formatted.displayName;
+    
+    const isDocField = field.key.startsWith('document.') || (!field.key.startsWith('per_image.') && !field.key.startsWith('per_audio.') && !field.key.startsWith('per_video.'));
+    const isImgField = field.key.startsWith('per_image.');
+    
+    const hasDocValue = docResult && getAnnotationFieldValue(docResult.value, field.key) !== undefined;
+    const hasImgValue = imgResult && getAnnotationFieldValue(imgResult.value, field.key) !== undefined;
+    
+    if (hasDocValue || (isDocField && docResult)) {
+      docFields.push({ key: field.key, name: baseName, type: field.type });
+    }
+    if (hasImgValue || (isImgField && imgResult)) {
+      imgFields.push({ key: field.key, name: baseName, type: field.type });
+    }
+  });
+
+  return (
+    <div className={cn("space-y-3", renderContext === 'dialog' && "space-y-2")}>
+      {/* Document modality section */}
+      {docResult && docFields.length > 0 && (
+        <div className="space-y-1.5">
+          {/* Modality header */}
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <FileText className="h-4 w-4 text-blue-600" aria-label="Document" />
+            <span>Document</span>
+          </div>
+          {/* Document fields */}
+          {docFields.map((field) => {
+            const hasValue = getAnnotationFieldValue(docResult.value, field.key) !== undefined;
+            return (
+              <div key={field.key} className="flex items-start gap-2 text-sm">
+                <div className="flex items-center gap-1.5 flex-shrink-0 min-w-[140px]">
+                  <span className="text-muted-foreground font-medium">{field.name}:</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  {hasValue ? (
+                    <div>
+                      <SingleAnnotationResult
+                        result={docResult}
+                        schema={schema}
+                        compact={true}
+                        targetFieldKey={field.key}
+                        renderContext={renderContext}
+                        selectedFieldKeys={null}
+                        maxFieldsToShow={maxFieldsToShow}
+                        highlightValue={highlightValue}
+                        asset={asset}
+                        showAssetContent={showAssetContent}
+                        onFieldInteraction={onFieldInteraction}
+                        activeField={activeField}
+                        onResultSelect={onResultSelect}
+                        forceExpanded={forceExpanded}
+                        onTimestampClick={onTimestampClick}
+                        onLocationClick={onLocationClick}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground/50 italic text-xs">N/A</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      
+      {/* Separator between modalities */}
+      {docResult && docFields.length > 0 && imgResult && imgFields.length > 0 && (
+        <Separator className="my-2" />
+      )}
+      
+      {/* Image modality section */}
+      {imgResult && imgFields.length > 0 && (
+        <div className="space-y-1.5">
+          {/* Modality header */}
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <ImageIcon className="h-4 w-4 text-green-600" aria-label="Image" />
+            <span>Image</span>
+          </div>
+          {/* Image fields */}
+          {imgFields.map((field) => {
+            const hasValue = getAnnotationFieldValue(imgResult.value, field.key) !== undefined;
+            return (
+              <div key={field.key} className="flex items-start gap-2 text-sm">
+                <div className="flex items-center gap-1.5 flex-shrink-0 min-w-[140px]">
+                  <span className="text-muted-foreground font-medium">{field.name}:</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  {hasValue ? (
+                    <div>
+                      <SingleAnnotationResult
+                        result={imgResult}
+                        schema={schema}
+                        compact={true}
+                        targetFieldKey={field.key}
+                        renderContext={renderContext}
+                        selectedFieldKeys={null}
+                        maxFieldsToShow={maxFieldsToShow}
+                        highlightValue={highlightValue}
+                        asset={asset}
+                        showAssetContent={showAssetContent}
+                        onFieldInteraction={onFieldInteraction}
+                        activeField={activeField}
+                        onResultSelect={onResultSelect}
+                        forceExpanded={forceExpanded}
+                        onTimestampClick={onTimestampClick}
+                        onLocationClick={onLocationClick}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground/50 italic text-xs">N/A</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -1148,6 +1366,34 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
         <SingleAnnotationResult
           result={singleResult}
           schema={singleSchema}
+          compact={compact}
+          targetFieldKey={targetFieldKey}
+          renderContext={renderContext}
+          selectedFieldKeys={selectedFieldKeys}
+          maxFieldsToShow={maxFieldsToShow}
+          highlightValue={highlightValue}
+          asset={asset}
+          showAssetContent={showAssetContent}
+          onFieldInteraction={onFieldInteraction}
+          activeField={activeField}
+          onResultSelect={onResultSelect}
+          forceExpanded={forceExpanded}
+          onTimestampClick={onTimestampClick}
+          onLocationClick={onLocationClick}
+        />
+      );
+    }
+    
+    // Check if all results have the same schema_id (consolidated modality results)
+    const firstSchemaId = validResultsWithSchemas[0].schema.id;
+    const allSameSchema = validResultsWithSchemas.every(item => item.schema.id === firstSchemaId);
+    
+    if (allSameSchema && validResultsWithSchemas.length === 2) {
+      // This is likely consolidated modality results (document + image)
+      return (
+        <ConsolidatedModalityView
+          results={validResultsWithSchemas.map(item => item.result)}
+          schema={validResultsWithSchemas[0].schema}
           compact={compact}
           targetFieldKey={targetFieldKey}
           renderContext={renderContext}

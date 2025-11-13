@@ -1,6 +1,10 @@
 import { AnnotationSchemaRead } from "@/client";
 import { JsonSchemaType, FormattedAnnotation, Asset } from "./types";
 import { AnnotationRead as ClientAnnotationRead } from "@/client";
+import { ImageIcon, Music, Video } from "lucide-react";
+
+import React from "react";
+import { cn } from "@/lib/utils";
 
 // --- START: Types and functions moved from AnnotationResultFilters.tsx ---
 
@@ -543,4 +547,128 @@ export const renderValueInput = (
     // It will be moved to the UnifiedFilterControls component.
     return null;
 };
-// --- END: Functions moved from AnnotationResultFilters.tsx --- 
+// --- END: Functions moved from AnnotationResultFilters.tsx ---
+
+// --- Multimodal Field Display Utilities ---
+
+/**
+ * Extract modality type from field name
+ */
+export const getModalityFromFieldName = (fieldName: string): 'document' | 'image' | 'audio' | 'video' | null => {
+  if (fieldName.startsWith('document.')) return 'document';
+  if (fieldName.startsWith('per_image.')) return 'image';
+  if (fieldName.startsWith('per_audio.')) return 'audio';
+  if (fieldName.startsWith('per_video.')) return 'video';
+  return null;
+};
+
+/**
+ * Get modality icon component
+ */
+export const getModalityIcon = (
+  modality: 'image' | 'audio' | 'video', 
+  size: 'sm' | 'md' = 'sm',
+  className?: string
+): React.ReactNode => {
+  const sizeClass = size === 'sm' ? 'h-3 w-3' : 'h-4 w-4';
+  
+  switch (modality) {
+    case 'image':
+      return React.createElement(ImageIcon, {
+        className: cn(sizeClass, "text-purple-600", className),
+        'aria-label': "Image field"
+      });
+    case 'audio':
+      return React.createElement(Music, {
+        className: cn(sizeClass, "text-teal-600", className),
+        'aria-label': "Audio field"
+      });
+    case 'video':
+      return React.createElement(Video, {
+        className: cn(sizeClass, "text-orange-600", className),
+        'aria-label': "Video field"
+      });
+  }
+};
+
+/**
+ * Format field name for display by removing prefixes and returning metadata
+ */
+export interface FormattedFieldName {
+  displayName: string;
+  modality: 'document' | 'image' | 'audio' | 'video' | null;
+  fullPath: string; // Original field name for reference
+}
+
+export const formatFieldNameForDisplay = (fieldName: string): FormattedFieldName => {
+  const modality = getModalityFromFieldName(fieldName);
+  
+  let displayName = fieldName;
+  
+  // Remove document. prefix
+  if (fieldName.startsWith('document.')) {
+    displayName = fieldName.substring('document.'.length);
+  }
+  // Remove per_image. prefix
+  else if (fieldName.startsWith('per_image.')) {
+    displayName = fieldName.substring('per_image.'.length);
+  }
+  // Remove per_audio. prefix
+  else if (fieldName.startsWith('per_audio.')) {
+    displayName = fieldName.substring('per_audio.'.length);
+  }
+  // Remove per_video. prefix
+  else if (fieldName.startsWith('per_video.')) {
+    displayName = fieldName.substring('per_video.'.length);
+  }
+  
+  return {
+    displayName,
+    modality,
+    fullPath: fieldName
+  };
+};
+
+/**
+ * Group fields by modality for enhanced display
+ */
+export interface FieldGroup {
+  modality: 'document' | 'image' | 'audio' | 'video' | 'other';
+  fields: Array<{ name: string; type: string; description: string; config: any }>;
+}
+
+export const groupFieldsByModality = (
+  fields: Array<{ name: string; type: string; description: string; config: any }>
+): FieldGroup[] => {
+  const groups: Record<string, FieldGroup['fields']> = {
+    document: [],
+    image: [],
+    audio: [],
+    video: [],
+    other: []
+  };
+  
+  fields.forEach(field => {
+    const formatted = formatFieldNameForDisplay(field.name);
+    
+    if (formatted.modality === 'document') {
+      groups.document.push({ ...field, name: formatted.displayName });
+    } else if (formatted.modality === 'image') {
+      groups.image.push({ ...field, name: formatted.displayName });
+    } else if (formatted.modality === 'audio') {
+      groups.audio.push({ ...field, name: formatted.displayName });
+    } else if (formatted.modality === 'video') {
+      groups.video.push({ ...field, name: formatted.displayName });
+    } else {
+      groups.other.push(field);
+    }
+  });
+  
+  // Return only non-empty groups
+  return (['document', 'image', 'audio', 'video', 'other'] as const)
+    .filter(modality => groups[modality].length > 0)
+    .map(modality => ({
+      modality,
+      fields: groups[modality]
+    }));
+}; 
