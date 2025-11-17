@@ -49,6 +49,8 @@ export interface UseIntelligenceChatOptions {
   temperature?: number
   max_tokens?: number
   thinking_enabled?: boolean
+  tools_enabled?: boolean  // Enable/disable tool calls (default: true)
+  tools?: Array<Record<string, unknown>>  // Tools to use for the chat
   stream?: boolean
   conversation_id?: number  // Optional: Save messages to this conversation
   auto_save?: boolean  // Optional: Automatically save messages to conversation history
@@ -106,6 +108,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         temperature: customOptions?.temperature ?? options.temperature,
         max_tokens: customOptions?.max_tokens || options.max_tokens,
         thinking_enabled: customOptions?.thinking_enabled || options.thinking_enabled || false,
+        tools_enabled: customOptions?.tools_enabled ?? options.tools_enabled ?? true,
         api_keys: apiKeys && Object.keys(apiKeys).length > 0 ? apiKeys : undefined,
         conversation_id: customOptions?.conversation_id ?? options.conversation_id,
         auto_save: customOptions?.auto_save ?? options.auto_save ?? false,

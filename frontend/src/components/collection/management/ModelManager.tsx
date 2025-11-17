@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -58,11 +58,11 @@ export default function ModelManager({ showModels = true, className = '', showPr
     setSelection('llm', { providerId: provider });
   };
   
-  const setSelectedModel = (model: string) => {
+  const setSelectedModel = useCallback((model: string) => {
     if (selectedProvider) {
       setSelection('llm', { providerId: selectedProvider, modelId: model });
     }
-  };
+  }, [selectedProvider, setSelection]);
   
   const [providers, setProviders] = useState<Provider[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);

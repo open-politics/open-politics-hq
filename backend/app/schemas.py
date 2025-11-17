@@ -1276,6 +1276,8 @@ class ChatRequest(SQLModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     thinking_enabled: bool = False
+    tools_enabled: bool = True  # Enable/disable tool calls (default: True for backward compatibility)
+    tools: Optional[List[Dict[str, Any]]] = None  # Tools to use for the chat
     api_keys: Optional[Dict[str, str]] = None  # Runtime API keys for providers (e.g., {"tavily": "key", "openai": "key"})
     conversation_id: Optional[int] = None  # Optional: Save messages to this conversation
     auto_save: bool = False  # Optional: Automatically save messages to conversation history

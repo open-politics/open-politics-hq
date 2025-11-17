@@ -8,7 +8,7 @@ WORKDIR /app
 # Note: We copy these first to leverage Docker cache for dependencies
 COPY package.json package-lock.json* ./
 
-# Copy the rest of your app's source code BEFORE installing dependencies
+# Copy the rest of your app's source code
 COPY . .
 
 # Install dependencies based on the copied package.json and lock file
@@ -18,4 +18,4 @@ RUN bun i
 EXPOSE 3000
 
 # Command to run the app in development mode
-CMD ["bun", "run", "next", "dev", "--turbo"]
+CMD ["bun", "run", "dev", "--turbo"]

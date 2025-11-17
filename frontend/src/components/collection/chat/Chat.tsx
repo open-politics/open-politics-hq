@@ -90,6 +90,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [temperature, setTemperature] = useState<string>('')
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(true)
   const [streamEnabled, setStreamEnabled] = useState<boolean>(true)
+  const [toolsEnabled, setToolsEnabled] = useState<boolean>(true)
+  const [tools, setTools] = useState<Tool[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Conversation management state
@@ -1176,6 +1178,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       model_name: selectedModel,
       temperature: Number.isFinite(tempNum as number) ? (tempNum as number) : undefined,
       thinking_enabled: thinkingEnabled,
+      tools_enabled: toolsEnabled,
       stream: streamEnabled,
       conversation_id: conversationIdToUse || undefined,
       auto_save: true,
@@ -1651,6 +1654,27 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Enable reasoning trace</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setToolsEnabled(!toolsEnabled)}
+                        className={cn(
+                          "px-2 sm:px-2.5 py-0.5 rounded text-[10px] sm:text-xs font-medium transition-colors whitespace-nowrap",
+                          toolsEnabled 
+                            ? "bg-primary text-primary-foreground" 
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Tools
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Enable tool calls (search, analyze, etc.)</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

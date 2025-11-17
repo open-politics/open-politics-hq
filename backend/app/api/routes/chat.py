@@ -257,6 +257,8 @@ async def intelligence_chat(
                     infospace_id=request.infospace_id,
                     stream=True,
                     thinking_enabled=request.thinking_enabled,
+                    tools_enabled=request.tools_enabled,
+                    tools=request.tools,
                     api_keys=request.api_keys,
                     conversation_id=request.conversation_id,
                     **kwargs
@@ -319,6 +321,7 @@ async def intelligence_chat(
                 infospace_id=request.infospace_id,
                 stream=False,
                 thinking_enabled=request.thinking_enabled,
+                tools_enabled=request.tools_enabled,
                 api_keys=request.api_keys,
                 conversation_id=request.conversation_id,
                 **kwargs

@@ -124,6 +124,19 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                       thinking_enabled: bool = False,
                       tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
+        """
+        Generate response using Ollama API.
+        
+        Supports image inputs via media_inputs in kwargs:
+        - media_inputs: List of dicts with {type: "image", content: bytes, mime_type: str}
+        - Images are added to the last user message in Ollama's format
+        """
+        # Extract media_inputs from kwargs
+        media_inputs = kwargs.pop("media_inputs", [])
+        if media_inputs:
+            logger.info(f"Processing {len(media_inputs)} media inputs for Ollama")
+            # Process images and add to messages
+            messages = self._prepare_messages_with_media(messages, media_inputs)
         
         # Tools with executor: implement tool loop (both streaming and non-streaming)
         if tools and tool_executor:
@@ -211,6 +224,109 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             return self._stream_generate(payload)
         else:
             return await self._generate(payload)
+    
+    def _prepare_messages_with_media(
+        self,
+        messages: List[Dict[str, Any]],
+        media_inputs: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert text + media_inputs into Ollama message format.
+        
+        Ollama supports images in messages as base64-encoded strings in content arrays.
+        Format: {"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}, {"type": "text", "text": "..."}]}
+        
+        Args:
+            messages: Original message list
+            media_inputs: List of media items with type, content (bytes), mime_type
+            
+        Returns:
+            Updated messages list with images added to last user message
+        """
+        import base64
+        
+        if not media_inputs:
+            return messages
+        
+        # Find the last user message
+        processed_messages = list(messages)
+        last_user_idx = -1
+        for i in range(len(processed_messages) - 1, -1, -1):
+            if processed_messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+        
+        if last_user_idx == -1:
+            logger.warning("No user message found to attach images to")
+            return messages
+        
+        # Get the last user message
+        last_msg = processed_messages[last_user_idx]
+        original_content = last_msg.get("content", "")
+        
+        # Build content array for Ollama
+        content_array = []
+        
+        # Add images FIRST (similar to Anthropic best practice)
+        for media in media_inputs:
+            if media.get("type") != "image":
+                continue  # Skip non-image media for now
+            
+            # Validate media type
+            mime_type = media.get("mime_type", "image/png")
+            allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+            
+            if mime_type not in allowed_types:
+                logger.warning(f"Unsupported image type: {mime_type}, skipping (allowed: {allowed_types})")
+                continue
+            
+            # Get image bytes
+            image_bytes = media.get("content")
+            if not isinstance(image_bytes, bytes):
+                logger.warning(f"Image content is not bytes (got {type(image_bytes)}), skipping")
+                continue
+            
+            if len(image_bytes) == 0:
+                logger.warning("Image content is empty, skipping")
+                continue
+            
+            # Convert to base64
+            try:
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            except Exception as e:
+                logger.error(f"Failed to encode image to base64: {e}")
+                continue
+            
+            # Add image block (Ollama format)
+            content_array.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": image_base64
+                }
+            })
+            
+            logger.debug(f"Added image block: {mime_type}, {len(image_bytes)} bytes")
+        
+        # Add text content AFTER images
+        if isinstance(original_content, str) and original_content.strip():
+            content_array.append({
+                "type": "text",
+                "text": original_content
+            })
+        elif isinstance(original_content, list):
+            # Already content blocks - extend them
+            content_array.extend(original_content)
+        
+        # Update the last user message
+        processed_messages[last_user_idx] = {
+            **last_msg,
+            "content": content_array if content_array else original_content
+        }
+        
+        logger.info(f"Added {len([m for m in media_inputs if m.get('type') == 'image'])} images to last user message")
+        return processed_messages
     
     def _extract_tool_result_streams(self, tool_result: Any, tool_name: str) -> tuple[str, Any]:
         """
@@ -583,7 +699,29 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             should_retry_without_tools = bool(status == 400 and isinstance(payload, dict) and payload.get("tools"))
             try:
                 error_text = getattr(e.response, 'text', '') if hasattr(e, 'response') else str(e)
+                error_json = None
+                try:
+                    if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                        error_json = e.response.json()
+                except Exception:
+                    pass
+                
                 logger.error(f"Ollama API error: {getattr(e.response, 'status_code', None) if hasattr(e, 'response') else 'unknown'} - {error_text}")
+                if error_json:
+                    logger.error(f"Ollama error JSON: {json.dumps(error_json, indent=2)}")
+                
+                # Check for memory-related errors (500 with memory error message)
+                if status == 500:
+                    error_lower = (error_text or "").lower()
+                    if "memory" in error_lower or "requires more" in error_lower:
+                        model_name = payload.get("model", "the model")
+                        user_friendly_error = (
+                            f"Model '{model_name}' requires more memory than available. "
+                            f"Try: 1) Using a smaller model, 2) Increasing Docker memory limits, "
+                            f"3) Using a model with quantization (e.g., qwen3-vl:8b-q4_K_M instead of qwen3-vl:8b)"
+                        )
+                        logger.error(user_friendly_error)
+                        raise RuntimeError(user_friendly_error)
                 
                 # Log tools specifically if they're present
                 if payload.get("tools"):
@@ -595,19 +733,14 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                     logger.error(f"Error appears to be tool-related: {error_text}")
                 elif "parameter" in error_text.lower() or "schema" in error_text.lower():
                     logger.error(f"Error appears to be schema-related: {error_text}")
-                
-                # Try to get more detailed error information
-                try:
-                    if hasattr(e, 'response') and hasattr(e.response, 'json'):
-                        error_json = e.response.json()
-                        logger.error(f"Detailed error JSON: {json.dumps(error_json, indent=2)}")
-                except Exception:
-                    pass
                     
                 try:
                     logger.error(f"Full Ollama request payload: {json.dumps(payload, indent=2)}")
                 except Exception:
                     logger.error("Ollama request payload: <unserializable>")
+            except RuntimeError:
+                # Re-raise memory errors
+                raise
             except Exception:
                 logger.error("Ollama API error (unable to log payload)")
             if should_retry_without_tools:
@@ -617,6 +750,16 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                 response = await self.client.post(f"{self.base_url}/api/chat", json=retry_payload)
                 response.raise_for_status()
                 data = response.json()
+            
+            # For other 500 errors, provide more context
+            if status == 500:
+                model_name = payload.get("model", "the model")
+                raise RuntimeError(
+                    f"Ollama server error with model '{model_name}'. "
+                    f"This may be due to insufficient memory, model not found, or server issues. "
+                    f"Check Ollama logs for details. Error: {error_text or 'Unknown error'}"
+                )
+            
             raise RuntimeError(f"Ollama generation failed: {e.response.text}")
         except Exception as e:
             logger.error(f"Ollama generation error: {e}")
@@ -712,20 +855,45 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                         
         except httpx.HTTPStatusError as e:
             error_text = None
+            error_json = None
             try:
                 # Ensure the response content is read before accessing .text
                 await e.response.aread()
                 error_text = e.response.text if hasattr(e.response, 'text') else str(e)
+                # Try to parse JSON error response
+                try:
+                    error_json = e.response.json() if hasattr(e.response, 'json') else None
+                except Exception:
+                    pass
             except Exception:
                 error_text = str(e)
+            
             try:
                 logger.error(f"Ollama streaming error: {e.response.status_code} - {error_text}")
+                if error_json:
+                    logger.error(f"Ollama error JSON: {json.dumps(error_json, indent=2)}")
                 try:
                     logger.error(f"Ollama request payload: {json.dumps(payload, indent=2)}")
                 except Exception:
                     logger.error("Ollama request payload: <unserializable>")
             except Exception:
                 logger.error("Ollama streaming error (unable to log payload)")
+            
+            # Check for memory-related errors (500 with memory error message)
+            if e.response.status_code == 500:
+                # Check if error mentions memory
+                error_lower = (error_text or "").lower()
+                if "memory" in error_lower or "requires more" in error_lower:
+                    # Extract model name from payload
+                    model_name = payload.get("model", "the model")
+                    user_friendly_error = (
+                        f"Model '{model_name}' requires more memory than available. "
+                        f"Try: 1) Using a smaller model, 2) Increasing Docker memory limits, "
+                        f"3) Using a model with quantization (e.g., qwen3-vl:8b-q4_K_M instead of qwen3-vl:8b)"
+                    )
+                    logger.error(user_friendly_error)
+                    raise RuntimeError(user_friendly_error)
+            
             # Retry once without tools on 400
             if e.response.status_code == 400 and isinstance(payload, dict) and payload.get("tools"):
                 retry_payload = dict(payload)
@@ -770,6 +938,16 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                         except json.JSONDecodeError:
                             continue
                 return
+            
+            # For other 500 errors, provide more context
+            if e.response.status_code == 500:
+                model_name = payload.get("model", "the model")
+                raise RuntimeError(
+                    f"Ollama server error with model '{model_name}'. "
+                    f"This may be due to insufficient memory, model not found, or server issues. "
+                    f"Check Ollama logs for details. Error: {error_text or 'Unknown error'}"
+                )
+            
             raise RuntimeError(f"Ollama streaming failed: {error_text}")
         except Exception as e:
             logger.error(f"Ollama streaming error: {e}")

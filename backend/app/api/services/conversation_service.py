@@ -169,6 +169,8 @@ class IntelligenceConversationService:
                                thinking_enabled: bool = False,
                                api_keys: Optional[Dict[str, str]] = None,
                                conversation_id: Optional[int] = None,
+                               tools_enabled: bool = True,
+                               tools: Optional[List[Dict[str, Any]]] = None,
                                **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Intelligence analysis chat with full tool orchestration.
@@ -182,6 +184,7 @@ class IntelligenceConversationService:
             infospace_id: ID of the infospace for intelligence context
             stream: Whether to stream the response
             conversation_id: Optional conversation ID for task persistence
+            tools_enabled: Whether to enable tool calls (default: True)
             **kwargs: Additional model parameters
         
         Returns:
@@ -205,8 +208,8 @@ class IntelligenceConversationService:
         # Use model-reported capability; do not assume tools
         supports_tools = bool(getattr(model_info, "supports_tools", False))
         
-        # Only provide tools when supported
-        tools = await self.get_universal_tools(user_id, infospace_id, api_keys) if supports_tools else None
+        # Only provide tools when supported AND enabled by user
+        tools = await self.get_universal_tools(user_id, infospace_id, api_keys) if (supports_tools and tools_enabled) else None
         
         # Add system context about the infospace
         infospace = self.session.get(Infospace, infospace_id)

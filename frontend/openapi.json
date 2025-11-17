@@ -20046,6 +20046,11 @@
             "title": "Thinking Enabled",
             "default": false
           },
+          "tools_enabled": {
+            "type": "boolean",
+            "title": "Tools Enabled",
+            "default": true
+          },
           "api_keys": {
             "anyOf": [
               {
