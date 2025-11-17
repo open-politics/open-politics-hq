@@ -20051,6 +20051,21 @@
             "title": "Tools Enabled",
             "default": true
           },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          },
           "api_keys": {
             "anyOf": [
               {
