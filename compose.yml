@@ -75,39 +75,39 @@ services:
       - ./backend:/app
 
   
-  nominatim:
-    image: mediagis/nominatim:5.1
-    restart: always
-    shm_size: 4g
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 2h
-    environment:
-      # Default: World coarse (admin boundaries only - countries, states, cities)
-      # Fast download (~5GB) and import (~2h), good for global coverage
-      - PBF_URL=${NOMINATIM_PBF_URL:-https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf}
-      - REPLICATION_URL=${NOMINATIM_REPLICATION_URL:-https://planet.openstreetmap.org/replication/day/}
-      - IMPORT_STYLE=${NOMINATIM_IMPORT_STYLE:-admin}
-      - UPDATE_MODE=none
-      - FREEZE=false
-      - THREADS=4
-      - GUNICORN_WORKERS=4
-      - IMPORT_WIKIPEDIA=false
-      - IMPORT_GB_POSTCODES=true
-      - POSTGRES_SHARED_BUFFERS=2GB
-      - POSTGRES_MAINTENANCE_WORK_MEM=4GB
-      - POSTGRES_WORK_MEM=50MB
-      - POSTGRES_EFFECTIVE_CACHE_SIZE=8GB
-    volumes:
-      - nominatim-data:/var/lib/postgresql/16/main
-      - nominatim-flatnode:/nominatim/flatnode
-    networks:
-      - default
-    env_file:
-      - .env
+  # nominatim:
+  #   image: mediagis/nominatim:5.1
+  #   restart: always
+  #   shm_size: 4g
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 2h
+  #   environment:
+  #     # Default: World coarse (admin boundaries only - countries, states, cities)
+  #     # Fast download (~5GB) and import (~2h), good for global coverage
+  #     - PBF_URL=${NOMINATIM_PBF_URL:-https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf}
+  #     - REPLICATION_URL=${NOMINATIM_REPLICATION_URL:-https://planet.openstreetmap.org/replication/day/}
+  #     - IMPORT_STYLE=${NOMINATIM_IMPORT_STYLE:-admin}
+  #     - UPDATE_MODE=none
+  #     - FREEZE=false
+  #     - THREADS=4
+  #     - GUNICORN_WORKERS=4
+  #     - IMPORT_WIKIPEDIA=false
+  #     - IMPORT_GB_POSTCODES=true
+  #     - POSTGRES_SHARED_BUFFERS=2GB
+  #     - POSTGRES_MAINTENANCE_WORK_MEM=4GB
+  #     - POSTGRES_WORK_MEM=50MB
+  #     - POSTGRES_EFFECTIVE_CACHE_SIZE=8GB
+  #   volumes:
+  #     - nominatim-data:/var/lib/postgresql/16/main
+  #     - nominatim-flatnode:/nominatim/flatnode
+  #   networks:
+  #     - default
+  #   env_file:
+  #     - .env
     # Override in .env for detailed regions:
     # Europe detailed:     NOMINATIM_PBF_URL=https://download.geofabrik.de/europe-latest.osm.pbf NOMINATIM_IMPORT_STYLE=address
     # North America:       NOMINATIM_PBF_URL=https://download.geofabrik.de/north-america-latest.osm.pbf NOMINATIM_IMPORT_STYLE=address
@@ -117,8 +117,8 @@ services:
 volumes:
   app-db-data:
   redis_data:
-  nominatim-data:
-  nominatim-flatnode:
+  # nominatim-data:
+  # nominatim-flatnode:
 
 networks:
   default:
