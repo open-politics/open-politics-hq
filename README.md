@@ -194,7 +194,7 @@ This means you can use, modify, and distribute this software, but any modificati
 
 ## Project Origins & Story
 
-This project started at Freie Universität Berlin's Political Science department. The gap between what research infrastructure could theoretically do and what was practically accessible to most researchers was obvious. Someone had to build the bridge. Our first official funding came from the European Horizon NGI Search project, and before that we were lucky to have a warm circle of friends and early supporters who believed in the idea before there was much to show. No venture capital, just journalists and neighbours who got it.
+This project started at Freie Universität Berlin's Political Science department. The gap between what research infrastructure could theoretically do and what was practically accessible to most researchers was obvious. We were in need of better bridge to apply our methodical lenses. Our first official funding came from the European Horizon NGI Search project, and before that we were lucky to have a warm circle of friends and early supporters who believed in the idea before there was much to show. No venture capital, just journalists and neighbours who got it.
 
 The business model is intentionally simple: we'll try to keep a free hosted version running as much as we can shoulder, but hosting HQ is rather cheap as most of the cost comes from LLMs. We focus on helping organisations deploy and use the platform effectively: infrastructure orchestration, custom implementations, training. The platform itself always stays open source and self hostable.
 
