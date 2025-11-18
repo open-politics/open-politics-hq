@@ -154,7 +154,7 @@ The platform is built from several independent services that work together. You 
 | **Database** | Data storage with vector search | PostgreSQL + PGVector |
 | **Object Storage** | File storage for uploads | MinIO (S3-compatible) |
 | **Cache/Queue** | Session management, job queues | Redis |
-| **Geocoding** | Location extraction and mapping | Pelias |
+| **Geocoding** | Location extraction and mapping | Nominatim |
 | **LLM** (optional) | Local AI inference | Ollama |
 
 ### LLM Support
