@@ -25,14 +25,7 @@ from sqlalchemy_celery_beat.models import ModelBase as CeleryBeatModelBase # Imp
 # Combine your app's metadata with the Celery Beat metadata
 target_metadata = [SQLModel.metadata, CeleryBeatModelBase.metadata]
 
-# Debug prints
-print("=== SQLModel Tables ===")
-for table in SQLModel.metadata.tables:
-    print(f"Found table: {table}")
-print("=== Celery Beat Tables ===")
-for table in CeleryBeatModelBase.metadata.tables:
-    print(f"Found table: {table}")
-# --- END OF ADDED SECTION ---
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

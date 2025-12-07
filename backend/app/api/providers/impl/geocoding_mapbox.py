@@ -4,6 +4,7 @@ Uses Mapbox Geocoding API with API key authentication.
 """
 import logging
 from typing import Optional, Dict, Any
+from urllib.parse import quote
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,9 @@ class MapboxGeocodingProvider:
             Geocoding result dictionary or None if not found
         """
         try:
+            # URL-encode the location for use in the path (critical for spaces, special chars)
+            encoded_location = quote(location.strip(), safe='')
+            
             # Build request parameters
             params = {
                 'access_token': self.api_key,
@@ -47,11 +51,13 @@ class MapboxGeocodingProvider:
             
             # Make request to Mapbox Geocoding API
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # Mapbox uses the search query as part of the URL path
-                url = f"{self.base_url}/{location}.json"
+                # Mapbox uses the search query as part of the URL path - MUST be URL encoded
+                url = f"{self.base_url}/{encoded_location}.json"
+                logger.info(f"Mapbox request: '{location}' -> URL: {url}")
                 response = await client.get(url, params=params)
                 response.raise_for_status()
                 data = response.json()
+                logger.info(f"Mapbox raw response for '{location}': {len(data.get('features', []))} features")
             
             # Check if we have results
             features = data.get('features', [])
@@ -67,6 +73,10 @@ class MapboxGeocodingProvider:
             # Mapbox provides place_type array (e.g., ['country'], ['city'])
             place_types = result.get('place_type', [])
             location_type = self._map_mapbox_type(place_types)
+            
+            # Log detailed result for debugging
+            logger.info(f"Mapbox result for '{location}': place_name='{result.get('place_name')}', "
+                       f"coordinates={coordinates}, type={place_types}")
             
             # Calculate area if bbox is available
             area = None
@@ -197,4 +207,3 @@ class MapboxGeocodingProvider:
             'poi': 'poi'
         }
         return type_mapping.get(place_type, 'location')
-

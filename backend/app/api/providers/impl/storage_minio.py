@@ -13,7 +13,7 @@ class MinioStorageProvider(StorageProvider):
     def __init__(self, endpoint_url: str, access_key: str, secret_key: str, bucket_name: str, use_ssl: bool):
         try:
             self.client = Minio(
-                endpoint_url,
+                endpoint=endpoint_url,
                 access_key=access_key,
                 secret_key=secret_key,
                 secure=use_ssl
@@ -27,9 +27,9 @@ class MinioStorageProvider(StorageProvider):
 
     def _ensure_bucket_exists(self):
         try:
-            found = self.client.bucket_exists(self.bucket_name)
+            found = self.client.bucket_exists(bucket_name=self.bucket_name)
             if not found:
-                self.client.make_bucket(self.bucket_name)
+                self.client.make_bucket(bucket_name=self.bucket_name)
                 logger.info(f"Bucket '{self.bucket_name}' created.")
             else:
                 logger.debug(f"Bucket '{self.bucket_name}' already exists.")
@@ -42,9 +42,9 @@ class MinioStorageProvider(StorageProvider):
             content = await file.read()
             await file.seek(0) # Reset pointer in case it needs to be read again by caller
             self.client.put_object(
-                self.bucket_name,
-                object_name,
-                io.BytesIO(content),
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+                data=io.BytesIO(content),
                 length=len(content),
                 content_type=file.content_type
             )
@@ -63,9 +63,9 @@ class MinioStorageProvider(StorageProvider):
                 guessed_content_type = 'application/octet-stream'
 
             self.client.put_object(
-                self.bucket_name,
-                object_name,
-                io.BytesIO(file_bytes),
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+                data=io.BytesIO(file_bytes),
                 length=len(file_bytes),
                 content_type=guessed_content_type
             )
@@ -76,7 +76,7 @@ class MinioStorageProvider(StorageProvider):
 
     async def get_file(self, object_name: str) -> Any: # Should return a file-like object (stream)
         try:
-            response = self.client.get_object(self.bucket_name, object_name)
+            response = self.client.get_object(bucket_name=self.bucket_name, object_name=object_name)
             logger.debug(f"Retrieved file object '{object_name}' from bucket '{self.bucket_name}'.")
             # The response itself is a stream (urllib3.response.HTTPResponse)
             return response
@@ -89,7 +89,7 @@ class MinioStorageProvider(StorageProvider):
 
     async def download_file(self, source_object_name: str, destination_local_path: str) -> None:
         try:
-            self.client.fget_object(self.bucket_name, source_object_name, destination_local_path)
+            self.client.fget_object(bucket_name=self.bucket_name, object_name=source_object_name, file_path=destination_local_path)
             logger.info(f"File '{source_object_name}' downloaded to '{destination_local_path}'.")
         except S3Error as e:
             if e.code == "NoSuchKey":
@@ -99,7 +99,7 @@ class MinioStorageProvider(StorageProvider):
 
     async def delete_file(self, object_name: str) -> None:
         try:
-            self.client.remove_object(self.bucket_name, object_name)
+            self.client.remove_object(bucket_name=self.bucket_name, object_name=object_name)
             logger.info(f"File '{object_name}' deleted from bucket '{self.bucket_name}'.")
         except S3Error as e:
             # Idempotency: if it's already gone, don't raise error, just log
@@ -112,7 +112,7 @@ class MinioStorageProvider(StorageProvider):
     def delete_file_sync(self, object_name: str) -> None:
         """Synchronous version for specific non-async contexts like cleanup."""
         try:
-            self.client.remove_object(self.bucket_name, object_name)
+            self.client.remove_object(bucket_name=self.bucket_name, object_name=object_name)
             logger.info(f"File '{object_name}' deleted synchronously from bucket '{self.bucket_name}'.")
         except S3Error as e:
             if e.code == "NoSuchKey":
@@ -124,7 +124,7 @@ class MinioStorageProvider(StorageProvider):
 
     async def list_files(self, prefix: Optional[str] = None) -> List[str]:
         try:
-            objects = self.client.list_objects(self.bucket_name, prefix=prefix, recursive=True)
+            objects = self.client.list_objects(bucket_name=self.bucket_name, prefix=prefix, recursive=True)
             return [obj.object_name for obj in objects]
         except S3Error as e:
             logger.error(f"S3Error listing files with prefix '{prefix}': {e}", exc_info=True)
@@ -133,9 +133,9 @@ class MinioStorageProvider(StorageProvider):
     async def move_file(self, source_object_name: str, destination_object_name: str) -> None:
         from minio.commonconfig import CopySource # Local import
         try:
-            copy_source = CopySource(self.bucket_name, source_object_name)
-            self.client.copy_object(self.bucket_name, destination_object_name, copy_source)
-            self.client.remove_object(self.bucket_name, source_object_name) # Delete original after copy
+            copy_source = CopySource(bucket=self.bucket_name, object=source_object_name)
+            self.client.copy_object(bucket_name=self.bucket_name, object_name=destination_object_name, source=copy_source)
+            self.client.remove_object(bucket_name=self.bucket_name, object_name=source_object_name) # Delete original after copy
             logger.info(f"File moved from '{source_object_name}' to '{destination_object_name}' in bucket '{self.bucket_name}'.")
         except S3Error as e:
             logger.error(f"S3Error moving file from '{source_object_name}' to '{destination_object_name}': {e}", exc_info=True)
@@ -145,9 +145,9 @@ class MinioStorageProvider(StorageProvider):
         from minio.commonconfig import CopySource # Local import
         src_bucket = source_bucket_name if source_bucket_name else self.bucket_name
         try:
-            copy_source = CopySource(src_bucket, source_object_name)
-            self.client.copy_object(self.bucket_name, destination_object_name, copy_source)
+            copy_source = CopySource(bucket=src_bucket, object=source_object_name)
+            self.client.copy_object(bucket_name=self.bucket_name, object_name=destination_object_name, source=copy_source)
             logger.info(f"File copied from '{src_bucket}/{source_object_name}' to '{self.bucket_name}/{destination_object_name}'.")
         except S3Error as e:
             logger.error(f"S3Error copying file from '{src_bucket}/{source_object_name}' to '{self.bucket_name}/{destination_object_name}': {e}", exc_info=True)
-            raise IOError(f"Minio copy_object failed: {e}") from e 
+            raise IOError(f"Minio copy_object failed: {e}") from e

@@ -86,7 +86,8 @@ def list_annotations(
         
         # Add filters if provided
         if source_id is not None:
-            query = query.where(Annotation.source_id == source_id)
+            # source_id parameter is actually asset_id (legacy naming)
+            query = query.where(Annotation.asset_id == source_id)
         if schema_id is not None:
             query = query.where(Annotation.schema_id == schema_id)
         
@@ -99,7 +100,8 @@ def list_annotations(
         # Get total count
         count_query = select(func.count(Annotation.id)).where(Annotation.infospace_id == infospace_id)
         if source_id is not None:
-            count_query = count_query.where(Annotation.source_id == source_id)
+            # source_id parameter is actually asset_id (legacy naming)
+            count_query = count_query.where(Annotation.asset_id == source_id)
         if schema_id is not None:
             count_query = count_query.where(Annotation.schema_id == schema_id)
         total_count = session.exec(count_query).one()

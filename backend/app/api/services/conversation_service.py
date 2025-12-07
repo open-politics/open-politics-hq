@@ -194,8 +194,9 @@ class IntelligenceConversationService:
         validate_infospace_access(self.session, infospace_id, user_id)
         
         # Create a secure context token for this conversation with API keys encoded
+        # Include model_name so MCP tools (like annotation runs) can use the chat's model
         from app.api.mcp.client import create_mcp_context_token_with_api_keys
-        context_token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys or {}, conversation_id)
+        context_token = create_mcp_context_token_with_api_keys(user_id, infospace_id, api_keys or {}, conversation_id, model_name)
         
         # Check if the model exists and get its capabilities
         model_info = await self.model_registry.get_model_info(model_name)
@@ -209,7 +210,18 @@ class IntelligenceConversationService:
         supports_tools = bool(getattr(model_info, "supports_tools", False))
         
         # Only provide tools when supported AND enabled by user
-        tools = await self.get_universal_tools(user_id, infospace_id, api_keys) if (supports_tools and tools_enabled) else None
+        # If tools are explicitly provided, use them (filtered by frontend)
+        # Otherwise, fetch all tools from MCP server
+        if supports_tools and tools_enabled:
+            if tools is not None and len(tools) > 0:
+                # Use provided tools (already filtered by frontend)
+                logger.info(f"Using {len(tools)} filtered tools provided by frontend")
+            else:
+                # Fetch all tools from MCP server
+                tools = await self.get_universal_tools(user_id, infospace_id, api_keys)
+                logger.info(f"Fetched {len(tools)} tools from MCP server")
+        else:
+            tools = None
         
         # Add system context about the infospace
         infospace = self.session.get(Infospace, infospace_id)
@@ -234,8 +246,8 @@ class IntelligenceConversationService:
                 runtime_api_keys=api_keys,
                 # Pass the context token to the provider for auth header
                 mcp_headers={"Authorization": f"Bearer {context_token}"},
-                # Pass the tool executor to the provider for non-MCP tools (includes api_keys)
-                tool_executor=lambda name, args: self.execute_tool_call(name, args, user_id, infospace_id, api_keys),
+                # Pass the tool executor to the provider for non-MCP tools (includes api_keys and conversation_id)
+                tool_executor=lambda name, args: self.execute_tool_call(name, args, user_id, infospace_id, api_keys, conversation_id),
                 **kwargs
             )
 
@@ -258,6 +270,7 @@ class IntelligenceConversationService:
                         stream=stream,
                         runtime_api_keys=api_keys,
                         mcp_headers={"Authorization": f"Bearer {context_token}"},
+                        tool_executor=lambda name, args: self.execute_tool_call(name, args, user_id, infospace_id, api_keys, conversation_id),
                         **kwargs
                     )
                 except Exception as fallback_e:
@@ -293,7 +306,8 @@ class IntelligenceConversationService:
                                arguments: Dict[str, Any],
                                user_id: int,
                                infospace_id: int,
-                               api_keys: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                               api_keys: Optional[Dict[str, str]] = None,
+                               conversation_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Execute a tool call or resource read made by the AI model using MCP.
         
@@ -307,6 +321,7 @@ class IntelligenceConversationService:
             user_id: ID of the user
             infospace_id: ID of the infospace
             api_keys: Optional runtime API keys for cloud providers
+            conversation_id: Optional conversation ID for task persistence
             
         Returns:
             Tool execution result
@@ -323,7 +338,8 @@ class IntelligenceConversationService:
                 content_ingestion_service=self.content_ingestion_service,
                 user_id=user_id,
                 infospace_id=infospace_id,
-                api_keys=api_keys  # Pass API keys to MCP client
+                api_keys=api_keys,  # Pass API keys to MCP client
+                conversation_id=conversation_id  # Pass conversation_id for task persistence
             ) as mcp_client:
                 # We no longer need to distinguish between tool execution and resource reading,
                 # as all capabilities are now exposed as tools.
@@ -637,20 +653,54 @@ Common operations
 4. Organize: organize(operation="create", name="...", asset_ids=[...])
 5. Web: search_web() → ingest_urls() (two-step: search, then save selections)
 
+Efficient navigation patterns (CRITICAL - prevents iteration limits):
+• SEARCH FIRST, don't walk the tree: navigate(resource="assets", mode="search", query="topic", depth="previews")
+• Direct bundle access: navigate(mode="view", node_id="bundle-123", depth="previews") to see contents
+• Batch operations: tasks(operation="batch", actions=[...]) instead of individual calls
+• Plan minimal sequence: Search → Batch → Update (3-4 calls total)
+
+⚠️ NEVER use depth="full" for search/list - use "previews" for browsing, "full" only when editing specific documents
+
+Common anti-patterns that cause iteration limits:
+❌ Multiple separate calls to explore structure (tree → view → list → load)
+❌ Individual task additions instead of batching (3 tasks = 3 calls, should be 1)
+❌ Fetching content multiple times or at wrong depth (search previews → then load full)
+❌ Not planning workflow upfront (exploring → then deciding what to do)
+
+✅ Optimal: Single search (limit=1, depth="full" when editing) → Batch tasks → Update (3 calls)
+
+Depth usage (BUDGET-AWARE):
+• depth="previews" (DEFAULT): ~125 tokens/asset - use for browsing, searching, exploring
+• depth="full" (SPARINGLY): 1k-100k+ tokens - ONLY for small specific documents you're editing
+• Never use "full" for browsing - it wastes tokens and hits limits
+
 Key principles:
 • Always use depth="previews" for browsing (efficient ~125 tokens/asset)
-• Only use depth="full" for small specific documents (can be 1k-100k+ tokens)
+• Only use depth="full" for small specific documents you're actively editing (can be 1k-100k+ tokens)
 • CSVs: navigate(mode="view") for preview, paginate with mode="list" for more
 • Track work: working_memory() avoids redundant fetches
+• Batch operations: MANDATORY - Use tasks(operation="batch") for 2+ task operations (prevents iteration limits)
 • Chain operations: Multiple tools in one response when logical
+• Direct search over tree walking: navigate(mode="search") finds bundles/assets in one call
+
+Task operations (CRITICAL):
+• Always funnel mutations through tasks(operation="batch", actions=[...]) — even single additions/updates.
+• Batch format keeps iteration count predictable (add/start/finish/cancel in one call).
+• Example: Creating 3 tasks = tasks(operation="batch", actions=[action_dict1, action_dict2, action_dict3]) = 1 call.
 
 Response style:
 • Direct and analytical
 • Use compact formats (tables over bullet lists)
-• Suggest next steps when relevant
+• Only suggest next steps if: the user is exploring/discovering, results are ambiguous, or they explicitly ask "what next?"
+• Don't explain tool usage after simple CRUD operations (create/update/delete)
 
 Tool execution: Execute tools directly without narrating your process or showing JSON arguments.
 Users see structured tool results automatically. Focus your response tokens on answering their question.
+
+General principles:
+• Trust that tool results are self-documenting
+• Reserve response tokens for insights, not narration
+• User knows the interface - only explain the unexpected
 </instructions>"""
         return context
     

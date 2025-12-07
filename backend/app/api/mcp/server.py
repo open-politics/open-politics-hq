@@ -2,78 +2,47 @@
 FastMCP Intelligence Analysis Server
 ====================================
 
-Clean, production-ready MCP server implementing elegant content separation patterns:
+Clean, production-ready MCP server implementing efficient content separation patterns.
 
-DESIGN PATTERNS:
---------------
+DESIGN PATTERNS
+---------------
 1. **ToolResult with Dual Content Streams**
-   - Traditional content: Concise summaries for model context (~200-500 chars)
-   - Structured content: Full rich data for frontend rendering
-   
+   - Traditional content: concise summaries (~200-500 chars)
+   - Structured content: full rich data for frontend rendering
+
 2. **XML Marker Pattern for Results**
-   - Model writes: <tool_results id="exec_123" format="default" />
-   - System expands: Formatted results from structured_content
-   - Benefits: 80-90% token savings, consistent formatting, rich interactivity
-   
+   - Model writes: `<tool_results id="exec_123" format="default" />`
+   - System expands marker with formatted output from structured_content
+
 3. **Preview Truncation**
-   - Asset text_content: Max 500 characters in responses
-   - Search snippets: Keep original short snippets
-   - Full content: Available in structured_content for frontend
-   
-4. **Two-Step Search Pattern**
-   - Step 1: search_web → User reviews in UI → Selects items
-   - Step 2: ingest_urls → Creates permanent assets from selections
-   - Benefit: User control, no premature asset creation
+   - Asset `text_content`: max 500 chars in responses
+   - Search snippets stay short; full text lives in structured_content
 
-ADDING NEW TOOLS:
+4. **Web Research Pipeline**
+   - Single call: `web_research(query="...", ingest_top_k=3, bundle_id=5)`
+   - Or two-phase: search → review → `web_research(ingest_urls=[...])`
+
+TOOL FAMILIES
+-------------
+- `workspace_hub`: tree/list/search + semantic search
+- `web_research`: live search with optional ingestion
+- `library_hub`: asset & collection (bundle) CRUD
+- `analysis_hub`: schemas, runs, dashboards, sharing
+- `tasks`: conversation-scoped planning (batch required)
+- `working_memory`: scratchpad for assets/findings/paths
+
+ADDING NEW TOOLS
 ----------------
-1. Use ToolResult for return value
-2. Create concise text summary (use format_* helpers)
-3. Include full data in structured_content
-4. Add tool to appropriate category section
-5. Document parameters with Field() descriptions
-6. Follow naming conventions: verb_noun (e.g., search_assets, create_bundle)
-
-Example Tool Pattern:
---------------------
-```python
-@mcp.tool
-async def example_tool(
-    param: Annotated[str, "Parameter description"],
-    ctx: Context
-) -> ToolResult:
-    \"\"\"One-line tool description.\"\"\"
-    
-    # Execute logic
-    data = await do_something(param)
-    
-    # Concise summary for model
-    summary = format_example_summary(data)
-    
-    # Full data for frontend
-    structured_data = {
-        "items": data,
-        "total": len(data),
-        "metadata": {...}
-    }
-    
-    return ToolResult(
-        content=[TextContent(type="text", text=summary)],
-        structured_content=structured_data
-    )
-```
-
-# New Method
-
-list = type[bundles, assetts
-amouont = literal[filestree, titles, titlefirst10, full]
-navigate
-xy
-z
+1. Always return `ToolResult`
+2. Keep summaries tight; stash full payload in `structured_content`
+3. Document parameters with `Annotated[...]`
+4. Follow verb_noun naming (e.g., `search_assets`, `create_bundle`)
+5. Slot the tool into the appropriate family above
 """
 
+
 import logging
-from typing import List, Optional, Any, Dict, Union
+from typing import List, Optional, Any, Dict, Union, Tuple
 from datetime import datetime, timezone
 from fastmcp import FastMCP, Context
 from fastmcp.tools.tool import ToolResult
@@ -135,6 +104,7 @@ def get_services():
     user_id = int(access_token.claims.get("sub"))
     infospace_id = access_token.claims.get("infospace_id")
     conversation_id = access_token.claims.get("conversation_id")  # Optional conversation ID
+    model_name = access_token.claims.get("model_name")  # Chat's selected model for annotation runs
 
     if not user_id or not infospace_id:
         raise PermissionError("Invalid authentication token")
@@ -165,6 +135,7 @@ def get_services():
             "user_id": user_id,
             "infospace_id": infospace_id,
             "conversation_id": conversation_id,  # Pass conversation ID to tools
+            "model_name": model_name,  # Chat's model for annotation runs
             "runtime_api_keys": api_keys,  # Use stored API keys from database
             "asset_service": asset_service,
             "annotation_service": annotation_service,
@@ -251,6 +222,67 @@ def format_bundle_summary(bundles: List[Any]) -> str:
     return f"Found {len(bundles)} bundle{'' if len(bundles) == 1 else 's'} in your infospace."
 
 
+def _extract_fields_from_output_contract(output_contract: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Extract field information from output_contract JSON schema dict."""
+    fields = []
+    
+    if not output_contract or not isinstance(output_contract, dict):
+        return fields
+    
+    # Handle JSON schema format: {"type": "object", "properties": {...}}
+    properties = output_contract.get("properties", {})
+    if not properties:
+        return fields
+    
+    def extract_from_properties(props: Dict[str, Any], prefix: str = "") -> None:
+        """Recursively extract fields from properties dict."""
+        for key, value in props.items():
+            if not isinstance(value, dict):
+                continue
+            
+            field_name = f"{prefix}.{key}" if prefix else key
+            field_type = value.get("type", "unknown")
+            field_description = value.get("description", "")
+            
+            # Add this field
+            if field_type in ["string", "integer", "number", "boolean", "array"]:
+                fields.append({
+                    "name": field_name,
+                    "type": field_type,
+                    "description": field_description
+                })
+            
+            # Recurse into nested object properties
+            if value.get("type") == "object" and value.get("properties"):
+                extract_from_properties(value["properties"], field_name)
+            
+            # Handle array of objects (per-modality patterns)
+            if value.get("type") == "array" and value.get("items", {}).get("type") == "object":
+                items_props = value.get("items", {}).get("properties", {})
+                if items_props:
+                    extract_from_properties(items_props, field_name)
+    
+    # Extract from hierarchical structure (document, per_*)
+    if "document" in properties and isinstance(properties["document"], dict):
+        doc_props = properties["document"].get("properties", {})
+        if doc_props:
+            extract_from_properties(doc_props, "document")
+    
+    # Extract from per-modality fields (per_image, per_audio, etc.)
+    for key, value in properties.items():
+        if key.startswith("per_") and isinstance(value, dict):
+            if value.get("type") == "array" and value.get("items", {}).get("type") == "object":
+                items_props = value.get("items", {}).get("properties", {})
+                if items_props:
+                    extract_from_properties(items_props, key)
+    
+    # If no hierarchical structure found, extract from flat properties
+    if not fields:
+        extract_from_properties(properties)
+    
+    return fields
+
+
 def format_schema_summary(schemas: List[Any]) -> str:
     """Format list of annotation schemas as concise summary."""
     if not schemas:
@@ -262,11 +294,33 @@ def format_schema_summary(schemas: List[Any]) -> str:
         lines.append(f"• [{schema.id}] {schema.name} (v{schema.version})")
         if schema.description:
             lines.append(f"  {truncate_text(schema.description, 100)}")
-            field_descriptions = [f"  {field.name}: {field.description}" for field in schema.output_contract.fields]
-            lines.append(f"  {field_descriptions}")
+        
+        # Extract fields from output_contract (handles both dict and object formats)
+        output_contract = schema.output_contract
+        if isinstance(output_contract, dict):
+            fields = _extract_fields_from_output_contract(output_contract)
+        elif hasattr(output_contract, 'fields'):
+            # Legacy format with OutputContract object
+            fields = [
+                {"name": f.name, "type": f.type, "description": getattr(f, 'description', '')}
+                for f in output_contract.fields
+            ]
         else:
-            field_descriptions = [f"  {field.name}: {field.description}" for field in schema.output_contract.fields]
-            lines.append(f"  {field_descriptions}")
+            fields = []
+        
+        if fields:
+            field_descriptions = [
+                f"  {field['name']}: {field['description']}" if field.get('description') 
+                else f"  {field['name']} ({field.get('type', 'unknown')})"
+                for field in fields[:10]  # Limit to first 10 fields
+            ]
+            lines.append("  Fields:")
+            lines.extend(field_descriptions)
+            if len(fields) > 10:
+                lines.append(f"  ... and {len(fields) - 10} more fields")
+        else:
+            lines.append("  (No fields defined)")
+        
         lines.append("")
     
     return "\n".join(lines)
@@ -276,79 +330,33 @@ def format_schema_summary(schemas: List[Any]) -> str:
 # CATEGORY: NAVIGATION & DISCOVERY
 # ============================================================================
 
-@mcp.tool(tags=["files", "navigation"])
-async def navigate(
+@mcp.tool(tags=["workspace", "navigation", "search"])
+async def workspace_hub(
     ctx: Context,
-    resource: Annotated[str, "Type of resource: 'files' (tree view with bundles, default), 'assets' (documents for search/load)"] = "files",
-    mode: Annotated[str, "How to access: 'tree' (show root hierarchy), 'view' (look inside a node), 'list' (browse all with pagination), 'search' (find by query), 'load' (get specific IDs by ID)"] = "tree",
-    depth: Annotated[str, """Information detail level (BUDGET-AWARE):
-    
-    'tree' - Structure only (no content, ~50-100 tokens)
-    
-    'titles' - Metadata + basic info (~100-200 tokens)
-    
-    'previews' (RECOMMENDED) - Smart excerpts for efficient browsing
-        • Text assets: First 500 chars (~125 tokens each)
-        • CSVs: First 5 rows with structure
-        • PDFs: First 2 pages summary
-        • Bundles: Contents overview
-        Token cost: ~125 tokens per asset
-    
-    'full' - Complete content (USE SPARINGLY - expensive!)
-        • Text/articles: Full text_content (can be 1k-100k+ tokens)
-        • CSVs with >20 rows: BLOCKED (use pagination instead)
-        • Large PDFs: BLOCKED (use page-by-page navigation)
-        • Bundles: Metadata only (children require separate calls)
-        
-    For large datasets, always use 'previews' or paginate with mode='list'.
-    Use 'full' only when you need complete text for a specific small document.
-    """] = "tree",
-    ids: Annotated[Optional[List[int]], "Specific resource IDs to retrieve (required when mode='load')"] = None,
-    node_id: Annotated[Optional[str], "Tree node ID to view (format: 'bundle-123' or 'asset-456', required when mode='view')"] = None,
-    query: Annotated[Optional[str], "Search terms to find resources (required when mode='search')"] = None,
-    search_method: Annotated[str, "Search approach: 'hybrid' (keyword + semantic), 'semantic' (meaning-based), 'text' (exact keyword matching)"] = "hybrid",
-    filters: Annotated[Optional[Dict[str, Any]], "Additional constraints (e.g., {'asset_kinds': ['pdf', 'web'], 'parent_asset_id': 123, 'bundle_id': 456})"] = None,
-    limit: Annotated[Optional[int], "Maximum items to return (defaults: view=5 for containers/5 for CSVs, list=50, search=30)"] = None,
-    offset: Annotated[int, "Number of items to skip (for pagination)"] = 0,
+    mode: Annotated[str, "Action: 'tree' (browse structure), 'view' (see children/content), 'search' (keyword), 'semantic' (concept search), 'load' (fetch by ID), 'open' (open asset in detail view)"] = "tree",
+    query: Annotated[Optional[str], "Search query (for search/semantic modes)"] = None,
+    node_id: Annotated[Optional[str], "Target ID for view mode (e.g. 'bundle-123', 'asset-456')"] = None,
+    ids: Annotated[Optional[List[int]], "Asset IDs to load (for load mode)"] = None,
+    asset_id: Annotated[Optional[int], "Asset ID to open (for open mode)"] = None,
+    depth: Annotated[str, "Detail level: 'tree' (structure), 'titles' (metadata), 'previews' (recommended), 'full' (complete content)"] = "previews",
+    resource: Annotated[Optional[str], "Override target: 'files' (bundles) or 'assets' (documents). Auto-detected by mode if omitted."] = None,
+    semantic_queries: Annotated[Optional[List[str]], "Multiple angles for semantic search"] = None,
+    search_method: Annotated[str, "Search approach: 'hybrid', 'semantic', 'text'"] = "hybrid",
+    filters: Annotated[Optional[Dict[str, Any]], "Filters: {'asset_kinds': ['pdf'], 'bundle_id': 123, 'parent_asset_id': 456}"] = None,
+    limit: Annotated[Optional[int], "Max items to return"] = None,
+    offset: Annotated[int, "Pagination offset"] = 0,
+    combine_results: Annotated[bool, "Deduplicate semantic results"] = True,
 ) -> ToolResult:
     """
-    Navigate workspace files and documents. Start with tree view, drill down as needed.
+    Unified workspace explorer. Browse, search, and load content.
     
     <quick_start>
-    See workspace structure:
-      navigate()  # Shows bundles and top-level files
-    
-    Look inside a collection or CSV:
-      navigate(mode="view", node_id="bundle-123")  # Peek inside
-      navigate(mode="view", node_id="asset-456")   # CSV: first 5 rows (df.head())
-    
-    Search for documents:
-      navigate(resource="assets", mode="search", query="climate policy")
-    
-    Load specific documents by ID:
-      navigate(resource="assets", mode="load", ids=[123, 124], depth="previews")
+    • Browse: workspace_hub() or workspace_hub(mode="view", node_id="bundle-123")
+    • Search: workspace_hub(mode="search", query="budget report")
+    • Semantic: workspace_hub(mode="semantic", query="implications of tax changes")
+    • Load: workspace_hub(mode="load", ids=[123], depth="full")
+    • Open: workspace_hub(mode="open", asset_id=123) - opens asset in detail panel
     </quick_start>
-    
-    <modes>
-    tree (default): Root hierarchy (~50-100 tokens)
-    view: Peek inside node (~200-500 tokens)
-    list: Browse all with pagination (limit=50 default)
-    search: Find by query (limit=30 default)
-    load: Get specific IDs
-    </modes>
-    
-    <depth_parameter>
-    tree: Structure only (no content)
-    titles: Metadata + basic info
-    previews: Smart excerpts - RECOMMENDED (~125 tokens each)
-    full: Complete content - USE SPARINGLY, can be 1k-100k+ tokens
-         ⚠️ Blocked for containers with >20 children - use pagination instead
-    </depth_parameter>
-    
-    <token_budget>
-    Always use depth='previews' for browsing. Only use depth='full' for small specific documents.
-    For large CSVs/PDFs: navigate(mode="view") for preview, then paginate with mode="list".
-    </token_budget>
     """
     with get_services() as services:
         validate_infospace_access(
@@ -357,15 +365,33 @@ async def navigate(
             services["user_id"]
         )
         
-        await ctx.info(f"Navigate: resource={resource}, mode={mode}, depth={depth}")
+        # Auto-detect resource if not specified
+        if not resource:
+            if mode in ["search", "semantic", "load"]:
+                resource = "assets"
+            else:
+                resource = "files"
+                
+        # Extract convenient filter args if passed in filters dict
+        asset_kinds = filters.get("asset_kinds") if filters else None
+        bundle_id = filters.get("bundle_id") if filters else None
+        parent_asset_id = filters.get("parent_asset_id") if filters else None
+        date_from = filters.get("date_from") if filters else None
+        date_to = filters.get("date_to") if filters else None
+
+        await ctx.info(f"Hub: mode={mode}, resource={resource}, query={query}")
         
         # BUDGET PROTECTION: Interactive elicitation for expensive depth='full' operations on large containers
         if depth == "full" and mode == "load" and ids:
             from app.models import Asset
+            from sqlmodel import select
             for asset_id in ids:
                 asset = services["session"].get(Asset, asset_id)
                 if asset and asset.infospace_id == services["infospace_id"] and asset.is_container:
-                    child_count = asset.child_asset_count or 0
+                    # Query child count (Asset doesn't have child_asset_count attribute)
+                    child_count = len(services["session"].exec(
+                        select(Asset.id).where(Asset.parent_asset_id == asset_id)
+                    ).all())
                     if child_count > 20:  # Conservative budget limit
                         estimated_tokens = child_count * 125  # Rough estimate
                         
@@ -456,15 +482,14 @@ async def navigate(
                                          f"Loading with depth='full' would use approximately {estimated_tokens:,} tokens.\n\n"
                                          f"📊 Recommended alternatives:\n\n"
                                          f"1. Quick preview:\n"
-                                         f"   navigate(mode='view', node_id='asset-{asset_id}')\n\n"
+                                         f"   workspace_hub(mode='view', node_id='asset-{asset_id}')\n\n"
                                          f"2. Paginated access:\n"
-                                         f"   navigate(resource='assets', mode='list', \n"
-                                         f"            filters={{'parent_asset_id': {asset_id}}}, \n"
-                                         f"            limit=50, offset=0)\n\n"
+                                         f"   workspace_hub(resource='assets', mode='list', \n"
+                                         f"                 filters={{'parent_asset_id': {asset_id}}}, \n"
+                                         f"                 limit=50, offset=0)\n\n"
                                          f"3. Query-based access:\n"
-                                         f"   semantic_search(parent_asset_id={asset_id}, \n"
-                                         f"                   query='your search terms', \n"
-                                         f"                   limit=20)"
+                                         f"   workspace_hub(mode='semantic', parent_asset_id={asset_id}, \n"
+                                         f"                 query='your search terms', limit=20)"
                                 )],
                                 structured_content={
                                     "error": "budget_protection_activated",
@@ -486,11 +511,92 @@ async def navigate(
                 effective_limit = 50
             elif mode == "search":
                 effective_limit = 30
+            elif mode == "semantic":
+                effective_limit = 10
             else:
                 effective_limit = 20  # tree/load default
         
+        effective_filters = dict(filters or {})
+        if asset_kinds:
+            effective_filters["asset_kinds"] = asset_kinds
+        if bundle_id and "bundle_id" not in effective_filters:
+            effective_filters["bundle_id"] = bundle_id
+        if parent_asset_id and "parent_asset_id" not in effective_filters:
+            effective_filters["parent_asset_id"] = parent_asset_id
+        
+        if mode == "semantic":
+            query_list = semantic_queries or ([query] if query else None)
+            if not query_list:
+                return ToolResult(
+                    content=[TextContent(type="text", text="Provide 'query' or 'semantic_queries' when mode='semantic'.")],
+                    structured_content={"error": "missing_semantic_query"}
+                )
+            
+            return await _workspace_semantic_search(
+                services=services,
+                ctx=ctx,
+                queries=query_list,
+                limit=effective_limit or 10,
+                asset_kinds=asset_kinds,
+                bundle_id=bundle_id,
+                parent_asset_id=parent_asset_id,
+                date_from=date_from,
+                date_to=date_to,
+                combine_results=combine_results
+            )
+        
+        # Open mode - returns a navigate-like result that auto-opens in the detail panel
+        if mode == "open":
+            target_asset_id = asset_id
+            # Also support extracting from node_id format
+            if not target_asset_id and node_id:
+                if node_id.startswith("asset-"):
+                    try:
+                        target_asset_id = int(node_id.split("-")[1])
+                    except (ValueError, IndexError):
+                        pass
+            # Or from ids list
+            if not target_asset_id and ids and len(ids) > 0:
+                target_asset_id = ids[0]
+                
+            if not target_asset_id:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ asset_id is required for open mode. Use: workspace_hub(mode='open', asset_id=123)")],
+                    structured_content={"error": "asset_id_required"}
+                )
+            
+            # Fetch asset info
+            from app.models import Asset
+            asset = services["session"].get(Asset, target_asset_id)
+            if not asset or asset.infospace_id != services["infospace_id"]:
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"❌ Asset {target_asset_id} not found in this infospace")],
+                    structured_content={"error": "asset_not_found", "asset_id": target_asset_id}
+                )
+            
+            await ctx.info(f"Opening asset {target_asset_id}: {asset.title}")
+            
+            # Return navigate-like structure with auto_open flag
+            # This lets the existing ConversationalAssetExplorer render it AND auto-open
+            return ToolResult(
+                content=[TextContent(type="text", text=f"📂 Opening: {asset.title}")],
+                structured_content={
+                    "resource": "assets",
+                    "mode": "open",
+                    "auto_open": True,
+                    "total": 1,
+                    "nodes": [{
+                        "id": f"asset-{target_asset_id}",
+                        "asset_id": target_asset_id,
+                        "type": "asset",
+                        "name": asset.title,
+                        "kind": asset.kind.value if asset.kind else "text",
+                    }]
+                }
+            )
+        
         # Tree mode is the default and most efficient way to browse
-        if mode == "tree" or (resource == "files" and mode not in ["search", "view", "expand"]):
+        if mode == "tree" or (resource == "files" and mode not in ["search", "view", "expand", "open"]):
             return await _navigate_tree_root(services, ctx)
         elif mode in ["view", "expand"]:  # Support both for backward compatibility
             if not node_id:
@@ -502,17 +608,17 @@ async def navigate(
         
         # Route to resource-specific handlers
         if resource == "assets":
-            return await _navigate_assets(services, ctx, mode, depth, ids, query, search_method, filters, effective_limit, offset)
+            return await _navigate_assets(services, ctx, mode, depth, ids, query, search_method, effective_filters, effective_limit, offset)
         elif resource == "files":
             # Default to tree mode
             return await _navigate_tree_root(services, ctx)
         else:
             # Unsupported resources: bundles (use tree), schemas (use annotation UI), runs (use annotation UI)
             return ToolResult(
-                content=[TextContent(type="text", text=f"Resource '{resource}' not supported. Use navigate() for files/bundles, or the annotation UI for schemas/runs.")],
+                content=[TextContent(type="text", text=f"Resource '{resource}' not supported. Use workspace_hub() for files/bundles, or the annotation UI for schemas/runs.")],
                 structured_content={
                     "error": f"unsupported resource: {resource}",
-                    "hint": "Use navigate() for tree view, navigate(mode='view', node_id='...') to explore"
+                    "hint": "Use workspace_hub() for tree view, workspace_hub(mode='view', node_id='...') to explore"
                 }
             )
 
@@ -595,8 +701,8 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
     if len(tree_nodes) > 10:
         summary_lines.append(f"\n... {len(tree_nodes) - 10} more items")
     
-    summary_lines.append(f"\n💡 Use navigate(mode='view', node_id='bundle-X') to look inside a bundle")
-    summary_lines.append(f"💡 Use navigate(mode='view', node_id='asset-Y') to preview a CSV's data")
+    summary_lines.append(f"\n💡 Use workspace_hub(mode='view', node_id='bundle-X') to look inside a bundle")
+    summary_lines.append(f"💡 Use workspace_hub(mode='view', node_id='asset-Y') to preview a CSV's data")
     
     # Convert nodes to dicts for structured_content
     nodes_data = []
@@ -831,7 +937,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
     
     # Add helpful hint for CSVs about getting full data
     if node_type == "asset" and parent_entity and parent_entity.kind and parent_entity.kind.value == 'csv':
-        summary_lines.append(f"\n→ To work with full data: navigate(resource='assets', mode='load', ids=[{node_numeric_id}], depth='full')")
+        summary_lines.append(f"\n→ To work with full data: workspace_hub(resource='assets', mode='load', ids=[{node_numeric_id}], depth='full')")
     
     # Convert nodes to dicts
     nodes_data = []
@@ -893,6 +999,12 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         
     elif mode == "search" and query:
         # Search assets
+        # Allow depth="full" when limit=1 (single-document workflow optimization)
+        if depth == "full" and limit and limit > 1:
+            await ctx.info(f"⚠️ Using depth='full' for search with limit > 1 is expensive. Consider depth='previews' for browsing, or use limit=1 for single-document editing workflow.")
+        elif depth == "full" and (not limit or limit == 1):
+            await ctx.info(f"✓ Using depth='full' with limit=1 for single-document editing workflow")
+        
         asset_kinds_enum = []
         if filters and filters.get("asset_kinds"):
             asset_kinds_enum = [AssetKind(kind) for kind in filters["asset_kinds"]]
@@ -918,6 +1030,10 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         
     else:
         # List all assets (rarely used, generally search is better)
+        # WARNING: depth="full" for list is wasteful - use "previews" for browsing
+        if depth == "full":
+            await ctx.info(f"⚠️ Using depth='full' for list is expensive. Consider depth='previews' for browsing, then load specific IDs with depth='full' only when editing.")
+        
         query_stmt = select(Asset).where(Asset.infospace_id == services["infospace_id"])
         
         # Apply filters
@@ -990,8 +1106,11 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
     asset_data = []
     for asset in assets:
         # Use consistent ID format with tree nodes
+        # Make asset_id prominent for immediate load operations
         item = {
-            "id": f"asset-{asset.id}",
+            "asset_id": asset.id,  # Prominent field name for easy access
+            "id": f"asset-{asset.id}",  # Tree node format
+            "numeric_id": asset.id,  # Direct numeric ID
             "type": "asset",
             "name": asset.title,
             "kind": asset.kind.value if asset.kind else "text",  # Always include kind for proper icon display
@@ -1036,7 +1155,8 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         summary_lines = [f"📄 {len(assets)} assets:\n"]
     
     for i, asset in enumerate(assets[:5], 1):
-        summary_lines.append(f"[{asset.id}] {asset.title}")
+        # Make asset ID prominent for immediate load operations
+        summary_lines.append(f"📄 Asset ID: {asset.id} | {asset.title}")
         if depth == "previews":
             preview = truncate_text(asset.text_content or "", 80)
             if preview:
@@ -1045,7 +1165,10 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
     if len(assets) > 5:
         summary_lines.append(f"\n... {len(assets) - 5} more assets")
     
-    summary_lines.append(f"\n→ Load details: navigate(resource='assets', mode='load', ids=[...], depth='full')")
+    if depth != "full":
+        summary_lines.append(f"\n→ Load full content: workspace_hub(resource='assets', mode='load', ids=[{assets[0].id if assets else '...'}], depth='full')")
+    else:
+        summary_lines.append(f"\n→ Full content loaded above")
     
     summary_text = "\n".join(summary_lines)
     return ToolResult(
@@ -1064,51 +1187,48 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
 
 
 @mcp.tool(tags=["search", "web", "ingestion"])
-async def search_web(
-    query: Annotated[str, "What to search for (e.g., 'recent climate legislation in Europe')"],
+async def web_research(
     ctx: Context,
+    query: Annotated[Optional[str], "What to search for (e.g., 'recent climate legislation in Europe')"] = None,
     provider: Annotated[str, "Search service: 'tavily' (default, recommended)"] = "tavily",
     max_results: Annotated[int, "Number of results to return (1-10 for basic, up to 50 for advanced)"] = 10,
     include_domains: Annotated[Optional[List[str]], "Only search these domains (e.g., ['gov.uk', 'parliament.uk'])"] = None,
     exclude_domains: Annotated[Optional[List[str]], "Skip these domains (e.g., ['twitter.com', 'facebook.com'])"] = None,
     search_depth: Annotated[str, "Result quality: 'basic' (faster) or 'advanced' (more thorough)"] = "basic",
+    ingest_urls: Annotated[Optional[List[str]], "List of URLs to ingest directly (can be used without search)"] = None,
+    ingest_top_k: Annotated[Optional[int], "After searching, auto-ingest the top K results (1-5 recommended)"] = None,
+    bundle_id: Annotated[Optional[int], "Collection ID to add ingested documents to"] = None,
+    scrape_content: Annotated[bool, "Extract full text content from pages (recommended: True)"] = True,
 ) -> ToolResult:
     """
-    Find new information from the web when workspace documents don't contain what you need.
+    Unified web discovery + ingestion, so you can research and capture sources in one call.
     
-    Use this to:
-    - Research current events or recent developments
-    - Find expert sources and official documents
-    - Gather diverse perspectives on a topic
-    - Locate specific facts or statistics
+    <use_cases>
+    • Search only:
+        web_research(query="2025 prorogation debates", max_results=8)
+    • Search + auto-ingest top 3 hits into a collection:
+        web_research(
+            query="just transition policy brief",
+            ingest_top_k=3,
+            bundle_id=12
+        )
+    • Direct ingestion without searching:
+        web_research(
+            ingest_urls=[
+                "https://example.com/report",
+                "https://another.org/brief"
+            ],
+            bundle_id=7
+        )
+    </use_cases>
     
-    Important: This only searches and returns results—it does NOT save anything yet.
-    After reviewing results, use ingest_urls() to save selected items as permanent documents.
+    Parameters:
+    - query: Optional. Skip it if you only want to ingest known URLs.
+    - ingest_top_k: Works only when query is provided. Pulls URLs from the ranked results list.
+    - ingest_urls: Explicit list you already trust (works with or without query).
+    - bundle_id: Logical collection to drop documents into.
     
-    <workflow>
-    Step 1 - Search:
-      search_web(query="2024 renewable energy policy EU")
-      # Returns preview of web results
-    
-    Step 2 - Review results in UI (user selects which ones matter)
-    
-    Step 3 - Save selections:
-      ingest_urls(urls=["https://example.com/doc1", "https://example.com/doc2"])
-      # Creates permanent documents from chosen results
-    </workflow>
-    
-    <examples>
-    Broad research:
-      search_web(query="carbon pricing mechanisms 2024", max_results=10)
-    
-    Targeted to trusted sources:
-      search_web(query="IPCC climate report", include_domains=["ipcc.ch", "unfccc.int"])
-    
-    Excluding noise:
-      search_web(query="vaccine efficacy studies", exclude_domains=["twitter.com", "reddit.com"])
-    </examples>
-    
-    Tip: Use search_depth="advanced" for complex topics where you need more comprehensive results.
+    Returns combined structured_content with `search` and/or `ingestion` keys depending on what ran.
     """
     with get_services() as services:
         validate_infospace_access(
@@ -1117,226 +1237,212 @@ async def search_web(
             services["user_id"]
         )
         
-        await ctx.info(f"Searching web: query='{query}', provider={provider}")
-        
-        # Normalize provider name to lowercase for registry lookup
-        provider_normalized = provider.lower()
-        
-        # Extract provider-specific API key from runtime keys
-        api_key = None
-        if services["runtime_api_keys"]:
-            if provider_normalized == 'tavily':
-                api_key = services["runtime_api_keys"].get('tavily') or services["runtime_api_keys"].get('TAVILY_API_KEY')
-            elif provider_normalized == 'opol':
-                api_key = services["runtime_api_keys"].get('opol') or services["runtime_api_keys"].get('OPOL_API_KEY')
-        
-        # Initialize search provider
-        from app.api.providers.search_registry import SearchProviderRegistryService
-        search_registry = SearchProviderRegistryService()
-        
-        try:
-            search_provider = search_registry.create_provider(provider_normalized, api_key)
-        except Exception as e:
+        if not query and not ingest_urls and not ingest_top_k:
             return ToolResult(
-                content=[TextContent(type="text", text=f"Error: Could not initialize {provider} search provider: {str(e)}")],
-                structured_content={
-                    "error": str(e),
-                    "status": "failed",
-                    "query": query,
-                    "provider": provider,
-                    "message": f"Search failed: {str(e)}"
-                }
+                content=[TextContent(type="text", text="Provide either a search query, ingest_urls, or ingest_top_k.")],
+                structured_content={"error": "missing_parameters"}
             )
         
-        # Build search parameters
-        search_params = {
-            "limit": max_results,
-            "search_depth": search_depth,
-        }
+        summary_sections: List[str] = []
+        structured_payload: Dict[str, Any] = {}
+        raw_results: List[dict] = []
         
-        if include_domains:
-            search_params['include_domains'] = include_domains
-        if exclude_domains:
-            search_params['exclude_domains'] = exclude_domains
-        
-        # Execute search
-        try:
-            raw_results = await search_provider.search(
-                query=query,
-                **search_params
-            )
-        except Exception as e:
-            logger.error(f"Search failed: {e}", exc_info=True)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"Search failed: {str(e)}")],
-                structured_content={
-                    "error": str(e),
-                    "status": "failed",
-                    "query": query,
-                    "provider": provider,
-                    "message": f"Search failed: {str(e)}",
-                    "results": [],
-                    "total_found": 0
-                }
-            )
-        
-        # Concise summary for model
-        search_items_summary = format_search_summary(raw_results, query)
-
-        # Add summary answer if available
-        summary = search_items_summary
-        if raw_results and "raw" in raw_results[0] and "summary_answer" in raw_results[0]["raw"]:
-            summary_answer = raw_results[0]["raw"]["summary_answer"]
-            summary = f"{summary_answer}\n\n{search_items_summary}"
-        
-        # Full structured data for frontend
-        search_results_data = [
-            {
-                "title": result.get("title", ""),
-                "url": result.get("url", ""),
-                "content": result.get("content", ""),  # Short snippet
-                "text_content": result.get("raw_content"),  # Full article if available
-                "score": result.get("score"),
-                "provider": provider,
-                "source_metadata": {
-                    "search_query": query,
-                    "search_provider": provider,
-                    "search_score": result.get("score"),
-                    "published_date": result.get("published_date"),
-                    "favicon": result.get("favicon"),
-                    "tavily_images": result.get("images", []),
-                }
+        if query:
+            await ctx.info(f"Searching web: query='{query}', provider={provider}")
+            provider_normalized = provider.lower()
+            
+            api_key = None
+            if services["runtime_api_keys"]:
+                if provider_normalized == 'tavily':
+                    api_key = services["runtime_api_keys"].get('tavily') or services["runtime_api_keys"].get('TAVILY_API_KEY')
+                elif provider_normalized == 'opol':
+                    api_key = services["runtime_api_keys"].get('opol') or services["runtime_api_keys"].get('OPOL_API_KEY')
+            
+            from app.api.providers.search_registry import SearchProviderRegistryService
+            search_registry = SearchProviderRegistryService()
+            
+            try:
+                search_provider = search_registry.create_provider(provider_normalized, api_key)
+            except Exception as e:
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"Error: Could not initialize {provider} search provider: {str(e)}")],
+                    structured_content={
+                        "error": str(e),
+                        "status": "failed",
+                        "query": query,
+                        "provider": provider,
+                    }
+                )
+            
+            search_params = {
+                "limit": max_results,
+                "search_depth": search_depth,
             }
-            for result in raw_results
-        ]
-        
-        await ctx.info(f"Found {len(raw_results)} results")
-        
-        return ToolResult(
-            content=[TextContent(type="text", text=summary)],
-            structured_content={
+            if include_domains:
+                search_params['include_domains'] = include_domains
+            if exclude_domains:
+                search_params['exclude_domains'] = exclude_domains
+            
+            try:
+                raw_results = await search_provider.search(
+                    query=query,
+                    **search_params
+                )
+            except Exception as e:
+                logger.error(f"Search failed: {e}", exc_info=True)
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"Search failed: {str(e)}")],
+                    structured_content={
+                        "error": str(e),
+                        "status": "failed",
+                        "query": query,
+                        "provider": provider,
+                        "results": [],
+                        "total_found": 0
+                    }
+                )
+            
+            search_items_summary = format_search_summary(raw_results, query)
+            summary_text = search_items_summary
+            if raw_results and "raw" in raw_results[0] and "summary_answer" in raw_results[0]["raw"]:
+                summary_answer = raw_results[0]["raw"]["summary_answer"]
+                summary_text = f"{summary_answer}\n\n{search_items_summary}"
+            
+            # Extract top-level images from first result's raw data (where Tavily stores them)
+            top_level_images = []
+            if raw_results and "raw" in raw_results[0]:
+                top_level_images = raw_results[0]["raw"].get("tavily_images", [])
+            
+            search_results_data = [
+                {
+                    "title": result.get("title", ""),
+                    "url": result.get("url", ""),
+                    "content": result.get("content", ""),
+                    "text_content": result.get("raw_content"),
+                    "score": result.get("score"),
+                    "provider": provider,
+                    "source_metadata": {
+                        "search_query": query,
+                        "search_provider": provider,
+                        "search_score": result.get("score"),
+                        "published_date": result.get("published_date"),
+                        "favicon": result.get("favicon"),
+                    }
+                }
+                for result in raw_results
+            ]
+            
+            await ctx.info(f"Found {len(raw_results)} results")
+            summary_sections.append(f"🔎 Web Search\n{summary_text}")
+            structured_payload["search"] = {
                 "query": query,
                 "provider": provider,
                 "results": search_results_data,
                 "total_found": len(raw_results),
-                "message": f"Found {len(raw_results)} results. Review them and use ingest_urls to save specific items."
+                "images": top_level_images,  # Top-level images from Tavily
             }
-        )
-
-
-# ============================================================================
-# CATEGORY: CONTENT INGESTION
-# ============================================================================
-
-@mcp.tool(tags=["ingestion", "content"])
-async def ingest_urls(
-    urls: Annotated[List[str], "Web addresses to save as permanent documents (e.g., ['https://example.com/article1', 'https://example.com/doc2'])"],
-    ctx: Context,
-    bundle_id: Annotated[Optional[int], "Collection ID to add these documents to (optional, can organize later)"] = None,
-    scrape_content: Annotated[bool, "Extract full text content from pages (recommended: True)"] = True,
-) -> ToolResult:
-    """
-    Convert web pages into permanent documents that become part of your workspace.
-    
-    Use this after search_web() to save selected results, or anytime you want to add specific web content to your research.
-    
-    What happens:
-    - Fetches and extracts content from each URL
-    - Creates a new document (asset) for each page
-    - Optionally adds all documents to a specified collection (bundle)
-    - Makes content searchable and available for analysis
-    
-    <workflow>
-    After web search:
-      1. search_web(query="climate policy")
-      2. User reviews results in UI
-      3. ingest_urls(urls=["url1", "url2", "url3"], bundle_id=5)
-    
-    Direct addition:
-      ingest_urls(
-        urls=["https://ipcc.ch/report-2024", "https://unfccc.int/news"],
-        bundle_id=8
-      )
-    </workflow>
-    
-    <examples>
-    Save search results to new collection:
-      organize(operation="create", name="Climate Reports 2024")
-      # Returns bundle_id: 12
-      ingest_urls(urls=["url1", "url2"], bundle_id=12)
-    
-    Add to existing collection:
-      ingest_urls(urls=["https://example.com/doc"], bundle_id=5)
-    
-    Ingest without organizing yet:
-      ingest_urls(urls=["url1", "url2"])
-      # Can add to bundle later with organize()
-    </examples>
-    
-    Note: Failed URLs are reported but don't stop processing of successful ones.
-    """
-    with get_services() as services:
-        validate_infospace_access(
-            services["session"], 
-            services["infospace_id"], 
-            services["user_id"]
-        )
         
-        await ctx.info(f"Ingesting {len(urls)} URLs (scrape={scrape_content})")
+        urls_to_ingest: List[str] = []
+        if ingest_urls:
+            urls_to_ingest.extend(ingest_urls)
+        if ingest_top_k and raw_results:
+            urls_from_results = [
+                result.get("url")
+                for result in raw_results[:ingest_top_k]
+                if result.get("url")
+            ]
+            urls_to_ingest.extend(urls_from_results)
+            if urls_from_results:
+                await ctx.info(f"Auto-ingesting top {len(urls_from_results)} results")
         
-        created_assets = []
-        failed_urls = []
+        ingestion_structured = None
+        if urls_to_ingest:
+            ingest_summary, ingestion_structured = await _ingest_urls_with_services(
+                services=services,
+                ctx=ctx,
+                urls=urls_to_ingest,
+                bundle_id=bundle_id,
+                scrape_content=scrape_content
+            )
+            summary_sections.append(f"📥 Ingestion\n{ingest_summary}")
+            structured_payload["ingestion"] = ingestion_structured
         
-        for url in urls:
-            try:
-                # Use the unified ingestion service
-                assets = await services["content_ingestion_service"].ingest_content(
-                    locator=url,
-                    infospace_id=services["infospace_id"],
-                    user_id=services["user_id"],
-                    bundle_id=bundle_id,
-                    options={
-                        'scrape_immediately': scrape_content
-                    }
-                )
-                created_assets.extend(assets)
-                await ctx.info(f"✓ Ingested: {url}")
-                
-            except Exception as e:
-                logger.error(f"Failed to ingest {url}: {e}")
-                failed_urls.append(url)
-                await ctx.info(f"✗ Failed: {url}")
-        
-        # Commit the database session
-        services["session"].commit()
-        
-        # Build summary
-        summary_lines = [f"Successfully ingested {len(created_assets)} assets from {len(urls)} URLs"]
-        
-        if bundle_id:
-            summary_lines.append(f"Added to bundle #{bundle_id}")
-        
-        if failed_urls:
-            summary_lines.append(f"\nFailed to ingest {len(failed_urls)} URLs:")
-            for url in failed_urls[:3]:
-                summary_lines.append(f"  • {url}")
-            if len(failed_urls) > 3:
-                summary_lines.append(f"  ... and {len(failed_urls) - 3} more")
-        
-        summary_lines.append(f"\nCreated asset IDs: {[a.id for a in created_assets]}")
+        if not summary_sections:
+            # Should only happen if ingest_top_k requested but no search results
+            return ToolResult(
+                content=[TextContent(type="text", text="No action performed. Provide ingest_urls or a valid search query.")],
+                structured_content={"status": "noop"}
+            )
         
         return ToolResult(
-            content=[TextContent(type="text", text="\n".join(summary_lines))],
-            structured_content={
-                "assets_created": len(created_assets),
-                "asset_ids": [asset.id for asset in created_assets],
-                "urls_processed": len(urls),
-                "urls_failed": len(failed_urls),
-                "failed_urls": failed_urls,
-                "bundle_id": bundle_id,
-                "status": "success" if not failed_urls else "partial_success"
-            }
+            content=[TextContent(type="text", text="\n\n".join(summary_sections))],
+            structured_content=structured_payload
         )
+
+
+async def _ingest_urls_with_services(
+    services: Dict,
+    ctx: Context,
+    urls: List[str],
+    bundle_id: Optional[int],
+    scrape_content: bool,
+) -> Tuple[str, Dict[str, Any]]:
+    """Shared ingestion helper used by web_research."""
+    if not urls:
+        return (
+            "No URLs provided for ingestion.",
+            {"status": "noop", "assets_created": 0, "asset_ids": [], "bundle_id": bundle_id},
+        )
+    
+    await ctx.info(f"Ingesting {len(urls)} URLs (scrape={scrape_content})")
+    
+    created_assets = []
+    failed_urls = []
+    
+    for url in urls:
+        try:
+            assets = await services["content_ingestion_service"].ingest_content(
+                locator=url,
+                infospace_id=services["infospace_id"],
+                user_id=services["user_id"],
+                bundle_id=bundle_id,
+                options={
+                    'scrape_immediately': scrape_content
+                }
+            )
+            created_assets.extend(assets)
+            await ctx.info(f"✓ Ingested: {url}")
+        except Exception as e:
+            logger.error(f"Failed to ingest {url}: {e}")
+            failed_urls.append(url)
+            await ctx.info(f"✗ Failed: {url}")
+    
+    services["session"].commit()
+    
+    summary_lines = [f"Created {len(created_assets)} assets from {len(urls)} URLs"]
+    if bundle_id:
+        summary_lines.append(f"Added to bundle #{bundle_id}")
+    
+    if failed_urls:
+        summary_lines.append(f"\nFailed to ingest {len(failed_urls)} URLs:")
+        for url in failed_urls[:3]:
+            summary_lines.append(f"  • {url}")
+        if len(failed_urls) > 3:
+            summary_lines.append(f"  ... and {len(failed_urls) - 3} more")
+    
+    summary_lines.append(f"\nNew asset IDs: {[a.id for a in created_assets]}")
+    
+    structured = {
+        "assets_created": len(created_assets),
+        "asset_ids": [asset.id for asset in created_assets],
+        "urls_processed": len(urls),
+        "urls_failed": len(failed_urls),
+        "failed_urls": failed_urls,
+        "bundle_id": bundle_id,
+        "status": "success" if not failed_urls else "partial_success"
+    }
+    
+    return "\n".join(summary_lines), structured
 
 
 # @mcp.tool
@@ -1405,76 +1511,42 @@ async def ingest_urls(
 # CATEGORY: ORGANIZATION & CURATION
 # ============================================================================
 
-@mcp.tool(tags=["organization", "bundles"])
-async def organize(
-    operation: Annotated[str, "What to do: 'create' (new collection), 'add' (documents to collection), 'remove' (documents from collection), 'rename' (update collection), 'delete' (remove collection)"],
+@mcp.tool(tags=["library", "assets", "bundles"])
+async def library_hub(
     ctx: Context,
-    bundle_id: Annotated[Optional[int], "Which collection to modify (required for add/remove/rename/delete)"] = None,
-    asset_ids: Annotated[Optional[List[int]], "Document IDs to add or remove (list of integers)"] = None,
-    name: Annotated[Optional[str], "Collection name (required for create, optional for rename)"] = None,
-    description: Annotated[Optional[str], "What this collection is about (optional, helps track purpose)"] = None,
+    operation: Annotated[str, "asset.create/update/delete or collection.create/add/remove/rename/delete"] = "asset.create",
+    # Asset Creation Params
+    kind: Annotated[Optional[str], "Asset kind (article, text, web, csv_row)"] = None,
+    title: Annotated[Optional[str], "Asset title"] = None,
+    content: Annotated[Optional[str], "Text content (for article/text)"] = None,
+    url: Annotated[Optional[str], "URL (for web)"] = None,
+    row_data: Annotated[Optional[Dict[str, Any]], "Column-value pairs for csv_row"] = None,
+    
+    # Asset Update Params
+    asset_id: Annotated[Optional[int], "Asset ID (for update/delete)"] = None,
+    new_title: Annotated[Optional[str], "New title"] = None,
+    new_content: Annotated[Optional[str], "New text content"] = None,
+    updates: Annotated[Optional[Dict[str, Any]], "Raw updates dict for advanced cases"] = None,
+
+    # Collection Params
+    bundle_id: Annotated[Optional[int], "Collection ID"] = None,
+    asset_ids: Annotated[Optional[List[int]], "Assets to include"] = None,
+    name: Annotated[Optional[str], "Collection name"] = None,
+    description: Annotated[Optional[str], "Collection description"] = None,
+    
+    # Shared
+    parent_asset_id: Annotated[Optional[int], "Parent asset ID"] = None,
+    data: Annotated[Optional[Dict[str, Any]], "Legacy: raw data payload (deprecated)"] = None,
 ) -> ToolResult:
     """
-    Manage document collections (bundles). Group related documents by topic, source, or research phase.
+    Manage library content (assets and collections).
     
-    ⚠️ IMPORTANT: Bundles are LOGICAL collections (like folders/tags).
-    For PHYSICAL parent-child relationships (CSV→rows), use asset() tool instead.
-    
-    <conceptual_model>
-    Bundles are flexible, many-to-many collections:
-    - One asset can be in multiple bundles
-    - Add/remove assets anytime
-    - Doesn't affect asset structure or parent-child relationships
-    - Think: Spotify playlists (same song can be in many playlists)
-    
-    NOT for:
-    - Making CSV rows "children" of an article → That's parent-child (use asset())
-    - Structural hierarchies → Use parent_asset_id when creating assets
-    
-    Use for:
-    - Organizing by topic: "Climate Policy", "Q1 Research"
-    - Temporary working sets: "For Review", "High Priority"
-    - Project grouping: "Berlin Study", "Validation Round 1"
-    </conceptual_model>
-    
-    <operations>
-    create: Start new collection
-      organize(operation="create", name="Climate Reports", asset_ids=[1,2,3])
-      Returns bundle_id for future operations
-    
-    add: Put documents in collection
-      organize(operation="add", bundle_id=4, asset_ids=[5,6,7])
-      Can add same asset to multiple bundles
-    
-    remove: Take documents out (doesn't delete them)
-      organize(operation="remove", bundle_id=4, asset_ids=[5])
-      Assets remain in database and other bundles
-    
-    rename: Update collection details
-      organize(operation="rename", bundle_id=4, name="New Name", description="Updated desc")
-    
-    delete: Remove collection (keeps documents)
-      organize(operation="delete", bundle_id=4)
-      All assets remain, just the bundle grouping is removed
-    </operations>
-    
-    <workflow_example>
-    Task: "Organize Leipzig entries from CSV into a collection with summary article"
-    
-    1. Create bundle:
-       organize(operation="create", name="Leipzig Centers", description="Summary of Leipzig entries")
-       → Returns bundle_id: 5
-    
-    2. Create summary article:
-       asset(data={"kind": "article", "title": "Leipzig Summary", "content": "..."})
-       → Returns asset_id: 100
-    
-    3. Add article + CSV rows to bundle:
-       organize(operation="add", bundle_id=5, asset_ids=[100, 7033, 7034, 7035])
-       → All assets now logically grouped (but CSV rows still children of their CSV parent)
-    </workflow_example>
-    
-    Tip: Use collections to work with document groups without searching repeatedly.
+    <quick_start>
+    • Create Note: library_hub(operation="asset.create", kind="text", title="Idea", content="...")
+    • Save Link: library_hub(operation="asset.create", kind="web", url="https://...", title="...")
+    • Create Collection: library_hub(operation="collection.create", name="Research", asset_ids=[1,2])
+    • Add to Collection: library_hub(operation="collection.add", bundle_id=5, asset_ids=[10])
+    </quick_start>
     """
     with get_services() as services:
         validate_infospace_access(
@@ -1483,26 +1555,68 @@ async def organize(
             services["user_id"]
         )
         
-        await ctx.info(f"Organize: operation={operation}, bundle_id={bundle_id}")
+        await ctx.info(f"library_hub: operation={operation}")
         
         try:
-            if operation == "create":
+            if operation.startswith("asset."):
+                # Construct legacy 'data' dict if flattened args are used
+                effective_data = data or {}
+                
+                if operation == "asset.create":
+                    if kind: effective_data["kind"] = kind
+                    if title: effective_data["title"] = title
+                    if content: effective_data["content"] = content
+                    if url: effective_data["url"] = url
+                    if row_data: effective_data["row_data"] = row_data
+                
+                elif operation == "asset.update":
+                    if asset_id: effective_data["id"] = asset_id
+                    
+                    # Initialize updates dict if needed
+                    if "updates" not in effective_data:
+                        effective_data["updates"] = updates or {}
+                    
+                    if new_title: effective_data["updates"]["title"] = new_title
+                    if new_content: effective_data["updates"]["content"] = new_content
+                    if new_content: effective_data["updates"]["text_content"] = new_content # Handle both content/text_content
+                    
+                elif operation == "asset.delete":
+                    if asset_id: effective_data["id"] = asset_id
+
+                # Route to handlers
+                if operation == "asset.create":
+                    if not effective_data:
+                        return ToolResult(content=[TextContent(type="text", text="❌ Missing parameters for asset.create")], structured_content={"error": "missing_params"})
+                    return await _asset_create(services, ctx, effective_data, parent_asset_id)
+                
+                if operation == "asset.update":
+                    if not effective_data:
+                        return ToolResult(content=[TextContent(type="text", text="❌ Missing parameters for asset.update")], structured_content={"error": "missing_params"})
+                    return await _asset_update(services, ctx, effective_data)
+                
+                if operation == "asset.delete":
+                    if not effective_data:
+                        return ToolResult(content=[TextContent(type="text", text="❌ Missing parameters for asset.delete")], structured_content={"error": "missing_params"})
+                    return await _asset_delete(services, ctx, effective_data)
+            
+            if operation == "collection.create":
                 return await _organize_create(services, ctx, name, description, asset_ids)
-            elif operation == "add":
+            if operation == "collection.add":
                 return await _organize_add(services, ctx, bundle_id, asset_ids)
-            elif operation == "remove":
+            if operation == "collection.remove":
                 return await _organize_remove(services, ctx, bundle_id, asset_ids)
-            elif operation == "rename":
+            if operation == "collection.rename":
                 return await _organize_rename(services, ctx, bundle_id, name, description)
-            elif operation == "delete":
+            if operation == "collection.delete":
                 return await _organize_delete(services, ctx, bundle_id)
-            else:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"Unknown operation: {operation}")],
-                    structured_content={"error": f"Unknown operation: {operation}"}
-                )
+            
+            return ToolResult(
+                content=[TextContent(type="text", text=f"Unknown operation: {operation}")],
+                structured_content={"error": f"Unknown operation: {operation}"}
+            )
+        
         except Exception as e:
-            logger.error(f"Organize operation failed: {e}", exc_info=True)
+            logger.error(f"library_hub operation failed: {e}", exc_info=True)
             return ToolResult(
                 content=[TextContent(type="text", text=f"Operation failed: {str(e)}")],
                 structured_content={"error": str(e), "status": "failed"}
@@ -1577,7 +1691,7 @@ async def _organize_add(services: Dict, ctx: Context, bundle_id: Optional[int],
     """Add assets to an existing bundle."""
     if not bundle_id:
         return ToolResult(
-            content=[TextContent(type="text", text="❌ Missing required parameter: bundle_id\n\nExample:\n  organize(operation='add', bundle_id=5, asset_ids=[1,2,3])\n\nTip: Use navigate() to find bundle IDs or create a new bundle with operation='create'")],
+            content=[TextContent(type="text", text="❌ Missing required parameter: bundle_id\n\nExample:\n  organize(operation='add', bundle_id=5, asset_ids=[1,2,3])\n\nTip: Use workspace_hub() to find bundle IDs or create a new bundle with operation='create'")],
             structured_content={
                 "error": "missing_required_parameter",
                 "missing_parameter": "bundle_id",
@@ -1587,7 +1701,7 @@ async def _organize_add(services: Dict, ctx: Context, bundle_id: Optional[int],
     
     if not asset_ids:
         return ToolResult(
-            content=[TextContent(type="text", text="❌ Missing required parameter: asset_ids\n\nExample:\n  organize(operation='add', bundle_id=5, asset_ids=[1,2,3])\n\nTip: Use navigate() to find asset IDs you want to add to the collection")],
+            content=[TextContent(type="text", text="❌ Missing required parameter: asset_ids\n\nExample:\n  organize(operation='add', bundle_id=5, asset_ids=[1,2,3])\n\nTip: Use workspace_hub() to find asset IDs you want to add to the collection")],
             structured_content={
                 "error": "missing_required_parameter",
                 "missing_parameter": "asset_ids",
@@ -1784,225 +1898,328 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
 # ============================================================================
 # CATEGORY: ANALYSIS & SCHEMA CREATION
 # ============================================================================
-
-@mcp.tool(tags=["analysis", "schema"])
-async def create_schema(
-    name: Annotated[str, "Schema name (e.g., 'Sentiment Analysis', 'Entity Extraction')"],
-    fields: Annotated[List[Dict[str, Any]], "List of field definitions. Each field needs: {name, type, description, required}. Types: 'string', 'number', 'boolean', 'array', 'object'"],
+async def _analysis_create_schema(
+    services: Dict,
     ctx: Context,
-    description: Annotated[Optional[str], "What this schema extracts or analyzes"] = None,
-    instructions: Annotated[Optional[str], "Custom instructions for the AI when using this schema"] = None,
+    name: str,
+    fields: List[Dict[str, Any]],
+    description: Optional[str],
+    instructions: Optional[str],
 ) -> ToolResult:
-    """
-    Create a new analysis schema that defines what information to extract from documents.
+    await ctx.info(f"Creating schema '{name}' with {len(fields)} fields")
     
-    Think of schemas as templates that tell the AI exactly what to look for and how to structure the results.
-    
-    Common use cases:
-    - Extract entities: organizations, people, locations, dates
-    - Classify content: sentiment, topics, categories
-    - Analyze patterns: arguments, evidence, claims
-    - Score documents: relevance, quality, bias
-    
-    Example fields:
-    ```python
-    [
-        {"name": "sentiment", "type": "string", "description": "Overall sentiment: positive, negative, or neutral", "required": True},
-        {"name": "confidence", "type": "number", "description": "Confidence score 0-1", "required": True},
-        {"name": "key_phrases", "type": "array", "description": "Important phrases mentioned", "required": False}
-    ]
-    ```
-    
-    Returns schema_id for use with analyze().
-    """
-    with get_services() as services:
-        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+    try:
+        # Build JSON Schema format for output_contract
+        # Follows the hierarchical convention with a top-level "document" object
+        document_properties = {}
+        required_fields = []
         
-        await ctx.info(f"Creating schema '{name}' with {len(fields)} fields")
+        for field in fields:
+            field_name = field.get("name", "unnamed_field")
+            field_type = field.get("field_type") or field.get("type", "text")
+            field_description = field.get("description", "")
+            is_required = field.get("required", True)
+            
+            # Map field_type to JSON Schema type
+            if field_type in ("list", "array"):
+                json_type = {"type": "array", "items": {"type": "string"}}
+            elif field_type in ("number", "integer", "int"):
+                json_type = {"type": "integer"}
+            elif field_type in ("float", "decimal"):
+                json_type = {"type": "number"}
+            elif field_type in ("boolean", "bool"):
+                json_type = {"type": "boolean"}
+            else:
+                # Default to string for text, str, and unknown types
+                json_type = {"type": "string"}
+            
+            # Add description if present
+            if field_description:
+                json_type["description"] = field_description
+            
+            document_properties[field_name] = json_type
+            
+            if is_required:
+                required_fields.append(field_name)
         
-        try:
-            # Build output contract from fields
-            from app.schemas import AnnotationSchemaCreate, OutputContract, FieldDefinition
-            
-            field_definitions = []
-            for field in fields:
-                field_def = FieldDefinition(
-                    name=field["name"],
-                    type=field["type"],
-                    description=field.get("description", ""),
-                    required=field.get("required", True)
-                )
-                field_definitions.append(field_def)
-            
-            output_contract = OutputContract(fields=field_definitions)
-            
-            schema_create = AnnotationSchemaCreate(
-                name=name,
-                description=description or f"Schema: {name}",
-                instructions=instructions,
-                output_contract=output_contract,
-                version="1.0.0"
-            )
-            
-            schema = services["annotation_service"].create_schema(
-                services["user_id"],
-                services["infospace_id"],
-                schema_create
-            )
-            
-            services["session"].commit()
-            
-            await ctx.info(f"Created schema #{schema.id}")
-            
-            field_summary = "\n".join([f"  • {f['name']} ({f['type']}): {f.get('description', 'No description')}" for f in fields])
-            
-            return ToolResult(
-                content=[TextContent(type="text", text=f"✅ Created schema '{name}' (ID: {schema.id})\n\nFields:\n{field_summary}\n\n→ Use analyze(asset_ids=[...], schema_id={schema.id}) to run analysis")],
-                structured_content={
-                    "schema_id": schema.id,
-                    "schema_name": schema.name,
-                    "schema_uuid": str(schema.uuid),
-                    "field_count": len(fields),
-                    "fields": fields,
-                    "status": "created"
+        # Build the full output_contract in hierarchical schema format
+        output_contract = {
+            "type": "object",
+            "properties": {
+                "document": {
+                    "type": "object",
+                    "properties": document_properties,
+                    "required": required_fields
                 }
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to create schema: {e}", exc_info=True)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Failed to create schema: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
-            )
-
-
-@mcp.tool(tags=["analysis", "execution"])
-async def analyze(
-    asset_ids: Annotated[List[int], "Document IDs to analyze (from navigate or search results)"],
-    schema_id: Annotated[int, "Schema ID defining what to extract (from create_schema or navigate schemas)"],
-    ctx: Context,
-    name: Annotated[Optional[str], "Name for this analysis run"] = None,
-    custom_instructions: Annotated[Optional[str], "Additional instructions for the AI"] = None,
-) -> ToolResult:
-    """
-    Run structured analysis on documents using a schema.
-    
-    This creates an annotation run that:
-    1. Processes each document with AI
-    2. Extracts information according to the schema
-    3. Returns structured results you can query and visualize
-    
-    The analysis runs asynchronously. Use get_run_dashboard() to check results.
-    
-    Workflow:
-    ```
-    # 1. Find documents
-    results = navigate(resource="assets", mode="search", query="climate policy")
-    
-    # 2. Create schema
-    schema = create_schema(name="Policy Analysis", fields=[...])
-    
-    # 3. Run analysis
-    run = analyze(asset_ids=[20,21,22], schema_id=schema.schema_id)
-    
-    # 4. Get results
-    dashboard = get_run_dashboard(run_id=run.run_id)
-    ```
-    """
-    with get_services() as services:
-        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+            },
+            "required": ["document"]
+        }
         
-        await ctx.info(f"Creating analysis run for {len(asset_ids)} assets with schema #{schema_id}")
+        # Use the annotation_service.create_annotation_schema method directly
+        schema = services["annotation_service"].create_annotation_schema(
+            name=name,
+            output_contract=output_contract,
+            user_id=services["user_id"],
+            infospace_id=services["infospace_id"],
+            description=description or f"Schema: {name}",
+            instructions=instructions,
+            version="1.0.0"
+        )
+        # Note: create_annotation_schema already commits
         
-        try:
-            run_name = name or f"Analysis - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
-            
-            configuration = {}
-            if custom_instructions:
-                configuration["custom_instructions"] = custom_instructions
-            
-            run_create = AnnotationRunCreate(
-                name=run_name,
-                description=f"Analysis via chat{': ' + custom_instructions if custom_instructions else ''}",
-                schema_ids=[schema_id],
-                target_asset_ids=asset_ids,
-                configuration=configuration
-            )
-            
-            run = services["annotation_service"].create_run(
-                services["user_id"],
-                services["infospace_id"],
-                run_create
-            )
-            
-            services["session"].commit()
-            
-            await ctx.info(f"Started run #{run.id}")
-            
-            return ToolResult(
-                content=[TextContent(type="text", text=f"🔬 Started analysis run '{run_name}' (ID: {run.id})\n\n📊 Analyzing {len(asset_ids)} documents with schema #{schema_id}\n\n⏳ Status: {run.status.value}\n\n→ Check results: get_run_dashboard(run_id={run.id})")],
-                structured_content={
-                    "run_id": run.id,
-                    "run_name": run.name,
-                    "run_uuid": str(run.uuid),
-                    "schema_id": schema_id,
-                    "asset_count": len(asset_ids),
-                    "status": run.status.value,
-                    "created_at": run.created_at.isoformat() if run.created_at else None
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to create analysis run: {e}", exc_info=True)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Failed to start analysis: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
-            )
-
-
-@mcp.tool(tags=["tasks", "productivity"])
-async def tasks(ctx: Context) -> ToolResult:
-    """
-    View all current tasks and their status.
-    
-    Shows:
-    - Tasks in progress (what you're working on now)
-    - Pending tasks (what's coming up)
-    - Recently completed tasks
-    
-    Tasks are stored in conversation metadata for reliable persistence.
-    
-    Use add_task() to create new tasks.
-    """
-    with get_services() as services:
-        if not services["conversation_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse add_task('description') to create your first task.")],
-                structured_content={"tasks": [], "summary": "empty"}
-            )
+        await ctx.info(f"Created schema #{schema.id}")
         
-        # Load conversation and its metadata
-        from app.models import ChatConversation
-        from sqlmodel import select
+        field_summary = "\n".join([
+            f"  • {f.get('name', 'unnamed')} ({f.get('field_type') or f.get('type', 'text')}): {f.get('description', 'No description')}" 
+            for f in fields
+        ])
         
-        conversation = services["session"].exec(
-            select(ChatConversation)
-            .where(ChatConversation.id == services["conversation_id"])
-        ).first()
-        
-        if not conversation or not conversation.conversation_metadata:
-            return ToolResult(
-                content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse add_task('description') to create your first task.")],
-                structured_content={"tasks": [], "summary": "empty"}
-            )
-        
-        tasks_list = conversation.conversation_metadata.get("tasks", [])
-        await ctx.info(f"Loaded {len(tasks_list)} tasks from conversation metadata")
-    
-    if not tasks_list:
         return ToolResult(
-            content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse add_task('description') to create your first task.")],
-            structured_content={"tasks": [], "summary": "empty"}
+            content=[TextContent(type="text", text=f"✅ Created schema '{name}' (ID: {schema.id})\n\nFields:\n{field_summary}\n\n→ Use analysis_hub(operation='run.start', schema_id={schema.id}, asset_ids=[...]) to run analysis")],
+            structured_content={
+                "schema_id": schema.id,
+                "schema_name": schema.name,
+                "schema_uuid": str(schema.uuid),
+                "field_count": len(fields),
+                "fields": fields,
+                "status": "created"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to create schema: {e}", exc_info=True)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to create schema: {str(e)}")],
+            structured_content={"error": str(e), "status": "failed"}
+        )
+
+@mcp.tool(tags=["analysis", "schema", "runs"])
+async def analysis_hub(
+    ctx: Context,
+    operation: Annotated[str, "schema.list, schema.create, run.start, run.list, run.dashboard, run.share"] = "schema.list",
+    schema_name: Annotated[Optional[str], "Required for schema.create"] = None,
+    schema_fields: Annotated[Optional[List[Dict[str, Any]]], "Field definitions for schema.create"] = None,
+    schema_description: Annotated[Optional[str], "Optional description for schema.create"] = None,
+    schema_instructions: Annotated[Optional[str], "Optional instructions for schema.create"] = None,
+    schema_id: Annotated[Optional[int], "Use with run.start/run.list filters/run.dashboard/run.share"] = None,
+    asset_ids: Annotated[Optional[List[int]], "Required for run.start"] = None,
+    run_name: Annotated[Optional[str], "Optional friendly name for run.start"] = None,
+    custom_instructions: Annotated[Optional[str], "Optional extra guidance for run.start"] = None,
+    status: Annotated[Optional[str], "Filter for run.list: pending/running/completed/failed/completed_with_errors"] = None,
+    limit: Annotated[int, "Pagination for run.list"] = 20,
+    offset: Annotated[int, "Pagination for run.list"] = 0,
+    run_id: Annotated[Optional[int], "Required for run.dashboard/run.share"] = None,
+    share_name: Annotated[Optional[str], "Optional title for run.share"] = None,
+    expiration_days: Annotated[Optional[int], "Optional expiry for run.share"] = None,
+) -> ToolResult:
+    """
+    Unified analysis control panel: create/list schemas, launch runs, list dashboards, and share results.
+    
+    <operations>
+    • schema.list .................. Show all available schemas.
+    • schema.create ................ Provide schema_name + schema_fields to add a template.
+    • run.start .................... Provide schema_id + asset_ids (optionally run_name/custom_instructions).
+    • run.list ..................... Optional filters schema_id/status plus pagination.
+    • run.dashboard ................ Provide run_id to fetch structured results.
+    • run.share .................... Provide run_id (plus optional share_name/expiration_days) for a public link.
+    """
+    with get_services() as services:
+        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        
+        await ctx.info(f"analysis_hub: operation={operation}")
+        
+        if operation == "schema.list":
+            return await _analysis_list_schemas(services, ctx)
+        
+        if operation == "schema.create":
+            if not schema_name or not schema_fields:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ schema.create requires schema_name and schema_fields")],
+                    structured_content={"error": "missing_schema_definition"}
+                )
+            return await _analysis_create_schema(
+                services=services,
+                ctx=ctx,
+                name=schema_name,
+                fields=schema_fields,
+                description=schema_description,
+                instructions=schema_instructions
+            )
+        
+        if operation == "run.start":
+            if not schema_id or not asset_ids:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ run.start requires schema_id and asset_ids")],
+                    structured_content={"error": "missing_run_parameters"}
+                )
+            return await _analysis_start_run(
+                services=services,
+                ctx=ctx,
+                asset_ids=asset_ids,
+                schema_id=schema_id,
+                name=run_name,
+                custom_instructions=custom_instructions
+            )
+        
+        if operation == "run.list":
+            return await _analysis_list_runs(
+                services=services,
+                ctx=ctx,
+                schema_id=schema_id,
+                status=status,
+                limit=limit,
+                offset=offset
+            )
+        
+        if operation == "run.dashboard":
+            if not run_id:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ run.dashboard requires run_id")],
+                    structured_content={"error": "missing_run_id"}
+                )
+            return await _analysis_get_dashboard(services, ctx, run_id)
+        
+        if operation == "run.share":
+            if not run_id:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ run.share requires run_id")],
+                    structured_content={"error": "missing_run_id"}
+                )
+            return await _analysis_share_run(
+                services=services,
+                ctx=ctx,
+                run_id=run_id,
+                name=share_name,
+                expiration_days=expiration_days
+            )
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=f"Unknown analysis operation: {operation}")],
+            structured_content={"error": f"unknown_operation:{operation}"}
+        )
+
+
+async def _analysis_start_run(
+    services: Dict,
+    ctx: Context,
+    asset_ids: List[int],
+    schema_id: int,
+    name: Optional[str],
+    custom_instructions: Optional[str],
+) -> ToolResult:
+    await ctx.info(f"Creating analysis run for {len(asset_ids)} assets with schema #{schema_id}")
+    
+    try:
+        # Validate that the assets exist in this infospace BEFORE creating the run
+        # This gives immediate feedback rather than failing in background celery task
+        valid_assets = services["asset_service"].get_assets_by_ids(
+            asset_ids, 
+            services["infospace_id"]
+        )
+        valid_asset_ids = {a.id for a in valid_assets}
+        invalid_ids = [aid for aid in asset_ids if aid not in valid_asset_ids]
+        
+        if invalid_ids:
+            invalid_str = ", ".join(str(i) for i in invalid_ids[:10])
+            if len(invalid_ids) > 10:
+                invalid_str += f"... (+{len(invalid_ids) - 10} more)"
+            
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Cannot start run: {len(invalid_ids)} asset(s) not found in this infospace: [{invalid_str}]\n\n💡 Use workspace_hub(mode='view') or workspace_hub(mode='load', ids=[...]) to verify asset IDs first.")],
+                structured_content={
+                    "error": "invalid_asset_ids",
+                    "invalid_ids": invalid_ids,
+                    "valid_ids": list(valid_asset_ids),
+                    "status": "failed"
+                }
+            )
+        
+        if not valid_assets:
+            return ToolResult(
+                content=[TextContent(type="text", text="❌ No valid assets provided for analysis run.\n\n💡 Use workspace_hub(mode='view') to browse available assets first.")],
+                structured_content={"error": "no_valid_assets", "status": "failed"}
+            )
+        
+        run_name = name or f"Analysis - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+        
+        # Use the chat's selected model for annotation runs
+        # Falls back to a sensible default if not available
+        stored_keys = services.get("runtime_api_keys", {})
+        model_name = services.get("model_name")
+        
+        if not model_name:
+            # Fallback: pick based on available stored credentials
+            if stored_keys.get("anthropic"):
+                model_name = "claude-sonnet-4-20250514"
+            elif stored_keys.get("openai"):
+                model_name = "gpt-4o"
+            elif stored_keys.get("gemini") or stored_keys.get("GOOGLE_API_KEY"):
+                model_name = "gemini-2.5-flash-preview-05-20"
+            else:
+                model_name = "qwen3:14b"  # Local Ollama fallback
+        
+        configuration = {
+            "ai_model": model_name,
+            "api_keys": stored_keys if stored_keys else None
+        }
+        if custom_instructions:
+            configuration["custom_instructions"] = custom_instructions
+        
+        await ctx.info(f"Using model: {model_name}")
+        
+        run_create = AnnotationRunCreate(
+            name=run_name,
+            description=f"Analysis via chat{': ' + custom_instructions if custom_instructions else ''}",
+            schema_ids=[schema_id],
+            target_asset_ids=list(valid_asset_ids),  # Use validated IDs
+            configuration=configuration
+        )
+        
+        run = services["annotation_service"].create_run(
+            services["user_id"],
+            services["infospace_id"],
+            run_create
+        )
+        
+        services["session"].commit()
+        
+        await ctx.info(f"Started run #{run.id}")
+        
+        # Include asset names in response for confirmation
+        asset_names = [a.title or f"Asset {a.id}" for a in valid_assets[:5]]
+        asset_summary = ", ".join(asset_names)
+        if len(valid_assets) > 5:
+            asset_summary += f"... (+{len(valid_assets) - 5} more)"
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=f"🔬 Started analysis run '{run_name}' (ID: {run.id})\n\n📊 Analyzing {len(valid_assets)} documents: {asset_summary}\n\n🤖 Model: {model_name}\n📋 Schema: #{schema_id}\n\n⏳ Status: {run.status.value}\n\n→ Check results: analysis_hub(operation='run.dashboard', run_id={run.id})")],
+            structured_content={
+                "run_id": run.id,
+                "run_name": run.name,
+                "run_uuid": str(run.uuid),
+                "schema_id": schema_id,
+                "model_name": model_name,
+                "asset_count": len(valid_assets),
+                "asset_ids": list(valid_asset_ids),
+                "status": run.status.value,
+                "created_at": run.created_at.isoformat() if run.created_at else None
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to create analysis run: {e}", exc_info=True)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to start analysis: {str(e)}")],
+            structured_content={"error": str(e), "status": "failed"}
+        )
+
+
+def _format_task_list(tasks_list: List[Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+    """Helper to format task list for display and structured content."""
+    if not tasks_list:
+        return (
+            "📝 No tasks yet.\n\nUse tasks(operation='batch', actions=[{'action': 'add', 'description': '...'}]) to create your first task.",
+            {"tasks": [], "summary": "empty"}
         )
     
     # Group by status
@@ -2031,9 +2248,9 @@ async def tasks(ctx: Context) -> ToolResult:
         for task in completed[:3]:  # Show last 3
             lines.append(f"  [{task['id']}] {task['description']}")
     
-    return ToolResult(
-        content=[TextContent(type="text", text="\n".join(lines))],
-        structured_content={
+    return (
+        "\n".join(lines),
+        {
             "tasks": tasks_list,
             "counts": {
                 "in_progress": len(in_progress),
@@ -2045,26 +2262,65 @@ async def tasks(ctx: Context) -> ToolResult:
 
 
 @mcp.tool(tags=["tasks", "productivity"])
-async def add_task(
-    description: Annotated[str, "What needs to be done (be specific)"],
+async def tasks(
     ctx: Context,
-    start_now: Annotated[bool, "Start working on it immediately"] = False
+    operation: Annotated[Optional[str], "Operation: 'view' (default) or 'batch' (execute multiple actions)"] = "view",
+    actions: Annotated[Optional[List[Dict[str, Any]]], "List of actions for batch operation: [{'action': 'add', 'description': '...'}, {'action': 'finish', 'task_id': 1}]"] = None
 ) -> ToolResult:
     """
-    Add a new task to your list.
+    View all current tasks and their status, or execute batch operations.
+    
+    ⚠️ This is the only task tool. Batch every mutation to avoid multi-call penalties.
+    
+    Common anti-patterns (CAUSES ITERATION LIMITS):
+    ❌ DON'T: Add/start/finish tasks in separate calls (view → add → view → start).
+    ❌ DON'T: Mix standalone calls with batch calls.
+    
+    ✅ DO: Plan all changes, then call `tasks(operation="batch", actions=[...])` once.
+    ✅ DO: Combine with efficient work sequence: Workspace search → tasks(batch) → library_hub update.
+    
+    Operations:
+    - 'view' (default): Show all tasks grouped by status
+    - 'batch': Execute multiple actions in one call (MANDATORY for 2+ operations to prevent iteration limits)
+    
+    Batch actions format:
+    - {"action": "add", "description": "...", "start_now": False}
+    - {"action": "start", "task_id": 1}
+    - {"action": "finish", "task_id": 1}
+    - {"action": "cancel", "task_id": 1}
+    
+    Tasks are stored in conversation metadata for reliable persistence.
+    
+    Note: Results are self-explanatory. Assistant should not repeat available operations unless user asks.
     
     Examples:
-      add_task("Refactor bundle creation to use tree_builder")
-      add_task("Add error handling to organize tool", start_now=True)
-    
-    Tasks start as 'pending' unless start_now=True.
-    Use start_task(id) to begin working on a pending task.
+      tasks()  # View all tasks
+      
+      # Create 3 tasks in ONE call:
+      tasks(operation="batch", actions=[
+          {"action": "add", "description": "Task 1"},
+          {"action": "add", "description": "Task 2"},
+          {"action": "add", "description": "Task 3"}
+      ])
+      
+      # Mixed operations in one call:
+      tasks(operation="batch", actions=[
+          {"action": "add", "description": "New task"},
+          {"action": "finish", "task_id": 1},
+          {"action": "start", "task_id": 2}
+      ])
     """
     with get_services() as services:
-        if not services["conversation_id"]:
+        conversation_id = services.get("conversation_id")
+        if not conversation_id:
             return ToolResult(
-                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
-                structured_content={"error": "No conversation_id provided"}
+                content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse tasks(operation='batch', actions=[{'action': 'add', 'description': '...'}]) to create your first task.")],
+                structured_content={"tasks": [], "summary": "empty"}
+            )
+        if not conversation_id:
+            return ToolResult(
+                content=[TextContent(type="text", text="📝 No tasks yet.\n\nUse tasks(operation='batch', actions=[{'action': 'add', 'description': '...'}]) to create your first task.")],
+                structured_content={"tasks": [], "summary": "empty"}
             )
         
         # Load conversation and its metadata
@@ -2073,257 +2329,153 @@ async def add_task(
         
         conversation = services["session"].exec(
             select(ChatConversation)
-            .where(ChatConversation.id == services["conversation_id"])
+            .where(ChatConversation.id == conversation_id)
         ).first()
         
         if not conversation:
             return ToolResult(
                 content=[TextContent(type="text", text="❌ Conversation not found")],
-                structured_content={"error": "Conversation not found"}
+                structured_content={"error": "Conversation not found", "tasks": []}
             )
         
-        # Initialize or load tasks from metadata
+        # Initialize metadata if needed
         if not conversation.conversation_metadata:
             conversation.conversation_metadata = {}
         
-        tasks = conversation.conversation_metadata.get("tasks", [])
+        tasks_list = conversation.conversation_metadata.get("tasks", [])
         
-        # Generate next task ID
-        task_id = max([t["id"] for t in tasks], default=0) + 1
+        # Handle batch operations
+        if operation == "batch" and actions:
+            results = []
+            errors = []
+            
+            for action in actions:
+                action_type = action.get("action")
+                
+                try:
+                    if action_type == "add":
+                        description = action.get("description")
+                        start_now = action.get("start_now", False)
+                        
+                        if not description:
+                            errors.append({"action": action, "error": "Missing 'description'"})
+                            continue
+                        
+                        # Generate next task ID
+                        task_id = max([t["id"] for t in tasks_list], default=0) + 1
+                        
+                        # Auto-pause other in-progress tasks if starting this one
+                        if start_now:
+                            for task in tasks_list:
+                                if task["status"] == "in_progress":
+                                    task["status"] = "pending"
+                        
+                        new_task = {
+                            "id": task_id,
+                            "description": description,
+                            "status": "in_progress" if start_now else "pending",
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        }
+                        tasks_list.append(new_task)
+                        results.append({"action": "add", "task": new_task})
+                        
+                    elif action_type == "start":
+                        task_id = action.get("task_id")
+                        if not task_id:
+                            errors.append({"action": action, "error": "Missing 'task_id'"})
+                            continue
+                        
+                        task = next((t for t in tasks_list if t["id"] == task_id), None)
+                        if not task:
+                            errors.append({"action": action, "error": f"Task {task_id} not found"})
+                            continue
+                        
+                        # Auto-pause other in-progress tasks
+                        for t in tasks_list:
+                            if t["id"] != task_id and t["status"] == "in_progress":
+                                t["status"] = "pending"
+                        
+                        task["status"] = "in_progress"
+                        if "started_at" not in task:
+                            task["started_at"] = datetime.now(timezone.utc).isoformat()
+                        results.append({"action": "start", "task": task})
+                        
+                    elif action_type == "finish":
+                        task_id = action.get("task_id")
+                        if not task_id:
+                            errors.append({"action": action, "error": "Missing 'task_id'"})
+                            continue
+                        
+                        task = next((t for t in tasks_list if t["id"] == task_id), None)
+                        if not task:
+                            errors.append({"action": action, "error": f"Task {task_id} not found"})
+                            continue
+                        
+                        task["status"] = "completed"
+                        task["completed_at"] = datetime.now(timezone.utc).isoformat()
+                        results.append({"action": "finish", "task": task})
+                        
+                    elif action_type == "cancel":
+                        task_id = action.get("task_id")
+                        if not task_id:
+                            errors.append({"action": action, "error": "Missing 'task_id'"})
+                            continue
+                        
+                        task = next((t for t in tasks_list if t["id"] == task_id), None)
+                        if not task:
+                            errors.append({"action": action, "error": f"Task {task_id} not found"})
+                            continue
+                        
+                        task["status"] = "cancelled"
+                        task["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+                        results.append({"action": "cancel", "task": task})
+                        
+                    else:
+                        errors.append({"action": action, "error": f"Unknown action: {action_type}"})
+                        
+                except Exception as e:
+                    errors.append({"action": action, "error": str(e)})
+            
+            # Save updated tasks
+            conversation.conversation_metadata["tasks"] = tasks_list
+            services["session"].add(conversation)
+            services["session"].commit()
+            
+            await ctx.info(f"Batch operation: {len(results)} succeeded, {len(errors)} failed")
+            
+            # Format response
+            content_lines = [f"📋 Batch operation: {len(results)} succeeded"]
+            if errors:
+                content_lines.append(f"⚠️ {len(errors)} errors")
+            
+            formatted_text, structured_data = _format_task_list(tasks_list)
+            
+            return ToolResult(
+                content=[TextContent(type="text", text="\n".join(content_lines) + "\n\n" + formatted_text)],
+                structured_content={
+                    **structured_data,
+                    "batch_results": results,
+                    "batch_errors": errors
+                }
+            )
         
-        # Create new task
-        new_task = {
-            "id": task_id,
-            "description": description,
-            "status": "in_progress" if start_now else "pending",
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
+        # Default: view operation
+        await ctx.info(f"Loaded {len(tasks_list)} tasks from conversation metadata")
         
-        # Auto-pause other in-progress tasks if starting this one
-        if start_now:
-            for task in tasks:
-                if task["status"] == "in_progress":
-                    task["status"] = "pending"
-        
-        # Add to task list
-        tasks.append(new_task)
-        conversation.conversation_metadata["tasks"] = tasks
-        
-        # Save to database
-        services["session"].add(conversation)
-        services["session"].commit()
-        
-        await ctx.info(f"Added task #{task_id} to conversation metadata")
-        
-        status_emoji = "🔵" if start_now else "⚪"
-        status_text = "Started" if start_now else "Added"
+        formatted_text, structured_data = _format_task_list(tasks_list)
         
         return ToolResult(
-            content=[TextContent(type="text", text=f"{status_emoji} {status_text} task #{task_id}: {description}")],
-            structured_content={"task": new_task}
+            content=[TextContent(type="text", text=formatted_text)],
+            structured_content=structured_data
         )
 
 
-@mcp.tool(tags=["tasks", "productivity"])
-async def start_task(
-    task_id: Annotated[int, "ID of task to start working on"],
-    ctx: Context
-) -> ToolResult:
-    """
-    Start working on a task (marks it in-progress).
-    
-    Automatically pauses any other in-progress tasks.
-    
-    Example:
-      start_task(3)
-    """
-    with get_services() as services:
-        if not services["conversation_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
-                structured_content={"error": "No conversation_id provided"}
-            )
-        
-        # Load conversation and tasks
-        from app.models import ChatConversation
-        from sqlmodel import select
-        
-        conversation = services["session"].exec(
-            select(ChatConversation)
-            .where(ChatConversation.id == services["conversation_id"])
-        ).first()
-        
-        if not conversation or not conversation.conversation_metadata:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ No tasks found")],
-                structured_content={"error": "No tasks"}
-            )
-        
-        tasks = conversation.conversation_metadata.get("tasks", [])
-        task = next((t for t in tasks if t["id"] == task_id), None)
-        
-        if not task:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
-                structured_content={"error": "task_not_found"}
-            )
-        
-        if task["status"] == "completed":
-            return ToolResult(
-                content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
-                structured_content={"status": "already_completed"}
-            )
-        
-        # Pause other in-progress tasks
-        paused = []
-        for t in tasks:
-            if t["status"] == "in_progress" and t["id"] != task_id:
-                t["status"] = "pending"
-                paused.append(t["id"])
-        
-        task["status"] = "in_progress"
-        task["started_at"] = datetime.now(timezone.utc).isoformat()
-        
-        # Save to database
-        services["session"].add(conversation)
-        services["session"].commit()
-        
-        msg = f"🔵 Started task #{task_id}: {task['description']}"
-        if paused:
-            msg += f"\n⏸️  Paused tasks: {', '.join(f'#{id}' for id in paused)}"
-        
-        return ToolResult(
-            content=[TextContent(type="text", text=msg)],
-            structured_content={"task": task, "paused": paused}
-        )
 
 
-@mcp.tool(tags=["tasks", "productivity"])
-async def finish_task(
-    task_id: Annotated[int, "ID of task to mark complete"],
-    ctx: Context
-) -> ToolResult:
-    """
-    Mark a task as completed.
-    
-    Example:
-      finish_task(3)
-    
-    Use tasks() to see your progress.
-    """
-    with get_services() as services:
-        if not services["conversation_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
-                structured_content={"error": "No conversation_id provided"}
-            )
-        
-        # Load conversation and tasks
-        from app.models import ChatConversation
-        from sqlmodel import select
-        
-        conversation = services["session"].exec(
-            select(ChatConversation)
-            .where(ChatConversation.id == services["conversation_id"])
-        ).first()
-        
-        if not conversation or not conversation.conversation_metadata:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ No tasks found")],
-                structured_content={"error": "No tasks"}
-            )
-        
-        tasks = conversation.conversation_metadata.get("tasks", [])
-        task = next((t for t in tasks if t["id"] == task_id), None)
-        
-        if not task:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
-                structured_content={"error": "task_not_found"}
-            )
-        
-        if task["status"] == "completed":
-            return ToolResult(
-                content=[TextContent(type="text", text=f"✅ Task #{task_id} already completed")],
-                structured_content={"status": "already_completed"}
-            )
-        
-        task["status"] = "completed"
-        task["completed_at"] = datetime.now(timezone.utc).isoformat()
-        
-        # Count remaining
-        remaining = len([t for t in tasks if t["status"] in ["pending", "in_progress"]])
-        completed_count = len([t for t in tasks if t["status"] == "completed"])
-        
-        # Save to database
-        services["session"].add(conversation)
-        services["session"].commit()
-        
-        msg = f"✅ Completed task #{task_id}: {task['description']}"
-        if remaining > 0:
-            msg += f"\n\n📊 Progress: {completed_count} done, {remaining} remaining"
-        else:
-            msg += f"\n\n🎉 All tasks completed!"
-        
-        return ToolResult(
-            content=[TextContent(type="text", text=msg)],
-            structured_content={"task": task, "progress": {"completed": completed_count, "remaining": remaining}}
-        )
 
 
-@mcp.tool(tags=["tasks", "productivity"])
-async def cancel_task(
-    task_id: Annotated[int, "ID of task to cancel"],
-    ctx: Context
-) -> ToolResult:
-    """
-    Cancel a task (no longer needed).
-    
-    Example:
-      cancel_task(5)
-    """
-    with get_services() as services:
-        if not services["conversation_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ Tasks require a conversation context")],
-                structured_content={"error": "No conversation_id provided"}
-            )
-        
-        # Load conversation and tasks
-        from app.models import ChatConversation
-        from sqlmodel import select
-        
-        conversation = services["session"].exec(
-            select(ChatConversation)
-            .where(ChatConversation.id == services["conversation_id"])
-        ).first()
-        
-        if not conversation or not conversation.conversation_metadata:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ No tasks found")],
-                structured_content={"error": "No tasks"}
-            )
-        
-        tasks = conversation.conversation_metadata.get("tasks", [])
-        task = next((t for t in tasks if t["id"] == task_id), None)
-        
-        if not task:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Task #{task_id} not found")],
-                structured_content={"error": "task_not_found"}
-            )
-        
-        task["status"] = "cancelled"
-        task["cancelled_at"] = datetime.now(timezone.utc).isoformat()
-        
-        # Save to database
-        services["session"].add(conversation)
-        services["session"].commit()
-        
-        return ToolResult(
-            content=[TextContent(type="text", text=f"❌ Cancelled task #{task_id}: {task['description']}")],
-            structured_content={"task": task}
-        )
+
+
 
 
 @mcp.tool(tags=["memory", "context"])
@@ -2347,17 +2499,41 @@ async def working_memory(
     Pinned items stay at the top for easy reference.
     Memory persists throughout the conversation.
     """
-    # Get or initialize memory in context metadata (no database access needed)
-    if not hasattr(ctx, "_working_memory"):
-        ctx._working_memory = {
+    with get_services() as services:
+        conversation_id = services.get("conversation_id")
+        
+        # Initialize default memory structure
+        default_memory = {
             "assets": {},      # {asset_id: {title, last_accessed, pinned}}
             "findings": {},    # {key: {content, pinned}}
             "paths": {},       # {key: {path, description, pinned}}
             "notes": {},       # {key: {content, pinned}}
         }
-    
-    memory = ctx._working_memory
-    
+        
+        memory = default_memory
+        conversation = None
+        
+        # Try to load persistent memory from conversation
+        if conversation_id:
+            from app.models import ChatConversation
+            from sqlmodel import select
+            
+            conversation = services["session"].exec(
+                select(ChatConversation)
+                .where(ChatConversation.id == conversation_id)
+            ).first()
+            
+            if conversation:
+                if not conversation.conversation_metadata:
+                    conversation.conversation_metadata = {}
+                
+                # Load existing memory or initialize
+                memory = conversation.conversation_metadata.get("working_memory", default_memory)
+                # Ensure all categories exist (migration safety)
+                for cat in default_memory:
+                    if cat not in memory:
+                        memory[cat] = {}
+
     try:
         if operation == "view":
             # Show current memory state
@@ -2415,6 +2591,15 @@ async def working_memory(
             
             memory[category][str(item_id)] = item_data
             
+            # Persist changes
+            if conversation:
+                # Force SQLAlchemy to detect change in JSON field
+                from sqlalchemy.orm.attributes import flag_modified
+                conversation.conversation_metadata["working_memory"] = memory
+                flag_modified(conversation, "conversation_metadata")
+                services["session"].add(conversation)
+                services["session"].commit()
+            
             return ToolResult(
                 content=f"Added {item_type} '{item_id}' to working memory",
                 structured_content={"added": item_data, "category": category}
@@ -2431,6 +2616,15 @@ async def working_memory(
             
             if str(item_id) in memory[category]:
                 del memory[category][str(item_id)]
+                
+                # Persist changes
+                if conversation:
+                    from sqlalchemy.orm.attributes import flag_modified
+                    conversation.conversation_metadata["working_memory"] = memory
+                    flag_modified(conversation, "conversation_metadata")
+                    services["session"].add(conversation)
+                    services["session"].commit()
+                
                 return ToolResult(
                     content=f"Removed {item_type} '{item_id}' from working memory",
                     structured_content={"removed": item_id, "category": category}
@@ -2452,6 +2646,15 @@ async def working_memory(
             
             if str(item_id) in memory[category]:
                 memory[category][str(item_id)]["pinned"] = (operation == "pin")
+                
+                # Persist changes
+                if conversation:
+                    from sqlalchemy.orm.attributes import flag_modified
+                    conversation.conversation_metadata["working_memory"] = memory
+                    flag_modified(conversation, "conversation_metadata")
+                    services["session"].add(conversation)
+                    services["session"].commit()
+                
                 return ToolResult(
                     content=f"{'Pinned' if operation == 'pin' else 'Unpinned'} {item_type} '{item_id}'",
                     structured_content={"item": memory[category][str(item_id)]}
@@ -2470,6 +2673,16 @@ async def working_memory(
                 "paths": {},
                 "notes": {},
             })
+            
+            # Persist changes
+            if conversation:
+                # Force SQLAlchemy to detect change in JSON field
+                from sqlalchemy.orm.attributes import flag_modified
+                conversation.conversation_metadata["working_memory"] = memory
+                flag_modified(conversation, "conversation_metadata")
+                services["session"].add(conversation)
+                services["session"].commit()
+            
             return ToolResult(
                 content="Working memory cleared",
                 structured_content={"memory": memory}
@@ -2489,330 +2702,256 @@ async def working_memory(
         )
 
 
-@mcp.tool(tags=["analysis", "discovery"])
-async def list_runs(
+async def _analysis_list_runs(
+    services: Dict,
     ctx: Context,
-    schema_id: Annotated[Optional[int], "Filter by schema ID (show runs using this analysis template)"] = None,
-    status: Annotated[Optional[str], "Filter by status: 'pending', 'running', 'completed', 'failed', 'completed_with_errors'"] = None,
-    limit: Annotated[int, "Maximum number of runs to return"] = 20,
-    offset: Annotated[int, "Number of runs to skip (for pagination)"] = 0,
+    schema_id: Optional[int],
+    status: Optional[str],
+    limit: int,
+    offset: int,
 ) -> ToolResult:
-    """
-    Browse annotation runs in this workspace.
+    from sqlmodel import select, and_
+    from app.models import AnnotationRun, RunStatus
     
-    Use this to:
-    - Discover existing analysis runs from previous sessions
-    - Find runs by schema or status
-    - Get run IDs for accessing results with get_run_dashboard()
+    await ctx.info(f"Listing runs (schema_id={schema_id}, status={status})")
     
-    <workflow>
-    Discover runs:
-      list_runs()  # All recent runs
-      list_runs(schema_id=5)  # Runs using specific schema
-      list_runs(status="completed")  # Only finished runs
+    query_conditions = [AnnotationRun.infospace_id == services["infospace_id"]]
     
-    Access results:
-      runs = list_runs(limit=5)
-      # Pick a run_id from results
-      dashboard = get_run_dashboard(run_id=42)
-    </workflow>
+    if schema_id:
+        from app.models import annotation_run_schema_association
+        query = (
+            select(AnnotationRun)
+            .join(annotation_run_schema_association)
+            .where(annotation_run_schema_association.c.schema_id == schema_id)
+            .where(AnnotationRun.infospace_id == services["infospace_id"])
+        )
+    else:
+        query = select(AnnotationRun).where(and_(*query_conditions))
     
-    Returns run metadata including ID, name, status, asset count, and timestamps.
-    """
-    with get_services() as services:
-        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
-        
-        from sqlmodel import select, and_
-        from app.models import AnnotationRun, RunStatus
-        
-        await ctx.info(f"Listing runs (schema_id={schema_id}, status={status})")
-        
-        # Build query
-        query_conditions = [AnnotationRun.infospace_id == services["infospace_id"]]
-        
-        if schema_id:
-            # Filter runs that target this schema
-            # Note: target_schemas is a relationship, so we need to join
-            from app.models import annotation_run_schema_association
-            query = (
-                select(AnnotationRun)
-                .join(annotation_run_schema_association)
-                .where(annotation_run_schema_association.c.schema_id == schema_id)
-                .where(AnnotationRun.infospace_id == services["infospace_id"])
-            )
-        else:
-            query = select(AnnotationRun).where(and_(*query_conditions))
-        
-        if status:
-            try:
-                status_enum = RunStatus(status)
-                query = query.where(AnnotationRun.status == status_enum)
-            except ValueError:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"❌ Invalid status: {status}. Valid: pending, running, completed, failed, completed_with_errors")],
-                    structured_content={"error": "invalid_status", "valid_statuses": ["pending", "running", "completed", "failed", "completed_with_errors"]}
-                )
-        
-        # Order by most recent first
-        query = query.order_by(AnnotationRun.created_at.desc()).offset(offset).limit(limit)
-        
-        runs = services["session"].exec(query).all()
-        
-        await ctx.info(f"Found {len(runs)} runs")
-        
-        if not runs:
-            filters_text = []
-            if schema_id:
-                filters_text.append(f"schema_id={schema_id}")
-            if status:
-                filters_text.append(f"status={status}")
-            filter_desc = f" with filters: {', '.join(filters_text)}" if filters_text else ""
-            
+    if status:
+        try:
+            status_enum = RunStatus(status)
+            query = query.where(AnnotationRun.status == status_enum)
+        except ValueError:
             return ToolResult(
-                content=[TextContent(type="text", text=f"📊 No annotation runs found{filter_desc}\n\nCreate your first run:\n  analyze(asset_ids=[...], schema_id=...)")],
-                structured_content={"runs": [], "total": 0, "filters": {"schema_id": schema_id, "status": status}}
+                content=[TextContent(type="text", text=f"❌ Invalid status: {status}. Valid: pending, running, completed, failed, completed_with_errors")],
+                structured_content={"error": "invalid_status", "valid_statuses": ["pending", "running", "completed", "failed", "completed_with_errors"]}
+            )
+    
+    query = query.order_by(AnnotationRun.created_at.desc()).offset(offset).limit(limit)
+    
+    runs = services["session"].exec(query).all()
+    
+    await ctx.info(f"Found {len(runs)} runs")
+    
+    if not runs:
+        filters_text = []
+        if schema_id:
+            filters_text.append(f"schema_id={schema_id}")
+        if status:
+            filters_text.append(f"status={status}")
+        filter_desc = f" with filters: {', '.join(filters_text)}" if filters_text else ""
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=f"📊 No annotation runs found{filter_desc}\n\nCreate your first run:\n  analysis_hub(operation='run.start', schema_id=..., asset_ids=[...])")],
+            structured_content={"runs": [], "total": 0, "filters": {"schema_id": schema_id, "status": status}}
+        )
+    
+    summary_lines = [f"📊 Found {len(runs)} annotation runs:\n"]
+    
+    for i, run in enumerate(runs[:10], 1):
+        run_config = run.configuration or {}
+        target_asset_ids = run_config.get('target_asset_ids', [])
+        target_count = len(target_asset_ids) if target_asset_ids else 0
+        annotation_count = len(run.annotations) if hasattr(run, 'annotations') and run.annotations else 0
+        target_display = str(target_count) if target_count > 0 else "bundle" if run_config.get('target_bundle_id') else "0"
+        status_emoji = {
+            "pending": "⏳",
+            "running": "🔄", 
+            "completed": "✅",
+            "failed": "❌",
+            "completed_with_errors": "⚠️"
+        }.get(run.status.value if run.status else "unknown", "❓")
+        
+        summary_lines.append(f"{i}. {status_emoji} [{run.id}] {run.name}")
+        if annotation_count > 0:
+            summary_lines.append(f"   {annotation_count} results from {target_display} assets | {run.status.value if run.status else 'unknown'}")
+        else:
+            summary_lines.append(f"   Targets: {target_display} assets | {run.status.value if run.status else 'unknown'}")
+        
+        if run.created_at:
+            summary_lines.append(f"   Created: {run.created_at.strftime('%Y-%m-%d %H:%M')}")
+        
+        summary_lines.append("")
+    
+    if len(runs) > 10:
+        summary_lines.append(f"... {len(runs) - 10} more runs")
+    
+    summary_lines.append(f"💡 Use analysis_hub(operation='run.dashboard', run_id=X) to see results")
+    
+    run_data = []
+    for run in runs:
+        run_config = run.configuration or {}
+        target_asset_ids = run_config.get('target_asset_ids', [])
+        target_count = len(target_asset_ids) if target_asset_ids else 0
+        annotation_count = len(run.annotations) if hasattr(run, 'annotations') and run.annotations else 0
+        schema_ids = [s.id for s in run.target_schemas] if hasattr(run, 'target_schemas') and run.target_schemas else []
+        schema_names = [s.name for s in run.target_schemas] if hasattr(run, 'target_schemas') and run.target_schemas else []
+        
+        run_data.append({
+            "id": run.id,
+            "uuid": str(run.uuid),
+            "name": run.name,
+            "description": run.description,
+            "status": run.status.value if run.status else None,
+            "target_asset_count": target_count,
+            "annotation_count": annotation_count,
+            "target_bundle_id": run_config.get('target_bundle_id'),
+            "schema_ids": schema_ids,
+            "schema_names": schema_names,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        })
+    
+    summary_text = "\n".join(summary_lines)
+    return ToolResult(
+        content=[TextContent(type="text", text=summary_text)],
+        structured_content={
+            "runs": run_data,
+            "total": len(runs),
+            "limit": limit,
+            "offset": offset,
+            "filters": {
+                "schema_id": schema_id,
+                "status": status
+            },
+            "message": summary_text
+        }
+    )
+
+
+async def _analysis_get_dashboard(
+    services: Dict,
+    ctx: Context,
+    run_id: int,
+) -> ToolResult:
+    await ctx.info(f"Fetching dashboard for run #{run_id}")
+    
+    try:
+        from sqlmodel import select
+        from app.models import AnnotationRun, Annotation, AnnotationSchema
+        
+        run = services["session"].get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run not found"}
             )
         
-        # Build concise summary for model
-        summary_lines = [f"📊 Found {len(runs)} annotation runs:\n"]
+        annotations = services["session"].exec(
+            select(Annotation).where(Annotation.run_id == run_id)
+        ).all()
         
-        for i, run in enumerate(runs[:10], 1):
-            # Get target asset count from configuration (just for display, not storing full list)
-            run_config = run.configuration or {}
-            target_asset_ids = run_config.get('target_asset_ids', [])
-            target_count = len(target_asset_ids) if target_asset_ids else 0
-            
-            # Get annotation count (actual results produced)
-            annotation_count = len(run.annotations) if hasattr(run, 'annotations') and run.annotations else 0
-            
-            # If no direct asset IDs, check for bundle
-            target_display = str(target_count) if target_count > 0 else "bundle" if run_config.get('target_bundle_id') else "0"
-            
-            # Status emoji
-            status_emoji = {
-                "pending": "⏳",
-                "running": "🔄", 
-                "completed": "✅",
-                "failed": "❌",
-                "completed_with_errors": "⚠️"
-            }.get(run.status.value if run.status else "unknown", "❓")
-            
-            summary_lines.append(f"{i}. {status_emoji} [{run.id}] {run.name}")
-            
-            # Show both target count and results count
-            if annotation_count > 0:
-                summary_lines.append(f"   {annotation_count} results from {target_display} assets | {run.status.value if run.status else 'unknown'}")
-            else:
-                summary_lines.append(f"   Targets: {target_display} assets | {run.status.value if run.status else 'unknown'}")
-            
-            if run.created_at:
-                summary_lines.append(f"   Created: {run.created_at.strftime('%Y-%m-%d %H:%M')}")
-            
-            summary_lines.append("")
+        schemas = run.target_schemas if hasattr(run, 'target_schemas') and run.target_schemas else []
+        logger.info(f"Run has {len(schemas)} schemas via target_schemas relationship")
         
-        if len(runs) > 10:
-            summary_lines.append(f"... {len(runs) - 10} more runs")
+        status_counts = {}
+        for ann in annotations:
+            status = ann.status.value if ann.status else "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
         
-        summary_lines.append(f"💡 Use get_run_dashboard(run_id=X) to see results")
+        summary_lines = [
+            f"📊 {run.name}: {len(annotations)} annotations • {run.status.value}",
+        ]
         
-        # Build structured data (counts only, no full asset ID lists)
-        run_data = []
-        for run in runs:
-            # Get target asset count from configuration (just count, not full list)
-            run_config = run.configuration or {}
-            target_asset_ids = run_config.get('target_asset_ids', [])
-            target_count = len(target_asset_ids) if target_asset_ids else 0
-            
-            # Get annotation count (actual results produced)
-            annotation_count = len(run.annotations) if hasattr(run, 'annotations') and run.annotations else 0
-            
-            # Get schema IDs and names
-            schema_ids = [s.id for s in run.target_schemas] if hasattr(run, 'target_schemas') and run.target_schemas else []
-            schema_names = [s.name for s in run.target_schemas] if hasattr(run, 'target_schemas') and run.target_schemas else []
-            
-            run_data.append({
-                "id": run.id,
-                "uuid": str(run.uuid),
-                "name": run.name,
-                "description": run.description,
-                "status": run.status.value if run.status else None,
-                "target_asset_count": target_count,
-                "annotation_count": annotation_count,
-                "target_bundle_id": run_config.get('target_bundle_id'),
-                "schema_ids": schema_ids,
-                "schema_names": schema_names,
-                "created_at": run.created_at.isoformat() if run.created_at else None,
-                "updated_at": run.updated_at.isoformat() if run.updated_at else None,
-                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        if status_counts:
+            status_parts = [f"{count} {status}" for status, count in list(status_counts.items())[:3]]
+            summary_lines.append(f"   {', '.join(status_parts)}")
+        
+        if schemas:
+            summary_lines.append(f"   Schemas: {', '.join([s.name for s in schemas[:2]])}")
+        
+        annotation_data = []
+        asset_ids_in_results = set()
+        for ann in annotations[:100]:
+            asset_ids_in_results.add(ann.asset_id)
+            annotation_data.append({
+                "id": ann.id,
+                "asset_id": ann.asset_id,
+                "schema_id": ann.schema_id,
+                "value": ann.value,
+                "status": ann.status.value if ann.status else None,
+                "timestamp": ann.timestamp.isoformat() if ann.timestamp else None,
             })
         
-        summary_text = "\n".join(summary_lines)
-        return ToolResult(
-            content=[TextContent(type="text", text=summary_text)],
-            structured_content={
-                "runs": run_data,
-                "total": len(runs),
-                "limit": limit,
-                "offset": offset,
-                "filters": {
-                    "schema_id": schema_id,
-                    "status": status
-                },
-                "message": summary_text
-            }
-        )
-
-
-@mcp.tool(tags=["analysis", "results"])
-async def get_run_dashboard(
-    run_id: Annotated[int, "Analysis run ID (from analyze or list_runs)"],
-    ctx: Context,
-) -> ToolResult:
-    """
-    Get analysis results with inline dashboard preview.
-    
-    Returns:
-    - Run status and metadata
-    - Annotation results (structured extractions)
-    - Dashboard configuration (for frontend rendering)
-    - Summary statistics
-    
-    The structured_content includes complete dashboard data that the frontend can render as:
-    - Tables showing all results
-    - Charts visualizing patterns
-    - Maps of geographic data
-    - Filters and controls
-    
-    Use this after analyze() or list_runs() to see what was extracted.
-    """
-    with get_services() as services:
-        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
-        
-        await ctx.info(f"Fetching dashboard for run #{run_id}")
-        
-        try:
-            from sqlmodel import select
-            from app.models import AnnotationRun, Annotation, AnnotationSchema
-            
-            # Get run
-            run = services["session"].get(AnnotationRun, run_id)
-            if not run or run.infospace_id != services["infospace_id"]:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                    structured_content={"error": "run not found"}
-                )
-            
-            # Get annotations
-            annotations = services["session"].exec(
-                select(Annotation).where(Annotation.run_id == run_id)
+        from app.models import Asset
+        asset_data = []
+        if asset_ids_in_results:
+            assets = services["session"].exec(
+                select(Asset).where(Asset.id.in_(list(asset_ids_in_results)))
             ).all()
-            
-            # Get schemas from the target_schemas relationship
-            schemas = run.target_schemas if hasattr(run, 'target_schemas') and run.target_schemas else []
-            logger.info(f"Run has {len(schemas)} schemas via target_schemas relationship")
-            
-            # Build summary
-            status_counts = {}
-            for ann in annotations:
-                status = ann.status.value if ann.status else "unknown"
-                status_counts[status] = status_counts.get(status, 0) + 1
-            
-            # Format CONCISE summary for model (minimal tokens)
-            summary_lines = [
-                f"📊 {run.name}: {len(annotations)} annotations • {run.status.value}",
-            ]
-            
-            if status_counts:
-                status_parts = [f"{count} {status}" for status, count in list(status_counts.items())[:3]]
-                summary_lines.append(f"   {', '.join(status_parts)}")
-            
-            if schemas:
-                summary_lines.append(f"   Schemas: {', '.join([s.name for s in schemas[:2]])}")
-            
-            # Prepare structured content with FULL dashboard data (for frontend only)
-            annotation_data = []
-            asset_ids_in_results = set()
-            for ann in annotations[:100]:  # Limit for performance
-                asset_ids_in_results.add(ann.asset_id)
-                annotation_data.append({
-                    "id": ann.id,
-                    "asset_id": ann.asset_id,
-                    "schema_id": ann.schema_id,
-                    "value": ann.value,
-                    "status": ann.status.value if ann.status else None,
-                    "timestamp": ann.timestamp.isoformat() if ann.timestamp else None,
+            for asset in assets:
+                asset_data.append({
+                    "id": asset.id,
+                    "uuid": str(asset.uuid),
+                    "title": asset.title,
+                    "kind": asset.kind.value if asset.kind else None,
+                    "infospace_id": asset.infospace_id,
                 })
+            logger.info(f"Fetched {len(asset_data)} assets for dashboard")
+        
+        schema_data = []
+        for schema in schemas:
+            output_contract = None
+            if schema.output_contract:
+                if hasattr(schema.output_contract, 'model_dump'):
+                    output_contract = schema.output_contract.model_dump()
+                elif isinstance(schema.output_contract, dict):
+                    output_contract = schema.output_contract
+                else:
+                    try:
+                        output_contract = dict(schema.output_contract)
+                    except Exception as e:
+                        logger.warning(f"Could not serialize output_contract for schema {schema.id}: {e}")
+                        output_contract = None
             
-            # Fetch assets for the annotations
-            from app.models import Asset
-            asset_data = []
-            if asset_ids_in_results:
-                assets = services["session"].exec(
-                    select(Asset).where(Asset.id.in_(list(asset_ids_in_results)))
-                ).all()
-                for asset in assets:
-                    asset_data.append({
-                        "id": asset.id,
-                        "uuid": str(asset.uuid),
-                        "title": asset.title,
-                        "kind": asset.kind.value if asset.kind else None,
-                        "infospace_id": asset.infospace_id,
-                    })
-                logger.info(f"Fetched {len(asset_data)} assets for dashboard")
-            
-            schema_data = []
-            for schema in schemas:
-                # Handle output_contract which might be a dict or Pydantic model
-                output_contract = None
-                if schema.output_contract:
-                    if hasattr(schema.output_contract, 'model_dump'):
-                        output_contract = schema.output_contract.model_dump()
-                    elif isinstance(schema.output_contract, dict):
-                        output_contract = schema.output_contract
-                    else:
-                        # Try to convert to dict
-                        try:
-                            output_contract = dict(schema.output_contract)
-                        except Exception as e:
-                            logger.warning(f"Could not serialize output_contract for schema {schema.id}: {e}")
-                            output_contract = None
-                
-                schema_data.append({
-                    "id": schema.id,
-                    "name": schema.name,
-                    "description": schema.description,
-                    "output_contract": output_contract,
-                })
-            
-            logger.info(f"Serialized {len(schema_data)} schemas for run {run_id}")
-            
-            structured_result = {
-                "run_id": run.id,
-                "run_name": run.name,
-                "run_uuid": str(run.uuid),
-                "status": run.status.value,
-                "created_at": run.created_at.isoformat() if run.created_at else None,
-                "updated_at": run.updated_at.isoformat() if run.updated_at else None,
-                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-                "annotation_count": len(annotations),
-                "annotations": annotation_data,
-                "schemas": schema_data,
-                "assets": asset_data,
-                "views_config": run.views_config,
-                "status_counts": status_counts,
-            }
-            
-            return ToolResult(
-                content=[TextContent(type="text", text="\n".join(summary_lines))],
-                structured_content=structured_result
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to get run dashboard: {e}", exc_info=True)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Failed to fetch dashboard: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
-            )
+            schema_data.append({
+                "id": schema.id,
+                "name": schema.name,
+                "description": schema.description,
+                "output_contract": output_contract,
+            })
+        
+        logger.info(f"Serialized {len(schema_data)} schemas for run {run_id}")
+        
+        structured_result = {
+            "run_id": run.id,
+            "run_name": run.name,
+            "run_uuid": str(run.uuid),
+            "status": run.status.value,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "annotation_count": len(annotations),
+            "annotations": annotation_data,
+            "schemas": schema_data,
+            "assets": asset_data,
+            "views_config": run.views_config,
+            "status_counts": status_counts,
+        }
+        
+        return ToolResult(
+            content=[TextContent(type="text", text="\n".join(summary_lines))],
+            structured_content=structured_result
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to get run dashboard: {e}", exc_info=True)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to fetch dashboard: {str(e)}")],
+            structured_content={"error": str(e), "status": "failed"}
+        )
 
 
 # ============================================================================
@@ -2880,7 +3019,7 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
         parent_asset = services["session"].get(Asset, parent_asset_id)
         if not parent_asset or parent_asset.infospace_id != services["infospace_id"]:
             return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Parent asset #{parent_asset_id} not found or not accessible\n\nTroubleshooting:\n1. Verify the asset ID exists: navigate(resource='assets', mode='load', ids=[{parent_asset_id}])\n2. Check if it's a CSV container: Should have kind='csv' and is_container=True\n3. Ensure it belongs to your infospace")],
+                content=[TextContent(type="text", text=f"❌ Parent asset #{parent_asset_id} not found or not accessible\n\nTroubleshooting:\n1. Verify the asset ID exists: workspace_hub(resource='assets', mode='load', ids=[{parent_asset_id}])\n2. Check if it's a CSV container: Should have kind='csv' and is_container=True\n3. Ensure it belongs to your infospace")],
                 structured_content={
                     "error": "parent_asset_not_found",
                     "parent_asset_id": parent_asset_id,
@@ -3035,11 +3174,71 @@ async def _asset_update(services: Dict, ctx: Context, data: Dict[str, Any]) -> T
     # Handle CSV row updates specially
     if asset.kind == AssetKind.CSV_ROW:
         return await _asset_update_csv_row(services, ctx, asset, data)
+    
+    # Handle article/text/web updates
+    elif asset.kind in [AssetKind.ARTICLE, AssetKind.TEXT, AssetKind.WEB]:
+        return await _asset_update_content(services, ctx, asset, data)
+    
     else:
         return ToolResult(
             content=[TextContent(type="text", text=f"❌ Update not supported for asset kind: {asset.kind.value}")],
             structured_content={"error": f"Update not supported for kind: {asset.kind.value}"}
         )
+
+
+async def _asset_update_content(services: Dict, ctx: Context, asset, data: Dict[str, Any]) -> ToolResult:
+    """Update article/text/web asset content."""
+    from app.schemas import AssetUpdate
+    from app.models import AssetKind
+    
+    updates = data.get("updates", {})
+    if not updates:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'updates' field is required for content asset update\n\nExample:\n  asset(operation='update', data={'id': 123, 'updates': {'title': 'New Title', 'text_content': 'New content...'}})")],
+            structured_content={"error": "updates is required"}
+        )
+    
+    # Build update dict - support both "content" (user-friendly) and "text_content" (database field)
+    update_dict = {}
+    if "title" in updates:
+        update_dict["title"] = updates["title"]
+    if "text_content" in updates:
+        update_dict["text_content"] = updates["text_content"]
+    elif "content" in updates:
+        # Map "content" to "text_content" for database
+        update_dict["text_content"] = updates["content"]
+    if "source_metadata" in updates:
+        update_dict["source_metadata"] = updates["source_metadata"]
+    
+    if not update_dict:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ No valid update fields provided. Supported: 'title', 'text_content' (or 'content'), 'source_metadata'")],
+            structured_content={"error": "no valid updates"}
+        )
+    
+    # Use AssetService to update
+    asset_update = AssetUpdate(**update_dict)
+    updated_asset = services["asset_service"].update_asset(asset.id, asset_update)
+    
+    if not updated_asset:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to update asset {asset.id}")],
+            structured_content={"error": "update failed"}
+        )
+    
+    # Return updated asset info
+    updated_fields = list(update_dict.keys())
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ Updated {asset.kind.value} #{asset.id}\nTitle: {updated_asset.title}\nUpdated fields: {', '.join(updated_fields)}")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": updated_asset.title,
+            "asset_kind": asset.kind.value,
+            "updated_fields": updated_fields,
+            "text_content": updated_asset.text_content[:500] if updated_asset.text_content else None,  # Preview
+            "status": "updated"
+        }
+    )
 
 
 async def _asset_update_csv_row(services: Dict, ctx: Context, asset, data: Dict[str, Any]) -> ToolResult:
@@ -3098,235 +3297,69 @@ async def _asset_delete(services: Dict, ctx: Context, data: Dict[str, Any]) -> T
     )
 
 
-@mcp.tool(tags=["asset", "crud"])
-async def asset(
+
+
+async def _analysis_share_run(
+    services: Dict,
     ctx: Context,
-    operation: Annotated[str, "CRUD operation: 'create', 'update', or 'delete'"] = "create",
-    data: Annotated[Optional[Dict[str, Any]], "Asset data with 'kind' field (article/web/text/csv_row). For csv_row, include 'parent_asset_id'."] = None,
+    run_id: int,
+    name: Optional[str],
+    expiration_days: Optional[int],
 ) -> ToolResult:
-    """
-    Create, update, or delete assets. Universal interface for all asset types.
+    await ctx.info(f"Creating shareable link for run #{run_id}")
     
-    ⚠️ IMPORTANT: This tool manages PHYSICAL parent-child relationships (CSV→rows, PDF→pages).
-    For LOGICAL grouping (organizing documents into collections), use organize() instead.
-    
-    <conceptual_model>
-    TWO WAYS TO ORGANIZE ASSETS:
-    
-    1. Parent-Child Relationships (THIS TOOL):
-       - Physical hierarchical structure
-       - Set at creation time only
-       - Cannot be changed after creation
-       - Examples: CSV contains rows, PDF contains pages
-       - Use when: Creating structured data (rows, pages, chapters)
-    
-    2. Bundles (USE organize() TOOL):
-       - Logical collections/folders
-       - Can be modified anytime
-       - Assets can be in multiple bundles
-       - Examples: "Climate Reports", "Q1 2024 Research"
-       - Use when: Grouping related documents by topic/project
-    
-    ❌ WRONG: Trying to make CSV rows "children" of an article
-       → CSV rows are permanently tied to their CSV parent
-       → Use organize() to put both the article AND the CSV in the same bundle
-    
-    ✅ RIGHT: Create article, then add article + CSV to shared bundle:
-       1. asset(data={"kind": "article", "title": "Summary", "content": "..."})
-       2. organize(operation="add", bundle_id=5, asset_ids=[article_id, csv_id])
-    </conceptual_model>
-    
-    <core_examples>
-    ⚠️ CSV Row (hierarchical - MUST include parent_asset_id):
-      asset(data={
-          "kind": "csv_row",
-          "parent_asset_id": 7032,  # REQUIRED - CSV container ID
-          "row_data": {"Name": "...", "Address": "..."}
-      })
-      Missing parent_asset_id creates orphaned root asset ❌
-    
-    Article (standalone):
-      asset(data={
-          "kind": "article",
-          "title": "Research Notes",
-          "content": "# Summary\n\nDetailed findings..."
-      })
-      Note: Use "content" not "text_content" - tool handles mapping
-    
-    Web page:
-      asset(data={
-          "kind": "web",
-          "url": "https://example.com/page",
-          "title": "Optional title"
-      })
-    
-    Text note:
-      asset(data={
-          "kind": "text",
-          "title": "Quick Note",
-          "content": "Plain text content"
-      })
-    
-    Update CSV row:
-      asset(operation="update", data={
-          "id": 7033,
-          "updates": {"Address": "New Street", "Phone": "+49..."}
-      })
-    
-    Delete (cascades to children):
-      asset(operation="delete", data={"id": 7034})
-    </core_examples>
-    
-    <field_reference>
-    Article fields:
-      - title (string): Headline
-      - content (string): Body text (maps to text_content in database)
-    
-    CSV Row fields:
-      - row_data (dict): Column-value pairs
-      - parent_asset_id (int): REQUIRED - CSV container ID
-    
-    Web fields:
-      - url (string): Web address
-      - title (string, optional): Custom title
-      - stub (bool, optional): Create without fetching content
-    
-    Text fields:
-      - content (string): Plain text
-      - title (string, optional): Custom title
-    </field_reference>
-    
-    <hierarchy>
-    Parent-child relationships (permanent):
-      CSV(7032) → CSV Rows(7033, 7034, ...)
-      PDF(123) → PDF Pages(124, 125, ...)
-    
-    ⚠️ Cannot re-parent existing assets
-    ⚠️ Deletion cascades: deleting parent removes all children
-    ⚠️ Always verify parent exists before creating children
-    </hierarchy>
-    
-    <common_mistakes>
-    ❌ csv_row without parent_asset_id → orphaned at root
-    ❌ Using "text_content" instead of "content" → field not recognized
-    ❌ Trying to re-parent existing assets → not supported
-    ❌ Confusing bundles with parent-child → use organize() for collections
-    ✅ Check with navigate() first, then create with correct parent_asset_id
-    ✅ Use organize() for logical grouping, asset() for physical hierarchy
-    </common_mistakes>
-    
-    Returns: Created/updated asset with ID, title, and status.
-    """
-    with get_services() as services:
-        validate_infospace_access(
-            services["session"],
-            services["infospace_id"],
-            services["user_id"]
+    try:
+        from app.api.services.shareable_service import ShareableService
+        from app.schemas import ShareableLinkCreate
+        from datetime import timedelta
+        
+        shareable_service = ShareableService(services["session"])
+        
+        expiration_date = None
+        if expiration_days:
+            expiration_date = datetime.now(timezone.utc) + timedelta(days=expiration_days)
+        
+        link_create = ShareableLinkCreate(
+            name=name or f"Shared: Run {run_id}",
+            resource_type="run",
+            resource_id=run_id,
+            permission_level="read_only",
+            is_public=True,
+            expiration_date=expiration_date
         )
-
-        # Validate data parameter
-        if not data:
-            return ToolResult(
-                content=[TextContent(type="text", text="❌ Missing required 'data' parameter.\n\nExamples:\n  asset(data={'kind': 'article', 'title': '...', 'content': '...'})\n  asset(data={'kind': 'web', 'url': 'https://...'})")],
-                structured_content={"error": "data parameter is required", "hint": "Include data={'kind': '...', ...}"}
-            )
-
-        await ctx.info(f"Asset operation: {operation} on kind={data.get('kind')}")
-
-        try:
-            if operation == "delete":
-                return await _asset_delete(services, ctx, data)
-            elif operation == "update":
-                return await _asset_update(services, ctx, data)
-            else:  # create (default)
-                # Extract parent_asset_id from data if present
-                parent_asset_id = data.get("parent_asset_id")
-                return await _asset_create(services, ctx, data, parent_asset_id)
-
-        except Exception as e:
-            logger.error(f"Asset operation failed: {e}", exc_info=True)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Asset operation failed: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
-            )
-
-
-@mcp.tool(tags=["sharing"])
-async def share_run(
-    run_id: Annotated[int, "Analysis run ID to share"],
-    ctx: Context,
-    name: Annotated[Optional[str], "Name for the shareable link"] = None,
-    expiration_days: Annotated[Optional[int], "Days until link expires (default: never)"] = None,
-) -> ToolResult:
-    """
-    Create a shareable link for an analysis run.
-    
-    Recipients can:
-    - View the complete dashboard
-    - See all results and visualizations  
-    - Import the run into their own workspace
-    - Cannot modify or see your other data
-    
-    Returns a public URL that works without login.
-    """
-    with get_services() as services:
-        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
         
-        await ctx.info(f"Creating shareable link for run #{run_id}")
+        link = shareable_service.create_shareable_link(
+            services["user_id"],
+            services["infospace_id"],
+            link_create
+        )
         
-        try:
-            from app.api.services.shareable_service import ShareableService
-            from app.schemas import ShareableLinkCreate
-            from datetime import timedelta
-            
-            shareable_service = ShareableService(services["session"])
-            
-            expiration_date = None
-            if expiration_days:
-                expiration_date = datetime.now(timezone.utc) + timedelta(days=expiration_days)
-            
-            link_create = ShareableLinkCreate(
-                name=name or f"Shared: Run {run_id}",
-                resource_type="run",
-                resource_id=run_id,
-                permission_level="read_only",
-                is_public=True,
-                expiration_date=expiration_date
-            )
-            
-            link = shareable_service.create_shareable_link(
-                services["user_id"],
-                services["infospace_id"],
-                link_create
-            )
-            
-            services["session"].commit()
-            
-            # Build shareable URL
-            share_url = f"{settings.FRONTEND_URL}/share/{link.token}"
-            
-            await ctx.info(f"Created shareable link: {share_url}")
-            
-            expiry_text = f"Expires: {expiration_date.strftime('%Y-%m-%d')}" if expiration_date else "Never expires"
-            
-            return ToolResult(
-                content=[TextContent(type="text", text=f"🔗 Shareable link created!\n\n{share_url}\n\n{expiry_text}\n\nRecipients can view the dashboard and import the run into their workspace.")],
-                structured_content={
-                    "share_url": share_url,
-                    "token": link.token,
-                    "link_id": link.id,
-                    "run_id": run_id,
-                    "expiration_date": expiration_date.isoformat() if expiration_date else None,
-                    "created_at": link.created_at.isoformat() if link.created_at else None
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to create shareable link: {e}", exc_info=True)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Failed to create share link: {str(e)}")],
-                structured_content={"error": str(e), "status": "failed"}
-            )
+        services["session"].commit()
+        
+        share_url = f"{settings.FRONTEND_URL}/share/{link.token}"
+        
+        await ctx.info(f"Created shareable link: {share_url}")
+        
+        expiry_text = f"Expires: {expiration_date.strftime('%Y-%m-%d')}" if expiration_date else "Never expires"
+        
+        return ToolResult(
+            content=[TextContent(type="text", text=f"🔗 Shareable link created!\n\n{share_url}\n\n{expiry_text}\n\nRecipients can view the dashboard and import the run into their workspace.")],
+            structured_content={
+                "share_url": share_url,
+                "token": link.token,
+                "link_id": link.id,
+                "run_id": run_id,
+                "expiration_date": expiration_date.isoformat() if expiration_date else None,
+                "created_at": link.created_at.isoformat() if link.created_at else None
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to create shareable link: {e}", exc_info=True)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to create share link: {str(e)}")],
+            structured_content={"error": str(e), "status": "failed"}
+        )
 
 
 # @mcp.tool
@@ -3392,282 +3425,231 @@ async def share_run(
 #             )
 
 
-@mcp.tool(tags=["analysis", "schema"])
-async def list_schemas(ctx: Context) -> ToolResult:
-    """
-    View available analysis templates (schemas) that define how to extract structured information from documents.
+async def _analysis_list_schemas(services: Dict, ctx: Context) -> ToolResult:
+    await ctx.info("Listing annotation schemas")
     
-    Use this to:
-    - See what types of analysis you can perform
-    - Find templates for extracting specific data (entities, themes, classifications, etc.)
-    - Understand what fields each analysis will produce
+    schemas = services["annotation_service"].list_schemas(
+        services["infospace_id"]
+    )
     
-    Schemas are pre-defined templates that tell the system what information to look for and how to structure it.
-    For example: "Extract all mentioned organizations, their roles, and key positions" or "Classify sentiment and identify main arguments."
+    summary = format_schema_summary(schemas)
     
-    Note: Currently disabled for simplification, but listed here for context.
-    """
-    with get_services() as services:
-        validate_infospace_access(
-            services["session"],
-            services["infospace_id"],
-            services["user_id"]
+    schema_data = []
+    for schema in schemas:
+        # Extract field count from output_contract
+        field_count = 0
+        if isinstance(schema.output_contract, dict):
+            properties = schema.output_contract.get("properties", {})
+            if properties:
+                # Count fields in hierarchical structure
+                if "document" in properties and isinstance(properties["document"], dict):
+                    doc_props = properties["document"].get("properties", {})
+                    field_count += len(doc_props) if doc_props else 0
+                # Count per-modality fields
+                for key, value in properties.items():
+                    if key.startswith("per_") and isinstance(value, dict):
+                        if value.get("type") == "array" and value.get("items", {}).get("type") == "object":
+                            items_props = value.get("items", {}).get("properties", {})
+                            field_count += len(items_props) if items_props else 0
+                # If no hierarchical structure, count flat properties
+                if field_count == 0:
+                    field_count = len(properties)
+        
+        schema_data.append({
+            "id": schema.id,
+            "name": schema.name,
+            "description": schema.description,
+            "version": schema.version,
+            "field_count": field_count,
+            "output_contract": schema.output_contract if isinstance(schema.output_contract, dict) else None,
+            "created_at": schema.created_at.isoformat() if schema.created_at else None,
+        })
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=summary)],
+        structured_content={
+            "schemas": schema_data,
+            "total": len(schemas)
+        }
+    )
+
+
+async def _workspace_semantic_search(
+    services: Dict,
+    ctx: Context,
+    queries: List[str],
+    limit: int,
+    asset_kinds: Optional[List[str]],
+    bundle_id: Optional[int],
+    parent_asset_id: Optional[int],
+    date_from: Optional[str],
+    date_to: Optional[str],
+    combine_results: bool,
+) -> ToolResult:
+    """Internal helper that powers workspace_hub(mode='semantic')."""
+    session = services["session"]
+    infospace_id = services["infospace_id"]
+    
+    infospace = session.get(Infospace, infospace_id)
+    if not infospace or not infospace.embedding_model:
+        return ToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text="❌ Semantic search not available: Infospace does not have embeddings configured.\n\n"
+                         "To enable semantic search:\n"
+                         "1. Configure an embedding model for this infospace\n"
+                         "2. Generate embeddings for your assets\n"
+                         "3. Retry workspace_hub(mode='semantic')"
+                )
+            ]
         )
+    
+    from datetime import datetime
+    date_from_dt = None
+    date_to_dt = None
+    
+    if date_from:
+        try:
+            date_from_dt = datetime.fromisoformat(date_from)
+        except ValueError:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Invalid date_from format: {date_from}. Use ISO format (YYYY-MM-DD)")]
+            )
+    
+    if date_to:
+        try:
+            date_to_dt = datetime.fromisoformat(date_to)
+        except ValueError:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Invalid date_to format: {date_to}. Use ISO format (YYYY-MM-DD)")]
+            )
+    
+    from app.models import AssetKind
+    kinds = None
+    if asset_kinds:
+        try:
+            kinds = [AssetKind(kind) for kind in asset_kinds]
+        except ValueError as e:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Invalid asset kind: {e}")]
+            )
+    
+    from app.api.services.vector_search_service import VectorSearchService
+    search_service = VectorSearchService(session, runtime_api_keys=services["runtime_api_keys"])
+    
+    try:
+        all_results = []
+        query_results_map = {}
         
-        await ctx.info("Listing annotation schemas")
+        for q in queries:
+            results = await search_service.semantic_search(
+                query_text=q,
+                infospace_id=infospace_id,
+                limit=limit,
+                asset_kinds=kinds,
+                date_from=date_from_dt,
+                date_to=date_to_dt,
+                bundle_id=bundle_id,
+                parent_asset_id=parent_asset_id
+            )
+            query_results_map[q] = results
+            all_results.extend(results)
         
-        schemas = services["annotation_service"].list_schemas(
-            services["user_id"],
-            services["infospace_id"],
-            active_only=True
-        )
+        if len(queries) > 1 and combine_results:
+            seen_chunks = {}
+            for result in all_results:
+                chunk_id = result.chunk_id
+                if chunk_id not in seen_chunks or result.similarity > seen_chunks[chunk_id].similarity:
+                    seen_chunks[chunk_id] = result
+            results = sorted(seen_chunks.values(), key=lambda x: x.similarity, reverse=True)[:limit]
+        else:
+            results = all_results
         
-        summary = format_schema_summary(schemas)
+        if not results:
+            queries_str = "', '".join(queries)
+            return ToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"🔍 No results found for {'queries' if len(queries) > 1 else 'query'}: '{queries_str}'\n\n"
+                             "Try:\n"
+                             "- Using different search terms\n"
+                             "- Removing filters\n"
+                             "- Ensuring assets have embeddings"
+                    )
+                ]
+            )
         
-        schema_data = [
-            {
-                "id": schema.id,
-                "name": schema.name,
-                "description": schema.description,
-                "version": schema.version,
-                "created_at": schema.created_at.isoformat() if schema.created_at else None,
-            }
-            for schema in schemas
-        ]
+        if len(queries) > 1:
+            queries_str = "', '".join(queries)
+            output_lines = [f"🔍 Multi-Query Semantic Search Results"]
+            output_lines.append(f"Queries: '{queries_str}'")
+            output_lines.append(f"Found {len(results)} unique results (combined and deduplicated)\n" if combine_results else f"Found {len(results)} total results\n")
+        else:
+            output_lines = [f"🔍 Semantic Search Results for: '{queries[0]}'"]
+            output_lines.append(f"Found {len(results)} results\n")
+        
+        structured_results = []
+        
+        for i, result in enumerate(results, 1):
+            output_lines.append(f"## Result {i} (Similarity: {result.similarity:.3f})")
+            output_lines.append(f"**Asset:** {result.asset_title} (ID: {result.asset_id})")
+            output_lines.append(f"**Type:** {result.asset_kind}")
+            output_lines.append(f"**Chunk:** #{result.chunk_index}")
+            
+            if result.chunk_metadata:
+                if 'start_char' in result.chunk_metadata and 'end_char' in result.chunk_metadata:
+                    output_lines.append(f"**Position:** chars {result.chunk_metadata['start_char']}-{result.chunk_metadata['end_char']}")
+            
+            text_preview = result.chunk_text[:300] + "..." if result.chunk_text and len(result.chunk_text) > 300 else (result.chunk_text or "")
+            output_lines.append(f"**Content:**\n{text_preview}")
+            output_lines.append("")
+            
+            structured_results.append({
+                "rank": i,
+                "similarity": round(result.similarity, 4),
+                "distance": round(result.distance, 4),
+                "asset_id": result.asset_id,
+                "asset_uuid": result.asset_uuid,
+                "asset_title": result.asset_title,
+                "asset_kind": result.asset_kind.value if hasattr(result.asset_kind, 'value') else str(result.asset_kind),
+                "chunk_id": result.chunk_id,
+                "chunk_index": result.chunk_index,
+                "chunk_text": result.chunk_text,
+                "chunk_metadata": result.chunk_metadata
+            })
+        
+        asset_ids = list(set(r.asset_id for r in results))
+        output_lines.append(f"\n💡 **Tip:** Use workspace_hub(mode='load', ids={asset_ids[:5]}, depth='full') to pull full documents")
         
         return ToolResult(
-            content=[TextContent(type="text", text=summary)],
+            content=[TextContent(type="text", text="\n".join(output_lines))],
             structured_content={
-                "schemas": schema_data,
-                "total": len(schemas)
+                "queries": queries,
+                "multi_query": len(queries) > 1,
+                "combined": combine_results if len(queries) > 1 else False,
+                "total_results": len(results),
+                "results": structured_results,
+                "asset_ids": asset_ids,
+                "query_results_map": {q: len(query_results_map[q]) for q in queries} if len(queries) > 1 else None
             }
         )
-
-
-@mcp.tool(tags=["search", "semantic", "discovery"])
-async def semantic_search(
-    query: Annotated[Union[str, List[str]], "What to search for conceptually (e.g., 'arguments for carbon pricing') or multiple related queries ['carbon tax benefits', 'emissions trading advantages']"],
-    ctx: Context,
-    limit: Annotated[int, "Maximum results per query (10-50 recommended)"] = 10,
-    asset_kinds: Annotated[Optional[List[str]], "Limit to document types: ['web', 'pdf', 'text', 'article']"] = None,
-    bundle_id: Annotated[Optional[int], "Search only within a specific collection (bundle ID)"] = None,
-    parent_asset_id: Annotated[Optional[int], "Search only within a specific parent asset (e.g., CSV rows under a CSV)"] = None,
-    date_from: Annotated[Optional[str], "Only documents from this date onward (format: YYYY-MM-DD)"] = None,
-    date_to: Annotated[Optional[str], "Only documents up to this date (format: YYYY-MM-DD)"] = None,
-    combine_results: Annotated[bool, "For multiple queries, merge and deduplicate results"] = True,
-) -> ToolResult:
-    """
-    Find content by meaning, not exact text. Works on any asset type (articles, CSV rows, PDFs, web pages).
     
-    <core_examples>
-    General discovery:
-      semantic_search(query="carbon pricing arguments")
-    
-    CSV deduplication (check if row exists elsewhere):
-      semantic_search(
-          query="München Hegelstraße 8 info@queeres-zentrum.de",  # Key fields
-          parent_asset_id=7032,  # Search within CSV
-          limit=20
-      )
-    
-    Multiple query angles:
-      semantic_search(
-          query=["carbon tax benefits", "emissions trading"],
-          combine_results=True
-      )
-    
-    Scoped search:
-      semantic_search(query="...", bundle_id=5)  # Within collection
-      semantic_search(query="...", asset_kinds=["article", "web"])  # By type
-    </core_examples>
-    
-    
-    <scope>
-    parent_asset_id: Searches children only (CSV rows, PDF pages)
-    bundle_id: Searches assets in collection
-    (no scope): Searches entire workspace
-    </scope>
-
-    """
-    with get_services() as services:
-        session = services["session"]
-        infospace_id = services["infospace_id"]
-        
-        # Check if infospace has embeddings configured
-        infospace = session.get(Infospace, infospace_id)
-        if not infospace or not infospace.embedding_model:
-            return ToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text="❌ Semantic search not available: Infospace does not have embeddings configured.\n\n"
-                             "To enable semantic search:\n"
-                             "1. Configure an embedding model for this infospace\n"
-                             "2. Generate embeddings for your assets\n"
-                             "3. Use this tool to search"
-                    )
-                ]
-            )
-        
-        # Convert date strings to datetime if provided
-        from datetime import datetime
-        date_from_dt = None
-        date_to_dt = None
-        
-        if date_from:
-            try:
-                date_from_dt = datetime.fromisoformat(date_from)
-            except ValueError:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"❌ Invalid date_from format: {date_from}. Use ISO format (YYYY-MM-DD)")]
+    except Exception as e:
+        logger.error(f"Semantic search failed: {e}", exc_info=True)
+        return ToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"❌ Semantic search failed: {str(e)}\n\n"
+                         "This might be because:\n"
+                         "- No embeddings have been generated yet\n"
+                         "- The embedding model is not available\n"
+                         "- There was an error processing the query"
                 )
-        
-        if date_to:
-            try:
-                date_to_dt = datetime.fromisoformat(date_to)
-            except ValueError:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"❌ Invalid date_to format: {date_to}. Use ISO format (YYYY-MM-DD)")]
-                )
-        
-        # Convert asset_kinds to enum
-        from app.models import AssetKind
-        kinds = None
-        if asset_kinds:
-            try:
-                kinds = [AssetKind(kind) for kind in asset_kinds]
-            except ValueError as e:
-                return ToolResult(
-                    content=[TextContent(type="text", text=f"❌ Invalid asset kind: {e}")]
-                )
-        
-        # Handle single or multiple queries
-        queries = [query] if isinstance(query, str) else query
-        
-        # Perform semantic search using runtime API keys from services
-        from app.api.services.vector_search_service import VectorSearchService
-        search_service = VectorSearchService(session, runtime_api_keys=services["runtime_api_keys"])
-        
-        try:
-            all_results = []
-            query_results_map = {}
-            
-            for q in queries:
-                results = await search_service.semantic_search(
-                    query_text=q,
-                    infospace_id=infospace_id,
-                    limit=limit,
-                    asset_kinds=kinds,
-                    date_from=date_from_dt,
-                    date_to=date_to_dt,
-                    bundle_id=bundle_id,
-                    parent_asset_id=parent_asset_id
-                )
-                query_results_map[q] = results
-                all_results.extend(results)
-            
-            # If multiple queries and combine_results is True, deduplicate by chunk_id
-            if len(queries) > 1 and combine_results:
-                seen_chunks = {}
-                for result in all_results:
-                    chunk_id = result.chunk_id
-                    # Keep the result with highest similarity
-                    if chunk_id not in seen_chunks or result.similarity > seen_chunks[chunk_id].similarity:
-                        seen_chunks[chunk_id] = result
-                results = sorted(seen_chunks.values(), key=lambda x: x.similarity, reverse=True)[:limit]
-            else:
-                results = all_results
-            
-            if not results:
-                queries_str = "', '".join(queries)
-                return ToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=f"🔍 No results found for {'queries' if len(queries) > 1 else 'query'}: '{queries_str}'\n\n"
-                                 "Try:\n"
-                                 "- Using different search terms\n"
-                                 "- Removing filters\n"
-                                 "- Ensuring assets have been embedded"
-                        )
-                    ]
-                )
-            
-            # Format results
-            if len(queries) > 1:
-                queries_str = "', '".join(queries)
-                output_lines = [f"🔍 Multi-Query Semantic Search Results"]
-                output_lines.append(f"Queries: '{queries_str}'")
-                output_lines.append(f"Found {len(results)} unique results (combined and deduplicated)\n" if combine_results else f"Found {len(results)} total results\n")
-            else:
-                output_lines = [f"🔍 Semantic Search Results for: '{queries[0]}'"]
-                output_lines.append(f"Found {len(results)} results\n")
-            
-            # Build structured data for tool result registry
-            structured_results = []
-            
-            for i, result in enumerate(results, 1):
-                output_lines.append(f"## Result {i} (Similarity: {result.similarity:.3f})")
-                output_lines.append(f"**Asset:** {result.asset_title} (ID: {result.asset_id})")
-                output_lines.append(f"**Type:** {result.asset_kind}")
-                output_lines.append(f"**Chunk:** #{result.chunk_index}")
-                
-                # Show chunk position if available
-                if result.chunk_metadata:
-                    if 'start_char' in result.chunk_metadata and 'end_char' in result.chunk_metadata:
-                        output_lines.append(f"**Position:** chars {result.chunk_metadata['start_char']}-{result.chunk_metadata['end_char']}")
-                
-                # Truncate text preview
-                text_preview = result.chunk_text[:300] + "..." if result.chunk_text and len(result.chunk_text) > 300 else (result.chunk_text or "")
-                output_lines.append(f"**Content:**\n{text_preview}")
-                output_lines.append("")
-                
-                # Add to structured results
-                structured_results.append({
-                    "rank": i,
-                    "similarity": round(result.similarity, 4),
-                    "distance": round(result.distance, 4),
-                    "asset_id": result.asset_id,
-                    "asset_uuid": result.asset_uuid,
-                    "asset_title": result.asset_title,
-                    "asset_kind": result.asset_kind.value if hasattr(result.asset_kind, 'value') else str(result.asset_kind),
-                    "chunk_id": result.chunk_id,
-                    "chunk_index": result.chunk_index,
-                    "chunk_text": result.chunk_text,
-                    "chunk_metadata": result.chunk_metadata
-                })
-            
-            # Add asset IDs for follow-up navigation
-            asset_ids = list(set(r.asset_id for r in results))
-            output_lines.append(f"\n💡 **Tip:** Use `navigate` with mode='load' and ids={asset_ids[:5]} to view full asset details")
-            
-            return ToolResult(
-                content=[TextContent(type="text", text="\n".join(output_lines))],
-                structured_content={
-                    "queries": queries,
-                    "multi_query": len(queries) > 1,
-                    "combined": combine_results if len(queries) > 1 else False,
-                    "total_results": len(results),
-                    "results": structured_results,
-                    "asset_ids": asset_ids,
-                    "query_results_map": {q: len(query_results_map[q]) for q in queries} if len(queries) > 1 else None
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Semantic search failed: {e}", exc_info=True)
-            return ToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"❌ Semantic search failed: {str(e)}\n\n"
-                             "This might be because:\n"
-                             "- No embeddings have been generated yet\n"
-                             "- The embedding model is not available\n"
-                             "- There was an error processing the query"
-                    )
-                ]
-            )
+            ]
+        )
 
 
 # @mcp.tool

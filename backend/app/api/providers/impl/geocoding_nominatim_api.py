@@ -111,6 +111,14 @@ class NominatimAPIGeocodingProvider:
             osm_class = result.get('class', '')
             location_type = self._map_nominatim_type(osm_type, osm_class)
             
+            # Detailed logging to debug coordinate issues
+            logger.info(f"Nominatim result for '{location}':")
+            logger.info(f"  display_name: {result.get('display_name')}")
+            logger.info(f"  raw lat/lon: lat={result.get('lat')}, lon={result.get('lon')}")
+            logger.info(f"  parsed: lat={lat}, lon={lon}")
+            logger.info(f"  returning coordinates: [{lon}, {lat}] (as [lon, lat])")
+            logger.info(f"  type: {osm_class}/{osm_type}")
+            
             # Calculate approximate area from bounding box
             area = None
             if len(boundingbox) == 4:

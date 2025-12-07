@@ -1008,7 +1008,7 @@ class AssetTransferRequest(BaseModel):
     asset_ids: List[int]
     source_infospace_id: int
     target_infospace_id: int
-    copy: bool = True
+    should_copy: bool = True  # renamed from 'copy' to avoid shadowing BaseModel.copy()
 
 @router.post("/transfer", response_model=List[AssetRead])
 def transfer_assets(
@@ -1021,14 +1021,14 @@ def transfer_assets(
     Transfer assets between infospaces.
     
     This endpoint allows you to copy or move multiple assets from one infospace to another.
-    When copying (copy=True), new assets are created in the target infospace with the same content.
-    When moving (copy=False), assets are moved by changing their infospace_id.
+    When copying (should_copy=True), new assets are created in the target infospace with the same content.
+    When moving (should_copy=False), assets are moved by changing their infospace_id.
     
     Args:
         asset_ids: List of asset IDs to transfer
         source_infospace_id: Source infospace ID
         target_infospace_id: Target infospace ID
-        copy: If True, copy assets (default). If False, move them.
+        should_copy: If True, copy assets (default). If False, move them.
     
     Returns:
         List of transferred assets in the target infospace
@@ -1051,7 +1051,7 @@ def transfer_assets(
         source_infospace_id=request.source_infospace_id,
         target_infospace_id=request.target_infospace_id,
         user_id=current_user.id,
-        copy=request.copy
+        copy=request.should_copy
     )
     
     if not transferred_assets:
