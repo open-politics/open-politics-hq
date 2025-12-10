@@ -31,13 +31,13 @@ def login_access_token(
     user = crud.authenticate(
         session=session, email=form_data.username, password=form_data.password
     )
+    if not user:
+        raise HTTPException(status_code=400, detail="Incorrect email or password")
     if not user.is_superuser:
         if not user.email_verified:
             raise HTTPException(status_code=400, detail="Email not verified")
         elif not user.is_active:
             raise HTTPException(status_code=400, detail="Your account is not active")
-        elif not user:
-            raise HTTPException(status_code=400, detail="Incorrect email or password")
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return Token(
