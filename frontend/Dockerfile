@@ -1,4 +1,4 @@
-# Use Bun's official Debian-based image (minimal variant dropped adduser/addgroup)
+# Bun's official Debian-based image
 FROM oven/bun:1-debian AS base
 
 WORKDIR /app
