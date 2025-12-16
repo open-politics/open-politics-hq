@@ -23,7 +23,9 @@ jobs:
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          push: true
+          push:
+            tags:
+              - "*"
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest
 
   build-and-push-frontend:
@@ -43,5 +45,7 @@ jobs:
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
-          push: true
+          push:
+            tags:
+              - "*"
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest
