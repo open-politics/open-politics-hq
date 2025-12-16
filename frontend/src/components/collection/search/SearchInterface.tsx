@@ -33,7 +33,7 @@ import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import useAuth from '@/hooks/useAuth';
 import { SearchService, AssetRead } from '@/client';
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import AssetDetailView from '@/components/collection/assets/Views/AssetDetailView';
 
 interface SearchResult {
@@ -482,7 +482,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
                 {result.published_date && (
                   <div className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
-                    {formatDistanceToNow(new Date(result.published_date))} ago
+                    {formatDistanceToNowStrict(new Date(result.published_date))} ago
                   </div>
                 )}
                 
@@ -536,7 +536,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span>{session.provider}</span>
                 <span>•</span>
-                <span>{formatDistanceToNow(session.timestamp)} ago</span>
+                <span>{formatDistanceToNowStrict(session.timestamp)} ago</span>
                 {!session.isLoading && !session.error && (
                   <>
                     <span>•</span>
@@ -807,7 +807,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
                       {result.published_date && (
                         <>
                           <span>•</span>
-                          <span>{formatDistanceToNow(new Date(result.published_date))} ago</span>
+                          <span>{formatDistanceToNowStrict(new Date(result.published_date))} ago</span>
                         </>
                       )}
                     </div>
@@ -929,7 +929,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
                         {result.published_date && (
                           <>
                             <span>•</span>
-                            <span>{formatDistanceToNow(new Date(result.published_date))} ago</span>
+                            <span>{formatDistanceToNowStrict(new Date(result.published_date))} ago</span>
                           </>
                         )}
                         {result.score && (
@@ -1059,7 +1059,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
                                 {result.published_date && (
                                   <div className="flex items-center gap-2">
                                     <strong className="w-20 shrink-0">Published:</strong>
-                                    <span>{formatDistanceToNow(new Date(result.published_date), { addSuffix: true })}</span>
+                                    <span>{formatDistanceToNowStrict(new Date(result.published_date), { addSuffix: true })}</span>
                                   </div>
                                 )}
                               </div>

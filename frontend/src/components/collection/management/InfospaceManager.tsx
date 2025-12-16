@@ -41,7 +41,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { formatDistanceToNow, format } from 'date-fns';
+import { formatDistanceToNowStrict, format } from 'date-fns';
 
 interface InfospaceManagerProps {
   activeInfospace: InfospaceRead | null;
@@ -596,9 +596,9 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
                           <div>Size: {formatFileSize(backup.file_size_bytes)}</div>
                         </div>
                         <div className="mt-2 text-xs text-muted-foreground">
-                          Created {formatDistanceToNow(new Date(backup.created_at))} ago
+                          Created {formatDistanceToNowStrict(new Date(backup.created_at))} ago
                           {backup.completed_at && (
-                            <span> • Completed {formatDistanceToNow(new Date(backup.completed_at))} ago</span>
+                            <span> • Completed {formatDistanceToNowStrict(new Date(backup.completed_at))} ago</span>
                           )}
                         </div>
                       </div>

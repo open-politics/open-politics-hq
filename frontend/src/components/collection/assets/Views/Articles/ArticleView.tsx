@@ -1,14 +1,17 @@
 import React from 'react';
 import { ArticleViewProps, ArticleMetadata } from './types';
 import { detectArticleFormat } from './utils';
-import ArticleHeader from './ArticleHeader';
 import ArticleFeaturedImage from './ArticleFeaturedImage';
-import HtmlArticleRenderer from './HtmlArticleRenderer';
-import MarkdownArticleRenderer from './MarkdownArticleRenderer';
 import ComposedArticleRenderer from './ComposedArticleRenderer';
+import TextContentRenderer from './TextContentRenderer';
 import { cn } from '@/lib/utils';
-import { FragmentDisplay, FragmentSectionHeader } from '../Fragments';
 
+/**
+ * ArticleView - Content view for articles
+ * 
+ * Note: Metadata and fragments are displayed in the parent's AssetMetaHeader.
+ * This component focuses on title + content only.
+ */
 export default function ArticleView({ 
   asset, 
   childAssets = [], 
@@ -22,54 +25,43 @@ export default function ArticleView({
 
   // Select appropriate renderer
   const renderContent = () => {
-    switch (format) {
-      case 'composed':
-        return (
-          <ComposedArticleRenderer
-            asset={asset}
-            content={content}
-            embeddedAssets={metadata?.embedded_assets}
-            onAssetClick={onAssetClick}
-          />
-        );
-      
-      case 'html':
-        return (
-          <HtmlArticleRenderer
-            asset={asset}
-            content={content}
-          />
-        );
-      
-      case 'markdown':
-        return (
-          <MarkdownArticleRenderer
-            asset={asset}
-            content={content}
-          />
-        );
-      
-      case 'text':
-      default:
-        return (
-          <div className="whitespace-pre-wrap text-sm">
-            {content}
-          </div>
-        );
+    // Only composed articles need special handling
+    // Everything else (html, markdown, text) goes through TextContentRenderer
+    if (format === 'composed') {
+      return (
+        <ComposedArticleRenderer
+          asset={asset}
+          content={content}
+          embeddedAssets={metadata?.embedded_assets}
+          onAssetClick={onAssetClick}
+        />
+      );
     }
+    
+    // TextContentRenderer auto-detects and handles HTML, Markdown, and plain text
+    return <TextContentRenderer content={content} />;
   };
 
   return (
     <div className={cn("h-full w-full flex flex-col min-h-0 overflow-y-auto", className)}>
-      {/* Header */}
-      <ArticleHeader 
-        asset={asset} 
-        onEdit={onEdit ? () => onEdit(asset) : undefined}
-      />
-
       {/* Content */}
       <div className="flex-1 w-full overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-6 pt-0">
+        <div className="max-w-4xl mx-auto px-6 py-6">
+          {/* Prominent Title */}
+          <h1 className="text-2xl font-bold leading-tight mb-4 text-foreground break-words">
+            {asset.title || 'Untitled Article'}
+          </h1>
+          
+          {/* Summary if available */}
+          {metadata?.summary && (
+            <div className="mb-4 px-3 pb-2 bg-muted/90 rounded-lg border-l-2 rounded-l-xs border-primary">
+              <span className="text-sm font-semibold text-muted-foreground">Summary:</span>
+            <p className="text-sm text-muted-foreground italic">
+                {metadata.summary}
+              </p>
+            </div>
+          )}
+
           {/* Featured Image */}
           <ArticleFeaturedImage 
             asset={asset} 
@@ -78,17 +70,6 @@ export default function ArticleView({
 
           {/* Article Content */}
           {renderContent()}
-
-          {/* Fragment Display */}
-          {asset.fragments && Object.keys(asset.fragments).length > 0 && (
-            <div className="mt-8 pt-6 border-t">
-              <FragmentSectionHeader count={Object.keys(asset.fragments).length} />
-              <FragmentDisplay 
-                fragments={asset.fragments as Record<string, any>}
-                viewMode="card"
-              />
-            </div>
-          )}
 
           {/* Child Assets Gallery (images beyond featured) */}
           {childAssets.length > 1 && (

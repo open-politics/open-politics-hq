@@ -85,8 +85,13 @@ class ResultStatus(str, enum.Enum):
 class TaskType(str, enum.Enum):
     INGEST = "ingest"
     ANNOTATE = "annotate"
-    PIPELINE = "pipeline"
-    MONITOR = "monitor"
+    PIPELINE = "pipeline"      # DEPRECATED - use FLOW
+    MONITOR = "monitor"        # DEPRECATED - use FLOW
+    FLOW = "flow"              # Execute a Flow
+    SOURCE_POLL = "source_poll"  # Poll a Source for new items
+    EMBED = "embed"            # Create embeddings
+    BACKUP = "backup"          # Create backups
+    CUSTOM = "custom"          # Custom Celery task
 
 
 class TaskStatus(str, enum.Enum):
@@ -126,14 +131,6 @@ class BackupStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class PipelineStepType(str, enum.Enum):
-    ANNOTATE = "ANNOTATE"
-    FILTER = "FILTER"
-    ANALYZE = "ANALYZE"
-    ROUTE = "ROUTE"
-    CURATE = "CURATE"
-    BUNDLE = "BUNDLE"
-
 class SourceType(str, enum.Enum):
     """Auto-detected source types based on locator patterns."""
     RSS_FEED = "rss_feed"
@@ -147,9 +144,21 @@ class SourceType(str, enum.Enum):
 
 class SourceStatus(str, enum.Enum):
     PENDING = "pending"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    IDLE = "idle"
     PROCESSING = "processing"
     COMPLETE = "complete"
     FAILED = "failed"
+    ERROR = "error"
+
+
+class AnnotationRunTrigger(str, enum.Enum):
+    """Trigger types for annotation runs."""
+    MANUAL = "manual"
+    SOURCE_POLL = "source_poll"
+    FLOW_STEP = "flow_step"
+    API = "api"
 
 
 class ProcessingStatus(str, enum.Enum):
@@ -172,6 +181,46 @@ class EmbeddingProvider(str, enum.Enum):
     JINA = "jina"
     OPENAI = "openai"  # For future use
     HUGGINGFACE = "huggingface"  # For future use
+
+
+# ─────────────────────────────────────────────────────── Flow Enums ──── #
+
+class FlowStatus(str, enum.Enum):
+    """Status of a Flow definition."""
+    DRAFT = "draft"        # Being configured, not yet active
+    ACTIVE = "active"      # Actively processing
+    PAUSED = "paused"      # Temporarily stopped
+    ERROR = "error"        # In error state, needs attention
+
+
+class FlowInputType(str, enum.Enum):
+    """What feeds data into a Flow."""
+    STREAM = "stream"      # Watch a Source's output
+    BUNDLE = "bundle"      # Watch a Bundle for new assets
+    MANUAL = "manual"      # Only triggered manually with explicit asset_ids
+
+
+class FlowTriggerMode(str, enum.Enum):
+    """When a Flow runs."""
+    ON_ARRIVAL = "on_arrival"  # Process as soon as new assets arrive
+    SCHEDULED = "scheduled"    # Run on a schedule (linked Task)
+    MANUAL = "manual"          # Only run when explicitly triggered
+
+
+class FlowStepType(str, enum.Enum):
+    """Types of steps in a Flow."""
+    ANNOTATE = "ANNOTATE"  # Apply schemas, create annotations
+    FILTER = "FILTER"      # Evaluate conditions, pass/reject assets
+    CURATE = "CURATE"      # Promote annotation fields to asset.fragments
+    ROUTE = "ROUTE"        # Copy/move assets to bundle(s)
+    EMBED = "EMBED"        # Create embeddings for semantic search
+    ANALYZE = "ANALYZE"    # Run analysis adapters
+
+
+class RunType(str, enum.Enum):
+    """Differentiates one-off runs from flow-triggered runs."""
+    ONE_OFF = "one_off"    # Manual/standalone annotation run (shows in history)
+    FLOW_STEP = "flow_step"  # Created by a Flow execution (hidden from main list)
 
 
 # ─────────────────────────────────────────────────────────── Core Access ──── #
@@ -233,7 +282,6 @@ class User(SQLModel, table=True):
     created_user_backups: List["UserBackup"] = Relationship(
         sa_relationship_kwargs={"foreign_keys": "[UserBackup.created_by_user_id]"}
     )
-    monitors: List["Monitor"] = Relationship(back_populates="user")
 
 
 class Infospace(SQLModel, table=True):
@@ -266,13 +314,6 @@ class Infospace(SQLModel, table=True):
     annotations: List["Annotation"] = Relationship(back_populates="infospace")
     shareable_links: List["ShareableLink"] = Relationship(back_populates="infospace")
     backups: List["InfospaceBackup"] = Relationship(back_populates="infospace")
-    monitors: List["Monitor"] = Relationship(back_populates="infospace")
-
-# ─────────────────────────────────────────────────────────────── Bundles ──── #
-
-class MonitorBundleLink(SQLModel, table=True):
-    monitor_id: int = Field(foreign_key="monitor.id", primary_key=True)
-    bundle_id: int = Field(foreign_key="bundle.id", primary_key=True)
 
 # ─────────────────────────────────────────────────────────────── Sources ──── #
 
@@ -286,6 +327,9 @@ class Source(SQLModel, table=True):
     status: SourceStatus = SourceStatus.PENDING
     source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     error_message: Optional[str] = None
+    
+    # Tags for filtering and organization
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
@@ -296,11 +340,51 @@ class Source(SQLModel, table=True):
     # Import/export lineage
     imported_from_uuid: Optional[str] = Field(default=None, index=True)
     
+    # ═══ STREAMING BEHAVIOR ═══
+    is_active: bool = Field(default=False)
+    poll_interval_seconds: int = Field(default=300)
+    
+    # ═══ OUTPUT ROUTING (key for hierarchy) ═══
+    output_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")
+    
+    # ═══ STATE TRACKING ═══
+    cursor_state: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    last_poll_at: Optional[datetime] = None
+    next_poll_at: Optional[datetime] = None
+    
+    # ═══ STATISTICS ═══
+    items_last_poll: int = Field(default=0)
+    total_items_ingested: int = Field(default=0)
+    
+    # ═══ HEALTH ═══
+    consecutive_failures: int = Field(default=0)
+    last_error_at: Optional[datetime] = None
+    
     infospace: Optional[Infospace] = Relationship(back_populates="sources")
     user: Optional[User] = Relationship(back_populates="sources")
 
     assets: List["Asset"] = Relationship(back_populates="source")
     monitoring_tasks: List["Task"] = Relationship(back_populates="source")
+    
+    # ═══ RELATIONSHIPS ═══
+    output_bundle: Optional["Bundle"] = Relationship()
+    poll_history: List["SourcePollHistory"] = Relationship(back_populates="source")
+
+class SourcePollHistory(SQLModel, table=True):
+    """Tracks poll history for sources to enable statistics and debugging."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(foreign_key="source.id")
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+    status: str  # success, failed, partial
+    items_found: int = Field(default=0)
+    items_ingested: int = Field(default=0)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    triggered_run_id: Optional[int] = Field(default=None, foreign_key="annotationrun.id")  # DEPRECATED
+    cursor_before: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    cursor_after: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    source: Optional["Source"] = Relationship(back_populates="poll_history")
 
 # ─────────────────────────────────────────────────────────────── Assets ──── #
 
@@ -316,6 +400,9 @@ class Asset(SQLModel, table=True):
     source_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     content_hash: Optional[str] = Field(default=None, index=True)
     fragments: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
+    
+    # Tags for filtering and organization
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     
     # Processing status for hierarchical assets (CSV, PDF)
     processing_status: ProcessingStatus = ProcessingStatus.READY
@@ -493,6 +580,7 @@ class Bundle(SQLModel, table=True):
     bundle_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     asset_count: Optional[int] = Field(default=0)
     version: str = Field(default="1.0")
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     
     # Nested bundle support
     parent_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
@@ -508,8 +596,7 @@ class Bundle(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="bundles")
     user: Optional[User] = Relationship(back_populates="bundles")
     assets: List["Asset"] = Relationship(back_populates="bundle")
-    monitors: List["Monitor"] = Relationship(back_populates="target_bundles", link_model=MonitorBundleLink)
-    
+
     # Nested bundle relationships
     parent_bundle: Optional["Bundle"] = Relationship(
         back_populates="child_bundles",
@@ -530,10 +617,6 @@ class Bundle(SQLModel, table=True):
 
 # ───────────────────────────────────────────────────── Annotation Schemas ──── #
 
-class MonitorSchemaLink(SQLModel, table=True):
-    monitor_id: int = Field(foreign_key="monitor.id", primary_key=True)
-    schema_id: int = Field(foreign_key="annotationschema.id", primary_key=True)
-
 class AnnotationSchema(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
@@ -544,6 +627,9 @@ class AnnotationSchema(SQLModel, table=True):
     version: str = Field(default="1.0")
     field_specific_justification_configs: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     is_active: bool = Field(default=True, index=True)
+    
+    # Tags for filtering and organization
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
@@ -554,7 +640,6 @@ class AnnotationSchema(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="schemas")
     user: Optional[User] = Relationship(back_populates="schemas")
     annotations: List["Annotation"] = Relationship(back_populates="schema")
-    monitors: List["Monitor"] = Relationship(back_populates="target_schemas", link_model=MonitorSchemaLink)
 
     __table_args__ = (
         Index(
@@ -588,6 +673,18 @@ class AnnotationRun(SQLModel, table=True):
     views_config: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list, sa_column=Column(JSONB)
     )
+    
+    # ═══ RUN TYPE: Distinguishes one-off runs from flow-triggered runs ═══
+    # one_off: Manual/standalone run - shows in run history
+    # flow_step: Created by FlowExecution - hidden from main run list, shown under Flow
+    run_type: RunType = Field(default=RunType.ONE_OFF)
+    
+    # ═══ FLOW EXECUTION LINK ═══
+    # If run_type == flow_step, this links to the parent FlowExecution
+    flow_execution_id: Optional[int] = Field(default=None, foreign_key="flowexecution.id", index=True)
+    
+    # Tags for filtering and organization
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
 
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
@@ -595,12 +692,22 @@ class AnnotationRun(SQLModel, table=True):
     # Import/export lineage
     imported_from_uuid: Optional[str] = Field(default=None, index=True)
 
-    # Link to a monitor if this run was generated by one
-    monitor_id: Optional[int] = Field(default=None, foreign_key="monitor.id")
-    monitor: Optional["Monitor"] = Relationship(back_populates="runs")
+    # ═══ TRIGGER TRACKING ═══
+    # trigger_type: manual (default), source_poll, flow_step, api
+    trigger_type: str = Field(default="manual")
+    trigger_context: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    # Source bundle for continuous run support
+    source_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
 
     infospace: Optional[Infospace] = Relationship(back_populates="runs")
     user: Optional[User] = Relationship(back_populates="runs")
+    
+    # Link to FlowExecution if this run was created by a Flow
+    flow_execution: Optional["FlowExecution"] = Relationship(
+        back_populates="annotation_runs",
+        sa_relationship_kwargs={"foreign_keys": "[AnnotationRun.flow_execution_id]"}
+    )
 
     target_schemas: List["AnnotationSchema"] = Relationship(link_model=RunSchemaLink)
     annotations: List["Annotation"] = Relationship(back_populates="run")
@@ -693,7 +800,6 @@ class Task(SQLModel, table=True):
 
     infospace: Optional[Infospace] = Relationship(back_populates="tasks")
     user: Optional[User] = Relationship(back_populates="tasks")
-    monitor: Optional["Monitor"] = Relationship(back_populates="linked_task")
     source: Optional["Source"] = Relationship(back_populates="monitoring_tasks")
 
 # ───────────────────────────────────────────────────────────── History (opt.) ──── #
@@ -779,8 +885,6 @@ class ChatConversationMessage(SQLModel, table=True):
 # ───────────────────────────────────────────────────────────── Index hints ──── #
 # Alembic migrations should create additional GIN/GIST indexes on JSON columns
 # (cells, value, output_contract) if query patterns show the need.
-
-# ─────────────────────────────────────────────────────────── Monitors ──── #
 
 # ─────────────────────────────────────────────────────────── Backups ──── #
 
@@ -886,78 +990,135 @@ class UserBackup(SQLModel, table=True):
         Index("ix_userbackup_target_created", "target_user_id", "created_by_user_id"),
     )
 
-class Monitor(SQLModel, table=True):
+# ─────────────────────────────────────────────────────────────── Flows ──── #
+# Flows unify Monitor + IntelligencePipeline into a single abstraction
+
+class Flow(SQLModel, table=True):
+    """
+    Unified processing flow that replaces Monitor and IntelligencePipeline.
+    
+    A Flow defines:
+    - What to watch (input: stream/bundle/manual)
+    - What processing to apply (steps: annotate, filter, curate, route, etc.)
+    - When to run (trigger: on_arrival, scheduled, manual)
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     name: str
-    description: Optional[str] = None
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
     
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
     
-    linked_task_id: int = Field(foreign_key="task.id", unique=True)
+    # ═══ STATUS ═══
+    status: FlowStatus = Field(default=FlowStatus.DRAFT)
     
-    run_config_override: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    views_config: Optional[List[Dict[str, Any]]] = Field(default_factory=list, sa_column=Column(JSONB))
-    aggregation_config: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
+    # ═══ INPUT CONFIGURATION ═══
+    # Defines what feeds data into this flow
+    input_type: FlowInputType = Field(default=FlowInputType.BUNDLE)
+    input_source_id: Optional[int] = Field(default=None, foreign_key="source.id")  # if input_type == STREAM
+    input_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")  # if input_type == BUNDLE
     
-    status: str = Field(default="PAUSED")
-    last_checked_at: Optional[datetime] = None
+    # ═══ STEP DEFINITIONS ═══
+    # Embedded as JSON for simplicity
+    # Example: [
+    #   {"type": "ANNOTATE", "schema_ids": [1, 2], "config": {...}},
+    #   {"type": "FILTER", "expression": {...}},
+    #   {"type": "CURATE", "fields": ["entities", "sentiment"]},
+    #   {"type": "ROUTE", "bundle_id": 5, "conditions": [...]}
+    # ]
+    steps: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB))
     
-    # Relationships
-    infospace: Infospace = Relationship(back_populates="monitors")
-    user: User = Relationship(back_populates="monitors")
-    linked_task: "Task" = Relationship(back_populates="monitor")
+    # ═══ TRIGGER CONFIGURATION ═══
+    trigger_mode: FlowTriggerMode = Field(default=FlowTriggerMode.MANUAL)
+    linked_task_id: Optional[int] = Field(default=None, foreign_key="task.id")  # For scheduled flows
     
-    target_bundles: List["Bundle"] = Relationship(back_populates="monitors", link_model=MonitorBundleLink)
-    target_schemas: List["AnnotationSchema"] = Relationship(back_populates="monitors", link_model=MonitorSchemaLink)
-    runs: List["AnnotationRun"] = Relationship(back_populates="monitor")
+    # ═══ DELTA TRACKING (unified) ═══
+    # Tracks what we've processed to enable incremental processing
+    # Structure: { "processed_asset_ids": [...], "last_processed_at": "...", "cursor": {...} }
+    cursor_state: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
+    
+    # ═══ STATISTICS ═══
+    total_executions: int = Field(default=0)
+    total_assets_processed: int = Field(default=0)
+    last_execution_at: Optional[datetime] = Field(default=None)
+    last_execution_status: Optional[str] = Field(default=None)
+    consecutive_failures: int = Field(default=0)
+    
+    # ═══ VIEWS CONFIG (for dashboards) ═══
+    views_config: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB))
+    
+    # ═══ TAGS ═══
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    
+    # ═══ TIMESTAMPS ═══
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+    
+    # ═══ RELATIONSHIPS ═══
+    executions: List["FlowExecution"] = Relationship(back_populates="flow")
+    input_source: Optional["Source"] = Relationship()
+    input_bundle: Optional["Bundle"] = Relationship()
+    
+    __table_args__ = (
+        Index("ix_flow_infospace_status", "infospace_id", "status"),
+        Index("ix_flow_input_bundle", "input_bundle_id"),
+        Index("ix_flow_input_source", "input_source_id"),
+    )
 
-# ─────────────────────────────────────────────────────────── Pipelines ──── #
 
-class PipelineStep(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    pipeline_id: int = Field(foreign_key="intelligencepipeline.id")
-    step_order: int
-    name: str
-    step_type: str # ANNOTATE, FILTER, ANALYZE, ROUTE, CURATE, BUNDLE
-    configuration: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    input_source: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+class FlowExecution(SQLModel, table=True):
+    """
+    A single execution of a Flow.
     
-    pipeline: "IntelligencePipeline" = Relationship(back_populates="steps")
-
-class IntelligencePipeline(SQLModel, table=True):
+    Replaces PipelineExecution and monitor cycle tracking.
+    Contains all trigger context and step outputs.
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
-    name: str
-    description: Optional[str] = None
-
-    infospace_id: int = Field(foreign_key="infospace.id")
-    user_id: int = Field(foreign_key="user.id")
+    flow_id: int = Field(foreign_key="flow.id")
     
-    source_bundle_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))
-    linked_task_id: Optional[int] = Field(default=None, foreign_key="task.id")
+    # ═══ TRIGGER CONTEXT ═══
+    triggered_by: str = Field(default="manual")  # task | on_arrival | manual | source_poll
+    triggered_by_task_id: Optional[int] = Field(default=None, foreign_key="task.id")
+    triggered_by_source_id: Optional[int] = Field(default=None, foreign_key="source.id")
+    trigger_context: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     
-    steps: List["PipelineStep"] = Relationship(back_populates="pipeline")
-    executions: List["PipelineExecution"] = Relationship(back_populates="pipeline")
-
-class PipelineExecution(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    pipeline_id: int = Field(foreign_key="intelligencepipeline.id")
-    status: str # RUNNING, COMPLETED, FAILED
-    trigger_type: str # ON_NEW_ASSET, SCHEDULED_FULL_RUN, MANUAL_ADHOC
-    triggering_asset_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+    # ═══ EXECUTION STATUS ═══
+    status: RunStatus = Field(default=RunStatus.PENDING)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    # ═══ INPUT/OUTPUT ═══
+    input_asset_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))
+    output_asset_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))  # After routing
+    
+    # ═══ STEP OUTPUTS ═══
+    # Structure: {
+    #   "0": {"type": "ANNOTATE", "run_id": 42, "annotation_count": 15},
+    #   "1": {"type": "FILTER", "passed": 12, "rejected": 3},
+    #   "2": {"type": "CURATE", "promoted_count": 24},
+    #   "3": {"type": "ROUTE", "routed_count": 12, "bundle_id": 5}
+    # }
     step_outputs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
-
-    pipeline: "IntelligencePipeline" = Relationship(back_populates="executions")
-
-class PipelineProcessedAsset(SQLModel, table=True):
-    pipeline_id: int = Field(foreign_key="intelligencepipeline.id", primary_key=True)
-    input_bundle_id: int = Field(foreign_key="bundle.id", primary_key=True)
-    asset_id: int = Field(foreign_key="asset.id", primary_key=True)
-    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # ═══ TAGS ═══
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    
+    # ═══ TIMESTAMPS ═══
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # ═══ RELATIONSHIPS ═══
+    flow: Optional["Flow"] = Relationship(back_populates="executions")
+    annotation_runs: List["AnnotationRun"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[AnnotationRun.flow_execution_id]"}
+    )
+    
+    __table_args__ = (
+        Index("ix_flowexecution_flow_status", "flow_id", "status"),
+        Index("ix_flowexecution_created", "created_at"),
+    )
 
 
 class RunAggregate(SQLModel, table=True):
@@ -972,22 +1133,6 @@ class RunAggregate(SQLModel, table=True):
     __table_args__ = (
         Index("ix_runaggregate_payload", "payload", postgresql_using="gin", postgresql_ops={"payload": "jsonb_path_ops"}),
         Index("ix_runaggregate_run_field", "run_id", "field_path"),
-    )
-
-
-class MonitorAggregate(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    monitor_id: int = Field(foreign_key="monitor.id")
-    field_path: str
-    value_kind: str
-    sketch_kind: str
-    payload: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
-
-    __table_args__ = (
-        Index("ix_monitoraggregate_payload", "payload", postgresql_using="gin", postgresql_ops={"payload": "jsonb_path_ops"}),
-        Index("ix_monitoraggregate_monitor_field", "monitor_id", "field_path"),
     )
 
 # ─────────────────────────────────────────────────────────────── Datasets ──── #

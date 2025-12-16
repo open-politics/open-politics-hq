@@ -38,7 +38,7 @@ import {
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import useAuth from '@/hooks/useAuth';
@@ -57,7 +57,15 @@ import AssetDetailViewPdf from './AssetDetailViewPdf';
 import AssetDetailViewTextBlock from './AssetDetailViewTextBlock';
 import ComposedArticleView from '../Composer/ComposedArticleView';
 import { ArticleView } from './Articles';
+import TextContentRenderer from './Articles/TextContentRenderer';
 import EditableCsvViewer from './EditableCsvViewer';
+import { FragmentInlineList } from './Fragments';
+import AssetMetaHeader from './AssetMetaHeader';
+import { useFragmentCuration } from '@/hooks/useFragmentCuration';
+import { getAssetIcon } from '@/components/collection/assets/assetKindConfig';
+import { AssetFeedView } from '../Feed/AssetFeedView';
+import { useSemanticSearch } from '@/hooks/useSemanticSearch';
+import type { AssetFeedItem } from '../Feed/types';
 // import MboxViewer from './viewers/MboxViewer';
 // import CsvViewer from './viewers/CsvViewer';
 // import useSpecializedView from '@/hooks/useSpecializedView';
@@ -129,6 +137,22 @@ const AssetDetailView = ({
 
   const { activeInfospace } = useInfospaceStore();
   const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset } = useAssetStore();
+  const { deleteFragment } = useFragmentCuration();
+  
+  // Semantic search for related assets
+  // Memoize the query to prevent unnecessary re-searches
+  const relatedAssetsQuery = useMemo(() => {
+    if (!asset) return '';
+    return `${asset.title || ''} ${asset.text_content?.slice(0, 500) || ''}`.trim();
+  }, [asset?.id, asset?.title, asset?.text_content]);
+  
+  const { results: relatedAssetsResults } = useSemanticSearch({
+    query: relatedAssetsQuery,
+    enabled: !!asset && (asset.kind === 'article' || asset.kind === 'web') && !!activeInfospace?.embedding_model && relatedAssetsQuery.length > 0,
+    limit: 6,
+    parentAssetId: asset?.parent_asset_id || undefined,
+    assetKinds: ['article', 'web'],
+  });
   // const { data: specializedViewData, loading: isLoadingSpecializedView, error: specializedViewError } = useSpecializedView(asset);
   const specializedViewData = null;
   const isLoadingSpecializedView = false;
@@ -628,24 +652,6 @@ const AssetDetailView = ({
     }
   };
 
-  const getAssetIcon = (kind: string, className?: string) => {
-    const iconClass = className || "h-4 w-4";
-    switch (kind) {
-      case 'pdf': return <FileText className={`${iconClass} text-red-600`} />;
-      case 'csv': return <FileSpreadsheet className={`${iconClass} text-green-600`} />;
-      case 'csv_row': return <List className={`${iconClass} text-emerald-600`} />;
-      case 'image': return <ImageIcon className={`${iconClass} text-purple-600`} />;
-      case 'video': return <Video className={`${iconClass} text-orange-600`} />;
-      case 'audio': return <Music className={`${iconClass} text-teal-600`} />;
-      case 'mbox':
-      case 'email': return <FileText className={`${iconClass} text-blue-600`} />;
-      case 'web': return <Globe className={`${iconClass} text-sky-600`} />;
-      case 'text':
-      case 'text_chunk': return <Type className={`${iconClass} text-indigo-600`} />;
-      case 'article': return <FileText className={`${iconClass} text-amber-600`} />;
-      default: return <File className={`${iconClass} text-muted-foreground`} />;
-    }
-  };
 
   const renderEditableField = (asset: AssetRead | null, field: 'title' | 'event_timestamp') => {
     if (!asset) return null;
@@ -724,24 +730,6 @@ const AssetDetailView = ({
 
     return (
       <div className="space-y-2">
-        {!shouldHighlight && onLoadIntoRunner && (
-          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md p-3">
-            <div className="flex items-center gap-2 text-sm">
-              <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <span className="text-blue-800 dark:text-blue-200">
-                Load an annotation run to see text evidence highlighting
-              </span>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => onLoadIntoRunner && onLoadIntoRunner(0, 'Select Run')}
-                className="ml-auto text-xs h-7"
-              >
-                Load Run
-              </Button>
-            </div>
-          </div>
-        )}
         <ScrollArea className="h-[200px] w-full rounded-md p-3 text-sm bg-background">
           <div className="whitespace-pre-wrap break-words w-full max-w-full">
             {shouldHighlight ? (
@@ -859,45 +847,16 @@ const AssetDetailView = ({
   // --- Helper Components for Asset Content ---
 
   const ArticleAssetContent = ({ asset, renderEditableField, hasChildren, childAssets, setActiveTab, handleChildAssetClick, renderTextDisplay }: { asset: AssetRead, renderEditableField: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any, renderTextDisplay: any }) => (
-    <div className="p-4 bg-muted/30 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
-      <h3 className="text-lg font-semibold mb-3 flex items-center">
-        <FileText className="h-5 w-5 mr-2 text-amber-500" />
-        Article Container
-      </h3>
-      <div className="space-y-2 mb-4 text-sm w-full min-w-0 max-w-full overflow-hidden">
+    <div className="p-4 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
+      {/* Prominent Title */}
+      <div className="mb-4">
         {renderEditableField(asset, 'title')}
-        <p><strong>Kind:</strong> {asset.kind}</p>
-        <p><strong>ID:</strong> {asset.id}</p>
-        {asset.source_identifier && <p><strong>Source:</strong> {asset.source_identifier}</p>}
-        {renderEditableField(asset, 'event_timestamp')}
-        </div>
+      </div>
       {asset.text_content && (
         <div className="flex-1 overflow-y-auto">
           <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Article Content</h4>
-          <div className="prose prose-sm max-w-none dark:prose-invert bg-background rounded p-4">
-            {isHtmlContent(asset.text_content) ? (
-              <div 
-                dangerouslySetInnerHTML={{ __html: sanitizeHtml(asset.text_content) }}
-                className="prose-a:text-primary prose-a:hover:underline 
-                prose-img:rounded-lg prose-img:my-4"
-
-              />
-            ) : (
-              <ReactMarkdown
-                components={{
-                  a: ({ node, children, ...props }) => (
-                    <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                      {children}
-                    </a>
-                  ),
-                  img: ({ node, ...props }) => (
-                    <img {...props} alt={props.alt || ''} className="rounded-lg my-4" loading="lazy" />
-                  ),
-                }}
-              >
-                {asset.text_content}
-              </ReactMarkdown>
-            )}
+          <div className="bg-background rounded p-4">
+            <TextContentRenderer content={asset.text_content} />
           </div>
         </div>
       )}
@@ -937,6 +896,7 @@ const AssetDetailView = ({
       {asset.source_metadata?.summary && typeof asset.source_metadata.summary === 'string' ? (
         <div className="mt-4 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
           <p className="text-sm text-muted-foreground italic">
+            Summary:
             {asset.source_metadata.summary}
           </p>
         </div>
@@ -955,12 +915,12 @@ const AssetDetailView = ({
     const showAuthenticatedImage = asset.blob_path && (!asset.source_identifier || sourceFailed);
 
       return (
-      <div className="p-4 bg-muted/30 h-full flex flex-col">
-        <div className="space-y-2 mb-4 text-sm">
+      <div className="p-4 h-full flex flex-col">
+        {/* Prominent Title */}
+        <div className="mb-4">
           {renderEditableField(asset, 'title')}
-          {renderEditableField(asset, 'event_timestamp')}
         </div>
-        <div className="flex-1 flex items-center justify-center bg-background rounded p-4">
+        <div className="flex-1 flex items-center justify-center bg-muted/20 rounded p-4">
           <div className="max-w-full max-h-full overflow-auto">
             {showExternalImage && (
               <img
@@ -990,13 +950,12 @@ const AssetDetailView = ({
   };
 
   const PdfAssetContent = ({ asset, renderEditableField, AuthenticatedPDF, hasChildren, childAssets, setActiveTab, handleChildAssetClick }: { asset: AssetRead, renderEditableField: any, AuthenticatedPDF: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any }) => (
-  <div className="p-4 bg-muted/30 h-full flex flex-col">
-    <div className="space-y-2 mb-4 text-sm">
+  <div className="p-4 h-full flex flex-col">
+    {/* Prominent Title */}
+    <div className="mb-4">
       {renderEditableField(asset, 'title')}
-      {(asset.source_metadata?.page_count !== undefined && asset.source_metadata?.page_count !== null) && <p><strong>Pages:</strong> {String(asset.source_metadata.page_count)}</p>}
-      {renderEditableField(asset, 'event_timestamp')}
-        </div>
-    <div className="flex-1 bg-background rounded overflow-hidden">
+    </div>
+    <div className="flex-1 bg-muted/20 rounded overflow-hidden">
       {asset.blob_path && <AuthenticatedPDF blobPath={asset.blob_path} title={asset.title || 'PDF Document'} className="w-full h-full border-0" />}
         </div>
     {hasChildren && (
@@ -1016,32 +975,27 @@ const AssetDetailView = ({
     );
 
 const VideoAssetContent = ({ asset, renderEditableField, AuthenticatedVideo }: { asset: AssetRead, renderEditableField: any, AuthenticatedVideo: any }) => (
-    <div className="p-4 bg-muted/30 h-full flex flex-col">
-        <div className="space-y-2 mb-4 text-sm">
+    <div className="p-4 h-full flex flex-col">
+        {/* Prominent Title */}
+        <div className="mb-4">
             {renderEditableField(asset, 'title')}
-            <p><strong>Kind:</strong> {asset.kind}</p>
-            <p><strong>ID:</strong> {asset.id}</p>
-            {asset.source_metadata?.filename && <p><strong>Filename:</strong> {String(asset.source_metadata.filename)}</p>}
-            {renderEditableField(asset, 'event_timestamp')}
         </div>
-        <div className="flex-1 bg-background rounded overflow-hidden flex items-center justify-center">
+        <div className="flex-1 bg-muted/20 rounded overflow-hidden flex items-center justify-center">
             {asset.blob_path && <AuthenticatedVideo blobPath={asset.blob_path} className="max-w-full max-h-96" />}
         </div>
         </div>
       );
 
 const AudioAssetContent = ({ asset, renderEditableField, AuthenticatedAudio }: { asset: AssetRead, renderEditableField: any, AuthenticatedAudio: any }) => (
-    <div className="p-4 bg-muted/30 h-full flex flex-col">
-        <h3 className="text-lg font-semibold mb-3 flex items-center"><Music className="h-5 w-5 mr-2 text-primary" />Audio Asset</h3>
-        <div className="space-y-2 mb-4 text-sm flex-grow">
+    <div className="p-4 h-full flex flex-col">
+        {/* Prominent Title */}
+        <div className="mb-4">
             {renderEditableField(asset, 'title')}
-            <p><strong>Kind:</strong> {asset.kind}</p>
-            <p><strong>ID:</strong> {asset.id}</p>
-            <p><strong>Filename:</strong> {String(asset.source_metadata?.filename)}</p>
-            {renderEditableField(asset, 'event_timestamp')}
         </div>
-        <div className="bg-background rounded p-6 flex items-center justify-center">
-            {asset.blob_path && <AuthenticatedAudio blobPath={asset.blob_path} className="w-full max-w-md" />}
+        <div className="flex-1 flex items-center justify-center">
+            <div className="bg-muted/20 rounded p-6 w-full max-w-md">
+                {asset.blob_path && <AuthenticatedAudio blobPath={asset.blob_path} className="w-full" />}
+            </div>
         </div>
         </div>
       );
@@ -1089,51 +1043,23 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
-      {/* Article Header */}
-      <div className="flex-none px-8 pb-6 w-full min-w-0 max-w-full overflow-hidden">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3 flex-wrap">
-          <Globe className="h-4 w-4 shrink-0" />
-          <span>Article</span>
-          {asset.event_timestamp && (
-            <>
-              <span>•</span>
-              <span>{format(new Date(asset.event_timestamp), "PPP")}</span>
-            </>
-          )}
-        </div>
-        
-        <h1 className="text-2xl font-bold leading-tight mb-4 text-foreground break-words overflow-wrap-anywhere">
-          {asset.title || 'Untitled Article'}
-        </h1>
-        
-        {asset.source_identifier && (
-          <div className="flex items-center gap-2 text-sm min-w-0 overflow-hidden">
-            <span className="text-muted-foreground shrink-0">Source:</span>
-            <a 
-              href={asset.source_identifier} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-primary hover:underline flex items-center gap-1 min-w-0 truncate"
-            >
-              <span className="truncate">{new URL(asset.source_identifier).hostname}</span>
-              <ExternalLink className="h-3 w-3 shrink-0" />
-            </a>
-          </div>
-        )}
-        
-        {/* Summary if available */}
-        {asset.source_metadata?.summary && typeof asset.source_metadata.summary === 'string' ? (
-          <div className="mt-4 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
-            <p className="text-sm text-muted-foreground italic">
-              {asset.source_metadata.summary}
-            </p>
-          </div>
-        ) : null}
-      </div>
-
       {/* Article Content */}
       <div className="flex-1 w-full overflow-y-auto min-w-0 max-w-full overflow-x-hidden">
         <div className="max-w-4xl mx-auto px-6 py-6 w-full min-w-0 max-w-full overflow-hidden">
+          {/* Prominent Title */}
+          <h1 className="text-2xl font-bold leading-tight mb-4 text-foreground break-words overflow-wrap-anywhere">
+            {asset.title || 'Untitled Article'}
+          </h1>
+          
+          {/* Summary if available */}
+          {asset.source_metadata?.summary && typeof asset.source_metadata.summary === 'string' ? (
+            <div className="mb-6 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
+              <p className="text-sm text-muted-foreground italic">
+                Summary:
+                {asset.source_metadata.summary}
+              </p>
+            </div>
+          ) : null}
           
           {/* Featured Image - Large and Prominent */}
           {featuredImage && (
@@ -1239,34 +1165,11 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
 
           {/* Article Text Content */}
           {asset.text_content && (
-            <div className="prose prose-sm md:prose-base dark:prose-invert w-full min-w-0 max-w-full overflow-hidden">
-              {isHtmlContent(asset.text_content) ? (
-                <div 
-                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(asset.text_content) }}
-                  className="[&_a]:text-primary [&_a]:hover:underline [&_a]:cursor-pointer 
-                  [&_img]:rounded-lg [&_img]:my-4 [&_img]:max-w-full
-                  [&_pre]:max-w-full [&_pre]:overflow-x-auto
-                  [&_table]:max-w-full [&_table]:overflow-x-auto
-                  w-full min-w-0 max-w-full overflow-hidden break-words"
-                />
-              ) : (
-                <div className="w-full min-w-0 max-w-full overflow-hidden break-words">
-                  <ReactMarkdown
-                    components={{
-                      a: ({ node, children, ...props }) => (
-                        <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">
-                          {children}
-                        </a>
-                      ),
-                      img: ({ node, ...props }) => (
-                        <img {...props} alt={props.alt || ''} className="rounded-lg my-4 max-w-full" loading="lazy" />
-                      ),
-                    }}
-                  >
-                    {asset.text_content}
-                  </ReactMarkdown>
-                </div>
-              )}
+            <div className="w-full min-w-0 max-w-full overflow-hidden">
+              <TextContentRenderer 
+                content={asset.text_content} 
+                className="w-full min-w-0 max-w-full overflow-hidden break-words"
+              />
             </div>
           )}
 
@@ -1291,7 +1194,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
                   {asset.source_metadata?.scraped_at && typeof asset.source_metadata.scraped_at === 'string' ? (
                     <div className="flex items-center gap-2">
                       <strong className="w-20 shrink-0">Scraped:</strong>
-                      <span>{formatDistanceToNow(new Date(asset.source_metadata.scraped_at), { addSuffix: true })}</span>
+                      <span>{formatDistanceToNowStrict(new Date(asset.source_metadata.scraped_at), { addSuffix: true })}</span>
                     </div>
                   ) : null}
                 </div>
@@ -1374,11 +1277,7 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
     };
 
     return (
-      <div className="p-4 bg-muted/30 h-full flex flex-col w-full max-w-full min-w-0">
-          <div className="space-y-2 mb-4 text-sm w-full max-w-full">
-              {renderEditableField(asset, 'title')}
-              {renderEditableField(asset, 'event_timestamp')}
-          </div>
+      <div className="p-4 pt-0 h-full flex flex-col w-full max-w-full min-w-0">
           {asset.blob_path && typeof asset.blob_path === 'string' && activeInfospace?.id ? (
               <div className="flex-1 bg-background rounded overflow-hidden w-full max-w-full min-w-0">
                   <EditableCsvViewer 
@@ -1443,32 +1342,14 @@ const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, rende
 
   return (
     <div className="p-4 space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold mb-3 flex items-center">
-          <FileSpreadsheet className="h-5 w-5 mr-2 text-primary" />
-          CSV Row Details
-        </h3>
+      {/* Prominent Title */}
+      <div className="mb-4">
         {renderEditableField(asset, 'title')}
       </div>
 
-      {/* Basic Asset Information */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-        <div className="min-w-0">
-          <strong className="text-muted-foreground">Asset ID:</strong>
-          <div className="font-mono truncate">{asset.id}</div>
-        </div>
-        <div className="min-w-0">
-          <strong className="text-muted-foreground">UUID:</strong>
-          <div className="font-mono text-xs truncate" title={asset.uuid}>{asset.uuid}</div>
-        </div>
-        <div className="min-w-0">
-          <strong className="text-muted-foreground">Kind:</strong>
-          <div><Badge variant="outline">{asset.kind}</Badge></div>
-        </div>
-        <div className="min-w-0">
-          <strong className="text-muted-foreground">Row Position:</strong>
-          <div className="font-semibold">{asset.part_index !== null ? asset.part_index + 1 : 'N/A'}</div>
-        </div>
+      {/* Row Position */}
+      <div className="text-sm text-muted-foreground mb-4">
+        Row Position: <span className="font-semibold text-foreground">{asset.part_index !== null ? asset.part_index + 1 : 'N/A'}</span>
       </div>
 
       <Separator />
@@ -1513,49 +1394,28 @@ const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, rende
           </AlertDescription>
         </Alert>
       )}
-
-      {/* Timestamps */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-        <div className="min-w-0">
-          <strong className="text-muted-foreground">Created:</strong>
-          <div className="truncate" title={format(new Date(asset.created_at), "PPp")}>
-            {format(new Date(asset.created_at), "PPp")}
-          </div>
-        </div>
-        {asset.updated_at && (
-          <div className="min-w-0">
-            <strong className="text-muted-foreground">Updated:</strong>
-            <div className="truncate" title={format(new Date(asset.updated_at), "PPp")}>
-              {format(new Date(asset.updated_at), "PPp")}
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 };
 
 const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: { asset: AssetRead, renderEditableField: any, renderTextDisplay: any }) => (
-    <div className="p-4 bg-muted/30 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
-        <h3 className="text-lg font-semibold mb-3 flex items-center"><FileText className="h-5 w-5 mr-2 text-primary" />Asset Details</h3>
-        <div className="space-y-2 mb-4 text-sm flex-grow w-full min-w-0 max-w-full overflow-hidden">
+    <div className="p-4 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
+        {/* Prominent Title */}
+        <div className="mb-4">
             {renderEditableField(asset, 'title')}
-            <p><strong>Kind:</strong> {asset.kind}</p>
-            <p><strong>ID:</strong> {asset.id}</p>
-            <p className="break-all"><strong>UUID:</strong> {asset.uuid}</p>
-            {asset.source_identifier && <p className="break-all"><strong>Source ID:</strong> {asset.source_identifier}</p>}
-            {asset.blob_path && <p className="break-all"><strong>Blob Path:</strong> {asset.blob_path}</p>}
-            {renderEditableField(asset, 'event_timestamp')}
+        </div>
+        
+        <div className="flex-1 space-y-4 w-full min-w-0 max-w-full overflow-hidden">
             {asset.text_content && (
-                <div className="mt-3 pt-3 border-t">
+                <div>
                     <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Text Content</h4>
                     {renderTextDisplay(asset.text_content, asset.id, asset.uuid)}
                 </div>
             )}
             {asset.source_metadata && Object.keys(asset.source_metadata).length > 0 && (
-                <div className="mt-3 pt-3 border-t w-full min-w-0 max-w-full overflow-hidden">
+                <div className="w-full min-w-0 max-w-full overflow-hidden">
                     <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Source Metadata</h4>
-                    <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32 break-all whitespace-pre-wrap w-full max-w-full">{JSON.stringify(asset.source_metadata, null, 2)}</pre>
+                    <pre className="text-xs bg-muted/30 p-2 rounded overflow-auto max-h-32 break-all whitespace-pre-wrap w-full max-w-full">{JSON.stringify(asset.source_metadata, null, 2)}</pre>
                 </div>
             )}
         </div>
@@ -1707,7 +1567,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     </p>
                     {imageAsset.created_at && (
                       <p className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(imageAsset.created_at), { addSuffix: true })}
+                        {formatDistanceToNowStrict(new Date(imageAsset.created_at), { addSuffix: true })}
                       </p>
                     )}
                   </div>
@@ -1819,7 +1679,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                             <Badge variant="outline" className="capitalize">{childAsset.kind}</Badge>
                             <span>ID: {childAsset.id}</span>
                             {childAsset.created_at && (
-                              <span>Created: {formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}</span>
+                              <span>Created: {formatDistanceToNowStrict(new Date(childAsset.created_at), { addSuffix: true })}</span>
                             )}
                           </div>
                           {childAsset.text_content && (
@@ -1878,7 +1738,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                       <Badge variant="outline" className="capitalize">{childAsset.kind}</Badge>
                       <span>ID: {childAsset.id}</span>
                       {childAsset.created_at && (
-                        <span>Created: {formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}</span>
+                        <span>Created: {formatDistanceToNowStrict(new Date(childAsset.created_at), { addSuffix: true })}</span>
                       )}
                     </div>
                     {childAsset.text_content && (
@@ -2089,9 +1949,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                 <h4 className="font-semibold text-sm">Extracted Text Content</h4>
                 {selectedChildAsset.text_content ? (
                   <ScrollArea className="h-96 w-full border rounded-lg p-4 bg-background">
-                    <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
-                      {selectedChildAsset.text_content}
-                    </div>
+                    <TextContentRenderer content={selectedChildAsset.text_content} />
                   </ScrollArea>
                 ) : (
                   <div className="h-96 w-full border rounded-lg flex items-center justify-center bg-muted/10">
@@ -2161,67 +2019,57 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
         </div>
       ) : (
         <>
-          {/* Top Section: Header/Metadata */}
-          <div className="flex-none p-2 sm:p-4 border-b min-w-0 overflow-hidden">
-            <div className="space-y-2 min-w-0">
-              <div className="flex items-start gap-2 flex-wrap min-w-0">
-                <h2 className="text-sm sm:text-lg font-semibold flex-1 min-w-0 break-words overflow-wrap-anywhere">{asset.title || `Asset ${asset.id}`}</h2>
-                <Badge variant="outline" className="capitalize text-xs shrink-0">{asset.kind}</Badge>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground min-w-0">
-                <span className="shrink-0">ID: {asset.id}</span>
-                {hasChildren && (
-                  <Badge variant="secondary" className="bg-primary/10 text-primary text-xs shrink-0">
-                    <Layers className="h-3 w-3 mr-1" />
-                    {childAssets.length} child assets
-                  </Badge>
-                )}
-                {asset.created_at && (
-                  <span className="hidden sm:inline shrink-0">Created: {format(new Date(asset.created_at), "PP")}</span>
-                )}
-                {asset.updated_at && (
-                  <span className="shrink-0">Updated: {formatDistanceToNow(new Date(asset.updated_at), { addSuffix: true })}</span>
-                )}
-              </div>
-            </div>
-          </div>
+          {/* Unified Meta Header */}
+          <AssetMetaHeader 
+            asset={asset}
+            onEdit={() => onEdit(asset)}
+            onFragmentDelete={async (key) => {
+              if (!asset?.id) return;
+              
+              const success = await deleteFragment({
+                assetId: asset.id,
+                fragmentKey: key,
+              });
+              
+              if (success) {
+                toast.success(`Fragment "${key}" deleted`);
+                // Force refetch by clearing the cache ref, then refresh
+                currentAssetIdRef.current = null;
+                fetchAsset();
+              } else {
+                toast.error('Failed to delete fragment');
+              }
+            }}
+            showActions={true}
+            showFragments={true}
+          />
 
           {/* Main Content Area */}
           <div className="flex-1 min-h-0 overflow-y-auto min-w-0 max-w-full">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'content' | 'children')} className="w-full h-full flex flex-col min-w-0 max-w-full overflow-hidden">
-              <TabsList className={cn(
-                "grid w-full flex-none sticky top-0 z-10 px-4 pt-2 mb-1 min-w-0",
-                isHierarchicalAsset && hasChildren ? "grid-cols-2" : "grid-cols-1"
-              )}>
-                <TabsTrigger value="content">
-                  {(() => {
-                    const useSpecializedView = asset?.kind === 'csv';
-                    if (useSpecializedView) {
-                      return 'Overview';
-                    }
-                    
-                    switch (asset?.kind) {
-                      case 'csv': return 'Overview';
-                      case 'article': return 'Article Overview';
-                      case 'image': return 'Image';
-                      case 'video': return 'Video';
-                      case 'audio': return 'Audio';
-                      case 'web': return 'Web Article';
-                      default: return 'Asset Content';
-                    }
-                  })()}
-                </TabsTrigger>
-                {isHierarchicalAsset && hasChildren && (
+            {isHierarchicalAsset && hasChildren ? (
+              /* Tabs only when there are children */
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'content' | 'children')} className="w-full h-full flex flex-col min-w-0 max-w-full overflow-hidden">
+                <TabsList className="grid grid-cols-2 w-full flex-none sticky top-0 z-10 px-4 pt-2 mb-1 min-w-0">
+                  <TabsTrigger value="content">
+                    {(() => {
+                      switch (asset?.kind) {
+                        case 'csv': return 'Overview';
+                        case 'article': return 'Article';
+                        case 'pdf': return 'Document';
+                        case 'web': return 'Article';
+                        default: return 'Content';
+                      }
+                    })()}
+                  </TabsTrigger>
                   <TabsTrigger value="children" className="flex items-center gap-2">
                     <TableIcon className="h-4 w-4" />
                     {(() => {
                       switch (asset?.kind) {
-                        case 'csv': return `Rows (${childAssets.length})`;
-                        case 'pdf': return `Pages (${childAssets.length})`;
-                        case 'article': return `Related Assets (${childAssets.length})`;
-                        case 'mbox': return `Emails (${childAssets.length})`;
+                        case 'csv': return `${childAssets.length} rows`;
+                        case 'pdf': return `${childAssets.length} pages`;
+                        case 'article': return `${childAssets.length} related`;
+                        case 'mbox': return `${childAssets.length} emails`;
                         case 'web': {
-                          // For web assets, show filtered image count
                           const imageCount = childAssets.filter(child => {
                             if (child.kind !== 'image') return false;
                             const isGif = (url: string) => url.toLowerCase().includes('.gif');
@@ -2231,18 +2079,37 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                           }).length;
                           return `Images (${imageCount})`;
                         }
-                        default: return `Child Assets (${childAssets.length})`;
+                        default: return `Children (${childAssets.length})`;
                       }
                     })()}
                   </TabsTrigger>
-                )}
-              </TabsList>
+                </TabsList>
 
-              <TabsContent value="content" className="flex-1 min-h-0 overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
-                {renderContent()}
-              </TabsContent>
+                <TabsContent value="content" className="flex-1 min-h-0 overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
+                  {renderContent()}
+                  
+                  {/* Related Assets - Semantic Search */}
+                  {asset && (asset.kind === 'article' || asset.kind === 'web') && activeInfospace?.embedding_model && (
+                    <div className="mt-8 pt-8 border-t">
+                      <AssetFeedView
+                        title="Related Articles"
+                        items={relatedAssetsResults
+                          .filter(r => r.asset.id !== asset.id) // Exclude current asset
+                          .slice(0, 6) // Limit to 6
+                          .map(r => ({
+                            asset: r.asset,
+                            score: r.score,
+                          }))}
+                        cardSize="sm"
+                        columns={3}
+                        showControls={false}
+                        onAssetClick={onEdit}
+                        emptyMessage="No related articles found"
+                      />
+                    </div>
+                  )}
+                </TabsContent>
 
-              {isHierarchicalAsset && hasChildren && (
                 <TabsContent value="children" className="flex-1 min-h-0 overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
                   {asset.kind === 'csv' ? (
                     <AssetDetailViewCsv
@@ -2260,8 +2127,13 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     renderChildAssets()
                   )}
                 </TabsContent>
-              )}
-            </Tabs>
+              </Tabs>
+            ) : (
+              /* No tabs - just render content directly */
+              <div className="h-full overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
+                {renderContent()}
+              </div>
+            )}
         </div>
         </>
       )}

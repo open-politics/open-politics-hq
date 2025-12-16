@@ -35,6 +35,7 @@ class GenerateAssetEmbeddingsRequest(BaseModel):
     """Request to generate embeddings for a single asset."""
     overwrite: bool = Field(default=False, description="Regenerate existing embeddings")
     async_processing: bool = Field(default=True, description="Process in background")
+    api_keys: Optional[Dict[str, str]] = Field(default=None, description="Runtime API keys for cloud providers")
 
 
 class EmbeddingStatsResponse(BaseModel):
@@ -113,12 +114,13 @@ async def generate_infospace_embeddings(
         )
     
     if request.async_processing:
-        # Start background task (uses stored credentials)
+        # Start background task (supports runtime + stored credentials)
         embed_infospace_task.delay(
             infospace_id=infospace_id,
             user_id=current_user.id,
             overwrite=request.overwrite,
-            asset_kinds=request.asset_kinds
+            asset_kinds=request.asset_kinds,
+            api_keys=request.api_keys
         )
         return Message(message=f"Embedding generation started in background for infospace {infospace_id}")
     else:
@@ -178,12 +180,13 @@ async def generate_asset_embeddings(
         )
     
     if request.async_processing:
-        # Start background task (uses stored credentials)
+        # Start background task (supports runtime + stored credentials)
         embed_asset_task.delay(
             asset_id=asset_id,
             infospace_id=infospace.id,
             user_id=current_user.id,
-            overwrite=request.overwrite
+            overwrite=request.overwrite,
+            api_keys=request.api_keys
         )
         return Message(message=f"Embedding generation started for asset {asset_id}")
     else:

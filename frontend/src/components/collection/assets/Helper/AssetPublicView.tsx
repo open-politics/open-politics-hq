@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AssetPreview } from '@/zustand_stores/storeShareables';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { getAssetIcon, formatAssetKind, getAssetBadgeClass } from '@/components/collection/assets/AssetSelector';
 import { ChevronRight, ChevronDown, Download, FileText, Layers, Table as TableIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -70,7 +70,7 @@ const AssetItem: React.FC<{ asset: AssetPreview; level: number; token: string }>
             </Button>
           )}
           <div className="text-xs text-muted-foreground truncate hidden md:block">
-            {formatDistanceToNow(new Date(asset.updated_at), { addSuffix: true })}
+            {formatDistanceToNowStrict(new Date(asset.updated_at), { addSuffix: true })}
           </div>
         </div>
       </div>
@@ -124,7 +124,7 @@ const AssetPublicView: React.FC<AssetPublicViewProps> = ({ asset, token }) => {
             <CardDescription>
               {formatAssetKind(asset.kind)}
               {originalFileName && ` · ${originalFileName}`}
-              {' · '}Last updated {formatDistanceToNow(new Date(asset.updated_at))} ago
+              {' · '}Last updated {formatDistanceToNowStrict(new Date(asset.updated_at))} ago
             </CardDescription>
           </div>
           {asset.blob_path && (

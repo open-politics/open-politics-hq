@@ -1325,7 +1325,56 @@ async def _process_annotation_run_async(run_id: int) -> None:
             target_asset_ids_to_process: List[int] = []
             run_config = run.configuration or {}
 
-            if run_config.get("target_asset_ids"):
+            # Check for source_bundle_id first (for continuous runs watching a bundle)
+            if run.source_bundle_id:
+                bundle_id = run.source_bundle_id
+                bundle = session.get(Bundle, bundle_id)
+                if bundle and bundle.infospace_id == run.infospace_id:
+                    # Get all assets from the source bundle
+                    all_bundle_asset_ids = [asset.id for asset in bundle.assets]
+                    logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets")
+                    
+                    # ═══ DELTA TRACKING: Only process assets that don't have annotations for all required schemas ═══
+                    # Get the schema IDs this run should process
+                    run_schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
+                    
+                    if run_schema_ids and all_bundle_asset_ids:
+                        # Find assets that already have annotations for ALL schemas (from ANY run in this infospace)
+                        # This prevents reprocessing assets that have already been annotated
+                        from sqlmodel import select, func
+                        from app.models import Annotation
+                        
+                        # Query: For each asset, count how many schemas it has annotations for
+                        # Check annotations from ANY run in the same infospace (not just this run)
+                        # This ensures we don't reprocess assets that were annotated by previous continuous runs
+                        assets_with_complete_annotations = session.exec(
+                            select(Annotation.asset_id, func.count(func.distinct(Annotation.schema_id)).label('schema_count'))
+                            .where(
+                                Annotation.asset_id.in_(all_bundle_asset_ids),
+                                Annotation.schema_id.in_(run_schema_ids),
+                                Annotation.infospace_id == run.infospace_id,  # Same infospace
+                                Annotation.status != ResultStatus.FAILED  # Don't count failed annotations
+                            )
+                            .group_by(Annotation.asset_id)
+                            .having(func.count(func.distinct(Annotation.schema_id)) == len(run_schema_ids))
+                        ).all()
+                        
+                        complete_asset_ids = {row.asset_id for row in assets_with_complete_annotations}
+                        unannotated_asset_ids = [aid for aid in all_bundle_asset_ids if aid not in complete_asset_ids]
+                        
+                        logger.info(f"Task: Continuous run {run.id} - {len(complete_asset_ids)} assets already fully annotated (across all runs), {len(unannotated_asset_ids)} assets need processing")
+                        target_asset_ids_to_process.extend(unannotated_asset_ids)
+                    else:
+                        # No schemas configured or no assets - process all (fallback behavior)
+                        logger.warning(f"Task: Continuous run {run.id} - No schemas configured or no assets, processing all assets")
+                        target_asset_ids_to_process.extend(all_bundle_asset_ids)
+                else:
+                    logger.error(f"Task: Source Bundle {bundle_id} for Run {run.id} not found or not in infospace.")
+                    run.status = RunStatus.FAILED
+                    run.error_message = f"Source Bundle {bundle_id} not found/invalid."
+                    session.add(run)
+                    session.commit()
+            elif run_config.get("target_asset_ids"):
                 target_asset_ids_to_process.extend(run_config["target_asset_ids"])
             elif run_config.get("target_bundle_id"):
                 bundle_id = run_config["target_bundle_id"]
@@ -1341,11 +1390,23 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     session.commit()
             
             if not target_asset_ids_to_process:
-                logger.error(f"Task: No target assets for Run {run.id}.")
-                run.status = RunStatus.FAILED
-                run.error_message = "No target assets found."
-                session.add(run)
-                session.commit()
+                # For continuous runs, it's normal to have no assets to process if all are already annotated
+                if run.source_bundle_id:
+                    logger.info(f"Task: Continuous run {run.id} - No unannotated assets to process (all assets already annotated). Completing run.")
+                    run.status = RunStatus.COMPLETED
+                    run.completed_at = datetime.now(timezone.utc)
+                    run.updated_at = datetime.now(timezone.utc)
+                    session.add(run)
+                    session.commit()
+                    logger.info(f"Task: Continuous run {run.id} completed successfully with 0 annotations (all assets already annotated).")
+                    return
+                else:
+                    logger.error(f"Task: No target assets for Run {run.id}.")
+                    run.status = RunStatus.FAILED
+                    run.error_message = "No target assets found."
+                    session.add(run)
+                    session.commit()
+                    return
 
             # CSV Row Expansion: Check for CSV parent assets and optionally expand to their CSV_ROW children
             csv_row_processing = run_config.get("csv_row_processing", True)  # Default to True for CSV row processing
@@ -1672,6 +1733,14 @@ async def _process_annotation_run_async(run_id: int) -> None:
             
             if all_created_justifications:
                 session.add_all(all_created_justifications)
+            
+            # Commit annotations immediately so they're visible to other transactions/queries
+            # This is critical for continuous monitoring where frontend polls for results
+            session.commit()
+            logger.info(f"Task: Committed {len(all_created_annotations)} annotations and {len(all_created_justifications)} justifications for Run {run.id}")
+            
+            # Refresh run to get latest state
+            session.refresh(run)
             
             # Determine final run status
             has_failed_annotations = any(ann.status == ResultStatus.FAILED for ann in all_created_annotations)

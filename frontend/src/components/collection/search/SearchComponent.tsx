@@ -16,7 +16,7 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import useAuth from '@/hooks/useAuth';
 import { SearchService, AssetRead } from '@/client';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 
 interface SearchResult {
   title: string;

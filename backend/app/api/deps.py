@@ -49,8 +49,6 @@ from app.api.services.task_service import TaskService
 from app.api.services.source_service import SourceService
 from app.api.services.chunking_service import ChunkingService
 from app.api.services.embedding_service import EmbeddingService
-from app.api.services.monitor_service import MonitorService
-from app.api.services.pipeline_service import PipelineService
 from app.api.services.conversation_service import IntelligenceConversationService
 
 # --- Service Class Imports --- 
@@ -85,8 +83,6 @@ from app.api.services.task_service import TaskService
 from app.api.services.source_service import SourceService
 from app.api.services.chunking_service import ChunkingService
 from app.api.services.embedding_service import EmbeddingService
-from app.api.services.monitor_service import MonitorService
-from app.api.services.pipeline_service import PipelineService
 from app.api.services.conversation_service import IntelligenceConversationService
 
 logger = logging.getLogger(__name__) 
@@ -356,40 +352,6 @@ def get_user_backup_service(
     setattr(request.state, service_name, instance)
     return instance
 UserBackupServiceDep = Annotated[UserBackupService, Depends(get_user_backup_service)]
-
-def get_monitor_service(
-    request: Request, session: SessionDep, 
-    annotation_service: AnnotationServiceDep, 
-    task_service: TaskServiceDep
-) -> MonitorService:
-    service_name = "monitor_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = MonitorService(
-        session=session, 
-        annotation_service=annotation_service,
-        task_service=task_service
-    )
-    setattr(request.state, service_name, instance)
-    return instance
-MonitorServiceDep = Annotated[MonitorService, Depends(get_monitor_service)]
-
-def get_pipeline_service(
-    request: Request, session: SessionDep,
-    annotation_service: AnnotationServiceDep,
-    analysis_service: AnalysisServiceDep,
-    bundle_service: BundleServiceDep
-) -> PipelineService:
-    service_name = "pipeline_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = PipelineService(
-        session=session,
-        annotation_service=annotation_service,
-        analysis_service=analysis_service,
-        bundle_service=bundle_service
-    )
-    setattr(request.state, service_name, instance)
-    return instance
-PipelineServiceDep = Annotated[PipelineService, Depends(get_pipeline_service)]
 
 def get_embedding_service(
     request: Request,

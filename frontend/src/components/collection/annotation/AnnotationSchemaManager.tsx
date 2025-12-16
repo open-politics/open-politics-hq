@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { adaptSchemaReadToSchemaFormData as transformApiToFormData } from '@/lib/annotations/adapters';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -485,7 +485,7 @@ const AnnotationSchemaManager: React.FC = () => {
                                           <TableCell className="text-center text-sm">{Object.keys((schema.output_contract as any)?.properties || {}).length}</TableCell>
                                           <TableCell className="text-center text-sm">{(schema as any).annotation_count ?? '-'}</TableCell>
                                           <TableCell className="text-muted-foreground text-xs">
-                                              {schema.updated_at ? formatDistanceToNow(new Date(schema.updated_at), { addSuffix: true }) : '-'}
+                                              {schema.updated_at ? formatDistanceToNowStrict(new Date(schema.updated_at), { addSuffix: true }) : '-'}
                                           </TableCell>
                                           <TableCell className="text-right pr-4">
                                               <div className="flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -776,7 +776,7 @@ const SchemaCard: React.FC<SchemaCardProps> = ({
                 </div>
                 <div className="flex justify-between">
                     <span className="text-muted-foreground">Updated:</span>
-                    <span>{schema.updated_at ? formatDistanceToNow(new Date(schema.updated_at), { addSuffix: true }) : '-'}</span>
+                    <span>{schema.updated_at ? formatDistanceToNowStrict(new Date(schema.updated_at), { addSuffix: true }) : '-'}</span>
                 </div>
             </CardContent>
             <CardFooter className="flex justify-between items-center p-3 pt-0">

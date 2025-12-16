@@ -36,6 +36,9 @@ export function initializeToolRenderers(): void {
   
   // Core exploration tools (rich, interactive)
   toolResultRegistry.register(NavigateRenderer);
+  // Hub tools use the same renderer as navigate
+  toolResultRegistry.register({ ...NavigateRenderer, toolName: 'workspace_hub' });
+  toolResultRegistry.register({ ...NavigateRenderer, toolName: 'library_hub' });
   toolResultRegistry.register(SemanticSearchRenderer);
   toolResultRegistry.register(SearchWebRenderer);
   toolResultRegistry.register(GetRunDashboardRenderer);

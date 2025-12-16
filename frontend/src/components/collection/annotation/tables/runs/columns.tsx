@@ -14,7 +14,7 @@ import { ArrowUpDown, MoreHorizontal, Eye, Download, Share2, Trash2, PlayCircle,
 import { AnnotationRunRead, RunStatus, ResourceType } from '@/client';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from '@/components/ui/badge';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNowStrict } from 'date-fns';
 import { useFavoriteRunsStore } from "@/zustand_stores/storeFavoriteRuns";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { toast } from "sonner";

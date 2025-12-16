@@ -38,22 +38,38 @@ export default function SourceEditDialog({ source, open, onClose }: SourceEditDi
   // Initialize form when source changes
   useEffect(() => {
     if (source) {
-      setName(source.name);
-      setTargetBundleId(source.details?.target_bundle_id);
+      setName(source.name || '');
+      // Use output_bundle_id (streaming field) instead of details.target_bundle_id
+      setTargetBundleId((source as any).output_bundle_id || source.details?.target_bundle_id);
+    } else {
+      // Reset form when source is cleared
+      setName('');
+      setTargetBundleId(undefined);
     }
   }, [source]);
 
   const handleSave = async () => {
-    if (!source) return;
+    if (!source) {
+      toast.error('No source selected');
+      return;
+    }
+    
+    if (!source.id) {
+      console.error('Source missing ID:', source);
+      toast.error('Invalid source data - missing ID');
+      return;
+    }
+
+    if (!activeInfospace?.id) {
+      toast.error('No active infospace');
+      return;
+    }
 
     setIsSaving(true);
     try {
       const updateData: any = {
-        name,
-        details: {
-          ...(source.details || {}),
-          target_bundle_id: targetBundleId
-        }
+        name: name.trim(),
+        output_bundle_id: targetBundleId || null,
       };
 
       await updateSource(source.id, updateData);
@@ -61,7 +77,7 @@ export default function SourceEditDialog({ source, open, onClose }: SourceEditDi
       onClose();
     } catch (error) {
       console.error('Failed to update source:', error);
-      toast.error('Failed to update source');
+      toast.error(`Failed to update source: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
@@ -88,17 +104,17 @@ export default function SourceEditDialog({ source, open, onClose }: SourceEditDi
             />
           </div>
 
-          {/* Target Bundle */}
+          {/* Output Bundle */}
           <div className="space-y-2">
-            <Label htmlFor="target-bundle">Target Bundle</Label>
+            <Label htmlFor="output-bundle">Output Bundle</Label>
             <p className="text-xs text-muted-foreground mb-2">
-              Select which bundle assets from this source should be added to
+              Select which bundle new items from this stream should be routed to
             </p>
             <Select
-              value={targetBundleId?.toString()}
+              value={targetBundleId?.toString() || 'none'}
               onValueChange={(value) => setTargetBundleId(value === 'none' ? undefined : parseInt(value))}
             >
-              <SelectTrigger id="target-bundle">
+              <SelectTrigger id="output-bundle">
                 <SelectValue placeholder="Select a bundle">
                   {targetBundleId ? (
                     <div className="flex items-center gap-2">
@@ -131,11 +147,11 @@ export default function SourceEditDialog({ source, open, onClose }: SourceEditDi
             <Label>Source Details</Label>
             <div className="text-sm text-muted-foreground space-y-1 p-3 bg-muted rounded-md">
               <div><strong>Type:</strong> {source.kind}</div>
-              {source.details?.feed_url && (
-                <div><strong>Feed URL:</strong> {source.details.feed_url}</div>
+              {(source.details as any)?.feed_url && (
+                <div><strong>Feed URL:</strong> {(source.details as any).feed_url}</div>
               )}
-              {source.details?.search_config?.query && (
-                <div><strong>Search Query:</strong> "{source.details.search_config.query}"</div>
+              {(source.details as any)?.search_config?.query && (
+                <div><strong>Search Query:</strong> "{(source.details as any).search_config.query}"</div>
               )}
               <div><strong>Status:</strong> {source.status}</div>
             </div>
@@ -146,7 +162,7 @@ export default function SourceEditDialog({ source, open, onClose }: SourceEditDi
           <Button variant="outline" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={isSaving || !name.trim()}>
+          <Button onClick={handleSave} disabled={isSaving || !name || !name.trim()}>
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save Changes
           </Button>

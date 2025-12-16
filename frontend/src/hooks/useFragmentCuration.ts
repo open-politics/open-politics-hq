@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useToast } from "@/components/ui/use-toast";
-import { AnalysisServiceService, PromoteFragmentRequest } from '@/client';
+import { AnalysisServiceService, PromoteFragmentRequest, DeleteFragmentData } from '@/client';
 import { ApiError } from '@/client/core/ApiError';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 
@@ -11,8 +11,14 @@ interface CurationPayload {
   sourceRunId?: number; // Original annotation run ID for proper source tracking
 }
 
+interface DeleteFragmentPayload {
+  assetId: number;
+  fragmentKey: string;
+}
+
 interface UseFragmentCurationReturn {
   curate: (payloads: CurationPayload[]) => Promise<void>;
+  deleteFragment: (payload: DeleteFragmentPayload) => Promise<boolean>;
   isCurationLoading: boolean;
   curationProgress: { current: number; total: number } | null;
 }
@@ -90,5 +96,31 @@ export function useFragmentCuration(): UseFragmentCurationReturn {
     }
   }, [activeInfospace, toast]);
 
-  return { curate, isCurationLoading, curationProgress };
+  const deleteFragment = useCallback(async (payload: DeleteFragmentPayload): Promise<boolean> => {
+    if (!activeInfospace) {
+      toast({
+        title: 'Error',
+        description: 'No active infospace selected.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+
+    try {
+      const result = await AnalysisServiceService.deleteFragment({
+        infospaceId: activeInfospace.id,
+        assetId: payload.assetId,
+        fragmentKey: payload.fragmentKey,
+      });
+
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to delete fragment');
+      }
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }, [activeInfospace]);
+
+  return { curate, deleteFragment, isCurationLoading, curationProgress };
 }

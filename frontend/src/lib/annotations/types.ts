@@ -174,6 +174,7 @@ export interface AnnotationRunParams {
   description?: string;
   assetIds?: number[];
   bundleId?: number | null;
+  sourceBundleId?: number | null; // NEW: For continuous runs watching a bundle
   schemaIds: number[];
   configuration?: Record<string, any>;
 }

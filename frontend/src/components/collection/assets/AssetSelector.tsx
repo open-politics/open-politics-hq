@@ -10,15 +10,6 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { 
   Search, 
   Upload, 
-  FileText, 
-  FileSpreadsheet, 
-  Image as ImageIcon, 
-  Video, 
-  Music, 
-  Mail, 
-  Globe, 
-  Type,
-  File,
   Eye,
   MoreHorizontal,
   ChevronDown,
@@ -38,11 +29,10 @@ import {
   EyeOff,
   View,
   ArrowDown01,
-  FileIcon,
-  Ellipsis,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import {
   AssetRead,
@@ -50,12 +40,23 @@ import {
   BundleRead,
   BundlesService,
 } from '@/client';
+import type { TreeNode } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useDebounce } from '@/hooks/useDebounce';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { BundleActivityIndicators } from './BundleActivityIndicators';
+import { useSemanticSearch } from '@/hooks/useSemanticSearch';
+import { 
+  getAssetIcon, 
+  formatAssetKind, 
+  getAssetBadgeClass 
+} from './assetKindConfig';
+import { RelevanceBadge } from './RelevanceBadge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,7 +84,16 @@ export interface AssetTreeItem {
   type: AssetTreeItemType;
   name: string;
   asset?: AssetRead;
-  bundle?: BundleRead;
+  bundle?: BundleRead & {
+    has_active_sources?: boolean;
+    active_source_count?: number;
+    has_monitors?: boolean;
+    monitor_count?: number;
+    is_pipeline_input?: boolean;
+    pipeline_input_count?: number;
+    is_pipeline_output?: boolean;
+    pipeline_output_count?: number;
+  };
   children?: AssetTreeItem[];
   level: number;
   isExpanded: boolean;
@@ -92,54 +102,9 @@ export interface AssetTreeItem {
   isContainer?: boolean;
 }
 
-// Helper Functions (can be moved to a utils file later)
-export const getAssetIcon = (kind: AssetKind, className?: string) => {
-    const iconClass = cn("h-4 w-4", className);
-    switch (kind) {
-      case 'pdf': return <FileText className={cn(iconClass, "text-red-600")} />;
-      case 'csv': return <FileSpreadsheet className={cn(iconClass, "text-green-600")} />;
-      case 'article': return <FileText className={cn(iconClass, "text-blue-600")} />;
-      case 'csv_row': return <Ellipsis className={cn(iconClass, "text-emerald-600")} />;
-      case 'image': return <ImageIcon className={cn(iconClass, "text-purple-600")} />;
-      case 'video': return <Video className={cn(iconClass, "text-orange-600")} />;
-      case 'audio': return <Music className={cn(iconClass, "text-teal-600")} />;
-      case 'mbox':
-      case 'email': return <Mail className={cn(iconClass, "text-blue-600")} />;
-      case 'web': return <Globe className={cn(iconClass, "text-sky-600")} />;
-      case 'text':
-      case 'text_chunk': return <Type className={cn(iconClass, "text-indigo-600")} />;
-      default: return <File className={cn(iconClass, "text-muted-foreground")} />;
-    }
-  };
-  
-export const formatAssetKind = (kind: AssetKind): string => {
-      if (kind === 'csv_row') return 'Row';
-      if (kind === 'pdf') return 'PDF';
-      if (kind === 'csv') return 'CSV';
-      if (kind === 'mbox') return 'Email';
-      return kind
-          .replace(/_/g, ' ')
-          .split(' ')
-          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(' ');
-  }
-  
-export const getAssetBadgeClass = (kind: AssetKind): string => {
-    switch (kind) {
-      case 'pdf': return "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/50 dark:text-red-300 dark:border-red-800";
-      case 'csv': return "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/50 dark:text-green-300 dark:border-green-800";
-      case 'csv_row': return "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-300 dark:border-emerald-800";
-      case 'image': return "bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800";
-      case 'video': return "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/50 dark:text-orange-300 dark:border-orange-800";
-      case 'audio': return "bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-900/50 dark:text-teal-300 dark:border-teal-800";
-      case 'mbox':
-      case 'email': return "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/50 dark:text-blue-300 dark:border-blue-800";
-      case 'web': return "bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-900/50 dark:text-sky-300 dark:border-sky-800";
-      case 'text':
-      case 'text_chunk': return "bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 dark:border-indigo-800";
-      default: return "bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-    }
-  };
+// Asset icon/badge helpers are imported from './assetKindConfig'
+// Re-export for backwards compatibility with other modules that may import from here
+export { getAssetIcon, formatAssetKind, getAssetBadgeClass } from './assetKindConfig';
 
 interface AssetSelectorProps {
     selectedItems: Set<string>;
@@ -152,6 +117,7 @@ interface AssetSelectorProps {
     renderItemActions?: (item: AssetTreeItem) => React.ReactNode;
     // External search control
     initialSearchTerm?: string;
+    onSearchTermChange?: (searchTerm: string) => void;
     autoFocusSearch?: boolean;
     // Compact mode - hides header and reduces padding for inline usage
     compact?: boolean;
@@ -166,6 +132,7 @@ export default function AssetSelector({
     onItemDoubleClick,
     renderItemActions,
     initialSearchTerm = '',
+    onSearchTermChange,
     autoFocusSearch = false,
     compact = false,
     filterByBundleId = null,
@@ -198,9 +165,49 @@ export default function AssetSelector({
   // UI State
   const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
+  
+  // Notify parent of search term changes
+  useEffect(() => {
+    onSearchTermChange?.(debouncedSearchTerm);
+  }, [debouncedSearchTerm, onSearchTermChange]);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
-  const [sortOption, setSortOption] = useState('updated_at-desc');
+  const [sortOption, setSortOption] = useState('kind-updated_at-desc');
+  
+  // Search mode: semantic vs text
+  const [useSemanticMode, setUseSemanticMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('assetSelector_searchMode');
+      return stored === 'semantic';
+    }
+    return true; // Default to semantic
+  });
+  
+  // Semantic search hook
+  const semanticSearchEnabled = useSemanticMode && !!activeInfospace?.embedding_model && debouncedSearchTerm.trim().length > 0;
+  const { 
+    results: semanticResults, 
+    isLoading: isSemanticSearching,
+    isAvailable: isSemanticAvailable,
+    error: semanticSearchError,
+  } = useSemanticSearch({
+    query: debouncedSearchTerm,
+    enabled: semanticSearchEnabled,
+    limit: 100,
+    bundleId: filterByBundleId || undefined,
+    assetKinds: assetTypeFilter !== 'all' ? [assetTypeFilter] : undefined,
+  });
+  
+  // Auto-fallback to text search if semantic search fails due to missing embeddings
+  const shouldUseTextSearch = useSemanticMode && semanticSearchError && 
+    semanticSearchError.toLowerCase().includes('not found in database');
+  
+  // Store preference in localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('assetSelector_searchMode', useSemanticMode ? 'semantic' : 'text');
+    }
+  }, [useSemanticMode]);
   
   // Inline editing state
   const [editingItem, setEditingItem] = useState<{ id: string; value: string } | null>(null);
@@ -213,6 +220,9 @@ export default function AssetSelector({
   const containerRef = useRef<HTMLDivElement>(null);
   const flattenedItemsRef = useRef<AssetTreeItem[]>([]);
   
+  // Bundle click timeout for distinguishing single vs double click
+  const bundleClickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Data fetching state - NOW REMOVED! Using tree store instead
   // const [bundleAssets, setBundleAssets] = useState<Map<number, AssetRead[]>>(new Map());
   // const [childAssets, setChildAssets] = useState<Map<number, AssetRead[]>>(new Map());
@@ -224,16 +234,19 @@ export default function AssetSelector({
   const [draggedOverAssetId, setDraggedOverAssetId] = useState<string | null>(null);
   const [dragOverTimeout, setDragOverTimeout] = useState<NodeJS.Timeout | null>(null);
 
-  // Pull-to-refresh state
-  const [pullDistance, setPullDistance] = useState(0);
+  // Refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pullOffset, setPullOffset] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const startYRef = useRef<number>(0);
-  const isPullingRef = useRef(false);
-  const wheelTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastWheelTimeRef = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
+  const isDragging = useRef(false);
+  const wheelAccumulator = useRef<number>(0);
+  const wheelResetTimeout = useRef<NodeJS.Timeout | null>(null);
+  const lastWheelTime = useRef<number>(0);
 
   const fetchingRef = useRef(false);
+  const previousRootNodesRef = useRef<TreeNode[]>([]);
+  const previousChildrenCacheRef = useRef<Map<string, TreeNode[]>>(new Map());
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -241,8 +254,11 @@ export default function AssetSelector({
       if (dragOverTimeout) {
         clearTimeout(dragOverTimeout);
       }
-      if (wheelTimeoutRef.current) {
-        clearTimeout(wheelTimeoutRef.current);
+      if (wheelResetTimeout.current) {
+        clearTimeout(wheelResetTimeout.current);
+      }
+      if (bundleClickTimeoutRef.current) {
+        clearTimeout(bundleClickTimeoutRef.current);
       }
     };
   }, [dragOverTimeout]);
@@ -264,140 +280,149 @@ export default function AssetSelector({
 
   // Note: flattenedItems will be computed after itemsForView is defined
 
-  // Pull-to-refresh handlers
+  // Refresh handler - simplified
   const handleRefresh = useCallback(async () => {
     if (isRefreshing) return;
     
     setIsRefreshing(true);
-    const startTime = Date.now();
+    setPullOffset(0);
     
     try {
-      const { clearCache, fetchRootTree } = useTreeStore.getState();
-      await clearCache();
-      await fetchRootTree();
+      const store = useTreeStore.getState();
       
-      // Ensure minimum duration of 600ms for smooth UX (prevents flickering)
-      const elapsed = Date.now() - startTime;
-      const minDuration = 600;
-      if (elapsed < minDuration) {
-        await new Promise(resolve => setTimeout(resolve, minDuration - elapsed));
-      }
+      // Save current expanded items to restore after refresh
+      const expandedIds = Array.from(expandedItems);
+      
+      // Force refresh by clearing lastFetchedInfospaceId (allows fetchRootTree to run)
+      useTreeStore.setState({ lastFetchedInfospaceId: null });
+      
+      // Fetch new data
+      await store.fetchRootTree();
+      
+      // Re-fetch children for all expanded items
+      const childrenPromises = expandedIds.map(async (itemId) => {
+        const node = [...store.rootNodes, ...Array.from(store.childrenCache.values()).flat()]
+          .find(n => n.id === itemId);
+        if (node && (node.type === 'bundle' || node.is_container)) {
+          try {
+            // Clear cache for this item to force refresh
+            const newCache = new Map(store.childrenCache);
+            newCache.delete(itemId);
+            useTreeStore.setState({ childrenCache: newCache });
+            
+            await store.fetchChildren(itemId);
+          } catch (err) {
+            console.warn(`[AssetSelector] Failed to reload children for ${itemId}:`, err);
+          }
+        }
+      });
+      
+      await Promise.all(childrenPromises);
       
       toast.success('Refreshed');
     } catch (error) {
+      console.error('[AssetSelector] Refresh error:', error);
       toast.error('Failed to refresh');
     } finally {
-      // Smooth fade out
-      setTimeout(() => {
-        setIsRefreshing(false);
-        // Delay reset for smooth transition
-        setTimeout(() => {
-          setPullDistance(0);
-        }, 200);
-      }, 100);
+      setIsRefreshing(false);
     }
-  }, [isRefreshing]);
+  }, [isRefreshing, expandedItems]);
 
+  // Simple pull-to-refresh handlers - clean implementation (touch + mouse wheel)
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer || isRefreshing) return;
     
-    const scrollTop = scrollContainer.scrollTop;
-    if (scrollTop === 0) {
-      startYRef.current = e.touches[0].clientY;
-      isPullingRef.current = true;
+    const viewport = scrollContainer.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+    if (!viewport) return;
+    
+    // Only start if at top of scroll
+    if (viewport.scrollTop === 0) {
+      touchStartY.current = e.touches[0].clientY;
+      isDragging.current = true;
     }
   }, [isRefreshing]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!isPullingRef.current || isRefreshing) return;
+    if (!isDragging.current || isRefreshing) return;
     
     const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer || scrollContainer.scrollTop > 0) {
-      isPullingRef.current = false;
-      setPullDistance(0);
+    if (!scrollContainer) return;
+    
+    const viewport = scrollContainer.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+    if (!viewport || viewport.scrollTop > 0) {
+      isDragging.current = false;
+      setPullOffset(0);
       return;
     }
 
     const currentY = e.touches[0].clientY;
-    const distance = Math.max(0, currentY - startYRef.current);
+    const delta = currentY - touchStartY.current;
     
-    // Elastic resistance curve for natural feel
-    const resistance = 0.5;
-    const maxPull = 100;
-    const elasticDistance = maxPull * (1 - Math.exp(-distance * resistance / maxPull));
-    
-    setPullDistance(elasticDistance);
+    // Simple pull with light resistance
+    if (delta > 0) {
+      const resistance = 0.4;
+      setPullOffset(Math.min(delta * resistance, 100));
+    }
   }, [isRefreshing]);
 
   const handleTouchEnd = useCallback(() => {
-    if (!isPullingRef.current) return;
+    if (!isDragging.current) return;
     
-    isPullingRef.current = false;
+    isDragging.current = false;
     
-    // Trigger refresh if pulled more than 50px
-    if (pullDistance > 50) {
-      // Keep indicator visible during refresh
-      setPullDistance(60);
+    // Trigger refresh if pulled past threshold
+    if (pullOffset >= 50) {
       handleRefresh();
     } else {
-      // Smooth spring back
-      setPullDistance(0);
+      setPullOffset(0);
     }
-  }, [pullDistance, handleRefresh]);
+  }, [pullOffset, handleRefresh]);
 
+  // Desktop: Mouse wheel support for pull-to-refresh - smooth implementation
   const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (isRefreshing) return;
+    
     const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer || isRefreshing) return;
+    if (!scrollContainer) return;
     
-    const now = Date.now();
-    const timeSinceLastWheel = now - lastWheelTimeRef.current;
+    const viewport = scrollContainer.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+    if (!viewport) return;
     
-    // Detect scroll up at top
-    if (scrollContainer.scrollTop === 0 && e.deltaY < 0) {
+    // Only trigger when at top and scrolling up
+    if (viewport.scrollTop === 0 && e.deltaY < 0) {
       e.preventDefault();
-      lastWheelTimeRef.current = now;
       
-      // Throttle updates for performance
-      if (timeSinceLastWheel < 16) return; // ~60fps
-      
-      const distance = Math.abs(e.deltaY) * 0.4;
-      setPullDistance(prev => {
-        const newDistance = Math.min(prev + distance, 100);
-        
-        // Trigger refresh when crossing threshold
-        if (newDistance >= 50 && prev < 50) {
-          setTimeout(() => {
-            setPullDistance(60);
-            handleRefresh();
-          }, 100);
-        }
-        return newDistance;
-      });
-      
-      // Clear existing timeout
-      if (wheelTimeoutRef.current) {
-        clearTimeout(wheelTimeoutRef.current);
+      // Clear reset timeout
+      if (wheelResetTimeout.current) {
+        clearTimeout(wheelResetTimeout.current);
       }
       
-      // Gradual decay reset
-      wheelTimeoutRef.current = setTimeout(() => {
-        setPullDistance(prev => {
-          if (prev > 0 && prev < 50) {
-            const newVal = Math.max(0, prev - 10);
-            if (newVal > 0) {
-              // Continue decay
-              wheelTimeoutRef.current = setTimeout(() => {
-                setPullDistance(p => Math.max(0, p - 10));
-              }, 100);
-            }
-            return newVal;
-          }
-          return prev;
-        });
-      }, 150);
+      // Accumulate wheel delta
+      wheelAccumulator.current += Math.abs(e.deltaY) * 0.3;
+      const offset = Math.min(wheelAccumulator.current, 100);
+      setPullOffset(offset);
+      
+      // Trigger refresh at threshold
+      if (offset >= 50) {
+        wheelAccumulator.current = 0;
+        handleRefresh();
+      } else {
+        // Reset after inactivity
+        wheelResetTimeout.current = setTimeout(() => {
+          wheelAccumulator.current = 0;
+          setPullOffset(0);
+        }, 200);
+      }
+    } else if (viewport.scrollTop > 0 && pullOffset > 0) {
+      // Reset if scrolled down
+      wheelAccumulator.current = 0;
+      setPullOffset(0);
+      if (wheelResetTimeout.current) {
+        clearTimeout(wheelResetTimeout.current);
+      }
     }
-  }, [isRefreshing, handleRefresh]);
+  }, [isRefreshing, pullOffset, handleRefresh]);
 
   // NEW: Fetch tree data when infospace changes (single efficient call!)
   // If filterByBundleId is provided, fetch children of that bundle instead
@@ -422,6 +447,55 @@ export default function AssetSelector({
     }
   }, [activeInfospace?.id, filterByBundleId, fetchRootTree, fetchChildren]);
 
+  // NEW: Restore expanded state after data loads - fixes issue where bundles appear open but have no children
+  // Optimized to only run when necessary
+  useEffect(() => {
+    // Only run if root is loaded and we have expanded items
+    if (isLoadingRoot || expandedItems.size === 0) return;
+    if (rootNodes.length === 0 && previousRootNodesRef.current.length === 0) return;
+    
+    // Check if we have expanded items that need their children loaded
+    const expandedIds = Array.from(expandedItems);
+    const itemsToLoad: string[] = [];
+    
+    // Build a set of all node IDs for quick lookup
+    const allNodeIds = new Set<string>();
+    rootNodes.forEach(n => allNodeIds.add(n.id));
+    childrenCache.forEach(children => {
+      children.forEach(n => allNodeIds.add(n.id));
+    });
+    
+    // Find expanded items that need children loaded
+    expandedIds.forEach(itemId => {
+      if (!childrenCache.has(itemId) && 
+          !isLoadingChildren.has(itemId) && 
+          allNodeIds.has(itemId)) {
+        itemsToLoad.push(itemId);
+      }
+    });
+
+    // Load children in parallel (but limit concurrency)
+    if (itemsToLoad.length > 0) {
+      // Load up to 5 items at once to avoid overwhelming the server
+      const batchSize = 5;
+      for (let i = 0; i < itemsToLoad.length; i += batchSize) {
+        const batch = itemsToLoad.slice(i, i + batchSize);
+        Promise.all(
+          batch.map(async (itemId) => {
+            try {
+              await fetchChildren(itemId);
+            } catch (err) {
+              console.warn(`[AssetSelector] Failed to load children for ${itemId}:`, err);
+            }
+          })
+        ).catch(err => {
+          console.warn('[AssetSelector] Batch load error:', err);
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootNodes.length, expandedItems.size, isLoadingRoot, isLoadingChildren.size, fetchChildren]);
+
   // Memoized asset kinds for filter dropdown (from tree nodes)
   const assetKinds = useMemo(() => {
     const kinds = new Set<AssetKind>();
@@ -436,6 +510,15 @@ export default function AssetSelector({
     childrenCache.forEach(children => collectKinds(children));
     return Array.from(kinds).sort();
   }, [rootNodes, childrenCache]);
+
+  // Create map of semantic search results (asset_id -> score) - must be before assetTree
+  const semanticScoreMap = useMemo(() => {
+    const map = new Map<number, number>();
+    semanticResults.forEach(result => {
+      map.set(result.asset.id, result.score);
+    });
+    return map;
+  }, [semanticResults]);
 
   // OLD N+1 FETCHING LOGIC - REMOVED! 🎉
 
@@ -474,115 +557,176 @@ export default function AssetSelector({
     setEditingItem(null);
   };
   
+  // Shared conversion function: TreeNode -> AssetTreeItem (extracted for reuse)
+  const convertTreeNodeToTreeItem = useCallback((node: TreeNode, level: number = 0): AssetTreeItem => {
+    const isExpanded = expandedItems.has(node.id);
+    const isSelected = selectedItems.has(node.id);
+    
+    // Get children from cache if node is expanded
+    let children: AssetTreeItem[] | undefined;
+    if (isExpanded) {
+      const cachedChildren = childrenCache.get(node.id) || previousChildrenCacheRef.current.get(node.id);
+      if (cachedChildren && cachedChildren.length > 0) {
+        children = cachedChildren.map(child => convertTreeNodeToTreeItem(child, level + 1));
+      }
+    }
+    
+    // Create minimal asset/bundle objects for display
+    let asset: AssetRead | undefined;
+    let bundle: BundleRead | undefined;
+    
+    if (node.type === 'asset') {
+      const assetId = parseInt(node.id.replace('asset-', ''));
+      asset = {
+        id: assetId,
+        title: node.name,
+        kind: node.kind,
+        is_container: node.is_container || false,
+        stub: node.stub || false,
+        processing_status: node.processing_status,
+        updated_at: node.updated_at,
+        created_at: node.created_at,
+        infospace_id: activeInfospace?.id || 0,
+        parent_asset_id: null,
+        text_content: '',
+        metadata: {},
+        uuid: '',
+        part_index: null,
+        source_id: null,
+      } as AssetRead;
+    } else if (node.type === 'bundle') {
+      const bundleId = parseInt(node.id.replace('bundle-', ''));
+      bundle = {
+        id: bundleId,
+        name: node.name,
+        description: '',
+        infospace_id: activeInfospace?.id || 0,
+        parent_bundle_id: node.parent_id ? parseInt(node.parent_id.replace('bundle-', '')) : null,
+        updated_at: node.updated_at,
+        created_at: node.created_at || node.updated_at,
+        asset_count: node.asset_count || 0,
+        child_bundle_count: node.child_bundle_count || 0,
+        has_active_sources: node.has_active_sources,
+        active_source_count: node.active_source_count,
+        has_monitors: node.has_monitors,
+        monitor_count: node.monitor_count,
+        is_pipeline_input: node.is_pipeline_input,
+        pipeline_input_count: node.pipeline_input_count,
+        is_pipeline_output: node.is_pipeline_output,
+        pipeline_output_count: node.pipeline_output_count,
+      } as BundleRead & {
+        has_active_sources?: boolean;
+        active_source_count?: number;
+        has_monitors?: boolean;
+        monitor_count?: number;
+        is_pipeline_input?: boolean;
+        pipeline_input_count?: number;
+        is_pipeline_output?: boolean;
+        pipeline_output_count?: number;
+      };
+    }
+    
+    return {
+      id: node.id,
+      type: node.type === 'bundle' ? 'folder' : 'asset',
+      name: node.name,
+      level,
+      isExpanded,
+      isSelected,
+      parentId: node.parent_id || undefined,
+      isContainer: node.type === 'bundle' || node.is_container || undefined,
+      children,
+      asset,
+      bundle,
+    };
+  }, [expandedItems, selectedItems, childrenCache, activeInfospace]);
+
+  // Helper: Convert AssetRead to TreeNode (reusing tree builder pattern from backend)
+  const assetReadToTreeNode = useCallback((asset: AssetRead): TreeNode => {
+    return {
+      id: `asset-${asset.id}`,
+      type: 'asset' as const,
+      name: asset.title || 'Untitled',
+      kind: asset.kind,
+      is_container: asset.is_container || false,
+      stub: asset.stub || false,
+      processing_status: asset.processing_status,
+      parent_id: asset.parent_asset_id ? `asset-${asset.parent_asset_id}` : undefined,
+      updated_at: asset.updated_at,
+      created_at: asset.created_at,
+      source_metadata: asset.source_metadata || undefined,
+    };
+  }, []);
+
   // Generate hierarchical asset tree
-  // NEW: Convert TreeNodes to AssetTreeItems (much simpler!)
+  // NEW: Convert TreeNodes to AssetTreeItems (much simpler!) - optimized with better memoization
   const assetTree = useMemo(() => {
     // Use filtered bundle children if filterByBundleId is set, otherwise use root nodes
+    // Keep showing previous data during refresh to prevent empty state
     const nodesToRender = filterByBundleId !== null 
-      ? (childrenCache.get(`bundle-${filterByBundleId}`) || [])
-      : rootNodes;
+      ? (childrenCache.get(`bundle-${filterByBundleId}`) || previousChildrenCacheRef.current.get(`bundle-${filterByBundleId}`) || [])
+      : (rootNodes.length > 0 ? rootNodes : previousRootNodesRef.current);
     
-    console.log('[AssetSelector] Building tree from', nodesToRender.length, filterByBundleId !== null ? 'bundle children' : 'root nodes');
+    // Update refs for next render
+    if (rootNodes.length > 0) {
+      previousRootNodesRef.current = rootNodes;
+    }
+    if (childrenCache.size > 0) {
+      previousChildrenCacheRef.current = new Map(childrenCache);
+    }
     
-    const convertToTreeItem = (node: any, level: number = 0): AssetTreeItem => {
-      const isExpanded = expandedItems.has(node.id);
-      const isSelected = selectedItems.has(node.id);
-      
-      // Get children from cache if node is expanded
-      let children: AssetTreeItem[] | undefined;
-      if (isExpanded) {
-        const cachedChildren = childrenCache.get(node.id);
-        if (cachedChildren && cachedChildren.length > 0) {
-          children = cachedChildren.map(child => convertToTreeItem(child, level + 1));
-        }
-      }
-      
-      // Create minimal asset/bundle objects for display (icons, styling, etc.)
-      let asset: AssetRead | undefined;
-      let bundle: BundleRead | undefined;
-      
-      if (node.type === 'asset') {
-        // Create minimal asset object with data from TreeNode
-        const assetId = parseInt(node.id.replace('asset-', ''));
-        asset = {
-          id: assetId,
-          title: node.name,
-          kind: node.kind,
-          is_container: node.is_container || false,
-          stub: node.stub || false,
-          processing_status: node.processing_status,
-          updated_at: node.updated_at,
-          created_at: node.created_at,
-          // Minimal required fields
-          infospace_id: activeInfospace?.id || 0,
-          parent_asset_id: null,
-          text_content: '',
-          metadata: {},
-          uuid: '',
-          part_index: null,
-          source_id: null,
-        } as AssetRead;
-      } else if (node.type === 'bundle') {
-        // Create minimal bundle object with data from TreeNode
-        const bundleId = parseInt(node.id.replace('bundle-', ''));
-        bundle = {
-          id: bundleId,
-          name: node.name,
-          description: '',
-          infospace_id: activeInfospace?.id || 0,
-          parent_bundle_id: node.parent_id ? parseInt(node.parent_id.replace('bundle-', '')) : null,
-          updated_at: node.updated_at,
-          created_at: node.created_at || node.updated_at,
-          asset_count: node.asset_count || 0,
-          child_bundle_count: node.child_bundle_count || 0,
-        } as BundleRead;
-      }
-      
-      return {
-        id: node.id,
-        type: node.type === 'bundle' ? 'folder' : 'asset',
-        name: node.name,
-        level,
-        isExpanded,
-        isSelected,
-        parentId: node.parent_id,
-        isContainer: node.type === 'bundle' || node.is_container,
-        children,
-        asset,  // Now populated for icons/styling
-        bundle, // Now populated for styling
-      };
-    };
-    
-    const tree = nodesToRender.map(node => convertToTreeItem(node, 0));
+    // Reuse the shared conversion function
+    const tree = nodesToRender.map(node => convertTreeNodeToTreeItem(node, 0));
     console.log('[AssetSelector] Generated', tree.length, 'tree items');
 
-    const [sortKey, sortDirection] = sortOption.split('-') as [SortKey, SortDirection];
+    // Parse sort option - supports both "key-direction" and "primary-secondary-direction" formats
+    const sortParts = sortOption.split('-');
+    const isCompoundSort = sortParts.length === 3; // e.g., "kind-updated_at-desc"
+    const primaryKey = sortParts[0] as SortKey;
+    const secondaryKey = isCompoundSort ? sortParts[1] as SortKey : null;
+    const sortDirection = (isCompoundSort ? sortParts[2] : sortParts[1]) as SortDirection;
+    
     const sortItemsRecursively = (items: AssetTreeItem[]): AssetTreeItem[] => {
         const sortedItems = [...items].sort((a, b) => {
+            // Folders always come first
             if (a.type === 'folder' && b.type !== 'folder') return -1;
             if (a.type !== 'folder' && b.type === 'folder') return 1;
 
-            let valA: string | number = 0;
-            let valB: string | number = 0;
+            // Helper to get sort value for a given key
+            const getSortValue = (item: AssetTreeItem, key: SortKey): string | number => {
+                switch(key) {
+                    case 'name':
+                        return item.name.toLowerCase();
+                    case 'updated_at':
+                        return item.asset ? new Date(item.asset.updated_at).getTime() : (item.bundle ? new Date(item.bundle.updated_at).getTime() : 0);
+                    case 'kind':
+                        return item.asset?.kind || ' ';
+                    default:
+                        return 0;
+                }
+            };
 
-            switch(sortKey) {
-                case 'name':
-                    valA = a.name.toLowerCase();
-                    valB = b.name.toLowerCase();
-                    break;
-                case 'updated_at':
-                    valA = a.asset ? new Date(a.asset.updated_at).getTime() : (a.bundle ? new Date(a.bundle.updated_at).getTime() : 0);
-                    valB = b.asset ? new Date(b.asset.updated_at).getTime() : (b.bundle ? new Date(b.bundle.updated_at).getTime() : 0);
-                    break;
-                case 'kind':
-                    valA = a.asset?.kind || ' ';
-                    valB = b.asset?.kind || ' ';
-                    break;
+            // Primary sort
+            const valA = getSortValue(a, primaryKey);
+            const valB = getSortValue(b, primaryKey);
+            
+            // For compound sort (kind + date): primary sort is always ascending by kind,
+            // secondary sort uses the specified direction
+            const primaryDirection = isCompoundSort && primaryKey === 'kind' ? 'asc' : sortDirection;
+            
+            if (valA < valB) return primaryDirection === 'asc' ? -1 : 1;
+            if (valA > valB) return primaryDirection === 'asc' ? 1 : -1;
+            
+            // Secondary sort (for compound sorts like kind-updated_at)
+            if (secondaryKey) {
+                const secA = getSortValue(a, secondaryKey);
+                const secB = getSortValue(b, secondaryKey);
+                
+                if (secA < secB) return sortDirection === 'asc' ? -1 : 1;
+                if (secA > secB) return sortDirection === 'asc' ? 1 : -1;
             }
             
-            if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-            if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
-            
+            // Fallback: sort by name
             if (a.name.toLowerCase() < b.name.toLowerCase()) return -1;
             if (a.name.toLowerCase() > b.name.toLowerCase()) return 1;
 
@@ -591,10 +735,38 @@ export default function AssetSelector({
         return sortedItems.map(item => ({ ...item, children: item.children ? sortItemsRecursively(item.children) : undefined }));
     };
     return sortItemsRecursively(tree);
-  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId]);
+  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, convertTreeNodeToTreeItem]);
+  
+  // Convert semantic results to AssetTreeItems using existing conversion utilities
+  // Reuses: AssetRead -> TreeNode -> AssetTreeItem (same pattern as tree store)
+  const semanticTreeItems = useMemo(() => {
+    if (!useSemanticMode || !semanticSearchEnabled || semanticResults.length === 0) {
+      return [];
+    }
+    
+    // Filter by asset type
+    const filteredResults = semanticResults.filter(result => {
+      const typeMatch = assetTypeFilter === 'all' || result.asset.kind === assetTypeFilter;
+      return typeMatch;
+    });
+    
+    // Convert AssetRead -> TreeNode -> AssetTreeItem (reusing existing conversion)
+    return filteredResults.map(result => {
+      const treeNode = assetReadToTreeNode(result.asset);
+      const treeItem = convertTreeNodeToTreeItem(treeNode, 0);
+      // Use full asset data we already have (more complete than minimal asset from TreeNode)
+      return { ...treeItem, asset: result.asset };
+    });
+  }, [useSemanticMode, semanticSearchEnabled, semanticResults, assetTypeFilter, assetReadToTreeNode, convertTreeNodeToTreeItem]);
 
   // Filter tree based on search and type
   const filteredTree = useMemo(() => {
+    // If semantic search is active and has results, return semantic results as flat list
+    if (useSemanticMode && semanticSearchEnabled && semanticTreeItems.length > 0) {
+      return semanticTreeItems;
+    }
+    
+    // Text search mode (original logic)
     const filterItems = (items: AssetTreeItem[]): AssetTreeItem[] => {
       return items.reduce((acc: AssetTreeItem[], item) => {
         const filteredChildren = item.children ? filterItems(item.children) : undefined;
@@ -615,28 +787,37 @@ export default function AssetSelector({
       }, []);
     };
     return filterItems(assetTree);
-  }, [assetTree, debouncedSearchTerm, assetTypeFilter]);
+  }, [assetTree, debouncedSearchTerm, assetTypeFilter, useSemanticMode, semanticSearchEnabled, semanticResults, semanticScoreMap]);
 
-  // NEW: Lazy load children when expanding nodes
+  // NEW: Lazy load children when expanding nodes - optimized
   const toggleExpanded = useCallback(async (itemId: string) => {
     const isCurrentlyExpanded = expandedItems.has(itemId);
-    setExpandedItems(prev => {
-      const newSet = new Set(prev);
-      if (isCurrentlyExpanded) newSet.delete(itemId);
-      else newSet.add(itemId);
-      return newSet;
-    });
+    const newExpandedSet = new Set(expandedItems);
+    
+    if (isCurrentlyExpanded) {
+      newExpandedSet.delete(itemId);
+    } else {
+      newExpandedSet.add(itemId);
+    }
+    
+    setExpandedItems(newExpandedSet);
 
-    // Lazy load children if expanding and not already cached
-    if (!isCurrentlyExpanded && !childrenCache.has(itemId)) {
+    // Lazy load children if expanding and not already cached or loading
+    if (!isCurrentlyExpanded && !childrenCache.has(itemId) && !isLoadingChildren.has(itemId)) {
       console.log('[AssetSelector] Lazy loading children for:', itemId);
       try {
         await fetchChildren(itemId);
       } catch (error) {
         console.error(`[AssetSelector] Failed to fetch children for ${itemId}:`, error);
+        // On error, collapse the item
+        setExpandedItems(prev => {
+          const errorSet = new Set(prev);
+          errorSet.delete(itemId);
+          return errorSet;
+        });
       }
     }
-  }, [expandedItems, childrenCache, fetchChildren]);
+  }, [expandedItems, childrenCache, isLoadingChildren, fetchChildren]);
 
   const allVisibleItemIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1015,9 +1196,28 @@ export default function AssetSelector({
         <div key={item.id}>
           <div
             data-item-index={itemIndex}
-            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50", compact ? "py-1 px-2 max-w-full overflow-hidden" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500", isFocused && "ring-1 ring-inset ring-primary")}
+            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500", isFocused && "ring-1 ring-inset ring-primary")}
             style={getIndentationStyle(item.level)}
-            onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}
+            onClick={(e) => { 
+              e.stopPropagation();
+              // Delay single-click to distinguish from double-click
+              if (bundleClickTimeoutRef.current) {
+                clearTimeout(bundleClickTimeoutRef.current);
+              }
+              bundleClickTimeoutRef.current = setTimeout(() => {
+                toggleExpanded(item.id);
+                bundleClickTimeoutRef.current = null;
+              }, 100);
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              // Cancel single-click expand and open detail view
+              if (bundleClickTimeoutRef.current) {
+                clearTimeout(bundleClickTimeoutRef.current);
+                bundleClickTimeoutRef.current = null;
+              }
+              handleItemClick(item);
+            }}
             onDragOver={(e) => { 
               e.preventDefault(); 
               e.stopPropagation(); 
@@ -1065,39 +1265,39 @@ export default function AssetSelector({
               }
             }}
           >
-            <div className="w-4 h-4 flex items-center justify-center">
-              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0 pl-2.5" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>} </Button>}
+            <div className="ml-1 w-4 h-4 flex items-center justify-center shrink-0">
+              {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 400, damping: 30 }}><ChevronRight className="h-3 w-3" /></motion.div>} </Button>}
             </div>
-            <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4 rounded-full", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
-            <div className="w-4 h-4 flex items-center justify-center">
+            <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4 rounded-sm shrink-0 border-gray-300 border-thin data-[state=checked]:bg-secondary data-[state=checked]:text-secondary-foreground", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
+            <div className="w-4 h-4 flex items-center justify-center shrink-0">
               <div className="relative">
                 <AnimatePresence mode="wait">
                   {item.isExpanded ? (
                     <motion.div
                       key="open"
-                      initial={{ opacity: 0, scale: 0.8 }}
+                      initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      transition={{ duration: 0.15, ease: "easeInOut" }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.1, ease: "easeOut" }}
                     >
-                      <FolderOpen className="h-4 w-4 text-blue-600" />
+                      <FolderOpen className="h-4 w-4 text-blue-400" />
                     </motion.div>
                   ) : (
                     <motion.div
                       key="closed"
-                      initial={{ opacity: 0, scale: 0.8 }}
+                      initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      transition={{ duration: 0.15, ease: "easeInOut" }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.1, ease: "easeOut" }}
                     >
-                      <Folder className="h-4 w-4 text-blue-600" />
+                      <Folder className="h-4 w-4 text-blue-400" />
                     </motion.div>
                   )}
                 </AnimatePresence>
               </div>
             </div>
-            <div className="flex-1 min-w-0" onDoubleClick={(e) => { e.stopPropagation(); handleEditItem(item); }}>
-              <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
+              <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                 {isEditing ? (
                   <div className="flex items-center gap-1">
                     <Input value={editingItem.value} onChange={(e) => setEditingItem({ ...editingItem, value: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEditing(); if (e.key === 'Escape') handleCancelEdit(); }} autoFocus className="h-7 text-sm" onClick={(e) => e.stopPropagation()} />
@@ -1106,25 +1306,29 @@ export default function AssetSelector({
                   </div>
                 ) : (
                   <>
-                    <span className="text-sm font-semibold truncate">{item.name}</span>
-                    <div className="md:hidden flex items-center gap-1">
-                      {item.type === 'folder' && (
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Bundle Details">
-                          <View className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {renderItemActions ? renderItemActions(item) : (
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
-                      )}
-                    </div>
+                    <span className="text-sm font-normal truncate flex-1 min-w-0">{item.name}</span>
+                    {/* Inline activity indicators for bundles */}
+                    {item.bundle && (
+                      <BundleActivityIndicators
+                        hasActiveSources={item.bundle.has_active_sources}
+                        activeSourceCount={item.bundle.active_source_count}
+                        hasMonitors={item.bundle.has_monitors}
+                        monitorCount={item.bundle.monitor_count}
+                        isPipelineInput={item.bundle.is_pipeline_input}
+                        pipelineInputCount={item.bundle.pipeline_input_count}
+                        isPipelineOutput={item.bundle.is_pipeline_output}
+                        pipelineOutputCount={item.bundle.pipeline_output_count}
+                      />
+                    )}
                   </>
                 )}
               </div>
             </div>
-            <div className="hidden md:flex items-center gap-1">
+            {/* Actions - always at the end */}
+            <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
               {item.type === 'folder' && (
                 <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Bundle Details">
-                  <View className="h-4 w-4" />
+                  <Eye className="h-4 w-4" />
                 </Button>
               )}
               {renderItemActions ? renderItemActions(item) : (
@@ -1140,19 +1344,19 @@ export default function AssetSelector({
                   height: "auto", 
                   opacity: 1,
                   transition: {
-                    height: { type: "spring", stiffness: 300, damping: 30, mass: 0.8 },
-                    opacity: { duration: 0.2 }
+                    height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 },
+                    opacity: { duration: 0.1 }
                   }
                 }}
                 exit={{ 
                   height: 0, 
                   opacity: 0,
                   transition: {
-                    height: { type: "spring", stiffness: 300, damping: 30, mass: 0.8 },
-                    opacity: { duration: 0.15 }
+                    height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 },
+                    opacity: { duration: 0.1 }
                   }
                 }}
-                className="overflow-hidden max-h-72 overflow-y-auto"
+                className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide"
               >
                 <div className="ml-0  pl-0 space-y-0.5 pb-2 pt-1">
                   <div className="space-y-0.5">
@@ -1173,7 +1377,7 @@ export default function AssetSelector({
       <div key={item.id}>
         <div
           data-item-index={itemIndex}
-          className={cn("group flex items-center gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md", compact ? "py-1 px-2 max-w-[70vw] md:max-w-[50vw] overflow-hidden" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-1 ring-inset ring-primary")}
+          className={cn("group flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-1 ring-inset ring-primary")}
           style={getIndentationStyle(item.level)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}
@@ -1234,34 +1438,56 @@ export default function AssetSelector({
             }
           }}
         >
-          <div className="w-4 h-4 flex items-center justify-center">{canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>{isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>}</Button>}</div>
-          <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded-full" />
-          <div className="w-4 h-4 flex items-center justify-center">{item.asset && getAssetIcon(item.asset.kind)}</div>
-          <div className="flex-1 min-w-0 overflow-hidden" onDoubleClick={(e) => { e.stopPropagation(); handleEditItem(item); }}>
-            <div className="flex items-center gap-1.5">
-              {isEditing ? (
-                  <div className="flex items-center gap-0.5">
-                    <Input value={editingItem.value} onChange={(e) => setEditingItem({ ...editingItem, value: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEditing(); if (e.key === 'Escape') handleCancelEdit(); }} autoFocus className="h-7 text-sm" onClick={(e) => e.stopPropagation()} />
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleSaveEditing();}}><Check className="h-4 w-4 text-green-600"/></Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleCancelEdit();}}><X className="h-4 w-4 text-red-600"/></Button>
-                  </div>
-                ) : (
-                  <>
-                    <span className="text-sm font-medium truncate">{item.name}</span>
-                    <div className="md:hidden flex items-center gap-1">
-                      {renderItemActions ? renderItemActions(item) : (
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
-                      )}
-                    </div>
-                  </>
-              )}
-            </div>
+          {/* Left fixed section: expand, checkbox, icon */}
+          <div className="ml-1 w-4 h-4 flex items-center justify-center shrink-0">
+            {canExpand && (
+              <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>
+                {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}><ChevronRight className="h-3 w-3" /></motion.div>}
+              </Button>
+            )}
           </div>
-          <div className="flex items-center gap-4 ml-auto pl-4">
-            {item.asset && <div className="text-xs text-muted-foreground truncate hidden group-hover:block md:block">{formatDistanceToNow(new Date(item.asset.updated_at), { addSuffix: true })}</div>}
-            <div className="hidden md:flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded-sm shrink-0 border-secondart data-[state=checked]:bg-secondart data-[state=checked]:text-secondart-foreground" />
+          {/* Relevance score badge - between checkbox and icon */}
+          {item.asset && semanticScoreMap.has(item.asset.id) && (
+            <RelevanceBadge 
+              score={semanticScoreMap.get(item.asset.id)!} 
+              size="sm"
+              className="shrink-0"
+            />
+          )}
+          {item.asset?.kind && (
+            <div className="w-4 h-4 flex items-center justify-center shrink-0">
+              {getAssetIcon(item.asset.kind, 'h-4 w-4')}
+            </div>
+          )}
+
+          {/* Middle flexible section: name + metadata */}
+          <div className="flex-1 min-w-0 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
+            {isEditing ? (
+              <div className="flex items-center gap-0.5">
+                <Input value={editingItem.value} onChange={(e) => setEditingItem({ ...editingItem, value: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEditing(); if (e.key === 'Escape') handleCancelEdit(); }} autoFocus className="h-7 text-sm" onClick={(e) => e.stopPropagation()} />
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleSaveEditing();}}><Check className="h-4 w-4 text-green-600"/></Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleCancelEdit();}}><X className="h-4 w-4 text-red-600"/></Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+                <span className="text-sm font-normal truncate flex-1 min-w-0">{item.name}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Right fixed section: date + actions - always at end */}
+          <div className="flex items-center gap-2 shrink-0">
+            {item.asset && !isEditing && (
+              <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:block">
+                {formatDistanceToNowStrict(new Date(item.asset.updated_at), { addSuffix: true })}
+              </span>
+            )}
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {renderItemActions ? renderItemActions(item) : (
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details">
+                  <Eye className="h-4 w-4" />
+                </Button>
               )}
             </div>
           </div>
@@ -1274,19 +1500,19 @@ export default function AssetSelector({
                 height: "auto", 
                 opacity: 1,
                 transition: {
-                  height: { type: "spring", stiffness: 350, damping: 32, mass: 0.7 },
-                  opacity: { duration: 0.2 }
+                  height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 },
+                  opacity: { duration: 0.1 }
                 }
               }}
               exit={{ 
                 height: 0, 
                 opacity: 0,
                 transition: {
-                  height: { type: "spring", stiffness: 350, damping: 32, mass: 0.7 },
-                  opacity: { duration: 0.15 }
+                  height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 },
+                  opacity: { duration: 0.1 }
                 }
               }}
-              className="overflow-hidden max-h-72 overflow-y-auto"
+              className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide"
             >
               <div className="ml-0 border-l-2 border-slate-200 dark:border-slate-700 pl-2 space-y-1 pb-2 pt-1">
                 <div className="space-y-1">
@@ -1428,63 +1654,129 @@ export default function AssetSelector({
         {/* Compact search bar - minimal design for inline usage */}
         {compact && (
           <div className="flex-none p-2 border-b">
-            <InputGroup>
-              <InputGroupAddon>
-                <Search className="h-3.5 w-3.5" />
-              </InputGroupAddon>
-              <InputGroupInput 
-                ref={searchInputRef}
-                placeholder="Search with @..." 
-                className="text-sm h-8" 
-                value={searchTerm} 
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  // Handle navigation keys - let window handler take over once navigation starts
-                  if (e.key === 'ArrowDown' && focusedIndex === -1 && flattenedItemsRef.current.length > 0) {
-                    // First arrow down - move focus to first item
-                    e.preventDefault();
-                    setFocusedIndex(0);
-                  } else if (e.key === 'ArrowUp' && focusedIndex === -1) {
-                    // First arrow up - move focus to last item
-                    e.preventDefault();
-                    if (flattenedItemsRef.current.length > 0) {
-                      setFocusedIndex(flattenedItemsRef.current.length - 1);
+            <div className="flex items-center gap-2">
+              <InputGroup className="flex-grow">
+                <InputGroupAddon>
+                  {isSemanticSearching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Search className="h-3.5 w-3.5" />
+                  )}
+                </InputGroupAddon>
+                <InputGroupInput 
+                  ref={searchInputRef}
+                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Search with @..."} 
+                  className="text-sm h-8" 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Handle navigation keys - let window handler take over once navigation starts
+                    if (e.key === 'ArrowDown' && focusedIndex === -1 && flattenedItemsRef.current.length > 0) {
+                      // First arrow down - move focus to first item
+                      e.preventDefault();
+                      setFocusedIndex(0);
+                    } else if (e.key === 'ArrowUp' && focusedIndex === -1) {
+                      // First arrow up - move focus to last item
+                      e.preventDefault();
+                      if (flattenedItemsRef.current.length > 0) {
+                        setFocusedIndex(flattenedItemsRef.current.length - 1);
+                      }
                     }
-                  }
-                  // For all other cases (including when focusedIndex >= 0), let the window handler manage it
-                }}
-              />
-            </InputGroup>
+                    // For all other cases (including when focusedIndex >= 0), let the window handler manage it
+                  }}
+                />
+              </InputGroup>
+              {/* Semantic search toggle - compact mode */}
+              {isSemanticAvailable && (
+                <div className="flex items-center gap-1.5">
+                  <Switch
+                    id="semantic-toggle-compact"
+                    checked={useSemanticMode}
+                    onCheckedChange={setUseSemanticMode}
+                    disabled={isSemanticSearching}
+                    className="scale-75"
+                  />
+                  <Label 
+                    htmlFor="semantic-toggle-compact" 
+                    className="text-[10px] text-muted-foreground cursor-pointer whitespace-nowrap"
+                  >
+                    {useSemanticMode ? 'S' : 'T'}
+                  </Label>
+                </div>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 shrink-0"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                title="Refresh"
+              >
+                <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+              </Button>
+            </div>
           </div>
         )}
       
         {/* Search and Filter - Full version for non-compact mode */}
         {!compact && (
           <div className="flex-none p-2 py-0 border-b min-w-0 overflow-hidden">
-            <div className="flex items-center gap-2 min-w-0 pl-6 py-3">
+            <div className="flex items-center gap-1 sm:gap-2 min-w-0 pl-1 sm:pl-2 py-2 sm:py-3">
               <Checkbox 
                 id="select-all" 
                 checked={isAllSelected} 
                 onCheckedChange={(checked) => handleSelectAll(Boolean(checked))} 
                 disabled={allVisibleItemIds.size === 0} 
                 aria-label="Select all visible items" 
-                className="rounded-full"
+                className="rounded-sm shrink-0"
               />
-              <InputGroup className="flex-grow h-8 ml-6 mr-6">
+              <InputGroup className="flex-grow h-8 ml-1 sm:ml-2">
                 <InputGroupAddon>
-                  <Search className="h-2 w-2" />
+                  {isSemanticSearching ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Search className="h-3 w-3" />
+                  )}
                 </InputGroupAddon>
                 <InputGroupInput 
                   ref={searchInputRef} 
-                  placeholder="Search..." 
+                  placeholder={useSemanticMode && isSemanticAvailable ? "Search..." : "Search..."} 
                   value={searchTerm} 
                   onChange={(e) => setSearchTerm(e.target.value)} 
                 />
               </InputGroup>
+              {/* Semantic search toggle - only show if available */}
+              {isSemanticAvailable && (
+                <div className="flex items-center gap-1 sm:gap-2 px-0.5 sm:px-2">
+                  <Switch
+                    id="semantic-toggle"
+                    checked={useSemanticMode}
+                    onCheckedChange={setUseSemanticMode}
+                    disabled={isSemanticSearching}
+                    className="scale-90 sm:scale-100"
+                  />
+                  <Label 
+                    htmlFor="semantic-toggle" 
+                    className="text-xs text-muted-foreground cursor-pointer whitespace-nowrap hidden sm:block"
+                  >
+                    {useSemanticMode ? 'Semantic' : 'Text'}
+                  </Label>
+                </div>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 sm:h-8 sm:w-8 p-0 shrink-0"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                title="Refresh"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5 sm:h-4 sm:w-4", isRefreshing && "animate-spin")} />
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 gap-2 shrink-0">
-                    <ArrowDown01 className="h-4 w-4" />
+                  <Button variant="ghost" size="sm" className="h-7 w-7 sm:h-8 sm:w-auto p-0 sm:px-2 sm:gap-2 shrink-0">
+                    <ArrowDown01 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     <span className="hidden sm:inline">Filters</span>
                   </Button>
                 </DropdownMenuTrigger>
@@ -1515,6 +1807,12 @@ export default function AssetSelector({
                     </DropdownMenuLabel>
                     <div className="bg-muted/30 rounded-md p-1">
                       <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                        <DropdownMenuRadioItem value="kind-updated_at-desc" className="rounded-sm">
+                          <span className="flex items-center gap-2">
+                            <span className="text-muted-foreground">📁</span>
+                            Type, then Date
+                          </span>
+                        </DropdownMenuRadioItem>
                         <DropdownMenuRadioItem value="updated_at-desc" className="rounded-sm">
                           <span className="flex items-center gap-2">
                             <span className="text-muted-foreground">↓</span>
@@ -1537,18 +1835,6 @@ export default function AssetSelector({
                           <span className="flex items-center gap-2">
                             <span className="text-muted-foreground">Z→A</span>
                             Name Descending
-                          </span>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="kind-asc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">A→Z</span>
-                            Type Ascending
-                          </span>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="kind-desc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Z→A</span>
-                            Type Descending
                           </span>
                         </DropdownMenuRadioItem>
                       </DropdownMenuRadioGroup>
@@ -1605,45 +1891,8 @@ export default function AssetSelector({
             }
           }}
         >
-          {/* Pull-to-refresh indicator */}
-          <div 
-            className="absolute top-0 left-0 right-0 flex items-center justify-center z-10 pointer-events-none"
-            style={{ 
-              height: `${pullDistance}px`,
-              opacity: pullDistance > 0 ? Math.min(pullDistance / 30, 1) : 0,
-              transform: `translateY(${pullDistance > 0 ? 0 : -10}px) scale(${Math.min(pullDistance / 50, 1)})`,
-              transition: isPullingRef.current ? 'none' : 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
-            }}
-          >
-            <div 
-              className="flex items-center gap-2 px-4 py-2 bg-primary/10 backdrop-blur-md rounded-full border border-primary/20 shadow-lg"
-              style={{
-                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
-              }}
-            >
-              <Loader2 
-                className={cn(
-                  "h-4 w-4 text-primary",
-                  isRefreshing && "animate-spin"
-                )}
-                style={{ 
-                  transform: !isRefreshing ? `rotate(${pullDistance * 4}deg)` : undefined,
-                  transition: isRefreshing ? 'none' : 'transform 0.2s ease-out'
-                }}
-              />
-              <span 
-                className="text-xs font-medium text-primary whitespace-nowrap"
-                style={{
-                  transition: 'opacity 0.2s ease-out'
-                }}
-              >
-                {isRefreshing ? 'Refreshing...' : pullDistance > 50 ? 'Release to refresh' : 'Pull to refresh'}
-              </span>
-            </div>
-          </div>
-
           <ScrollArea 
-            className="h-full w-full min-w-0 max-w-full"
+            className="h-full w-full min-w-0 max-w-full" 
             ref={scrollContainerRef}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
@@ -1659,13 +1908,41 @@ export default function AssetSelector({
               </div>
             )}
             <div 
+              className="w-full overflow-hidden"
               style={{ 
-                paddingTop: `${pullDistance}px`,
-                transition: isPullingRef.current ? 'none' : 'padding-top 0.4s cubic-bezier(0.4, 0, 0.2, 1)'
+                transform: `translateY(${pullOffset}px)`, 
+                transition: isDragging.current ? 'none' : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                willChange: isDragging.current ? 'transform' : 'auto'
               }}
             >
-            {isLoadingRoot ? (
-              <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /><span className="ml-0 text-muted-foreground">Loading...</span></div>
+              {/* Pull-to-refresh indicator */}
+              {pullOffset > 0 && (
+                <div className="flex items-center justify-center py-2 text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    {isRefreshing ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span className="text-xs">Refreshing...</span>
+                      </>
+                    ) : pullOffset >= 60 ? (
+                      <>
+                        <RefreshCw className="h-4 w-4" />
+                        <span className="text-xs">Release to refresh</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4" style={{ transform: `rotate(${Math.min(pullOffset * 2, 180)}deg)` }} />
+                        <span className="text-xs">Pull to refresh</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            {isLoadingRoot && rootNodes.length === 0 && previousRootNodesRef.current.length === 0 ? (
+              <div className="flex items-center justify-center h-32">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-muted-foreground">Loading...</span>
+              </div>
             ) : filteredTree.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                 <FolderOpen className="h-8 w-8 mb-2 opacity-50" />
@@ -1675,7 +1952,7 @@ export default function AssetSelector({
                 </p>
               </div>
             ) : (
-              <div ref={containerRef} className="px-2 mt-2 space-y-0.5">
+              <div ref={containerRef} className="px-2 md:px-0 mt-2 space-y-0.5 w-full overflow-hidden">
                 {filteredTree.map(item => {
                   const itemIndex = flattenedItemsRef.current.findIndex(fi => fi.id === item.id);
                   return renderTreeItem(item, itemIndex >= 0 ? itemIndex : undefined);
@@ -1683,8 +1960,7 @@ export default function AssetSelector({
               </div>
             )}
             </div>
-            <ScrollBar />
-          </ScrollArea>
+          </ScrollArea >
         </div>
       </div>
   );

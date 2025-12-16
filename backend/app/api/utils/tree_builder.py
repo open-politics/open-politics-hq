@@ -7,15 +7,22 @@ No service class needed - just pure functions for formatting data.
 """
 
 from typing import List, Dict, Set, Optional, Any
-from app.models import Asset, Bundle, AssetKind
+from sqlmodel import Session, select
+from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus
 from app.schemas import TreeNode, TreeNodeType
 from collections import Counter
 from datetime import datetime
 
 
-def build_tree_node_from_bundle(bundle: Bundle) -> TreeNode:
-    """Convert a Bundle to a TreeNode with minimal data."""
-    return TreeNode(
+def build_tree_node_from_bundle(bundle: Bundle, session: Optional[Session] = None) -> TreeNode:
+    """
+    Convert a Bundle to a TreeNode with minimal data and activity indicators.
+    
+    Args:
+        bundle: The bundle to convert
+        session: Optional database session for querying relationships
+    """
+    node = TreeNode(
         id=f"bundle-{bundle.id}",
         type=TreeNodeType.BUNDLE,
         name=bundle.name,
@@ -27,6 +34,55 @@ def build_tree_node_from_bundle(bundle: Bundle) -> TreeNode:
         updated_at=bundle.updated_at,
         created_at=bundle.created_at,
     )
+    
+    if session:
+        # Query active sources outputting to this bundle
+        active_sources = session.exec(
+            select(Source)
+            .where(Source.output_bundle_id == bundle.id)
+            .where(Source.is_active == True)
+        ).all()
+        node.has_active_sources = len(active_sources) > 0
+        node.active_source_count = len(active_sources)
+        
+        # Query active Flows watching this bundle as input
+        active_flows_input = session.exec(
+            select(Flow)
+            .where(Flow.input_bundle_id == bundle.id)
+            .where(Flow.status == FlowStatus.ACTIVE)
+        ).all()
+        node.has_monitors = len(active_flows_input) > 0  # Legacy field name for UI compatibility
+        node.monitor_count = len(active_flows_input)
+        
+        # This bundle is a flow input if any active flow watches it
+        node.is_pipeline_input = len(active_flows_input) > 0
+        node.pipeline_input_count = len(active_flows_input)
+        
+        # Query Flows routing TO this bundle (ROUTE steps with bundle_id matching)
+        all_flows = session.exec(
+            select(Flow)
+            .where(Flow.infospace_id == bundle.infospace_id)
+            .where(Flow.status == FlowStatus.ACTIVE)
+        ).all()
+        
+        # Filter flows that have a ROUTE step targeting this bundle
+        matching_output_flows = []
+        for flow in all_flows:
+            if flow.steps:
+                for step in flow.steps:
+                    if step.get("type") == "ROUTE":
+                        # Check bundle_id or bundle_ids in step config
+                        if step.get("bundle_id") == bundle.id:
+                            matching_output_flows.append(flow)
+                            break
+                        if bundle.id in (step.get("bundle_ids") or []):
+                            matching_output_flows.append(flow)
+                            break
+        
+        node.is_pipeline_output = len(matching_output_flows) > 0
+        node.pipeline_output_count = len(matching_output_flows)
+    
+    return node
 
 
 def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id: int = None) -> TreeNode:
@@ -82,6 +138,7 @@ def get_bundled_asset_ids(bundles: List[Bundle]) -> Set[int]:
 def build_root_tree_nodes(
     root_bundles: List[Bundle],
     root_assets: List[Asset],
+    session: Optional[Session] = None,
 ) -> List[TreeNode]:
     """
     Build tree nodes for root level (no parents).
@@ -89,6 +146,7 @@ def build_root_tree_nodes(
     Args:
         root_bundles: Bundles with no parent_bundle_id
         root_assets: Assets with no parent_asset_id and not in any bundle
+        session: Optional database session for querying relationships
     
     Returns:
         List of TreeNode objects for the root level
@@ -97,7 +155,7 @@ def build_root_tree_nodes(
     
     # Add bundle nodes
     for bundle in root_bundles:
-        nodes.append(build_tree_node_from_bundle(bundle))
+        nodes.append(build_tree_node_from_bundle(bundle, session))
     
     # Add standalone asset nodes
     for asset in root_assets:
@@ -110,6 +168,7 @@ def build_bundle_children_nodes(
     bundle: Bundle,
     child_bundles: List[Bundle],
     bundle_assets: List[Asset],
+    session: Optional[Session] = None,
 ) -> List[TreeNode]:
     """
     Build tree nodes for children of a specific bundle.
@@ -118,6 +177,7 @@ def build_bundle_children_nodes(
         bundle: Parent bundle
         child_bundles: Nested bundles within this bundle
         bundle_assets: Assets directly in this bundle (not their children)
+        session: Optional database session for querying relationships
     
     Returns:
         List of TreeNode objects for bundle children
@@ -126,7 +186,7 @@ def build_bundle_children_nodes(
     
     # Add child bundles first
     for child_bundle in child_bundles:
-        nodes.append(build_tree_node_from_bundle(child_bundle))
+        nodes.append(build_tree_node_from_bundle(child_bundle, session))
     
     # Add bundle's direct assets
     for asset in bundle_assets:

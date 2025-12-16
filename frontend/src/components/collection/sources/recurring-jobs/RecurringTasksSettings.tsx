@@ -24,7 +24,7 @@ import {
     useRecurringTasksError
 } from '@/zustand_stores/storeRecurringTasks';
 import { Badge } from '@/components/ui/badge';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import RecurringTaskFormDialog from './RecurringTaskFormDialog';
 import { toast } from 'sonner';
@@ -289,7 +289,7 @@ export default function RecurringTasksSettings({ onLoadJob }: RecurringTasksSett
                     <CardContent className="p-4 text-sm space-y-2">
                       {/* Last Run Info */}
                       <div className="flex justify-between items-center text-xs text-muted-foreground">
-                         <span>Last Run: {task.last_run_at ? formatDistanceToNow(new Date(task.last_run_at), { addSuffix: true }) : 'Never'}</span>
+                         <span>Last Run: {task.last_run_at ? formatDistanceToNowStrict(new Date(task.last_run_at), { addSuffix: true }) : 'Never'}</span>
                          <span>Last Status: {formatStatus(task.last_run_status)}</span>
                       </div>
                       {task.last_run_message && (
@@ -297,7 +297,7 @@ export default function RecurringTasksSettings({ onLoadJob }: RecurringTasksSett
                       )}
                       {/* Last Successful Run Info */}
                       <div className="flex justify-between items-center text-xs text-muted-foreground">
-                         <span>Last Success: {task.last_successful_run_at ? formatDistanceToNow(new Date(task.last_successful_run_at), { addSuffix: true }) : 'Never'}</span>
+                         <span>Last Success: {task.last_successful_run_at ? formatDistanceToNowStrict(new Date(task.last_successful_run_at), { addSuffix: true }) : 'Never'}</span>
                          {task.consecutive_failure_count && task.consecutive_failure_count > 0 ? (
                               <span className="text-destructive">Failures: {task.consecutive_failure_count}</span>
                          ) : null}

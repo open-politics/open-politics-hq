@@ -11,11 +11,11 @@ from typing import Any, List
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import Session, select, delete
 from sqlalchemy import update
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api import deps
 from app.models import Asset, Bundle
-from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message
+from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead
 from app.api.services.service_utils import validate_infospace_access
 from app.api.utils.tree_builder import (
     build_root_tree_nodes,
@@ -88,7 +88,7 @@ def get_infospace_tree(
     logger.info(f"Found {len(root_assets)} root assets in infospace {infospace_id}")
     
     # Build tree nodes using utility functions
-    tree_nodes = build_root_tree_nodes(root_bundles, root_assets)
+    tree_nodes = build_root_tree_nodes(root_bundles, root_assets, db)
     
     # Count totals
     total_bundles = len(db.exec(
@@ -172,7 +172,7 @@ def get_tree_children(
             bundle_assets = all_bundle_assets[asset_skip:asset_skip + remaining_limit]
         
         # Build tree nodes
-        children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets)
+        children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, db)
         total_children = (bundle.child_bundle_count or 0) + (bundle.asset_count or 0)
         
         logger.info(f"Loaded {len(children_nodes)} children for bundle {parent_numeric_id}")
@@ -347,7 +347,7 @@ def delete_tree_nodes(
     
     # PHASE 3: Delete child records (bulk DELETE bypasses ORM cascades)
     if asset_ids_to_delete:
-        from app.models import AssetChunk, Annotation, PipelineProcessedAsset
+        from app.models import AssetChunk, Annotation
         logger.info(f"Deleting child records for {len(asset_ids_to_delete)} assets")
         # Delete asset chunks (for RAG/vector search)
         db.exec(
@@ -356,10 +356,6 @@ def delete_tree_nodes(
         # Delete annotations
         db.exec(
             delete(Annotation).where(Annotation.asset_id.in_(asset_ids_to_delete))
-        )
-        # Delete pipeline processed asset records
-        db.exec(
-            delete(PipelineProcessedAsset).where(PipelineProcessedAsset.asset_id.in_(asset_ids_to_delete))
         )
     
     # PHASE 4: Bulk delete all assets
@@ -395,4 +391,129 @@ def delete_tree_nodes(
         message += f" ({failed_count} failed)"
     
     return Message(message=message)
+
+
+class FeedAssetsResponse(BaseModel):
+    """Response for the feed assets endpoint"""
+    assets: List[AssetRead]
+    total: int
+    has_more: bool
+
+
+@router.get("/infospaces/{infospace_id}/tree/feed", response_model=FeedAssetsResponse)
+def get_feed_assets(
+    *,
+    infospace_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    kinds: List[str] = Query(None, description="Filter by asset kinds"),
+    sort_by: str = Query("updated_at", description="Sort field: created_at, updated_at"),
+    sort_order: str = Query("desc", description="Sort order: asc, desc"),
+    db: Session = deps.Depends(deps.get_db),
+    current_user = deps.Depends(deps.get_current_user),
+) -> Any:
+    """
+    Get a feed of recent assets sorted by date.
+    
+    Unlike the tree endpoint, this returns ALL displayable assets regardless
+    of whether their containing bundle is expanded. Perfect for "latest" feeds.
+    
+    Features:
+    - Includes assets from all bundles (not just expanded ones)
+    - Filters out child assets (only parent/standalone assets)
+    - Sorted by date (created_at or updated_at)
+    - Supports kind filtering
+    - Includes source_metadata for image extraction
+    """
+    validate_infospace_access(db, infospace_id, current_user.id)
+    
+    # Base query: user's assets in this infospace, no parent asset
+    query = (
+        select(Asset)
+        .where(Asset.infospace_id == infospace_id)
+        .where(Asset.user_id == current_user.id)
+        .where(Asset.parent_asset_id.is_(None))  # Only top-level assets
+    )
+    
+    # Filter by kinds if specified
+    if kinds:
+        query = query.where(Asset.kind.in_(kinds))
+    
+    # Get total count
+    count_query = (
+        select(Asset.id)
+        .where(Asset.infospace_id == infospace_id)
+        .where(Asset.user_id == current_user.id)
+        .where(Asset.parent_asset_id.is_(None))
+    )
+    if kinds:
+        count_query = count_query.where(Asset.kind.in_(kinds))
+    total = len(db.exec(count_query).all())
+    
+    # Apply sorting
+    if sort_by == "created_at":
+        order_col = Asset.created_at
+    else:
+        order_col = Asset.updated_at
+    
+    if sort_order == "asc":
+        query = query.order_by(order_col.asc())
+    else:
+        query = query.order_by(order_col.desc())
+    
+    # Apply pagination
+    query = query.offset(skip).limit(limit)
+    
+    assets = db.exec(query).all()
+    
+    logger.info(f"Feed: returned {len(assets)} assets (total: {total}) for infospace {infospace_id}")
+    
+    return FeedAssetsResponse(
+        assets=[AssetRead.model_validate(a) for a in assets],
+        total=total,
+        has_more=(skip + len(assets)) < total
+    )
+
+
+class BatchGetAssetsRequest(BaseModel):
+    asset_ids: List[int] = Field(..., description="List of asset IDs to fetch", max_length=100)
+
+@router.post("/infospaces/{infospace_id}/tree/assets/batch", response_model=List[AssetRead])
+def batch_get_assets(
+    *,
+    infospace_id: int,
+    request: BatchGetAssetsRequest,
+    db: Session = deps.Depends(deps.get_db),
+    current_user = deps.Depends(deps.get_current_user),
+) -> Any:
+    """
+    Batch fetch multiple assets by IDs in a single request.
+    
+    Efficient alternative to multiple GET /assets/{id} calls.
+    Used by semantic search and other features that need multiple assets.
+    
+    This endpoint follows the tree API pattern for efficient batch operations.
+    """
+    validate_infospace_access(db, infospace_id, current_user.id)
+    
+    if not request.asset_ids:
+        return []
+    
+    # Fetch all assets in a single query (same pattern as tree API)
+    assets = db.exec(
+        select(Asset)
+        .where(Asset.id.in_(request.asset_ids))
+        .where(Asset.infospace_id == infospace_id)
+        .where(Asset.user_id == current_user.id)
+    ).all()
+    
+    # Return in the same order as requested IDs (preserve order)
+    asset_map = {asset.id: asset for asset in assets}
+    result = []
+    for asset_id in request.asset_ids:
+        if asset_id in asset_map:
+            result.append(AssetRead.model_validate(asset_map[asset_id]))
+    
+    logger.info(f"Batch fetched {len(result)} assets for infospace {infospace_id}")
+    return result
 

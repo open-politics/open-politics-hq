@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssetRead, BundleRead } from '@/client';
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNowStrict } from 'date-fns';
 import AssetEmbed from './AssetEmbed';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 
@@ -170,7 +170,7 @@ export default function ComposedArticleView({
               </div>
             )}
             <span>•</span>
-            <span>Updated {formatDistanceToNow(new Date(asset.updated_at), { addSuffix: true })}</span>
+            <span>Updated {formatDistanceToNowStrict(new Date(asset.updated_at), { addSuffix: true })}</span>
           </div>
         )}
       </div>

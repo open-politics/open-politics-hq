@@ -93,12 +93,14 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
 
   const handleGoToPrevious = () => {
     if (canGoToPrevious) {
+      isNavigatingRef.current = true;
       onChildAssetSelect?.(filteredAndSortedAssets[selectedIndex - 1]);
     }
   };
 
   const handleGoToNext = () => {
     if (canGoToNext) {
+      isNavigatingRef.current = true;
       onChildAssetSelect?.(filteredAndSortedAssets[selectedIndex + 1]);
     }
   };
@@ -114,6 +116,9 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   const selectedTableRowRef = useRef<HTMLTableRowElement>(null);
   const highlightedCardRef = useRef<HTMLDivElement>(null);
   const selectedCardRef = useRef<HTMLDivElement>(null);
+  
+  // Track if navigation came from prev/next buttons to skip auto-scroll
+  const isNavigatingRef = useRef(false);
 
   // Effect to scroll to highlighted asset
   useEffect(() => {
@@ -131,9 +136,15 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     }
   }, [highlightedAssetId, viewMode]);
 
-  // Effect to scroll to selected asset
+  // Effect to scroll to selected asset (skip if navigating via prev/next buttons)
   useEffect(() => {
     if (selectedChildAsset) {
+      // Skip scrolling if navigation came from prev/next buttons
+      if (isNavigatingRef.current) {
+        isNavigatingRef.current = false;
+        return;
+      }
+      
       const targetRef = viewMode === 'table' ? selectedTableRowRef.current : selectedCardRef.current;
       if (targetRef) {
         // Small delay to ensure rendering is complete
@@ -191,7 +202,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   };
 
   const renderTableView = () => (
-    <div className="max-h-80 w-full overflow-auto">
+    <div className="max-h-40 md:max-h-80 w-full overflow-auto">
       <table className="text-sm border-collapse w-full table-fixed" style={{ minWidth: '500px' }}>
         <colgroup>
           <col style={{ width: '50px' }} />
@@ -357,13 +368,9 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     const columnNames = Object.keys(rowData);
 
     return (
-      <Card className="mt-4 border-primary/50 max-w-5xl mx-auto">
+      <Card className="mt-4 max-w-5xl mx-auto border-none">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <FileSpreadsheet className="h-4 w-4 text-primary" />
-              Row Columns
-            </CardTitle>
             <div className="flex items-center gap-1 absolute bottom-3 right-4 z-10 bg-background/95 backdrop-blur-sm py-2 px-3 rounded-lg shadow-sm">
               {/* Navigation */}
               <Button
@@ -447,10 +454,6 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
           {/* Column Data */}
           {columnNames.length > 0 && (
             <div>
-              <h4 className="text-sm font-semibold mb-3 text-muted-foreground flex items-center gap-2">
-                <TableIcon className="h-4 w-4" />
-                Column Data ({columnNames.length} columns)
-              </h4>
               <div className="grid gap-3 w-full">
                 {columnNames.map((columnName, index) => (
                   <div key={index} className="border rounded-lg p-3 min-w-0">
@@ -542,13 +545,8 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   return (
     <div className="space-y-4 h-full flex flex-col max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-end gap-4">
         <div className="flex items-center gap-2">
-          <FileSpreadsheet className="h-5 w-5 text-primary" />
-          <h3 className="text-lg font-semibold">CSV Rows</h3>
-          <Badge variant="outline">
-            {filteredAndSortedAssets.length} of {childAssets.length} rows
-          </Badge>
           {selectedChildAsset && (
             <Badge variant="default" className="bg-primary/10 text-primary border-primary">
               Row {selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : selectedChildAsset.id} Selected

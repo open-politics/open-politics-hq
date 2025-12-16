@@ -191,6 +191,9 @@ export interface PanelViewConfig {
   type: 'table' | 'map' | 'chart' | 'pie' | 'graph';
   filters: FilterSet;
   collapsed?: boolean; // Whether the panel settings are collapsed
+  // NEW: Multi-source support for meta-dashboards
+  sourceType?: 'run' | 'bundle'; // Default: 'run' (backward compatible)
+  sourceId?: number; // run_id or bundle_id
   // Panel-specific settings that persist across sessions
   settings?: {
     // For pie charts

@@ -45,8 +45,18 @@ export function ToolResultDisplay({
   // Try to find a registered renderer
   const renderer = toolResultRegistry.getRenderer(toolName, result);
   
+  // Debug logging
+  console.log('[ToolResultDisplay] Routing:', {
+    toolName,
+    hasRenderer: !!renderer,
+    rendererName: renderer?.toolName,
+    resultKeys: result ? Object.keys(result) : [],
+    hasOnAssetClick: !!onAssetClick
+  });
+  
   // Fallback to generic renderer if no specific renderer found
   if (!renderer) {
+    console.log('[ToolResultDisplay] No renderer found, using GenericRenderer');
     return <GenericRenderer {...renderProps} />;
   }
   

@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { AssetRead, AssetKind } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { AssetPreview } from '../Views/AssetPreviewComponents';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 
 interface AssetEmbedProps {
   assetId: number;
@@ -148,7 +148,7 @@ export default function AssetEmbed({
             <p className="font-medium text-sm truncate">{asset.title}</p>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline" className="text-xs capitalize">{asset.kind}</Badge>
-              <span>{formatDistanceToNow(new Date(asset.updated_at), { addSuffix: true })}</span>
+              <span>{formatDistanceToNowStrict(new Date(asset.updated_at), { addSuffix: true })}</span>
             </div>
           </div>
         </div>
@@ -244,7 +244,7 @@ export default function AssetEmbed({
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>ID: {asset.id}</span>
-            <span>{formatDistanceToNow(new Date(asset.updated_at), { addSuffix: true })}</span>
+            <span>{formatDistanceToNowStrict(new Date(asset.updated_at), { addSuffix: true })}</span>
           </div>
         </div>
 

@@ -47,14 +47,22 @@ celery.conf.update(
         'app.api.tasks.content_tasks',
         'app.api.tasks.backup',
         'app.api.tasks.user_backup',
-        'app.api.tasks.monitor_tasks',
-        'app.api.tasks.pipeline_tasks',
         'app.api.tasks.embed',
+        'app.api.tasks.flow_tasks',  # Unified Flow execution
+        'app.api.tasks.source_monitoring',  # Source polling (RSS, search, etc.)
     ),
     # Beat schedule
     beat_schedule={
         'check-recurring-tasks-every-minute': {
             'task': 'app.api.tasks.schedule.check_recurring_tasks',
+            'schedule': 60.0,
+        },
+        'check-on-arrival-flows-every-minute': {
+            'task': 'app.api.tasks.flow_tasks.check_on_arrival_flows',
+            'schedule': 60.0,
+        },
+        'poll-active-sources-every-minute': {
+            'task': 'app.api.tasks.source_monitoring.poll_active_sources',
             'schedule': 60.0,
         },
         'automatic-backup-all-infospaces': {
@@ -77,6 +85,10 @@ celery.conf.update(
         },
     }
 )
+
+
+# Alias for imports that use celery_app
+celery_app = celery
 
 
 @celery.task(bind=True)

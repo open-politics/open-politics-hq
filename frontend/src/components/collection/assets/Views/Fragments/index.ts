@@ -3,6 +3,7 @@ export { FragmentDisplay, FragmentSectionHeader } from './FragmentDisplay';
 export { FragmentBadge, FragmentCountBadge } from './FragmentBadge';
 export { FragmentCard } from './FragmentCard';
 export { FragmentFull } from './FragmentFull';
+export { FragmentInline, FragmentInlineList } from './FragmentInline';
 
 export type { 
   FragmentData,

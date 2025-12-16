@@ -662,7 +662,7 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
     await ctx.info(f"Found {len(root_assets)} root assets")
     
     # Build tree structure
-    tree_nodes = build_root_tree_nodes(root_bundles, root_assets)
+    tree_nodes = build_root_tree_nodes(root_bundles, root_assets, services["session"])
     
     # At root level: NO enrichment (strict lazy-loading)
     # Tree nodes already have basic metadata from build_root_tree_nodes:
@@ -790,7 +790,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
             bundle_assets = all_bundle_assets[asset_skip:asset_skip + remaining_limit]
         
         # Build nodes
-        children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets)
+        children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, services["session"])
         
         # Enrich each node with preview data
         for i, node in enumerate(children_nodes):

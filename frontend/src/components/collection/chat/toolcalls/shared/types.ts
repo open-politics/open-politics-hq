@@ -47,7 +47,7 @@ export interface TreeNode {
 
 export interface NavigateResult {
   resource: 'assets' | 'bundles' | 'schemas' | 'runs' | 'files';
-  mode: 'list' | 'search' | 'load' | 'tree' | 'view' | 'expand';  // 'view' is the new term, 'expand' kept for backward compat
+  mode: 'list' | 'search' | 'load' | 'tree' | 'view' | 'expand' | 'open';  // 'view' is the new term, 'expand' kept for backward compat, 'open' for auto-open
   depth?: 'ids' | 'titles' | 'previews' | 'full' | 'tree';
   items?: any[];
   bundle_data?: Record<string, BundleData>;
@@ -72,6 +72,10 @@ export interface NavigateResult {
   query?: string;
   message: string;
   summary?: string;  // Backend summary text (may contain ASCII tables)
+  // Auto-open fields (for mode: 'open')
+  auto_open?: boolean;
+  asset_id?: number;
+  bundle_id?: number;
 }
 
 export interface BundleData {

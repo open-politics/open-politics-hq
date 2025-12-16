@@ -16,7 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertCircle, Trash2, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatDistanceToNow, format, parseISO } from 'date-fns';
+import { formatDistanceToNowStrict, format, parseISO } from 'date-fns';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { 
     AlertDialog, 
@@ -165,7 +165,7 @@ export default function ShareManagerView() {
                     {/* TODO: Add Link component here to the resource page if getResourceUrl is implemented */}
                   </TableCell>
                   <TableCell className="text-xs">
-                    {formatDistanceToNow(parseISO(link.created_at), { addSuffix: true })}
+                    {formatDistanceToNowStrict(parseISO(link.created_at), { addSuffix: true })}
                   </TableCell>
                   <TableCell className="text-xs">
                     {link.expiration_date 

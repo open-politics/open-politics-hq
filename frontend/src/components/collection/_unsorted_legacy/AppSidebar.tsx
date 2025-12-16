@@ -37,7 +37,7 @@ import {
   DoorOpen,
   GithubIcon,
   Asterisk,
-  Activity,
+  Workflow,
   Terminal
 } from "lucide-react"
 
@@ -111,19 +111,21 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       colorClass: "sidebar-teal",
     },
     {
-      title: "Analyser",
+      title: "Analysis",
       url: "/hq/infospaces/annotation-runner",
       icon: Terminal,
       isActive: true,
       colorClass: "sidebar-blue",
+      description: "One-off annotation runs",
     },
-    // {
-    //   title: "Web Search",
-    //   url: "/hq/search",
-    //   icon: Search,
-    //   isActive: true,
-    //   colorClass: "sidebar-purple",
-    // },
+    {
+      title: "Flows",
+      url: "/hq/infospaces/flows",
+      icon: Workflow,
+      isActive: true,
+      colorClass: "sidebar-orange",
+      description: "Automated processing pipelines",
+    },
   ], [])
 
   const storesNav = React.useMemo(() => [

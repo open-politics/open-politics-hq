@@ -467,4 +467,197 @@ class SourceService:
             else:
                 return False
         except Exception:
-            return False 
+            return False
+    
+    # ─────────────── STREAMING OPERATIONS ─────────────── #
+    # Merged from StreamSourceService for unified source management
+    
+    def activate_stream(self, source_id: int, user_id: int) -> Source:
+        """
+        Activate a source stream - enable polling.
+        
+        Args:
+            source_id: Source to activate
+            user_id: User performing action
+            
+        Returns:
+            Updated Source
+        """
+        from datetime import timedelta
+        
+        source = self.session.get(Source, source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        
+        validate_infospace_access(self.session, source.infospace_id, user_id)
+        
+        source.is_active = True
+        source.status = SourceStatus.PENDING  # Will be ACTIVE after first poll
+        
+        # Calculate next poll time
+        if source.poll_interval_seconds:
+            source.next_poll_at = datetime.now(timezone.utc) + timedelta(
+                seconds=source.poll_interval_seconds
+            )
+        
+        source.updated_at = datetime.now(timezone.utc)
+        self.session.add(source)
+        self.session.commit()
+        self.session.refresh(source)
+        
+        logger.info(f"Source {source_id} stream activated")
+        return source
+    
+    def pause_stream(self, source_id: int, user_id: int) -> Source:
+        """
+        Pause a source stream - disable polling.
+        
+        Args:
+            source_id: Source to pause
+            user_id: User performing action
+            
+        Returns:
+            Updated Source
+        """
+        source = self.session.get(Source, source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        
+        validate_infospace_access(self.session, source.infospace_id, user_id)
+        
+        source.is_active = False
+        source.status = SourceStatus.PAUSED
+        source.next_poll_at = None
+        source.updated_at = datetime.now(timezone.utc)
+        
+        self.session.add(source)
+        self.session.commit()
+        self.session.refresh(source)
+        
+        logger.info(f"Source {source_id} stream paused")
+        return source
+    
+    async def execute_poll(
+        self,
+        source_id: int,
+        user_id: Optional[int] = None,
+        runtime_api_keys: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a single poll of a source.
+        
+        Polls the source for new content (RSS, search, etc.) and creates Assets
+        in the source's output_bundle. Any Flows watching that bundle with
+        trigger_mode=on_arrival will be triggered by check_on_arrival_flows.
+        
+        Args:
+            source_id: Source to poll
+            user_id: Optional user context
+            runtime_api_keys: Optional API keys for search providers
+            
+        Returns:
+            Poll result with statistics
+        """
+        # Delegate to StreamSourceService for the actual poll implementation
+        from app.api.services.stream_source_service import StreamSourceService
+        
+        stream_service = StreamSourceService(self.session)
+        return await stream_service.execute_poll(source_id, user_id, runtime_api_keys)
+    
+    def get_stream_stats(self, source_id: int, user_id: int, infospace_id: int) -> Dict[str, Any]:
+        """
+        Get streaming statistics for a source.
+        
+        Args:
+            source_id: Source ID
+            user_id: User requesting stats
+            infospace_id: Infospace context
+            
+        Returns:
+            Statistics dictionary
+        """
+        from datetime import timedelta
+        from app.models import SourcePollHistory
+        
+        source = self.get_source(source_id, user_id, infospace_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        
+        # Get recent poll history
+        recent_polls = self.session.exec(
+            select(SourcePollHistory)
+            .where(SourcePollHistory.source_id == source_id)
+            .order_by(SourcePollHistory.started_at.desc())
+            .limit(24)
+        ).all()
+        
+        # Calculate items per hour (last 24 hours)
+        now = datetime.now(timezone.utc)
+        last_24h = now - timedelta(hours=24)
+        
+        recent_items = sum(
+            poll.items_ingested
+            for poll in recent_polls
+            if poll.started_at >= last_24h and poll.status == "success"
+        )
+        
+        return {
+            "source_id": source_id,
+            "is_active": source.is_active,
+            "status": source.status.value if source.status else None,
+            "total_items_ingested": source.total_items_ingested,
+            "items_last_poll": source.items_last_poll,
+            "items_per_hour_24h": recent_items,
+            "last_poll_at": source.last_poll_at.isoformat() if source.last_poll_at else None,
+            "next_poll_at": source.next_poll_at.isoformat() if source.next_poll_at else None,
+            "consecutive_failures": source.consecutive_failures,
+            "stream_health": "failing" if source.consecutive_failures >= 3 else (
+                "degraded" if source.consecutive_failures >= 1 else "healthy"
+            ),
+        }
+    
+    def get_poll_history(
+        self,
+        source_id: int,
+        user_id: int,
+        infospace_id: int,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get poll history for a source.
+        
+        Args:
+            source_id: Source ID
+            user_id: User requesting history
+            infospace_id: Infospace context
+            limit: Max records to return
+            
+        Returns:
+            List of poll history records
+        """
+        from app.models import SourcePollHistory
+        
+        source = self.get_source(source_id, user_id, infospace_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        
+        polls = self.session.exec(
+            select(SourcePollHistory)
+            .where(SourcePollHistory.source_id == source_id)
+            .order_by(SourcePollHistory.started_at.desc())
+            .limit(limit)
+        ).all()
+        
+        return [
+            {
+                "id": poll.id,
+                "started_at": poll.started_at.isoformat() if poll.started_at else None,
+                "completed_at": poll.completed_at.isoformat() if poll.completed_at else None,
+                "status": poll.status,
+                "items_found": poll.items_found,
+                "items_ingested": poll.items_ingested,
+                "error_message": poll.error_message,
+                "triggered_pipeline": poll.triggered_pipeline,
+            }
+            for poll in polls
+        ]

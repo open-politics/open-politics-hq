@@ -29,8 +29,6 @@ import {
   Download,
   X,
   FolderPlus,
-  FolderOpen,
-  Folder,
   Edit3,
   Check,
   Link as LinkIcon,
@@ -41,9 +39,13 @@ import {
   FileIcon,
   RadioTower,
   Menu,
+  Newspaper,
+  Folder,
+  Shredder,
+  Asterisk
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import {
   AssetRead,
@@ -113,6 +115,11 @@ import { ResourceType } from '@/client';
 import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { useIsMobile } from '@/hooks/use-mobile';
 import DataSourceManager from '../sources/DataSourceManager';
+import { AssetFeedView } from './Feed';
+import { useSemanticSearch } from '@/hooks/useSemanticSearch';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
+import type { AssetFeedItem } from './Feed/types';
+import { Form } from 'react-hook-form';
 
     
 
@@ -157,9 +164,9 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   
   const { exportResource, exportResourcesBatch, importResource, exportMixedBatch } = useShareableStore();
 
-  // UI State
-  const [searchTerm, setSearchTerm] = useState('');
-  const debouncedSearchTerm = useDebounce(searchTerm, 300);
+  // UI State - search term is managed by AssetSelector, we track it here for feed
+  const [searchTermFromSelector, setSearchTermFromSelector] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTermFromSelector, 300);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [activeDetail, setActiveDetail] = useState<{ type: 'asset' | 'bundle'; id: number } | null>(null);
@@ -167,6 +174,32 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const [highlightAssetId, setHighlightAssetId] = useState<number | null>(null);
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
   const [sortOption, setSortOption] = useState('updated_at-desc');
+  const [useSemanticMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('assetSelector_searchMode') === 'semantic';
+    }
+    return true; // Default to semantic, matching AssetSelector
+  });
+  
+  // Semantic search for feed
+  const semanticSearchEnabled = useSemanticMode && !!activeInfospace?.embedding_model && debouncedSearchTerm.trim().length > 0;
+  const { results: semanticResults } = useSemanticSearch({
+    query: debouncedSearchTerm,
+    enabled: semanticSearchEnabled,
+    limit: 100,
+    assetKinds: assetTypeFilter !== 'all' ? [assetTypeFilter] : undefined,
+  });
+  
+  // Convert semantic results to feed items
+  const semanticFeedItems = useMemo<AssetFeedItem[]>(() => {
+    if (!semanticSearchEnabled || semanticResults.length === 0) {
+      return [];
+    }
+    return semanticResults.map(result => ({
+      asset: result.asset,
+      score: result.score,
+    }));
+  }, [semanticSearchEnabled, semanticResults]);
   
   // Dialog state
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -843,18 +876,9 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
   return (
     <TextSpanHighlightProvider>
-      <div className="flex flex-col h-full w-full min-w-0 px-1 sm:px-2 overflow-y-auto">
-        {/* Header */}
+      <div className="flex flex-col h-full w-full min-w-0 px-1 sm:px-2 overflow-y-auto scrollbar-hide">
         <div className="flex items-center hidden sm:flex justify-between mb-3 px-2">
-          <div className="flex items-center gap-2 sm:gap-3"> 
-            <div className="p-2 flex items-center gap-1.5 sm:gap-2 rounded-md bg-green-50/20 dark:bg-emerald-950/10 border border-green-200 dark:border-emerald-800 shadow-sm">
-              <Folder className="h-4 w-4  text-green-700 dark:text-emerald-400" />
-              <FileText className="h-4 w-4 text-green-700 dark:text-emerald-400" />
-            </div>
-            <div>
-              <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-gray-100">Asset Manager</h1>
-            </div>
-          </div>
+          
         </div>
         <div className="flex-none mb-3 md:mb-1 px-2">
           {isMobile ? (
@@ -918,6 +942,19 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                 >
                   <Download className="h-3.5 w-3.5 mr-1.5" /> 
                   Import
+                </Button>
+                
+                {/* Feed View button for mobile */}
+                <Button 
+                  variant="default" 
+                  onClick={() => {
+                    setActiveDetail(null);
+                    setShowMobileDetail(true);
+                  }} 
+                  className="h-8 px-3 text-xs bg-amber-600 hover:bg-amber-700"
+                >
+                  <Folder className="h-3.5 w-3.5 mr-1.5" /> 
+                  Latest/ Feed
                 </Button>
               </div>
               
@@ -1086,29 +1123,26 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-1 pb-3 backdrop-blur">
+        <div className="flex-1 min-h-0 min-w-0 overflow-hidden p-1 pb-3 backdrop-blur">
           {isMobile ? (
             /* Mobile Layout - Tree view with side sheet for details */
             <>
-              <div className="h-full w-full">
+              <div className="h-full w-full min-w-0 overflow-hidden">
                 <AssetSelector
                   selectedItems={selectedItems}
                   onSelectionChange={setSelectedItems}
                   onItemView={handleItemView}
                   onItemDoubleClick={handleItemDoubleClick}
                   renderItemActions={renderItemActions}
+                  onSearchTermChange={setSearchTermFromSelector}
                 />
               </div>
               
               {/* Mobile Detail Sheet - slides in from right */}
               <Sheet open={showMobileDetail} onOpenChange={setShowMobileDetail}>
                 <SheetContent side="right" className="w-full sm:w-full flex flex-col p-0">
-                  <SheetHeader className="flex-shrink-0 px-6 py-4 border-b">
-                    <SheetTitle>
-                      {activeDetail?.type === 'asset' ? 'Asset Details' : 'Bundle Details'}
-                    </SheetTitle>
-                  </SheetHeader>
-                  <div className="flex-1 overflow-y-auto">
+                  
+                  <div className="flex-1 mt-10 overflow-y-auto scrollbar-hide">
                     {activeDetail?.type === 'asset' ? (
                       <AssetDetailView
                         selectedAssetId={activeDetail.id}
@@ -1125,27 +1159,42 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                         onAssetSelect={setSelectedAssetInBundle}
                         highlightAssetId={highlightAssetId}
                       />
-                    ) : null}
+                    ) : (
+                      /* Feed View for mobile when opened without detail */
+                      <AssetFeedView
+                        items={semanticSearchEnabled && semanticFeedItems.length > 0 ? semanticFeedItems : undefined}
+                        infospaceId={semanticSearchEnabled && semanticFeedItems.length > 0 ? undefined : activeInfospace?.id}
+                        availableKinds={assetKinds}
+                        onAssetClick={(asset) => {
+                          setActiveDetail({ type: 'asset', id: asset.id });
+                        }}
+                        title={semanticSearchEnabled && semanticFeedItems.length > 0 ? `Search Results (${semanticFeedItems.length})` : "Recent Items"}
+                        cardSize="sm"
+                        columns={2}
+                        emptyMessage={semanticSearchEnabled ? "No results found." : "No items yet."}
+                      />
+                    )}
                   </div>
                 </SheetContent>
               </Sheet>
             </>
           ) : (
             /* Desktop Layout - Resizable panels */
-            <ResizablePanelGroup direction="horizontal" className="h-full w-full mx-auto rounded-lg border-primary/60 overflow-hidden">
+            <ResizablePanelGroup direction="horizontal" className="h-full w-full min-w-0 mx-auto rounded-lg border-primary/60 overflow-hidden">
               <ResizablePanel 
-                defaultSize={50} 
-                minSize={10} 
-                maxSize={60} 
-                className="overflow-hidden"
+                defaultSize={55} 
+                minSize={20} 
+                maxSize={80} 
+                className="overflow-hidden min-w-0"
               >
-                <div className="h-full w-full overflow-hidden">
+                <div className="h-full w-full overflow-hidden min-w-0">
                   <AssetSelector
                     selectedItems={selectedItems}
                     onSelectionChange={setSelectedItems}
                     onItemView={handleItemView}
                     onItemDoubleClick={handleItemDoubleClick}
                     renderItemActions={renderItemActions}
+                    onSearchTermChange={setSearchTermFromSelector}
                   />
                 </div>
               </ResizablePanel>
@@ -1153,35 +1202,74 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
               <ResizableHandle withHandle className="bg-border" />
 
               <ResizablePanel 
-                defaultSize={50} 
+                defaultSize={45} 
                 minSize={20} 
                 maxSize={80}
                 className="overflow-hidden"
               >
-                <div className="h-full w-full border-l overflow-hidden">
+                <div className="h-full w-full border-l overflow-hidden flex flex-col">
                   {activeDetail?.type === 'asset' ? (
-                    <AssetDetailView
-                      selectedAssetId={activeDetail.id}
-                      highlightAssetIdOnOpen={highlightAssetId}
-                      onEdit={handleEditAsset}
-                      schemas={[]}
-                      onLoadIntoRunner={onLoadIntoRunner}
-                    />
-                  ) : activeDetail?.type === 'bundle' ? (
-                    <BundleDetailView
-                      selectedBundleId={activeDetail.id}
-                      onLoadIntoRunner={onLoadIntoRunner}
-                      selectedAssetId={selectedAssetInBundle}
-                      onAssetSelect={setSelectedAssetInBundle}
-                      highlightAssetId={highlightAssetId}
-                    />
-                  ) : (
-                    <div className="h-full flex items-center justify-center p-6">
-                      <div className="text-center">
-                        <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                        <h3 className="text-lg font-medium text-muted-foreground">Select an item to view its details</h3>
+                    <>
+                      {/* Back to Feed button */}
+                      <div className="flex-none px-4 py-2 flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveDetail(null)}
+                          className="h-7 px-2 text-xs gap-1"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
                       </div>
-                    </div>
+                      <div className="flex-1 overflow-hidden">
+                        <AssetDetailView
+                          selectedAssetId={activeDetail.id}
+                          highlightAssetIdOnOpen={highlightAssetId}
+                          onEdit={handleEditAsset}
+                          schemas={[]}
+                          onLoadIntoRunner={onLoadIntoRunner}
+                        />
+                      </div>
+                    </>
+                  ) : activeDetail?.type === 'bundle' ? (
+                    <>
+                      {/* Back to Feed button */}
+                      <div className="flex-none px-4 py-2 flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveDetail(null)}
+                          className="h-7 px-2 text-xs gap-1"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <BundleDetailView
+                          selectedBundleId={activeDetail.id}
+                          onLoadIntoRunner={onLoadIntoRunner}
+                          selectedAssetId={selectedAssetInBundle}
+                          onAssetSelect={setSelectedAssetInBundle}
+                          highlightAssetId={highlightAssetId}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    /* Feed View - shown when no item is selected */
+                    <AssetFeedView
+                      items={semanticSearchEnabled && semanticFeedItems.length > 0 ? semanticFeedItems : undefined}
+                      infospaceId={semanticSearchEnabled && semanticFeedItems.length > 0 ? undefined : activeInfospace?.id}
+                      availableKinds={assetKinds}
+                      onAssetClick={(asset) => {
+                        setActiveDetail({ type: 'asset', id: asset.id });
+                        setHighlightAssetId(null);
+                      }}
+                      title={"latest"}
+                      cardSize="md"
+                      columns="auto"
+                      layout="bento"
+                      emptyMessage={semanticSearchEnabled ? "No results found." : "No items yet. Add some content to see them here."}
+                    />
                   )}
                 </div>
               </ResizablePanel>

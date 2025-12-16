@@ -114,7 +114,11 @@ def list_runs(
         # Convert to read models and add counts if requested
         result_runs = []
         for run in runs:
-            run_read = AnnotationRunRead.model_validate(run)
+            # Ensure trigger_context is a dict, not None
+            run_dict = run.model_dump(exclude_none=False)
+            if run_dict.get('trigger_context') is None:
+                run_dict['trigger_context'] = {}
+            run_read = AnnotationRunRead.model_validate(run_dict)
             
             # Populate schema_ids from target_schemas relationship
             run_read.schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
@@ -173,7 +177,11 @@ def get_run(
             )
         
         # Convert to read model
-        run_read = AnnotationRunRead.model_validate(run)
+        # Ensure trigger_context is a dict, not None
+        run_dict = run.model_dump(exclude_none=False)
+        if run_dict.get('trigger_context') is None:
+            run_dict['trigger_context'] = {}
+        run_read = AnnotationRunRead.model_validate(run_dict)
         
         # Populate schema_ids from target_schemas relationship
         run_read.schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []

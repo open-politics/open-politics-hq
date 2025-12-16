@@ -15,7 +15,7 @@
  * 3. Keep it simple: nodes render nodes, previews are inline
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { NavigateResult } from '../shared/types';
 import { EmptyResult } from '../shared/ResultComponents';
 import { Badge } from '@/components/ui/badge';
@@ -388,6 +388,9 @@ export function ConversationalAssetExplorer({
   onAssetClick,
   onBundleClick
 }: ConversationalAssetExplorerProps) {
+  // Track if we've already triggered auto-open to prevent re-triggering
+  const hasAutoOpened = useRef(false);
+  
   // Get summary text from backend
   const summaryText = useMemo(() => {
     return result.message || result.summary || '';
@@ -407,6 +410,67 @@ export function ConversationalAssetExplorer({
       type: node.type || 'asset',
     }));
   }, [result]);
+  
+  // Auto-open: When result.auto_open is true OR mode is 'open', trigger the overlay
+  useEffect(() => {
+    const shouldAutoOpen = (result as any).auto_open || result.mode === 'open';
+    
+    if (shouldAutoOpen && !hasAutoOpened.current) {
+      console.log('[ConversationalAssetExplorer] Auto-open triggered:', {
+        mode: result.mode,
+        auto_open: (result as any).auto_open,
+        nodesLength: nodes.length,
+        firstNode: nodes[0]
+      });
+      
+      // Check for direct asset_id in result (mode: 'open' with asset_id at top level)
+      if ((result as any).asset_id && onAssetClick) {
+        hasAutoOpened.current = true;
+        console.log('[ConversationalAssetExplorer] Opening asset from result.asset_id:', (result as any).asset_id);
+        setTimeout(() => onAssetClick((result as any).asset_id), 100);
+        return;
+      }
+      
+      // Check for direct bundle_id in result (mode: 'open' with bundle_id at top level)
+      if ((result as any).bundle_id && onBundleClick) {
+        hasAutoOpened.current = true;
+        console.log('[ConversationalAssetExplorer] Opening bundle from result.bundle_id:', (result as any).bundle_id);
+        setTimeout(() => onBundleClick((result as any).bundle_id), 100);
+        return;
+      }
+      
+      // Fall back to single node auto-open (backend puts asset_id in the node)
+      if (nodes.length === 1) {
+        const node = nodes[0];
+        console.log('[ConversationalAssetExplorer] Checking single node:', node);
+        
+        if ((node.type === 'asset' || !node.type) && onAssetClick) {
+          // Backend puts asset_id directly in node
+          const assetId = node.asset_id || (
+            typeof node.id === 'string' && node.id.includes('-') 
+              ? parseInt(node.id.split('-')[1]) 
+              : parseInt(String(node.id))
+          );
+          if (!isNaN(assetId)) {
+            hasAutoOpened.current = true;
+            console.log('[ConversationalAssetExplorer] Opening asset:', assetId);
+            setTimeout(() => onAssetClick(assetId), 100);
+          }
+        } else if (node.type === 'bundle' && onBundleClick) {
+          const bundleId = node.bundle_id || (
+            typeof node.id === 'string' && node.id.includes('-') 
+              ? parseInt(node.id.split('-')[1]) 
+              : parseInt(String(node.id))
+          );
+          if (!isNaN(bundleId)) {
+            hasAutoOpened.current = true;
+            console.log('[ConversationalAssetExplorer] Opening bundle:', bundleId);
+            setTimeout(() => onBundleClick(bundleId), 100);
+          }
+        }
+      }
+    }
+  }, [result, nodes, onAssetClick, onBundleClick]);
   
   // Check if we're viewing a CSV parent (both 'view' and legacy 'expand' mode)
   const isCSVView = (result.mode === 'view' || result.mode === 'expand') && result.parent_kind === 'csv';

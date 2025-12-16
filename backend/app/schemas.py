@@ -314,12 +314,19 @@ class SourceBase(SQLModel):
     details: Dict[str, Any] = {}
 
 class SourceCreate(SourceBase):
-    pass
+    # ═══ STREAMING CONFIGURATION ═══
+    is_active: Optional[bool] = False
+    poll_interval_seconds: Optional[int] = 300
+    output_bundle_id: Optional[int] = None
 
 class SourceUpdate(SQLModel):
     name: Optional[str] = None
     kind: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+    # ═══ STREAMING UPDATES ═══
+    is_active: Optional[bool] = None
+    poll_interval_seconds: Optional[int] = None
+    output_bundle_id: Optional[int] = None
 
 class SourceRead(SourceBase):
     id: int
@@ -333,6 +340,18 @@ class SourceRead(SourceBase):
     source_metadata: Optional[Dict[str, Any]] = {}
     monitoring_tasks: List[TaskRead] = []
     asset_count: Optional[int] = None
+    
+    # ═══ STREAMING FIELDS ═══
+    is_active: bool
+    poll_interval_seconds: int
+    output_bundle_id: Optional[int] = None
+    cursor_state: Dict[str, Any] = {}
+    last_poll_at: Optional[datetime] = None
+    next_poll_at: Optional[datetime] = None
+    items_last_poll: int = 0
+    total_items_ingested: int = 0
+    consecutive_failures: int = 0
+    last_error_at: Optional[datetime] = None
 
     @computed_field  # type: ignore[misc]
     @property
@@ -341,6 +360,16 @@ class SourceRead(SourceBase):
         if not self.monitoring_tasks:
             return False
         return any(task.is_enabled for task in self.monitoring_tasks)
+    
+    @computed_field  # type: ignore[misc]
+    @property
+    def stream_health(self) -> str:
+        """Return health indicator: healthy, degraded, failing."""
+        if self.consecutive_failures >= 3:
+            return "failing"
+        elif self.consecutive_failures >= 1:
+            return "degraded"
+        return "healthy"
 
 
 class SourcesOut(SQLModel):
@@ -525,6 +554,16 @@ class AnnotationRunCreate(AnnotationRunBase):
     schema_ids: List[int]
     target_asset_ids: Optional[List[int]] = None
     target_bundle_id: Optional[int] = None
+    source_bundle_id: Optional[int] = None  # LEGACY: For continuous runs watching a bundle
+    # ═══ RUN TYPE ═══
+    run_type: Optional[str] = "one_off"  # one_off | flow_step
+    flow_execution_id: Optional[int] = None  # If created by a Flow
+    tags: Optional[List[str]] = None
+    # ═══ LEGACY TRIGGER TRACKING (kept for backwards compatibility) ═══
+    trigger_type: Optional[str] = "manual"  # AnnotationRunTrigger value
+    trigger_context: Optional[Dict[str, Any]] = None
+    pipeline_execution_id: Optional[int] = None
+    triggered_by_source_id: Optional[int] = None
 
 class AnnotationRunUpdate(SQLModel):
     name: Optional[str] = None
@@ -540,6 +579,9 @@ class AnnotationRunRead(AnnotationRunBase):
     infospace_id: int
     user_id: int
     status: RunStatus
+    run_type: str = "one_off"  # one_off | flow_step
+    flow_execution_id: Optional[int] = None
+    tags: List[str] = []
     created_at: datetime
     updated_at: datetime
     started_at: Optional[datetime]
@@ -547,6 +589,13 @@ class AnnotationRunRead(AnnotationRunBase):
     error_message: Optional[str]
     annotation_count: Optional[int] = None
     schema_ids: Optional[List[int]] = None
+    # ═══ TRIGGER TRACKING ═══
+    trigger_type: str = "manual"
+    trigger_context: Dict[str, Any] = Field(default_factory=dict)
+    pipeline_execution_id: Optional[int] = None
+    triggered_by_source_id: Optional[int] = None
+    monitor_id: Optional[int] = None
+    source_bundle_id: Optional[int] = None  # NEW: For continuous runs watching a bundle
 
 class AnnotationRunsOut(SQLModel):
     data: List[AnnotationRunRead]
@@ -724,92 +773,132 @@ class TasksOut(SQLModel): # For listing multiple tasks
     data: List[TaskRead]
     count: int
 
-# --- New Models for Monitor ---
-class MonitorBase(SQLModel):
-    name: str
-    description: Optional[str] = None
-    schedule: str # Cron schedule
-    target_bundle_ids: List[int]
-    target_schema_ids: List[int]
-    run_config_override: Optional[Dict[str, Any]] = {}
-
-class MonitorCreate(MonitorBase):
-    pass
-
-class MonitorUpdate(SQLModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    schedule: Optional[str] = None
-    target_bundle_ids: Optional[List[int]] = None
-    target_schema_ids: Optional[List[int]] = None
-    run_config_override: Optional[Dict[str, Any]] = None
-    status: Optional[str] = None
-
-class MonitorRead(MonitorBase):
-    id: int
-    uuid: str
-    infospace_id: int
-    user_id: int
-    linked_task_id: int
-    status: str
-    last_checked_at: Optional[datetime] = None
-
-# --- New Models for Pipeline ---
-
-class PipelineStepBase(SQLModel):
-    name: str
-    step_order: int
-    step_type: str = Field(description="Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE")
-    configuration: Dict[str, Any] = Field(description="Configuration for the step")
-    input_source: Dict[str, Any] = Field(description="Source of input for this step")
-
-class PipelineStepCreate(PipelineStepBase):
-    pass
-
-class PipelineStepRead(PipelineStepBase):
-    id: int
-    pipeline_id: int
-
-class IntelligencePipelineBase(SQLModel):
-    name: str
-    description: Optional[str] = None
-    source_bundle_ids: List[int]
-
-class IntelligencePipelineCreate(IntelligencePipelineBase):
-    steps: List[PipelineStepCreate]
-
-class IntelligencePipelineUpdate(SQLModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    source_bundle_ids: Optional[List[int]] = None
-    steps: Optional[List[PipelineStepCreate]] = None
-
-class IntelligencePipelineRead(IntelligencePipelineBase):
-    id: int
-    uuid: str
-    infospace_id: int
-    user_id: int
-    linked_task_id: Optional[int]
-    steps: List[PipelineStepRead]
-
 class SourceCreateRequest(SourceBase):
-    enable_monitoring: bool = False
-    schedule: Optional[str] = None  # cron schedule
+    """Request to create a source with optional streaming configuration."""
     target_bundle_id: Optional[int] = None
     target_bundle_name: Optional[str] = None
+    # ═══ STREAMING CONFIGURATION ═══
+    is_active: Optional[bool] = False
+    poll_interval_seconds: Optional[int] = 300
+    output_bundle_id: Optional[int] = None
 
-class PipelineExecutionRead(SQLModel):
+# ================================================================================================
+# FLOW SCHEMAS (Unified Flow Architecture)
+# ================================================================================================
+
+class FlowStepConfig(SQLModel):
+    """Configuration for a single step in a Flow."""
+    type: str  # ANNOTATE, FILTER, CURATE, ROUTE, EMBED, ANALYZE
+    # For ANNOTATE
+    schema_ids: Optional[List[int]] = None
+    config: Optional[Dict[str, Any]] = None
+    # For FILTER
+    expression: Optional[Dict[str, Any]] = None
+    # For CURATE
+    fields: Optional[List[str]] = None
+    # For ROUTE
+    bundle_id: Optional[int] = None
+    bundle_ids: Optional[List[int]] = None
+    conditions: Optional[List[Dict[str, Any]]] = None
+    # For EMBED
+    model: Optional[str] = None
+    chunk_config: Optional[Dict[str, Any]] = None
+    # For ANALYZE
+    adapter_name: Optional[str] = None
+    adapter_config: Optional[Dict[str, Any]] = None
+
+
+class FlowBase(SQLModel):
+    """Base schema for Flow."""
+    name: str
+    description: Optional[str] = None
+    input_type: str = "bundle"  # stream | bundle | manual
+    input_source_id: Optional[int] = None
+    input_bundle_id: Optional[int] = None
+    trigger_mode: str = "manual"  # on_arrival | scheduled | manual
+    steps: List[Dict[str, Any]] = []
+    views_config: Optional[List[Dict[str, Any]]] = None
+    tags: Optional[List[str]] = None
+
+
+class FlowCreate(FlowBase):
+    """Schema for creating a Flow."""
+    pass
+
+
+class FlowUpdate(SQLModel):
+    """Schema for updating a Flow."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    input_type: Optional[str] = None
+    input_source_id: Optional[int] = None
+    input_bundle_id: Optional[int] = None
+    trigger_mode: Optional[str] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+    views_config: Optional[List[Dict[str, Any]]] = None
+    tags: Optional[List[str]] = None
+
+
+class FlowRead(FlowBase):
+    """Schema for reading a Flow."""
     id: int
-    pipeline_id: int
+    uuid: str
+    infospace_id: int
+    user_id: int
     status: str
-    trigger_type: str
-    started_at: datetime
-    completed_at: Optional[datetime]
-    triggering_asset_ids: Optional[List[int]]
+    linked_task_id: Optional[int] = None
+    cursor_state: Dict[str, Any] = {}
+    total_executions: int = 0
+    total_assets_processed: int = 0
+    last_execution_at: Optional[datetime] = None
+    last_execution_status: Optional[str] = None
+    consecutive_failures: int = 0
+    created_at: datetime
+    updated_at: datetime
 
-# --- End New Models for Pipeline ---
 
-# --- End New Models for Monitor ---
+class FlowsOut(SQLModel):
+    """Paginated list of Flows."""
+    data: List[FlowRead]
+    count: int
+
+
+class FlowExecutionCreate(SQLModel):
+    """Schema for triggering a Flow execution."""
+    asset_ids: Optional[List[int]] = None  # For manual triggers with specific assets
+    tags: Optional[List[str]] = None
+
+
+class FlowExecutionRead(SQLModel):
+    """Schema for reading a FlowExecution."""
+    id: int
+    uuid: str
+    flow_id: int
+    triggered_by: str
+    triggered_by_task_id: Optional[int] = None
+    triggered_by_source_id: Optional[int] = None
+    trigger_context: Dict[str, Any] = {}
+    status: str
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    input_asset_ids: List[int] = []
+    output_asset_ids: List[int] = []
+    step_outputs: Dict[str, Any] = {}
+    tags: List[str] = []
+    created_at: datetime
+
+
+class FlowExecutionsOut(SQLModel):
+    """Paginated list of FlowExecutions."""
+    data: List[FlowExecutionRead]
+    count: int
+
+
+# ================================================================================================
+# END FLOW SCHEMAS
+# ================================================================================================
 
 # --- New Models for Provider Discovery ---
 class ProviderModel(SQLModel):
@@ -1510,6 +1599,16 @@ class TreeNode(SQLModel):
     
     # Rich preview data (CSV structure, bundle summary, etc.)
     preview: Optional[Dict[str, Any]] = None
+    
+    # Activity indicators (for bundles)
+    has_active_sources: Optional[bool] = None  # Receives from active streams
+    active_source_count: Optional[int] = None  # Number of active sources
+    has_monitors: Optional[bool] = None  # Is monitored for recurring annotation
+    monitor_count: Optional[int] = None  # Number of active monitors
+    is_pipeline_input: Optional[bool] = None  # Used as input to pipelines
+    pipeline_input_count: Optional[int] = None  # Number of pipelines using as input
+    is_pipeline_output: Optional[bool] = None  # Receives routed assets from pipelines
+    pipeline_output_count: Optional[int] = None  # Number of pipelines routing to this
 
 class TreeResponse(SQLModel):
     """Response containing tree structure."""

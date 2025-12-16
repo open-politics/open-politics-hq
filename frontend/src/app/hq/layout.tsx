@@ -9,10 +9,17 @@ import {
   BreadcrumbList,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
 import useAuth from "@/hooks/useAuth"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
 import { useUserPreferencesStore } from "@/zustand_stores/storeUserPreferences"
+import { useIsMobile } from "@/hooks/use-mobile"
+import AssetDetailProvider, { useAssetDetail } from "@/components/collection/assets/Views/AssetDetailProvider"
+import AssetDetailView from "@/components/collection/assets/Views/AssetDetailView"
+import BundleDetailView from "@/components/collection/assets/Views/BundleDetailView"
+import { TextSpanHighlightProvider } from "@/components/collection/contexts/TextSpanHighlightContext"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
 import { useEffect, useState, useRef } from 'react';
 import createGlobe from "cobe";
@@ -61,9 +68,160 @@ function useBreadcrumbs(activeInfospace: any) {
   return items;
 }
 
+// Inspector panel slot - renders inside the resizable panel
+function InspectorPanelSlot() {
+  const { isOpen, selectedAssetId, selectedBundleId, viewType, closeDetailOverlay, openDetailOverlay } = useAssetDetail();
+  
+  // Show nothing if not open, or if neither asset nor bundle is selected
+  if (!isOpen || (!selectedAssetId && !selectedBundleId)) return null;
+  
+  const title = viewType === 'bundle' ? 'Bundle Details' : 'Asset Details';
+  
+  return (
+    <div className="h-full flex flex-col bg-background border-l">
+      <div className="flex items-center justify-between p-3 border-b bg-muted/30">
+        <h3 className="font-semibold text-sm">{title}</h3>
+        <button
+          onClick={closeDetailOverlay}
+          className="p-1 hover:bg-muted rounded-md transition-colors"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <TextSpanHighlightProvider>
+          {viewType === 'bundle' && selectedBundleId ? (
+            <BundleDetailView
+              selectedBundleId={selectedBundleId}
+              selectedAssetId={null}
+              onAssetSelect={(assetId) => {
+                if (assetId) openDetailOverlay(assetId);
+              }}
+              highlightAssetId={null}
+            />
+          ) : selectedAssetId ? (
+            <AssetDetailView
+              selectedAssetId={selectedAssetId}
+              highlightAssetIdOnOpen={selectedAssetId}
+              schemas={[]}
+              onEdit={() => {}}
+            />
+          ) : null}
+        </TextSpanHighlightProvider>
+      </div>
+    </div>
+  );
+}
+
+// Mobile inspector sheet
+function MobileInspectorSheet() {
+  const { isOpen, selectedAssetId, selectedBundleId, viewType, closeDetailOverlay, openDetailOverlay } = useAssetDetail();
+  
+  const title = viewType === 'bundle' ? 'Bundle Details' : 'Asset Details';
+  
+  return (
+    <Sheet open={isOpen} onOpenChange={(open) => !open && closeDetailOverlay()}>
+      <SheetContent side="right" className="w-[90vw] sm:w-[400px] p-0">
+        <SheetHeader className="p-4 border-b">
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription className="sr-only">
+            View {viewType === 'bundle' ? 'bundle' : 'asset'} details
+          </SheetDescription>
+        </SheetHeader>
+        <div className="flex-1 overflow-y-auto">
+          <TextSpanHighlightProvider>
+            {viewType === 'bundle' && selectedBundleId ? (
+              <BundleDetailView
+                selectedBundleId={selectedBundleId}
+                selectedAssetId={null}
+                onAssetSelect={(assetId) => {
+                  if (assetId) openDetailOverlay(assetId);
+                }}
+                highlightAssetId={null}
+              />
+            ) : selectedAssetId ? (
+              <AssetDetailView
+                selectedAssetId={selectedAssetId}
+                highlightAssetIdOnOpen={selectedAssetId}
+                schemas={[]}
+                onEdit={() => {}}
+              />
+            ) : null}
+          </TextSpanHighlightProvider>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// Main content with inspector panel (desktop: resizable, mobile: sheet)
+function MainContentWithInspector({ 
+  children, 
+  mainContentRef 
+}: { 
+  children: React.ReactNode;
+  mainContentRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const isMobile = useIsMobile();
+  const { isOpen } = useAssetDetail();
+  
+  // On mobile, use Sheet overlay
+  if (isMobile) {
+    return (
+      <>
+        <main 
+          ref={mainContentRef}
+          className="flex-1 h-full overflow-y-auto relative z-10 focus:outline-none @container" 
+          tabIndex={-1}
+        >
+          {children}
+        </main>
+        <MobileInspectorSheet />
+      </>
+    );
+  }
+  
+  // On desktop, use resizable panels
+  return (
+    <ResizablePanelGroup 
+      direction="horizontal" 
+      className="flex-1 h-full relative z-10"
+      autoSaveId={null}
+    >
+      <ResizablePanel 
+        defaultSize={isOpen ? 60 : 100} 
+        minSize={30}
+        className="overflow-hidden"
+      >
+        <main 
+          ref={mainContentRef}
+          className="h-full overflow-y-auto focus:outline-none @container" 
+          tabIndex={-1}
+        >
+          {children}
+        </main>
+      </ResizablePanel>
+      
+      {isOpen && (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel 
+            defaultSize={40} 
+            minSize={20} 
+            maxSize={60}
+            className="overflow-hidden"
+          >
+            <InspectorPanelSlot />
+          </ResizablePanel>
+        </>
+      )}
+    </ResizablePanelGroup>
+  );
+}
+
 // Component that uses the sidebar context
 function SidebarContent({ children, user }: { children: React.ReactNode, user: any }) {
-  const { open, isMobile } = useSidebar();
+  const { open, isMobile: sidebarMobile } = useSidebar();
   const { resolvedTheme } = useTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
@@ -151,7 +309,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
         className="max-w-full overflow-hidden"
         style={{
           // Drive the globe shift with a CSS variable; animation handled by child wrapper
-          ["--globe-shift"]: isMobile
+          ["--globe-shift"]: sidebarMobile
             ? "0px"
             : open
               ? "calc(var(--sidebar-width)/2)"
@@ -224,7 +382,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
         </header>
         
         {/* Mobile Info Banner */}
-        {isMobile && !preferences.docs_banner_dismissed && (
+        {sidebarMobile && !preferences.docs_banner_dismissed && (
           <div className="sm:hidden mx-3 mb-2 relative">
             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md">
               <Link 
@@ -250,13 +408,9 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
             </div>
           </div>
         )}
-        <main 
-          ref={mainContentRef}
-          className="flex-1 h-full overflow-y-auto relative z-10 focus:outline-none" 
-          tabIndex={-1}
-        >
+        <MainContentWithInspector mainContentRef={mainContentRef}>
           {children}
-        </main>
+        </MainContentWithInspector>
       </SidebarInset>
     </>
   );
@@ -295,10 +449,12 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="h-full max-h-screen w-full flex flex-col md:flex-row overflow-hidden">
-      <SidebarContent user={user}>
-        {children}
-      </SidebarContent>
-    </div>
+    <AssetDetailProvider renderMode="panel">
+      <div className="h-full max-h-screen w-full flex flex-col md:flex-row overflow-hidden">
+        <SidebarContent user={user}>
+          {children}
+        </SidebarContent>
+      </div>
+    </AssetDetailProvider>
   )
 }

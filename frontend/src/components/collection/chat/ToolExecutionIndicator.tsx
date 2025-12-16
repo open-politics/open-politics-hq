@@ -31,9 +31,12 @@ import {
 } from 'lucide-react'
 import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { cn } from '@/lib/utils'
-import { toolResultRegistry, ToolResultDisplay } from './toolcalls'
+import { toolResultRegistry, ToolResultDisplay, initializeToolRenderers } from './toolcalls'
 import { getStatusIcon, getStatusColorClass, formatToolName } from './toolcalls/shared/utils'
 import { StructuredToolResponse } from './StructuredToolResponse'
+
+// Ensure renderers are initialized (defensive - should already happen via import)
+initializeToolRenderers()
 
 interface ToolExecutionIndicatorProps {
   execution: ToolExecution
@@ -56,13 +59,18 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
   const resultToDisplay = execution.structured_content || execution.result;
   const hasResult = execution.status === 'completed' && resultToDisplay != null;
   
-  // Debug logging for search_web tool
-  if (execution.tool_name === 'search_web' && hasResult) {
-    console.log('[ToolExecutionIndicator] search_web result:', {
+  // Debug logging for all completed tools
+  if (execution.status === 'completed') {
+    const registeredTools = toolResultRegistry.getAllTools();
+    console.log('[ToolExecutionIndicator] Tool completed:', {
+      tool_name: execution.tool_name,
+      status: execution.status,
       hasStructuredContent: !!execution.structured_content,
       hasResult: !!execution.result,
-      resultToDisplay,
-      canHandle: hasRegisteredRenderer(execution.tool_name, resultToDisplay)
+      resultToDisplay: resultToDisplay ? (typeof resultToDisplay === 'object' ? Object.keys(resultToDisplay) : resultToDisplay) : null,
+      registeredRenderers: registeredTools,
+      canHandle: resultToDisplay ? hasRegisteredRenderer(execution.tool_name, resultToDisplay) : false,
+      compact
     });
   }
   

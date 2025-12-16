@@ -8,24 +8,23 @@ from app.api.routes import (
     assets,
     backups,
     bundles,
-    chat,  # NEW: Intelligence chat routes
-    chat_history,  # NEW: Chat conversation history routes
+    chat,  # Intelligence chat routes
+    chat_history,  # Chat conversation history routes
     chunking,
     datasets,
     embeddings,
     filestorage,
     filters,
+    flows,  # Unified Flow architecture (replaces monitors + pipelines)
     healthcheck,
     infospaces,
     login,
-    monitors,
-    pipelines,
     search,
     shareables,
     sources,
     sso,
     tasks,
-    tree,  # NEW: Efficient tree navigation routes
+    tree,  # Efficient tree navigation routes
     user_backups,
     users,
     utils,
@@ -48,7 +47,7 @@ api_router.include_router(annotations.router, prefix="/annotations", tags=["anno
 api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(backups.router, tags=["Backups"])
 api_router.include_router(backups.general_router, tags=["Backups"])
-api_router.include_router(bundles.router, prefix="/bundles", tags=["Bundles"])
+api_router.include_router(bundles.router, tags=["Bundles"])
 api_router.include_router(chat.router, prefix="/chat", tags=["Intelligence Chat"])  # NEW
 api_router.include_router(chat_history.router, prefix="/chat/conversations", tags=["Chat History"])  # NEW
 api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
@@ -56,11 +55,10 @@ api_router.include_router(datasets.router, tags=["datasets"])
 api_router.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
 api_router.include_router(filestorage.router, prefix="/files", tags=["filestorage"])
 api_router.include_router(filters.router, prefix="/filters", tags=["filters"])
+api_router.include_router(flows.router, tags=["Flows"])  # NEW: Unified Flow architecture
 api_router.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
 api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
 api_router.include_router(login.router, tags=["login"])
-api_router.include_router(monitors.router, tags=["Monitors"])
-api_router.include_router(pipelines.router, prefix="/pipelines", tags=["Pipelines"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
 
 api_router.include_router(shareables.router, prefix="/shareables", tags=["sharing"])

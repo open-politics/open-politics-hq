@@ -100,6 +100,73 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/assets/{asset_id}/fragments/{fragment_key}": {
+      "delete": {
+        "tags": [
+          "Analysis Service",
+          "Analysis Service"
+        ],
+        "summary": "Delete Fragment",
+        "description": "Delete a curated fragment from an asset.",
+        "operationId": "delete_fragment",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "fragment_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Fragment Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteFragmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/analysis/adapters": {
       "get": {
         "tags": [
@@ -3556,7 +3623,7 @@
           "Assets"
         ],
         "summary": "Transfer Assets",
-        "description": "Transfer assets between infospaces.\n\nThis endpoint allows you to copy or move multiple assets from one infospace to another.\nWhen copying (copy=True), new assets are created in the target infospace with the same content.\nWhen moving (copy=False), assets are moved by changing their infospace_id.\n\nArgs:\n    asset_ids: List of asset IDs to transfer\n    source_infospace_id: Source infospace ID\n    target_infospace_id: Target infospace ID\n    copy: If True, copy assets (default). If False, move them.\n\nReturns:\n    List of transferred assets in the target infospace",
+        "description": "Transfer assets between infospaces.\n\nThis endpoint allows you to copy or move multiple assets from one infospace to another.\nWhen copying (should_copy=True), new assets are created in the target infospace with the same content.\nWhen moving (should_copy=False), assets are moved by changing their infospace_id.\n\nArgs:\n    asset_ids: List of asset IDs to transfer\n    source_infospace_id: Source infospace ID\n    target_infospace_id: Target infospace ID\n    should_copy: If True, copy assets (default). If False, move them.\n\nReturns:\n    List of transferred assets in the target infospace",
         "operationId": "transfer_assets",
         "requestBody": {
           "content": {
@@ -4688,7 +4755,7 @@
         }
       }
     },
-    "/api/v1/bundles/infospaces/{infospace_id}/bundles": {
+    "/api/v1/infospaces/{infospace_id}/bundles": {
       "post": {
         "tags": [
           "Bundles"
@@ -4819,7 +4886,7 @@
         }
       }
     },
-    "/api/v1/bundles/bundles/{bundle_id}": {
+    "/api/v1/bundles/{bundle_id}": {
       "get": {
         "tags": [
           "Bundles"
@@ -4962,7 +5029,7 @@
         }
       }
     },
-    "/api/v1/bundles/bundles/bulk-delete": {
+    "/api/v1/bundles/bulk-delete": {
       "post": {
         "tags": [
           "Bundles"
@@ -5009,7 +5076,7 @@
         ]
       }
     },
-    "/api/v1/bundles/bundles/{bundle_id}/assets/{asset_id}": {
+    "/api/v1/bundles/{bundle_id}/assets/{asset_id}": {
       "post": {
         "tags": [
           "Bundles"
@@ -5121,7 +5188,7 @@
         }
       }
     },
-    "/api/v1/bundles/infospaces/{infospace_id}/bundles/{bundle_id}/assets": {
+    "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/assets": {
       "get": {
         "tags": [
           "Bundles"
@@ -5205,7 +5272,7 @@
         }
       }
     },
-    "/api/v1/bundles/assets/{asset_id}": {
+    "/api/v1/assets/{asset_id}": {
       "get": {
         "tags": [
           "Bundles"
@@ -5253,7 +5320,7 @@
         }
       }
     },
-    "/api/v1/bundles/bundles/{bundle_id}/transfer": {
+    "/api/v1/bundles/{bundle_id}/transfer": {
       "post": {
         "tags": [
           "Bundles"
@@ -5320,7 +5387,7 @@
         }
       }
     },
-    "/api/v1/bundles/bundles/{bundle_id}/move": {
+    "/api/v1/bundles/{bundle_id}/move": {
       "post": {
         "tags": [
           "Bundles"
@@ -5378,7 +5445,7 @@
         }
       }
     },
-    "/api/v1/bundles/bundles/{bundle_id}/hierarchy": {
+    "/api/v1/bundles/{bundle_id}/hierarchy": {
       "get": {
         "tags": [
           "Bundles"
@@ -5438,7 +5505,7 @@
         }
       }
     },
-    "/api/v1/bundles/infospaces/{infospace_id}/bundles/root": {
+    "/api/v1/infospaces/{infospace_id}/bundles/root": {
       "get": {
         "tags": [
           "Bundles"
@@ -5490,7 +5557,7 @@
         }
       }
     },
-    "/api/v1/bundles/infospaces/{infospace_id}/bundles/bulk-assets": {
+    "/api/v1/infospaces/{infospace_id}/bundles/bulk-assets": {
       "get": {
         "tags": [
           "Bundles"
@@ -8319,6 +8386,1022 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/flows/": {
+      "post": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Create Flow",
+        "description": "Create a new Flow.\n\nA Flow defines a processing workflow with:\n- Input: What to watch (bundle, source stream, or manual)\n- Steps: What processing to apply (annotate, filter, curate, route)\n- Trigger: When to run (on_arrival, scheduled, manual)",
+        "operationId": "create_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "List Flows",
+        "description": "List all Flows in the infospace.",
+        "operationId": "list_flows",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status",
+              "title": "Status"
+            },
+            "description": "Filter by status"
+          },
+          {
+            "name": "input_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by input type",
+              "title": "Input Type"
+            },
+            "description": "Filter by input type"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated tags to filter by",
+              "title": "Tags"
+            },
+            "description": "Comma-separated tags to filter by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows": {
+      "post": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Create Flow",
+        "description": "Create a new Flow.\n\nA Flow defines a processing workflow with:\n- Input: What to watch (bundle, source stream, or manual)\n- Steps: What processing to apply (annotate, filter, curate, route)\n- Trigger: When to run (on_arrival, scheduled, manual)",
+        "operationId": "create_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "List Flows",
+        "description": "List all Flows in the infospace.",
+        "operationId": "list_flows",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status",
+              "title": "Status"
+            },
+            "description": "Filter by status"
+          },
+          {
+            "name": "input_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by input type",
+              "title": "Input Type"
+            },
+            "description": "Filter by input type"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated tags to filter by",
+              "title": "Tags"
+            },
+            "description": "Comma-separated tags to filter by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}": {
+      "get": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Get Flow",
+        "description": "Get a specific Flow by ID.",
+        "operationId": "get_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Update Flow",
+        "description": "Update a Flow.",
+        "operationId": "update_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Delete Flow",
+        "description": "Delete a Flow and all its executions.",
+        "operationId": "delete_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/activate": {
+      "post": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Activate Flow",
+        "description": "Activate a Flow for processing.\n\nThe Flow must have at least one step and valid input configuration.",
+        "operationId": "activate_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/pause": {
+      "post": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Pause Flow",
+        "description": "Pause a Flow.",
+        "operationId": "pause_flow",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/execute": {
+      "post": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Trigger Flow Execution",
+        "description": "Trigger a Flow execution manually.\n\nIf asset_ids are provided in the request body, only those assets will be processed.\nOtherwise, the Flow will process all pending (delta) assets based on its input configuration.",
+        "operationId": "trigger_flow_execution",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FlowExecutionCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Execution In"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowExecutionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/executions": {
+      "get": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "List Flow Executions",
+        "description": "List executions for a Flow.",
+        "operationId": "list_flow_executions",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status",
+              "title": "Status"
+            },
+            "description": "Filter by status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowExecutionsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/executions/{execution_id}": {
+      "get": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Get Flow Execution",
+        "description": "Get a specific Flow execution.",
+        "operationId": "get_flow_execution",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          },
+          {
+            "name": "execution_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Execution Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowExecutionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/pending-assets": {
+      "get": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Get Pending Assets",
+        "description": "Get the list of asset IDs that would be processed on the next execution.\n\nThis is useful for previewing what the Flow will process.",
+        "operationId": "get_pending_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "title": "Response Flows-Get Pending Assets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/flows/{flow_id}/reset-cursor": {
+      "post": {
+        "tags": [
+          "Flows",
+          "Flows"
+        ],
+        "summary": "Reset Flow Cursor",
+        "description": "Reset the Flow's cursor state, allowing it to reprocess all assets.\n\nUse with caution - this will cause all assets to be reprocessed on next execution.",
+        "operationId": "reset_flow_cursor",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/healthz/readiness": {
       "get": {
         "tags": [
@@ -9132,638 +10215,6 @@
               "text/html": {
                 "schema": {
                   "type": "string"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/infospaces/{infospace_id}/monitors": {
-      "post": {
-        "tags": [
-          "Monitors"
-        ],
-        "summary": "Create Monitor",
-        "description": "Create a new monitor in an infospace.",
-        "operationId": "create_monitor",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MonitorCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MonitorRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Monitors"
-        ],
-        "summary": "List Monitors",
-        "description": "List all monitors in an infospace.",
-        "operationId": "list_monitors",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MonitorRead"
-                  },
-                  "title": "Response Monitors-List Monitors"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/monitors/{monitor_id}": {
-      "get": {
-        "tags": [
-          "Monitors"
-        ],
-        "summary": "Get Monitor",
-        "description": "Get a specific monitor by ID.",
-        "operationId": "get_monitor",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "monitor_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Monitor Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MonitorRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Monitors"
-        ],
-        "summary": "Update Monitor",
-        "description": "Update a monitor.",
-        "operationId": "update_monitor",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "monitor_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Monitor Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MonitorUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MonitorRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Monitors"
-        ],
-        "summary": "Delete Monitor",
-        "description": "Delete a monitor.",
-        "operationId": "delete_monitor",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "monitor_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Monitor Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/monitors/{monitor_id}/execute": {
-      "post": {
-        "tags": [
-          "Monitors"
-        ],
-        "summary": "Execute Monitor Manually",
-        "description": "Manually trigger a monitor to check for new assets and create a run.",
-        "operationId": "execute_monitor_manually",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "monitor_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Monitor Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Message"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/pipelines/infospaces/{infospace_id}/pipelines": {
-      "post": {
-        "tags": [
-          "Pipelines"
-        ],
-        "summary": "Create Pipeline",
-        "description": "Create a new Intelligence Pipeline.",
-        "operationId": "create_pipeline",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IntelligencePipelineCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IntelligencePipelineRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Pipelines"
-        ],
-        "summary": "List Pipelines",
-        "description": "List all Intelligence Pipelines in an infospace.",
-        "operationId": "list_pipelines",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/IntelligencePipelineRead"
-                  },
-                  "title": "Response Pipelines-List Pipelines"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/pipelines/{pipeline_id}": {
-      "get": {
-        "tags": [
-          "Pipelines"
-        ],
-        "summary": "Get Pipeline",
-        "description": "Get a specific Intelligence Pipeline by ID.",
-        "operationId": "get_pipeline",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pipeline_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Pipeline Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IntelligencePipelineRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Pipelines"
-        ],
-        "summary": "Update Pipeline",
-        "description": "Update an Intelligence Pipeline.",
-        "operationId": "update_pipeline",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pipeline_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Pipeline Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IntelligencePipelineUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IntelligencePipelineRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Pipelines"
-        ],
-        "summary": "Delete Pipeline",
-        "description": "Delete an Intelligence Pipeline.",
-        "operationId": "delete_pipeline",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pipeline_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Pipeline Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/pipelines/{pipeline_id}/execute": {
-      "post": {
-        "tags": [
-          "Pipelines"
-        ],
-        "summary": "Execute Pipeline",
-        "description": "Manually trigger an Intelligence Pipeline for a specific set of assets.",
-        "operationId": "execute_pipeline",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "pipeline_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Pipeline Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "type": "integer"
-                },
-                "title": "Asset Ids"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PipelineExecutionRead"
                 }
               }
             }
@@ -11489,7 +11940,7 @@
           "Sources"
         ],
         "summary": "Create Rss Source",
-        "description": "Create a new Source of kind 'rss' and optionally set up a monitor for it.",
+        "description": "Create a new Source of kind 'rss' and its output bundle.\n\nNote: The auto_monitor parameter is deprecated. Use the Flows API to create\nprocessing workflows that watch this source's output bundle.",
         "operationId": "create_rss_source",
         "security": [
           {
@@ -11524,6 +11975,313 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/sources/{source_id}/activate": {
+      "post": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Activate Stream",
+        "description": "Activate a source stream - enable polling.",
+        "operationId": "activate_stream",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/sources/{source_id}/pause": {
+      "post": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Pause Stream",
+        "description": "Pause a source stream - disable polling.",
+        "operationId": "pause_stream",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/sources/{source_id}/poll": {
+      "post": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Poll Source",
+        "description": "Manually trigger a poll of a source.",
+        "operationId": "poll_source",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sources-Poll Source"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/sources/{source_id}/stats": {
+      "get": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Get Stream Stats",
+        "description": "Get stream statistics for a source.",
+        "operationId": "get_stream_stats",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sources-Get Stream Stats"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/sources/{source_id}/poll-history": {
+      "get": {
+        "tags": [
+          "Sources",
+          "Sources"
+        ],
+        "summary": "Get Poll History",
+        "description": "Get recent poll history for a source.",
+        "operationId": "get_poll_history",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Source Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sources-Get Poll History"
                 }
               }
             }
@@ -12661,6 +13419,177 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/tree/feed": {
+      "get": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Get Feed Assets",
+        "description": "Get a feed of recent assets sorted by date.\n\nUnlike the tree endpoint, this returns ALL displayable assets regardless\nof whether their containing bundle is expanded. Perfect for \"latest\" feeds.\n\nFeatures:\n- Includes assets from all bundles (not just expanded ones)\n- Filters out child assets (only parent/standalone assets)\n- Sorted by date (created_at or updated_at)\n- Supports kind filtering\n- Includes source_metadata for image extraction",
+        "operationId": "get_feed_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "kinds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter by asset kinds",
+              "title": "Kinds"
+            },
+            "description": "Filter by asset kinds"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Sort field: created_at, updated_at",
+              "default": "updated_at",
+              "title": "Sort By"
+            },
+            "description": "Sort field: created_at, updated_at"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Sort order: asc, desc",
+              "default": "desc",
+              "title": "Sort Order"
+            },
+            "description": "Sort order: asc, desc"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedAssetsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/tree/assets/batch": {
+      "post": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Batch Get Assets",
+        "description": "Batch fetch multiple assets by IDs in a single request.\n\nEfficient alternative to multiple GET /assets/{id} calls.\nUsed by semantic search and other features that need multiple assets.\n\nThis endpoint follows the tree API pattern for efficient batch operations.",
+        "operationId": "batch_get_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchGetAssetsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AssetRead"
+                  },
+                  "title": "Response Tree Navigation-Batch Get Assets"
                 }
               }
             }
@@ -16953,6 +17882,100 @@
               }
             ],
             "title": "Target Bundle Id"
+          },
+          "source_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Bundle Id"
+          },
+          "run_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Type",
+            "default": "one_off"
+          },
+          "flow_execution_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Execution Id"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "trigger_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Type",
+            "default": "manual"
+          },
+          "trigger_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Context"
+          },
+          "pipeline_execution_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Execution Id"
+          },
+          "triggered_by_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered By Source Id"
           }
         },
         "type": "object",
@@ -17136,6 +18159,30 @@
           "status": {
             "$ref": "#/components/schemas/RunStatus"
           },
+          "run_type": {
+            "type": "string",
+            "title": "Run Type",
+            "default": "one_off"
+          },
+          "flow_execution_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Execution Id"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "default": []
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -17205,6 +18252,60 @@
               }
             ],
             "title": "Schema Ids"
+          },
+          "trigger_type": {
+            "type": "string",
+            "title": "Trigger Type",
+            "default": "manual"
+          },
+          "trigger_context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Trigger Context"
+          },
+          "pipeline_execution_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Execution Id"
+          },
+          "triggered_by_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered By Source Id"
+          },
+          "monitor_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monitor Id"
+          },
+          "source_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Bundle Id"
           }
         },
         "type": "object",
@@ -18288,9 +19389,9 @@
             "type": "integer",
             "title": "Target Infospace Id"
           },
-          "copy": {
+          "should_copy": {
             "type": "boolean",
-            "title": "Copy",
+            "title": "Should Copy",
             "default": true
           }
         },
@@ -18492,6 +19593,24 @@
           "backup_id"
         ],
         "title": "BackupShareRequest"
+      },
+      "BatchGetAssetsRequest": {
+        "properties": {
+          "asset_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Asset Ids",
+            "description": "List of asset IDs to fetch"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_ids"
+        ],
+        "title": "BatchGetAssetsRequest"
       },
       "Body_Infospaces-import_infospace": {
         "properties": {
@@ -20774,6 +21893,24 @@
         ],
         "title": "DatasetsOut"
       },
+      "DeleteFragmentResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "DeleteFragmentResponse"
+      },
       "DirectAssetCreationRequest": {
         "properties": {
           "search_results": {
@@ -21147,6 +22284,33 @@
         ],
         "title": "ExternalSearchRequest"
       },
+      "FeedAssetsResponse": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetRead"
+            },
+            "type": "array",
+            "title": "Assets"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assets",
+          "total",
+          "has_more"
+        ],
+        "title": "FeedAssetsResponse",
+        "description": "Response for the feed assets endpoint"
+      },
       "FieldJustificationConfig": {
         "properties": {
           "enabled": {
@@ -21191,6 +22355,628 @@
         ],
         "title": "FileUploadResponse"
       },
+      "FlowCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "input_type": {
+            "type": "string",
+            "title": "Input Type",
+            "default": "bundle"
+          },
+          "input_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Source Id"
+          },
+          "input_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Bundle Id"
+          },
+          "trigger_mode": {
+            "type": "string",
+            "title": "Trigger Mode",
+            "default": "manual"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Steps",
+            "default": []
+          },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "FlowCreate",
+        "description": "Schema for creating a Flow."
+      },
+      "FlowExecutionCreate": {
+        "properties": {
+          "asset_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Ids"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "title": "FlowExecutionCreate",
+        "description": "Schema for triggering a Flow execution."
+      },
+      "FlowExecutionRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "flow_id": {
+            "type": "integer",
+            "title": "Flow Id"
+          },
+          "triggered_by": {
+            "type": "string",
+            "title": "Triggered By"
+          },
+          "triggered_by_task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered By Task Id"
+          },
+          "triggered_by_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered By Source Id"
+          },
+          "trigger_context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Trigger Context",
+            "default": {}
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "input_asset_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Input Asset Ids",
+            "default": []
+          },
+          "output_asset_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Output Asset Ids",
+            "default": []
+          },
+          "step_outputs": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Step Outputs",
+            "default": {}
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "default": []
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uuid",
+          "flow_id",
+          "triggered_by",
+          "status",
+          "created_at"
+        ],
+        "title": "FlowExecutionRead",
+        "description": "Schema for reading a FlowExecution."
+      },
+      "FlowExecutionsOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/FlowExecutionRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "FlowExecutionsOut",
+        "description": "Paginated list of FlowExecutions."
+      },
+      "FlowRead": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "input_type": {
+            "type": "string",
+            "title": "Input Type",
+            "default": "bundle"
+          },
+          "input_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Source Id"
+          },
+          "input_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Bundle Id"
+          },
+          "trigger_mode": {
+            "type": "string",
+            "title": "Trigger Mode",
+            "default": "manual"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Steps",
+            "default": []
+          },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "linked_task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Task Id"
+          },
+          "cursor_state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Cursor State",
+            "default": {}
+          },
+          "total_executions": {
+            "type": "integer",
+            "title": "Total Executions",
+            "default": 0
+          },
+          "total_assets_processed": {
+            "type": "integer",
+            "title": "Total Assets Processed",
+            "default": 0
+          },
+          "last_execution_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Execution At"
+          },
+          "last_execution_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Execution Status"
+          },
+          "consecutive_failures": {
+            "type": "integer",
+            "title": "Consecutive Failures",
+            "default": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id",
+          "uuid",
+          "infospace_id",
+          "user_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "FlowRead",
+        "description": "Schema for reading a Flow."
+      },
+      "FlowUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "input_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Type"
+          },
+          "input_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Source Id"
+          },
+          "input_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Bundle Id"
+          },
+          "trigger_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Mode"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "views_config": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Views Config"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "title": "FlowUpdate",
+        "description": "Schema for updating a Flow."
+      },
+      "FlowsOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/FlowRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "FlowsOut",
+        "description": "Paginated list of Flows."
+      },
       "GenerateAssetEmbeddingsRequest": {
         "properties": {
           "overwrite": {
@@ -21204,6 +22990,21 @@
             "title": "Async Processing",
             "description": "Process in background",
             "default": true
+          },
+          "api_keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Keys",
+            "description": "Runtime API keys for cloud providers"
           }
         },
         "type": "object",
@@ -21970,174 +23771,6 @@
         ],
         "title": "InfospacesOut"
       },
-      "IntelligencePipelineCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "source_bundle_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Source Bundle Ids"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/PipelineStepCreate"
-            },
-            "type": "array",
-            "title": "Steps"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "source_bundle_ids",
-          "steps"
-        ],
-        "title": "IntelligencePipelineCreate"
-      },
-      "IntelligencePipelineRead": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "source_bundle_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Source Bundle Ids"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "uuid": {
-            "type": "string",
-            "title": "Uuid"
-          },
-          "infospace_id": {
-            "type": "integer",
-            "title": "Infospace Id"
-          },
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "linked_task_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Linked Task Id"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/PipelineStepRead"
-            },
-            "type": "array",
-            "title": "Steps"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "source_bundle_ids",
-          "id",
-          "uuid",
-          "infospace_id",
-          "user_id",
-          "linked_task_id",
-          "steps"
-        ],
-        "title": "IntelligencePipelineRead"
-      },
-      "IntelligencePipelineUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "source_bundle_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Bundle Ids"
-          },
-          "steps": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/PipelineStepCreate"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Steps"
-          }
-        },
-        "type": "object",
-        "title": "IntelligencePipelineUpdate"
-      },
       "Message": {
         "properties": {
           "message": {
@@ -22253,254 +23886,6 @@
         "title": "ModelListResponse",
         "description": "Response listing available models."
       },
-      "MonitorCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "schedule": {
-            "type": "string",
-            "title": "Schedule"
-          },
-          "target_bundle_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Target Bundle Ids"
-          },
-          "target_schema_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Target Schema Ids"
-          },
-          "run_config_override": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Config Override",
-            "default": {}
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "schedule",
-          "target_bundle_ids",
-          "target_schema_ids"
-        ],
-        "title": "MonitorCreate"
-      },
-      "MonitorRead": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "schedule": {
-            "type": "string",
-            "title": "Schedule"
-          },
-          "target_bundle_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Target Bundle Ids"
-          },
-          "target_schema_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Target Schema Ids"
-          },
-          "run_config_override": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Config Override",
-            "default": {}
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "uuid": {
-            "type": "string",
-            "title": "Uuid"
-          },
-          "infospace_id": {
-            "type": "integer",
-            "title": "Infospace Id"
-          },
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "linked_task_id": {
-            "type": "integer",
-            "title": "Linked Task Id"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "last_checked_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Checked At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "schedule",
-          "target_bundle_ids",
-          "target_schema_ids",
-          "id",
-          "uuid",
-          "infospace_id",
-          "user_id",
-          "linked_task_id",
-          "status"
-        ],
-        "title": "MonitorRead"
-      },
-      "MonitorUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "schedule": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Schedule"
-          },
-          "target_bundle_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Bundle Ids"
-          },
-          "target_schema_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Schema Ids"
-          },
-          "run_config_override": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Config Override"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          }
-        },
-        "type": "object",
-        "title": "MonitorUpdate"
-      },
       "NewPassword": {
         "properties": {
           "token": {
@@ -22586,154 +23971,6 @@
           "full_access"
         ],
         "title": "PermissionLevel"
-      },
-      "PipelineExecutionRead": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "pipeline_id": {
-            "type": "integer",
-            "title": "Pipeline Id"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "trigger_type": {
-            "type": "string",
-            "title": "Trigger Type"
-          },
-          "started_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Started At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "triggering_asset_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Triggering Asset Ids"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "pipeline_id",
-          "status",
-          "trigger_type",
-          "started_at",
-          "completed_at",
-          "triggering_asset_ids"
-        ],
-        "title": "PipelineExecutionRead"
-      },
-      "PipelineStepCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "step_order": {
-            "type": "integer",
-            "title": "Step Order"
-          },
-          "step_type": {
-            "type": "string",
-            "title": "Step Type",
-            "description": "Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE"
-          },
-          "configuration": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Configuration",
-            "description": "Configuration for the step"
-          },
-          "input_source": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Input Source",
-            "description": "Source of input for this step"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "step_order",
-          "step_type",
-          "configuration",
-          "input_source"
-        ],
-        "title": "PipelineStepCreate"
-      },
-      "PipelineStepRead": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "step_order": {
-            "type": "integer",
-            "title": "Step Order"
-          },
-          "step_type": {
-            "type": "string",
-            "title": "Step Type",
-            "description": "Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE"
-          },
-          "configuration": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Configuration",
-            "description": "Configuration for the step"
-          },
-          "input_source": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Input Source",
-            "description": "Source of input for this step"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "pipeline_id": {
-            "type": "integer",
-            "title": "Pipeline Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "step_order",
-          "step_type",
-          "configuration",
-          "input_source",
-          "id",
-          "pipeline_id"
-        ],
-        "title": "PipelineStepRead"
       },
       "ProcessingStatus": {
         "type": "string",
@@ -23901,22 +25138,6 @@
             "title": "Details",
             "default": {}
           },
-          "enable_monitoring": {
-            "type": "boolean",
-            "title": "Enable Monitoring",
-            "default": false
-          },
-          "schedule": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Schedule"
-          },
           "target_bundle_id": {
             "anyOf": [
               {
@@ -23938,6 +25159,41 @@
               }
             ],
             "title": "Target Bundle Name"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active",
+            "default": false
+          },
+          "poll_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Interval Seconds",
+            "default": 300
+          },
+          "output_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Bundle Id"
           }
         },
         "type": "object",
@@ -23945,7 +25201,8 @@
           "name",
           "kind"
         ],
-        "title": "SourceCreateRequest"
+        "title": "SourceCreateRequest",
+        "description": "Request to create a source with optional streaming configuration."
       },
       "SourceRead": {
         "properties": {
@@ -24036,10 +25293,92 @@
             ],
             "title": "Asset Count"
           },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "poll_interval_seconds": {
+            "type": "integer",
+            "title": "Poll Interval Seconds"
+          },
+          "output_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Bundle Id"
+          },
+          "cursor_state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Cursor State",
+            "default": {}
+          },
+          "last_poll_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Poll At"
+          },
+          "next_poll_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Poll At"
+          },
+          "items_last_poll": {
+            "type": "integer",
+            "title": "Items Last Poll",
+            "default": 0
+          },
+          "total_items_ingested": {
+            "type": "integer",
+            "title": "Total Items Ingested",
+            "default": 0
+          },
+          "consecutive_failures": {
+            "type": "integer",
+            "title": "Consecutive Failures",
+            "default": 0
+          },
+          "last_error_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At"
+          },
           "is_monitored": {
             "type": "boolean",
             "title": "Is Monitored",
             "description": "True if the source has any enabled monitoring tasks.",
+            "readOnly": true
+          },
+          "stream_health": {
+            "type": "string",
+            "title": "Stream Health",
+            "description": "Return health indicator: healthy, degraded, failing.",
             "readOnly": true
           }
         },
@@ -24055,7 +25394,10 @@
           "created_at",
           "updated_at",
           "error_message",
-          "is_monitored"
+          "is_active",
+          "poll_interval_seconds",
+          "is_monitored",
+          "stream_health"
         ],
         "title": "SourceRead"
       },
@@ -24143,6 +25485,39 @@
               }
             ],
             "title": "Details"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "poll_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll Interval Seconds"
+          },
+          "output_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Bundle Id"
           }
         },
         "type": "object",
@@ -24288,7 +25663,12 @@
           "ingest",
           "annotate",
           "pipeline",
-          "monitor"
+          "monitor",
+          "flow",
+          "source_poll",
+          "embed",
+          "backup",
+          "custom"
         ],
         "title": "TaskType"
       },
@@ -24619,6 +25999,94 @@
               }
             ],
             "title": "Preview"
+          },
+          "has_active_sources": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Active Sources"
+          },
+          "active_source_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Source Count"
+          },
+          "has_monitors": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Monitors"
+          },
+          "monitor_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monitor Count"
+          },
+          "is_pipeline_input": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Pipeline Input"
+          },
+          "pipeline_input_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Input Count"
+          },
+          "is_pipeline_output": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Pipeline Output"
+          },
+          "pipeline_output_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Output Count"
           }
         },
         "type": "object",

@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlmodel import Session, select
 from app.core.celery_app import celery
 from app.core.db import engine
-from app.models import Task, TaskType, TaskStatus, IntelligencePipeline
+from app.models import Task, TaskType, TaskStatus
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -34,12 +34,19 @@ def check_recurring_tasks():
                     # Dispatch based on task type
                     if task.type == TaskType.INGEST:
                         _dispatch_ingest_task(task)
-                    elif task.type == TaskType.MONITOR:
-                        _dispatch_monitor_task(task)
                     elif task.type == TaskType.ANNOTATE:
                         _dispatch_annotate_task(task)
+                    elif task.type == TaskType.FLOW:
+                        _dispatch_flow_task(task)
+                    elif task.type == TaskType.SOURCE_POLL:
+                        _dispatch_source_poll_task(task)
+                    elif task.type == TaskType.EMBED:
+                        _dispatch_embed_task(task)
+                    # Legacy types - log deprecation warning
+                    elif task.type == TaskType.MONITOR:
+                        logger.warning(f"Task {task.id} uses deprecated MONITOR type. Migrate to FLOW.")
                     elif task.type == TaskType.PIPELINE:
-                        _dispatch_pipeline_task(task)
+                        logger.warning(f"Task {task.id} uses deprecated PIPELINE type. Migrate to FLOW.")
                     else:
                         logger.warning(f"Unknown task type '{task.type}' for task {task.id}")
                         
@@ -63,17 +70,42 @@ def _dispatch_ingest_task(task: Task):
         logger.error(f"INGEST task {task.id} missing target_source_id")
         _update_task_status(task.id, "error", "Missing target_source_id in configuration")
 
-def _dispatch_monitor_task(task: Task):
-    """Dispatch a MONITOR task to execute_monitor_task"""
-    monitor_id = task.configuration.get("monitor_id")
-    if monitor_id:
-        from app.api.tasks.monitor_tasks import execute_monitor_task
-        execute_monitor_task.delay(monitor_id)
-        logger.info(f"Dispatched MONITOR task {task.id} for monitor {monitor_id}")
-        _update_task_status(task.id, "running", "Task dispatched to execute_monitor_task")
+def _dispatch_flow_task(task: Task):
+    """Dispatch a FLOW task to trigger_flow_by_task."""
+    from app.api.tasks.flow_tasks import trigger_flow_by_task
+    trigger_flow_by_task.delay(task.id)
+    logger.info(f"Dispatched FLOW task {task.id}")
+    _update_task_status(task.id, "running", "Task dispatched to trigger_flow_by_task")
+
+def _dispatch_source_poll_task(task: Task):
+    """Dispatch a SOURCE_POLL task to poll a source for new content."""
+    source_id = task.configuration.get("source_id") or task.configuration.get("target_source_id")
+    if source_id:
+        from app.api.tasks.ingest import process_source
+        process_source.delay(source_id, user_id=task.user_id)
+        logger.info(f"Dispatched SOURCE_POLL task {task.id} for source {source_id}")
+        _update_task_status(task.id, "running", "Task dispatched to process_source")
     else:
-        logger.error(f"MONITOR task {task.id} missing monitor_id")
-        _update_task_status(task.id, "error", "Missing monitor_id in configuration")
+        logger.error(f"SOURCE_POLL task {task.id} missing source_id")
+        _update_task_status(task.id, "error", "Missing source_id in configuration")
+
+def _dispatch_embed_task(task: Task):
+    """Dispatch an EMBED task to generate embeddings."""
+    from app.api.tasks.embed import embed_infospace_task
+    
+    infospace_id = task.configuration.get("infospace_id") or task.infospace_id
+    if infospace_id:
+        embed_infospace_task.delay(
+            infospace_id=infospace_id,
+            user_id=task.user_id,
+            overwrite=task.configuration.get("overwrite", False),
+            task_id=task.id
+        )
+        logger.info(f"Dispatched EMBED task {task.id} for infospace {infospace_id}")
+        _update_task_status(task.id, "running", "Task dispatched to embed_infospace_task")
+    else:
+        logger.error(f"EMBED task {task.id} missing infospace_id")
+        _update_task_status(task.id, "error", "Missing infospace_id in configuration")
 
 def _dispatch_annotate_task(task: Task):
     """Dispatch an ANNOTATE task to annotation processing"""
@@ -124,47 +156,6 @@ def _dispatch_annotate_task(task: Task):
     except Exception as e:
         logger.error(f"Failed to dispatch ANNOTATE task {task.id}: {e}", exc_info=True)
         _update_task_status(task.id, "error", f"Failed to create annotation run: {str(e)}")
-
-def _dispatch_pipeline_task(task: Task):
-    """Dispatch a PIPELINE task. This requires a pipeline_id in configuration.
-    For now, this logs an error if missing; a full implementation would create an execution and start step 1.
-    """
-    pipeline_id = task.configuration.get("pipeline_id") if task.configuration else None
-    if not pipeline_id:
-        logger.error(f"PIPELINE task {task.id} missing pipeline_id")
-        _update_task_status(task.id, "error", "Missing pipeline_id in configuration")
-        return
-    try:
-        from app.api.services.pipeline_service import PipelineService
-        from app.api.services.annotation_service import AnnotationService
-        from app.api.services.analysis_service import AnalysisService
-        from app.api.services.bundle_service import BundleService
-        from app.api.services.asset_service import AssetService
-        from app.api.providers.factory import create_classification_provider, create_storage_provider
-        from app.core.config import settings
-
-        with Session(engine) as session:
-            storage_provider = create_storage_provider(settings)
-            asset_service = AssetService(session, storage_provider)
-            classification_provider = create_classification_provider(settings)
-            annotation_service = AnnotationService(session, classification_provider, asset_service)
-            analysis_service = AnalysisService(session, classification_provider, annotation_service, asset_service)
-            bundle_service = BundleService(session)
-            pipeline_service = PipelineService(session, annotation_service, analysis_service, bundle_service)
-
-            # Resolve delta to determine triggering assets
-            pipeline = session.get(IntelligencePipeline, pipeline_id)
-            if not pipeline:
-                _update_task_status(task.id, "error", f"Pipeline {pipeline_id} not found")
-                return
-            # Reuse service's helper via protected access for now
-            delta = pipeline_service._resolve_start_assets_delta(pipeline)
-            triggering_assets = sorted({aid for ids in delta.values() for aid in ids})
-            execution = pipeline_service.trigger_pipeline(pipeline_id=pipeline_id, asset_ids=triggering_assets, trigger_type="SCHEDULED_FULL_RUN")
-            _update_task_status(task.id, "running", f"Started pipeline execution {execution.id}")
-    except Exception as e:
-        logger.error(f"Failed to dispatch PIPELINE task {task.id}: {e}", exc_info=True)
-        _update_task_status(task.id, "error", f"Failed to start pipeline: {str(e)}")
 
 def _update_task_status(task_id: int, status: str, message: Optional[str] = None):
     """Update task status and message"""

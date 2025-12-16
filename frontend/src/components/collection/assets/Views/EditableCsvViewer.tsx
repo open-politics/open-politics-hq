@@ -304,10 +304,8 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
       {/* Compact Header with actions */}
       <div className="flex-none px-3 py-2 bg-muted/30 border-b flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <FileSpreadsheet className="h-4 w-4 text-green-600 flex-shrink-0" />
-          <span className="text-sm font-medium truncate">{title}</span>
           <Badge variant="outline" className="text-xs flex-shrink-0">
-            {rows.length} × {columns.length - 1}
+            {rows.length} rows × {columns.length - 1} columns
           </Badge>
           {hasChanges && (
             <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300 flex-shrink-0">
@@ -383,7 +381,7 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
       )}
 
       {/* Data Table */}
-      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[45vh]" : "flex-1")}>
+      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[25vh] md:max-h-[45vh]" : "flex-1")}>
         <div className="min-w-full inline-block align-middle">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-muted/50 sticky top-0 z-10">

@@ -16,7 +16,6 @@ from app.api.deps import (
     ContentIngestionServiceDep,
     BundleServiceDep,
     TaskServiceDep,
-    MonitorServiceDep,
 )
 from app.api.services.source_service import SourceService
 from app.api.services.service_utils import validate_infospace_access
@@ -30,7 +29,6 @@ from app.schemas import (
     SourceCreateRequest,
     BundleCreate,
     TaskCreate,
-    MonitorCreate,
 )
 from sqlmodel import select, func
 from pydantic import BaseModel
@@ -69,7 +67,8 @@ def create_source(
     and a destination bundle will also be created.
     """
     source_service = SourceService(session)
-    bundle_id_to_use = source_in.target_bundle_id
+    # Use output_bundle_id (streaming) or target_bundle_id (legacy monitoring) or create new
+    bundle_id_to_use = source_in.output_bundle_id or source_in.target_bundle_id
 
     # Create a bundle if necessary (always create one for ingestion)
     if not bundle_id_to_use:
@@ -100,8 +99,16 @@ def create_source(
         source_details['target_bundle_id'] = bundle_id_to_use
         source_create = SourceCreate.model_validate(source_in)
         source_create.details = source_details
+        # Set output_bundle_id for streaming
+        source_create.output_bundle_id = bundle_id_to_use
     else:
         source_create = SourceCreate.model_validate(source_in)
+    
+    # Set streaming fields if provided
+    if hasattr(source_in, 'is_active') and source_in.is_active is not None:
+        source_create.is_active = source_in.is_active
+    if hasattr(source_in, 'poll_interval_seconds') and source_in.poll_interval_seconds is not None:
+        source_create.poll_interval_seconds = source_in.poll_interval_seconds
 
     # Create the source
     source = source_service.create_source(
@@ -510,13 +517,13 @@ async def create_rss_source(
     request: RssSourceCreateRequest,
     content_service: ContentIngestionServiceDep,
     bundle_service: BundleServiceDep,
-    monitor_service: MonitorServiceDep,
 ) -> Any:
     """
-    Create a new Source of kind 'rss' and optionally set up a monitor for it.
-    """
-    from app.api.services.monitor_service import MonitorService
+    Create a new Source of kind 'rss' and its output bundle.
     
+    Note: The auto_monitor parameter is deprecated. Use the Flows API to create
+    processing workflows that watch this source's output bundle.
+    """
     source_name = request.source_name
     if not source_name:
         try:
@@ -585,27 +592,134 @@ async def create_rss_source(
         session.commit()
         session.refresh(source)
 
-    # 3. If auto_monitor is true, create a Monitor (using the same bundle)
-    if request.auto_monitor and request.monitoring_schedule:
-        monitor_service_instance = MonitorService(
-            session, annotation_service=None, task_service=None
+    # Note: auto_monitor is deprecated. Users should create a Flow via /flows API
+    # to set up processing workflows for this source's output bundle.
+    if request.auto_monitor:
+        logger.warning(
+            f"auto_monitor is deprecated. Create a Flow watching bundle {bundle_id_to_use} "
+            f"instead for source {source.id}"
         )
-
-        monitor_create = MonitorCreate(
-            name=f"Monitor for {source.name}",
-            schedule=request.monitoring_schedule,
-            target_bundle_ids=[bundle_id_to_use],
-            target_schema_ids=[],
-            run_config_override={"source_id": source.id},
-        )
-
-        try:
-            monitor = monitor_service_instance.create_monitor(
-                monitor_in=monitor_create,
-                user_id=current_user.id,
-                infospace_id=infospace_id,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create monitor: {e}")
 
     return source
+
+
+# ═══════════════════════════════════════════════════════════════
+# STREAMING ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/{source_id}/activate", response_model=SourceRead, operation_id="Sources-activate_stream")
+def activate_stream(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    source_id: int,
+    session: SessionDep,
+) -> SourceRead:
+    """Activate a source stream - enable polling."""
+    validate_infospace_access(session, infospace_id, current_user.id)
+
+    source_service = SourceService(session)
+    source = source_service.activate_stream(source_id, current_user.id)
+
+    return SourceRead.model_validate(source)
+
+
+@router.post("/{source_id}/pause", response_model=SourceRead, operation_id="Sources-pause_stream")
+def pause_stream(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    source_id: int,
+    session: SessionDep,
+) -> SourceRead:
+    """Pause a source stream - disable polling."""
+    validate_infospace_access(session, infospace_id, current_user.id)
+
+    source_service = SourceService(session)
+    source = source_service.pause_stream(source_id, current_user.id)
+
+    return SourceRead.model_validate(source)
+
+
+@router.post("/{source_id}/poll", status_code=status.HTTP_202_ACCEPTED, operation_id="Sources-poll_source")
+async def poll_source(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    source_id: int,
+    session: SessionDep,
+) -> Dict[str, Any]:
+    """Manually trigger a poll of a source."""
+    from app.core.security import decrypt_credentials
+    
+    validate_infospace_access(session, infospace_id, current_user.id)
+    
+    # Retrieve user's stored API keys for search providers
+    api_keys = {}
+    if current_user.encrypted_credentials:
+        api_keys = decrypt_credentials(current_user.encrypted_credentials)
+    
+    source_service = SourceService(session)
+    result = await source_service.execute_poll(source_id, user_id=current_user.id, runtime_api_keys=api_keys)
+    
+    return result
+
+
+@router.get("/{source_id}/stats", operation_id="Sources-get_stream_stats")
+def get_stream_stats(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    source_id: int,
+    session: SessionDep,
+) -> Dict[str, Any]:
+    """Get stream statistics for a source."""
+    validate_infospace_access(session, infospace_id, current_user.id)
+    
+    source_service = SourceService(session)
+    stats = source_service.get_stream_stats(source_id, current_user.id, infospace_id)
+    
+    return stats
+
+
+@router.get("/{source_id}/poll-history", operation_id="Sources-get_poll_history")
+def get_poll_history(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    source_id: int,
+    session: SessionDep,
+    limit: int = Query(default=20, le=100),
+) -> Dict[str, Any]:
+    """Get recent poll history for a source."""
+    from app.models import SourcePollHistory
+    
+    validate_infospace_access(session, infospace_id, current_user.id)
+    
+    # Verify source exists and belongs to infospace
+    source = session.get(Source, source_id)
+    if not source or source.infospace_id != infospace_id:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    polls = session.exec(
+        select(SourcePollHistory)
+        .where(SourcePollHistory.source_id == source_id)
+        .order_by(SourcePollHistory.started_at.desc())
+        .limit(limit)
+    ).all()
+    
+    return {
+        "source_id": source_id,
+        "polls": [
+            {
+                "id": poll.id,
+                "started_at": poll.started_at.isoformat(),
+                "completed_at": poll.completed_at.isoformat() if poll.completed_at else None,
+                "status": poll.status,
+                "items_found": poll.items_found,
+                "items_ingested": poll.items_ingested,
+                "error_message": poll.error_message,
+            }
+            for poll in polls
+        ],
+    }

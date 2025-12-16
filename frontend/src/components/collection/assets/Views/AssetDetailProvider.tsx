@@ -8,9 +8,18 @@ import { TextSpanHighlightProvider } from '@/components/collection/contexts/Text
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client';
 
+// --- Type for what's being viewed ---
+type DetailViewType = 'asset' | 'bundle' | null;
+
 // --- Create Context ---
 interface AssetDetailContextType {
   openDetailOverlay: (assetId: number) => void;
+  openBundleDetail: (bundleId: number) => void;
+  closeDetailOverlay: () => void;
+  isOpen: boolean;
+  selectedAssetId: number | null;
+  selectedBundleId: number | null;
+  viewType: DetailViewType;
 }
 
 const AssetDetailContext = createContext<AssetDetailContextType | undefined>(undefined);
@@ -30,19 +39,24 @@ interface AssetDetailProviderProps {
   // NEW: Optional annotation context for when provider is used in annotation runner
   annotationResults?: FormattedAnnotation[];
   schemas?: AnnotationSchemaRead[];
+  // Render mode: 'overlay' (Dialog) or 'panel' (for layout integration)
+  renderMode?: 'overlay' | 'panel';
 }
 
 export default function AssetDetailProvider({
   children,
   onLoadIntoRunner,
   annotationResults,
-  schemas
+  schemas,
+  renderMode = 'overlay'
 }: AssetDetailProviderProps) {
   // Removed: const { isDetailOpen, selectedDocumentId, closeDocumentDetail } = useDocumentStore();
   const [isManagerOpen, setIsManagerOpen] = useState(false);
   // --- Manage Overlay State Here ---
   const [isDetailOverlayOpen, setIsDetailOverlayOpen] = useState(false);
   const [detailAssetId, setDetailAssetId] = useState<number | null>(null);
+  const [detailBundleId, setDetailBundleId] = useState<number | null>(null);
+  const [viewType, setViewType] = useState<DetailViewType>(null);
   // --- Add state for initial highlight ---
   const [highlightAssetIdOnOpen, setHighlightAssetIdOnOpen] = useState<number | null>(null);
   // --- End Add state ---
@@ -52,13 +66,26 @@ export default function AssetDetailProvider({
   const openDetailOverlay = useCallback((assetId: number) => {
     console.log(`[AssetDetailProvider] Opening detail for asset ID: ${assetId} and setting highlight.`);
     setDetailAssetId(assetId);
+    setDetailBundleId(null);
+    setViewType('asset');
     setHighlightAssetIdOnOpen(assetId); // Set the ID to highlight
+    setIsDetailOverlayOpen(true);
+  }, []);
+
+  const openBundleDetail = useCallback((bundleId: number) => {
+    console.log(`[AssetDetailProvider] Opening detail for bundle ID: ${bundleId}`);
+    setDetailBundleId(bundleId);
+    setDetailAssetId(null);
+    setViewType('bundle');
+    setHighlightAssetIdOnOpen(null);
     setIsDetailOverlayOpen(true);
   }, []);
 
   const closeDetailOverlay = useCallback(() => {
     setIsDetailOverlayOpen(false);
     setDetailAssetId(null);
+    setDetailBundleId(null);
+    setViewType(null);
     setHighlightAssetIdOnOpen(null); // Clear highlight ID on close
   }, []);
   // --- End Functions ---
@@ -82,6 +109,12 @@ export default function AssetDetailProvider({
   // --- Provide context value ---
   const contextValue = {
     openDetailOverlay,
+    openBundleDetail,
+    closeDetailOverlay,
+    isOpen: isDetailOverlayOpen,
+    selectedAssetId: detailAssetId,
+    selectedBundleId: detailBundleId,
+    viewType,
   };
   // --- End Provide context value ---
 
@@ -90,17 +123,20 @@ export default function AssetDetailProvider({
     <TextSpanHighlightProvider>
       <AssetDetailContext.Provider value={contextValue}>
         {children}
-        <AssetDetailOverlay
-          // Use state for props
-          open={isDetailOverlayOpen}
-          onClose={closeDetailOverlay}
-          assetId={detailAssetId} // Pass the correct ID
-          highlightAssetIdOnOpen={highlightAssetIdOnOpen} // Pass highlight ID
-          onLoadIntoRunner={handleLoadIntoRunner}
-          onOpenManagerRequest={handleOpenManagerRequest}
-          annotationResults={annotationResults}
-          schemas={schemas}
-        />
+        {/* Only render overlay in 'overlay' mode - 'panel' mode is handled by layout */}
+        {renderMode === 'overlay' && (
+          <AssetDetailOverlay
+            // Use state for props
+            open={isDetailOverlayOpen}
+            onClose={closeDetailOverlay}
+            assetId={detailAssetId} // Pass the correct ID
+            highlightAssetIdOnOpen={highlightAssetIdOnOpen} // Pass highlight ID
+            onLoadIntoRunner={handleLoadIntoRunner}
+            onOpenManagerRequest={handleOpenManagerRequest}
+            annotationResults={annotationResults}
+            schemas={schemas}
+          />
+        )}
         <AssetManagerOverlay
           isOpen={isManagerOpen}
           onClose={handleCloseManager}

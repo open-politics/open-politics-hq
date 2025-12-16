@@ -13,7 +13,8 @@ from app.models import (
     AnnotationSchema,
     Asset,
     Bundle,
-    IntelligencePipeline,
+    Flow,
+    FlowStatus,
 )
 from app.api.services.annotation_service import AnnotationService
 from app.core.beat_utils import add_or_update_schedule, remove_schedule
@@ -135,19 +136,26 @@ def _validate_task_input_config(
                 raise ValueError("Search source requires a 'query' in search_config.")
 
     elif task_in.type == TaskType.PIPELINE:
+        # PIPELINE task type is deprecated - use FLOW instead
+        raise ValueError(
+            "PIPELINE task type is deprecated. Please use FLOW task type instead. "
+            "Create a Flow with your desired steps and link it to a FLOW task."
+        )
+    
+    elif task_in.type == TaskType.FLOW:
         config = task_in.configuration
         if not isinstance(config, dict):
             raise ValueError("Configuration must be a dictionary.")
 
-        pipeline_id = config.get("pipeline_id")
-        if not pipeline_id or not isinstance(pipeline_id, int):
+        flow_id = config.get("flow_id") or config.get("target_id")
+        if not flow_id or not isinstance(flow_id, int):
             raise ValueError(
-                "PIPELINE task configuration requires an integer 'pipeline_id'."
+                "FLOW task configuration requires an integer 'flow_id' or 'target_id'."
             )
-        pipeline = session.get(IntelligencePipeline, pipeline_id)
-        if not pipeline or pipeline.infospace_id != infospace_id:
+        flow = session.get(Flow, flow_id)
+        if not flow or flow.infospace_id != infospace_id:
             raise ValueError(
-                f"Target Pipeline ID {pipeline_id} not found in infospace {infospace_id}."
+                f"Target Flow ID {flow_id} not found in infospace {infospace_id}."
             )
 
 
@@ -424,61 +432,32 @@ class TaskService:
                         self.session.commit()
                         return False
                 else:
-                    # Legacy monitor task handling
-                    monitor_id = task.configuration.get("monitor_id")
-                    if monitor_id:
-                        from app.api.tasks.monitor_tasks import execute_monitor_task
-                        execute_monitor_task.delay(monitor_id)
-                        logger.info(f"TaskService: Dispatched MONITOR task {task.id} for monitor {monitor_id}")
-                    else:
-                        logger.error(f"TaskService: Cannot execute MONITOR task {task.id}. Missing 'source_id' or 'monitor_id'.")
-                        task.last_run_status = "error"
-                        task.last_run_message = "Manual execution failed: Missing 'source_id' or 'monitor_id'."
-                        task.last_run_at = datetime.now(timezone.utc)
-                        self.session.add(task)
-                        self.session.commit()
-                        return False
+                    # Legacy MONITOR task - deprecated, migrate to FLOW
+                    logger.warning(f"TaskService: MONITOR task type is deprecated. Please migrate Task {task.id} to use FLOW.")
+                    task.last_run_status = "error"
+                    task.last_run_message = "MONITOR task type is deprecated. Please migrate to FLOW."
+                    task.last_run_at = datetime.now(timezone.utc)
+                    self.session.add(task)
+                    self.session.commit()
+                    return False
 
             elif task.type == TaskType.PIPELINE:
-                pipeline_id = task.configuration.get("pipeline_id") if task.configuration else None
-                if not pipeline_id:
-                    logger.error(f"TaskService: Cannot execute PIPELINE task {task.id}. Missing 'pipeline_id' in configuration.")
-                    task.last_run_status = "error"
-                    task.last_run_message = "Manual execution failed: Missing 'pipeline_id' in configuration."
-                    task.last_run_at = datetime.now(timezone.utc)
-                    self.session.add(task)
-                    self.session.commit()
-                    return False
-                from app.api.services.pipeline_service import PipelineService
-                from app.api.services.annotation_service import AnnotationService
-                from app.api.services.analysis_service import AnalysisService
-                from app.api.services.bundle_service import BundleService
-                from app.api.services.asset_service import AssetService
-                from app.api.providers.factory import create_model_registry, create_storage_provider
-                from app.core.config import settings
+                # Legacy PIPELINE task - deprecated, migrate to FLOW
+                logger.warning(f"TaskService: PIPELINE task type is deprecated. Please migrate Task {task.id} to use FLOW.")
+                task.last_run_status = "error"
+                task.last_run_message = "PIPELINE task type is deprecated. Please migrate to FLOW."
+                task.last_run_at = datetime.now(timezone.utc)
+                self.session.add(task)
+                self.session.commit()
+                return False
 
-                storage_provider = create_storage_provider(settings)
-                asset_service = AssetService(self.session, storage_provider)
-                model_registry = create_model_registry(settings)
-                await model_registry.initialize_providers()
-                annotation_service = AnnotationService(self.session, model_registry, asset_service)
-                analysis_service = AnalysisService(self.session, model_registry, annotation_service, asset_service)
-                bundle_service = BundleService(self.session)
-                pipeline_service = PipelineService(self.session, annotation_service, analysis_service, bundle_service)
-
-                pipeline = self.session.get(IntelligencePipeline, pipeline_id)
-                if not pipeline or pipeline.infospace_id != infospace_id:
-                    logger.error(f"TaskService: Pipeline {pipeline_id} not found in infospace {infospace_id}.")
-                    task.last_run_status = "error"
-                    task.last_run_message = f"Manual execution failed: Pipeline {pipeline_id} not found."
-                    task.last_run_at = datetime.now(timezone.utc)
-                    self.session.add(task)
-                    self.session.commit()
-                    return False
-                delta = pipeline_service._resolve_start_assets_delta(pipeline)
-                triggering_assets = sorted({aid for ids in delta.values() for aid in ids})
-                execution = pipeline_service.trigger_pipeline(pipeline_id=pipeline_id, asset_ids=triggering_assets, trigger_type="MANUAL_ADHOC")
-                logger.info(f"TaskService: Started pipeline execution {execution.id} for Task {task.id}")
+            elif task.type == TaskType.FLOW:
+                # New unified FLOW task type
+                from app.api.tasks.flow_tasks import trigger_flow_by_task
+                trigger_flow_by_task.delay(task.id)
+                logger.info(f"TaskService: Dispatched FLOW task {task.id}")
+                task.last_run_status = "running"
+                task.last_run_message = "Task dispatched to flow executor"
 
             else:
                 logger.warning(f"TaskService: Manual execution for task type '{task.type}' is not implemented for Task {task.id}.")

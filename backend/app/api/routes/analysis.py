@@ -41,6 +41,41 @@ async def promote_fragment(
     )
     return annotation
 
+
+class DeleteFragmentResponse(BaseModel):
+    success: bool
+    message: str
+
+
+@router.delete("/infospaces/{infospace_id}/assets/{asset_id}/fragments/{fragment_key}", response_model=DeleteFragmentResponse, tags=["Analysis Service"])
+async def delete_fragment(
+    *,
+    infospace_id: int,
+    asset_id: int,
+    fragment_key: str,
+    analysis_service: AnalysisServiceDep,
+    current_user: CurrentUser
+):
+    """
+    Delete a curated fragment from an asset.
+    """
+    try:
+        success = analysis_service.annotation_service.delete_fragment(
+            user_id=current_user.id,
+            infospace_id=infospace_id,
+            asset_id=asset_id,
+            fragment_key=fragment_key
+        )
+        if success:
+            return DeleteFragmentResponse(success=True, message=f"Fragment '{fragment_key}' deleted successfully")
+        else:
+            raise HTTPException(status_code=404, detail=f"Fragment '{fragment_key}' not found on asset {asset_id}")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.exception(f"Error deleting fragment '{fragment_key}' from asset {asset_id}: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while deleting the fragment.")
+
 @router.get("/analysis/adapters", response_model=List[AnalysisAdapterRead], tags=["Analysis Adapters"])
 async def list_analysis_adapters(
     session: SessionDep,

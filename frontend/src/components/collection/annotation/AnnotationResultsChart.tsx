@@ -55,6 +55,12 @@ export interface ChartDataPoint {
   assetSchemeValues?: Record<string, Record<string, any>>;
   stats?: Record<string, { min: number; max: number; avg: number; count: number }>;
   categoryFrequency?: Record<string, Record<string, number>>;
+  // Monitoring mode fields
+  annotatedCount?: number;
+  pendingCount?: number;
+  partialCount?: number;
+  totalAssetCount?: number;
+  pendingAssetIds?: number[];
   [key: string]: any; 
 }
 
@@ -105,6 +111,12 @@ interface Props {
   onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
   // NEW: Cross-panel timestamp highlighting (similar to map's highlightLocation)
   highlightedTimestamp?: { timestamp: Date; fieldKey: string } | null;
+  // NEW: Monitoring mode props
+  monitoringMode?: boolean;
+  allAssets?: AssetRead[];  // All assets in bundle (annotated + pending)
+  expectedSchemaIds?: number[];  // Schemas to expect for completion
+  showPendingAssets?: boolean;  // Toggle for pending assets visibility
+  onShowPendingChange?: (show: boolean) => void;
 }
 
 // NEW: Interface for group selection in timeline charts
@@ -664,6 +676,250 @@ const processLineChartData = (
   return finalChartData.sort((a, b) => a.timestamp - b.timestamp);
 };
 
+// --- Monitoring-Aware Line Chart Data Processing ---
+const processMonitoringLineChartData = (
+  results: FormattedAnnotation[],
+  allAssets: AssetRead[],
+  schemas: AnnotationSchemaRead[],
+  assetsMap: Map<number, AssetRead>,
+  timeAxisConfig: TimeAxisConfig | null,
+  groupingInterval: 'day' | 'week' | 'month' | 'quarter' | 'year',
+  expectedSchemaIds: number[],
+  showPendingAssets: boolean
+): ChartDataPoint[] => {
+  
+  const allDatePoints = new Map<string, ChartDataPoint>();
+  
+  // Create annotation map: asset_id -> schema_id -> annotation
+  const annotationMap = new Map<number, Map<number, FormattedAnnotation>>();
+  results.forEach(ann => {
+    if (!annotationMap.has(ann.asset_id)) {
+      annotationMap.set(ann.asset_id, new Map());
+    }
+    annotationMap.get(ann.asset_id)!.set(ann.schema_id, ann);
+  });
+  
+  const expectedSchemaSet = new Set(expectedSchemaIds);
+  
+  // Helper to get asset timestamp for grouping
+  const getAssetTimestamp = (asset: AssetRead): Date | null => {
+    if (!timeAxisConfig) {
+      return new Date(asset.created_at);
+    }
+    
+    switch (timeAxisConfig.type) {
+      case 'event':
+        return asset.event_timestamp ? new Date(asset.event_timestamp) : new Date(asset.created_at);
+      case 'default':
+        return new Date(asset.created_at);
+      case 'schema':
+        // For schema-based time, we need to find an annotation for this asset
+        const assetAnnotations = annotationMap.get(asset.id);
+        if (assetAnnotations) {
+          const ann = Array.from(assetAnnotations.values()).find(a => 
+            a.schema_id === timeAxisConfig.schemaId
+          );
+          if (ann && timeAxisConfig.fieldKey) {
+            const dateValue = getAnnotationFieldValue(ann.value, timeAxisConfig.fieldKey);
+            if (dateValue) {
+              try {
+                const d = new Date(dateValue);
+                return isNaN(d.getTime()) ? new Date(asset.created_at) : d;
+              } catch {
+                return new Date(asset.created_at);
+              }
+            }
+          }
+        }
+        return new Date(asset.created_at);
+      default:
+        return new Date(asset.created_at);
+    }
+  };
+  
+  // Process all assets (not just annotated ones)
+  const assetsToProcess = showPendingAssets ? allAssets : allAssets.filter(asset => {
+    const assetAnnotations = annotationMap.get(asset.id);
+    return assetAnnotations && assetAnnotations.size > 0;
+  });
+  
+  // Group assets by date
+  const assetsByDate = new Map<string, AssetRead[]>();
+  
+  assetsToProcess.forEach(asset => {
+    const timestamp = getAssetTimestamp(asset);
+    if (!timestamp || isNaN(timestamp.getTime())) return;
+    
+    // Generate date key for grouping
+    let dateKey: string;
+    switch (groupingInterval) {
+      case 'week': 
+        dateKey = format(startOfWeek(timestamp, { weekStartsOn: 1 }), 'yyyy-wo'); 
+        break;
+      case 'month': 
+        dateKey = format(startOfMonth(timestamp), 'yyyy-MM'); 
+        break;
+      case 'quarter': 
+        dateKey = `${format(startOfQuarter(timestamp), 'yyyy')}-Q${Math.floor(startOfQuarter(timestamp).getMonth() / 3) + 1}`; 
+        break;
+      case 'year': 
+        dateKey = format(startOfYear(timestamp), 'yyyy'); 
+        break;
+      default: 
+        dateKey = format(timestamp, 'yyyy-MM-dd'); 
+        break;
+    }
+    
+    if (!assetsByDate.has(dateKey)) {
+      assetsByDate.set(dateKey, []);
+    }
+    assetsByDate.get(dateKey)!.push(asset);
+  });
+  
+  // Process each date bucket
+  assetsByDate.forEach((assets, dateKey) => {
+    const normalizedTimestamp = getNormalizedTimestampForInterval(dateKey, groupingInterval);
+    
+    let chartPoint = allDatePoints.get(dateKey);
+    if (!chartPoint) {
+      chartPoint = {
+        dateString: dateKey,
+        timestamp: normalizedTimestamp,
+        count: 0,
+        documents: [],
+        stats: {},
+        categoryFrequency: {},
+        assetSchemeValues: {},
+        annotatedCount: 0,
+        pendingCount: 0,
+        partialCount: 0,
+        totalAssetCount: 0,
+        pendingAssetIds: []
+      };
+      allDatePoints.set(dateKey, chartPoint);
+    }
+    
+    // Categorize assets by annotation status
+    let annotatedCount = 0;
+    let pendingCount = 0;
+    let partialCount = 0;
+    const pendingAssetIds: number[] = [];
+    const annotatedAssetIds: number[] = [];
+    
+    assets.forEach(asset => {
+      const assetAnnotations = annotationMap.get(asset.id) || new Map();
+      const completedSchemaIds = new Set(assetAnnotations.keys());
+      
+      // Check completion status
+      const hasAllSchemas = expectedSchemaSet.size > 0 
+        ? Array.from(expectedSchemaSet).every(id => completedSchemaIds.has(id))
+        : completedSchemaIds.size === schemas.length;
+      
+      const hasSomeSchemas = completedSchemaIds.size > 0;
+      const hasFailures = Array.from(assetAnnotations.values()).some(
+        ann => ann.status === 'failure'
+      );
+      
+      if (hasFailures) {
+        // Failed assets don't count as annotated
+        pendingCount++;
+        pendingAssetIds.push(asset.id);
+      } else if (hasAllSchemas && hasSomeSchemas) {
+        annotatedCount++;
+        annotatedAssetIds.push(asset.id);
+      } else if (hasSomeSchemas) {
+        partialCount++;
+      } else {
+        pendingCount++;
+        pendingAssetIds.push(asset.id);
+      }
+      
+      chartPoint!.documents.push(asset.id);
+      
+      // Process annotations for value lines (same as regular processing)
+      if (hasSomeSchemas) {
+        const assetId = asset.id.toString();
+        if (!chartPoint!.assetSchemeValues![assetId]) {
+          chartPoint!.assetSchemeValues![assetId] = {};
+        }
+        
+        assetAnnotations.forEach((ann, schemaId) => {
+          const schema = schemas.find(s => s.id === schemaId);
+          if (!schema) return;
+          
+          const schemeName = schema.name;
+          chartPoint!.assetSchemeValues![assetId][schemeName] = ann.value;
+          
+          const plottableFields = getPlottableFieldsForSchema(schema);
+          plottableFields.forEach(field => {
+            let fieldValue = getAnnotationFieldValue(ann.value, field.key);
+            
+            if ((fieldValue === null || fieldValue === undefined) && field.key.includes('.')) {
+              const fieldFallbackKey = field.key.split('.').pop();
+              if (fieldFallbackKey) {
+                fieldValue = getAnnotationFieldValue(ann.value, fieldFallbackKey);
+              }
+            }
+            
+            if (fieldValue !== null && fieldValue !== undefined) {
+              const fieldChartKey = `${schemeName}_${field.name}`;
+              
+              if (field.type === 'integer' || field.type === 'number') {
+                const num = Number(fieldValue);
+                if (!isNaN(num)) {
+                  if (!chartPoint!.stats![fieldChartKey]) {
+                    chartPoint!.stats![fieldChartKey] = { min: Infinity, max: -Infinity, avg: 0, count: 0 };
+                  }
+                  
+                  const stats = chartPoint!.stats![fieldChartKey];
+                  stats.min = Math.min(stats.min, num);
+                  stats.max = Math.max(stats.max, num);
+                  stats.count += 1;
+                  stats.avg = (stats.avg * (stats.count - 1) + num) / stats.count;
+                  
+                  if (chartPoint![fieldChartKey] === undefined) {
+                    chartPoint![fieldChartKey] = num;
+                  } else {
+                    const currentVal = chartPoint![fieldChartKey] as number;
+                    chartPoint![fieldChartKey] = (currentVal + num) / 2;
+                  }
+                }
+              }
+            }
+          });
+        });
+      }
+    });
+    
+    chartPoint!.totalAssetCount = assets.length;
+    chartPoint!.annotatedCount = annotatedCount;
+    chartPoint!.pendingCount = pendingCount;
+    chartPoint!.partialCount = partialCount;
+    chartPoint!.pendingAssetIds = pendingAssetIds;
+    chartPoint!.count = annotatedCount; // Use annotated count for backward compatibility
+    chartPoint!.documents = [...new Set(chartPoint!.documents)];
+  });
+  
+  // Set final aggregate fields
+  const finalChartData = Array.from(allDatePoints.values()).map(chartPoint => {
+    if (chartPoint.stats) {
+      Object.entries(chartPoint.stats).forEach(([fieldKey, stats]) => {
+        const finalMin = stats.min !== Infinity ? stats.min : null;
+        const finalMax = stats.max !== -Infinity ? stats.max : null;
+        const finalAvg = stats.count > 0 ? stats.avg : null;
+        
+        chartPoint[`${fieldKey}_min`] = finalMin;
+        chartPoint[`${fieldKey}_max`] = finalMax;
+        chartPoint[`${fieldKey}_avg`] = finalAvg;
+      });
+    }
+    
+    return chartPoint;
+  });
+  
+  return finalChartData.sort((a, b) => a.timestamp - b.timestamp);
+};
+
 interface CustomTooltipProps extends TooltipProps<number, string> {
   keyToSplitValueMap: Map<string, string>;
   coordinate?: { x: number; y: number };
@@ -1049,6 +1305,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
   onFieldInteraction,
   // NEW: Cross-panel timestamp highlighting
   highlightedTimestamp = null,
+  // NEW: Monitoring mode props
+  monitoringMode = false,
+  allAssets = [],
+  expectedSchemaIds = [],
+  showPendingAssets: showPendingAssetsProp,
+  onShowPendingChange,
 }) => {
   const [isGrouped, setIsGrouped] = useState(false);
   const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
@@ -1079,9 +1341,37 @@ const AnnotationResultsChart: React.FC<Props> = ({
   // --- SIMPLIFIED STATE: Only individual field visibility ---
   const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set());
   
+  // --- Monitoring mode state ---
+  const [showPendingAssets, setShowPendingAssets] = useState(showPendingAssetsProp ?? true);
+  
+  // Update local state when prop changes
+  useEffect(() => {
+    if (showPendingAssetsProp !== undefined) {
+      setShowPendingAssets(showPendingAssetsProp);
+    }
+  }, [showPendingAssetsProp]);
+  
+  const handleShowPendingChange = (show: boolean) => {
+    setShowPendingAssets(show);
+    if (onShowPendingChange) {
+      onShowPendingChange(show);
+    }
+  };
+  
   // --- Line continuity: Always connect nulls for better timeline visualization ---
 
-  const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
+  const assetsMap = useMemo(() => {
+    const map = new Map(assets.map(asset => [asset.id, asset]));
+    // In monitoring mode, also include allAssets
+    if (monitoringMode && allAssets.length > 0) {
+      allAssets.forEach(asset => {
+        if (!map.has(asset.id)) {
+          map.set(asset.id, asset);
+        }
+      });
+    }
+    return map;
+  }, [assets, monitoringMode, allAssets]);
   const sourceNameMap = useMemo(() => new Map(sources.map(s => [s.id, s.name || `Source ${s.id}`])), [sources]);
   
   // Auto-select first field when grouping schema changes
@@ -1175,6 +1465,14 @@ const AnnotationResultsChart: React.FC<Props> = ({
   const processedData = useMemo((): ProcessedChartData => {
     // Create assetsMap locally to avoid dependency instability
     const localAssetsMap = new Map(assets.map(asset => [asset.id, asset]));
+    // In monitoring mode, include allAssets
+    if (monitoringMode && allAssets.length > 0) {
+      allAssets.forEach(asset => {
+        if (!localAssetsMap.has(asset.id)) {
+          localAssetsMap.set(asset.id, asset);
+        }
+      });
+    }
     
     if (analysisData) {
       return {
@@ -1395,14 +1693,26 @@ const AnnotationResultsChart: React.FC<Props> = ({
     }
 
     // === NO SPLITTING LOGIC ===
-    const chartData = processLineChartData(
-      resultsForChart,
-      schemas,
-      localAssetsMap,
-      timeAxisConfig,
-      selectedTimeInterval,
-      null
-    );
+    // Use monitoring processing if monitoring mode is enabled
+    const chartData = monitoringMode && allAssets.length > 0 && expectedSchemaIds.length > 0
+      ? processMonitoringLineChartData(
+          resultsForChart,
+          allAssets,
+          schemas,
+          localAssetsMap,
+          timeAxisConfig,
+          selectedTimeInterval,
+          expectedSchemaIds,
+          showPendingAssets
+        )
+      : processLineChartData(
+          resultsForChart,
+          schemas,
+          localAssetsMap,
+          timeAxisConfig,
+          selectedTimeInterval,
+          null
+        );
     
     // Extract fields from non-splitting data
     const fields: ProcessedFieldData[] = [];
@@ -1470,7 +1780,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
     groupingFieldKey,       
     aggregateSources,
     groupedSortOrder,
-    selectedSchemaIds.sort().join(',')
+    selectedSchemaIds.sort().join(','),
+    // Monitoring mode dependencies
+    monitoringMode,
+    allAssets.map(a => a.id).sort().join(','),
+    expectedSchemaIds.sort().join(','),
+    showPendingAssets
   ]);
 
   // === SIMPLIFIED FIELD VISIBILITY: Single effect that initializes from processed data ===
@@ -1895,6 +2210,19 @@ const AnnotationResultsChart: React.FC<Props> = ({
                 </Label>
               </div>
 
+              {/* Monitoring Mode Toggle */}
+              {monitoringMode && (
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="show-pending-assets"
+                    checked={showPendingAssets}
+                    onCheckedChange={handleShowPendingChange}
+                  />
+                  <Label htmlFor="show-pending-assets" className="text-sm font-medium">
+                    Show Pending Assets
+                  </Label>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2097,8 +2425,44 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   />
                 )}
                 
-                {/* Annotation count bars */}
-                {showAnnotationBars && (
+                {/* Monitoring mode: Stacked status bars */}
+                {monitoringMode && showAnnotationBars && (
+                  <>
+                    <Bar
+                      yAxisId="right"
+                      dataKey="annotatedCount"
+                      stackId="status"
+                      fill="#22c55e"
+                      name="Annotated"
+                      isAnimationActive={false}
+                      barSize={20}
+                      maxBarSize={30}
+                    />
+                    <Bar
+                      yAxisId="right"
+                      dataKey="partialCount"
+                      stackId="status"
+                      fill="#f59e0b"
+                      name="Partial"
+                      isAnimationActive={false}
+                      barSize={20}
+                      maxBarSize={30}
+                    />
+                    <Bar
+                      yAxisId="right"
+                      dataKey="pendingCount"
+                      stackId="status"
+                      fill="#94a3b8"
+                      name="Pending"
+                      isAnimationActive={false}
+                      barSize={20}
+                      maxBarSize={30}
+                    />
+                  </>
+                )}
+                
+                {/* Standard annotation count bars (non-monitoring mode) */}
+                {!monitoringMode && showAnnotationBars && (
                   <Bar
                     yAxisId="right"
                     dataKey="count"
@@ -2110,6 +2474,22 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     isAnimationActive={false}
                     barSize={20}
                     maxBarSize={30}
+                  />
+                )}
+                
+                {/* Monitoring mode: Pending count line */}
+                {monitoringMode && showPendingAssets && (
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="pendingCount"
+                    stroke="#94a3b8"
+                    strokeDasharray="5 5"
+                    strokeWidth={2}
+                    dot={{ fill: '#94a3b8', r: 3 }}
+                    name="Pending Assets"
+                    connectNulls={true}
+                    isAnimationActive={false}
                   />
                 )}
                 

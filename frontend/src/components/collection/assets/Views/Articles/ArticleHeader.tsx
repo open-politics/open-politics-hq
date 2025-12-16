@@ -3,7 +3,7 @@ import { AssetRead } from '@/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ExternalLink, Edit2, Globe } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { getArticleSource, getSourceBadgeInfo } from './utils';
 import { ArticleMetadata } from './types';
 import { cn } from '@/lib/utils';
@@ -22,9 +22,9 @@ export default function ArticleHeader({ asset, onEdit, className }: ArticleHeade
   // Get publication date
   const pubDate = metadata?.publication_date || metadata?.rss_published_date;
   const formattedDate = pubDate 
-    ? formatDistanceToNow(new Date(pubDate), { addSuffix: true })
+    ? formatDistanceToNowStrict(new Date(pubDate), { addSuffix: true })
     : asset.event_timestamp 
-      ? formatDistanceToNow(new Date(asset.event_timestamp), { addSuffix: true })
+      ? formatDistanceToNowStrict(new Date(asset.event_timestamp), { addSuffix: true })
       : null;
   
   // Get author

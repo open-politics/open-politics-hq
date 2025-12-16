@@ -129,8 +129,9 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
             name: params.name,
             description: params.description,
             schema_ids: params.schemaIds,
-            target_asset_ids: params.assetIds,
+            target_asset_ids: params.assetIds && params.assetIds.length > 0 ? params.assetIds : undefined,
             target_bundle_id: params.bundleId,
+            source_bundle_id: params.sourceBundleId, // NEW: Support continuous runs
             configuration: params.configuration || {},
         };
 

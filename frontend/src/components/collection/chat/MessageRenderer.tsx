@@ -15,11 +15,13 @@
 import React, { useMemo } from 'react'
 import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { ToolExecutionIndicator } from './ToolExecutionIndicator'
+import { TemporalAnchor } from './TemporalAnchor'
 import { Response } from '@/components/ai-elements/response'
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
 import { Badge } from '@/components/ui/badge'
 import { Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
 
 interface AssistantMessageRendererProps {
   content: string
@@ -28,6 +30,8 @@ interface AssistantMessageRendererProps {
   thinkingTrace?: string
   onAssetClick?: (assetId: number) => void
   onBundleClick?: (bundleId: number) => void
+  hideTaskTools?: boolean  // When true, skip rendering task tools inline (used when side panel shows them)
+  collapseToolsOnDesktop?: boolean  // Hide tool cards on desktop (shown in sidebar)
 }
 
 interface MessageSection {
@@ -144,7 +148,13 @@ function parseMessageSections(
     }
 
     // 2. Add tool executions in order
-    orderedExecutions.forEach(execution => {
+    // FIXED: If orderedExecutions is empty but we have tool executions,
+    // use the normalized executions directly (backend may not include markers)
+    const executionsToUse = orderedExecutions.length > 0 
+      ? orderedExecutions 
+      : normalizedExecutions
+    
+    executionsToUse.forEach(execution => {
       sections.push({
         type: 'tool',
         content: '',
@@ -173,7 +183,9 @@ export function AssistantMessageRenderer({
   toolExecutions = [],
   thinkingTrace,
   onAssetClick,
-  onBundleClick
+  onBundleClick,
+  hideTaskTools = false,
+  collapseToolsOnDesktop = false
 }: AssistantMessageRendererProps) {
   // Normalize null to empty array (default param only handles undefined)
   const normalizedToolExecutions = toolExecutions || []
@@ -183,16 +195,19 @@ export function AssistantMessageRenderer({
     [content, normalizedToolExecutions, thinkingTrace]
   )
 
-  // Get unique tool names for summary
+  // Get unique tool names for summary (excluding hidden tools)
   const uniqueToolNames = useMemo(() => {
     const names: string[] = []
     normalizedToolExecutions.forEach(exec => {
+      // Skip task tools if hidden
+      if (hideTaskTools && exec.tool_name === 'tasks') return
+      
       if (!names.includes(exec.tool_name)) {
         names.push(exec.tool_name)
       }
     })
     return names
-  }, [normalizedToolExecutions])
+  }, [normalizedToolExecutions, hideTaskTools])
 
   const hasTools = normalizedToolExecutions.length > 0
   const hasThinking = !!thinkingTrace
@@ -201,10 +216,13 @@ export function AssistantMessageRenderer({
   const hasRunningTool = normalizedToolExecutions.some(exec => exec.status === 'running')
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 min-w-0 w-full overflow-hidden">
       {/* Minimal Summary - Just show tools used */}
       {hasTools && (
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <div className={cn(
+          "flex items-center gap-2 text-[11px] text-muted-foreground",
+          collapseToolsOnDesktop && "@xl:hidden"
+        )}>
           <Wrench className="h-3 w-3" />
           <span>{normalizedToolExecutions.length} tool{normalizedToolExecutions.length !== 1 ? 's' : ''}:</span>
           <div className="flex flex-wrap gap-1">
@@ -221,7 +239,7 @@ export function AssistantMessageRenderer({
       )}
 
       {/* Timeline Flow - Minimal and Clean */}
-      <div className="space-y-2">
+      <div className="space-y-2 min-w-0 overflow-hidden">
         {sections.map((section, index) => {
           switch (section.type) {
             case 'thinking': {
@@ -260,14 +278,60 @@ export function AssistantMessageRenderer({
             case 'tool':
               if (!section.toolExecution) return null
               
-              // Task tools are handled by PersistentTaskTracker - show minimal inline
+              // Task tools are handled by PersistentTaskTracker and MessageTaskPanel
               const isTaskTool = ['tasks', 'add_task', 'start_task', 'finish_task', 'cancel_task'].includes(
                 section.toolExecution.tool_name
               )
               
-              const isOperatorTool = ['navigate', 'organize', 'semantic_search', 'search_web'].includes(
+              const isOperatorTool = [
+                'navigate',
+                'organize',
+                'semantic_search',
+                'workspace_hub',
+                'web_research',
+                'library_hub',
+                'analysis_hub',
+                'search_web', // legacy
+              ].includes(
                 section.toolExecution.tool_name
               )
+              
+              // For task tools on desktop: show minimal indicator only, no expanded content
+              if (isTaskTool && hideTaskTools) {
+                return (
+                  <div key={`tool-${section.toolExecution.id}`} className="my-1 min-w-0">
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 px-1">
+                      <span className="font-medium">{section.toolExecution.tool_name}</span>
+                      {section.toolExecution.status === 'running' && (
+                        <span className="text-blue-500/70">• Running</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              }
+              
+              // Hide tool on desktop if collapseToolsOnDesktop is true and it's not a Task
+              const hideToolForDesktop = collapseToolsOnDesktop && !isTaskTool
+              
+              if (hideToolForDesktop) {
+                return (
+                  <React.Fragment key={`tool-${section.toolExecution.id}`}>
+                    {/* Narrow container: Show full tool */}
+                    <div className="@xl:hidden my-2 min-w-0">
+                      <ToolExecutionIndicator
+                        execution={section.toolExecution}
+                        compact={!isOperatorTool || isTaskTool}
+                        onAssetClick={onAssetClick}
+                        onBundleClick={onBundleClick}
+                      />
+                    </div>
+                    {/* Wide container: Show Temporal Anchor */}
+                    <div className="hidden @xl:block my-3 min-w-0">
+                      <TemporalAnchor execution={section.toolExecution} />
+                    </div>
+                  </React.Fragment>
+                )
+              }
               
               return (
                 <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
@@ -297,20 +361,29 @@ export function AssistantMessageRenderer({
 
       {/* Show unreferenced tool executions if any */}
       {normalizedToolExecutions.length > 0 && sections.filter(s => s.type === 'tool').length === 0 && (
-        <details className="mt-4 pt-4 border-t border-border/50">
+        <details className={cn(
+          "mt-4 pt-4 border-t border-border/50",
+          collapseToolsOnDesktop && "@xl:hidden"
+        )}>
           <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
             Tool Executions ({normalizedToolExecutions.length})
           </summary>
           <div className="mt-3 space-y-2">
-            {normalizedToolExecutions.map(execution => (
-              <ToolExecutionIndicator
-                key={execution.id}
-                execution={execution}
-                compact={true}
-                onAssetClick={onAssetClick}
-                onBundleClick={onBundleClick}
-              />
-            ))}
+            {normalizedToolExecutions
+              .filter(execution => {
+                // Filter out task tools if hideTaskTools is true
+                const isTaskTool = ['tasks'].includes(execution.tool_name)
+                return !(isTaskTool && hideTaskTools)
+              })
+              .map(execution => (
+                <ToolExecutionIndicator
+                  key={execution.id}
+                  execution={execution}
+                  compact={true}
+                  onAssetClick={onAssetClick}
+                  onBundleClick={onBundleClick}
+                />
+              ))}
           </div>
         </details>
       )}

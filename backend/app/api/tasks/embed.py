@@ -19,25 +19,29 @@ def embed_asset_task(
     asset_id: int, 
     infospace_id: int,
     user_id: int,
-    overwrite: bool = False
+    overwrite: bool = False,
+    api_keys: Optional[Dict[str, str]] = None
 ):
     """
     Celery task to generate embeddings for a single asset.
     
-    Uses user's stored encrypted credentials for provider access.
+    Uses runtime API keys if provided, otherwise falls back to user's stored encrypted credentials.
     
     Args:
         asset_id: Asset ID to embed
         infospace_id: Infospace ID (for configuration)
         user_id: User ID (for credential lookup)
         overwrite: Whether to regenerate existing embeddings
+        api_keys: Optional runtime API keys for cloud providers (openai, voyage, jina)
     """
     logger.info(f"Starting embedding task for asset {asset_id} (user {user_id})")
+    if api_keys:
+        logger.info(f"Using runtime API keys for providers: {list(api_keys.keys())}")
     
     async def _embed_asset():
         with Session(engine) as session:
-            # Service uses user_id to look up stored credentials
-            service = EmbeddingService(session, user_id=user_id)
+            # Service uses runtime API keys if provided, otherwise falls back to stored credentials
+            service = EmbeddingService(session, user_id=user_id, runtime_api_keys=api_keys)
             result = await service.generate_embeddings_for_asset(
                 asset_id=asset_id,
                 infospace_id=infospace_id,
@@ -64,12 +68,13 @@ def embed_infospace_task(
     user_id: int,
     overwrite: bool = False,
     asset_kinds: Optional[List[str]] = None,
-    task_id: Optional[int] = None
+    task_id: Optional[int] = None,
+    api_keys: Optional[Dict[str, str]] = None
 ):
     """
     Celery task to generate embeddings for all assets in an infospace.
     
-    Uses user's stored encrypted credentials for provider access.
+    Uses runtime API keys if provided, otherwise falls back to user's stored encrypted credentials.
     
     Args:
         infospace_id: Infospace ID
@@ -77,16 +82,19 @@ def embed_infospace_task(
         overwrite: Whether to regenerate existing embeddings
         asset_kinds: Optional filter for specific asset types
         task_id: Optional recurring task ID for status updates
+        api_keys: Optional runtime API keys for cloud providers (openai, voyage, jina)
     """
     logger.info(f"Starting infospace embedding task for infospace {infospace_id} (user {user_id})")
+    if api_keys:
+        logger.info(f"Using runtime API keys for providers: {list(api_keys.keys())}")
     
     if task_id:
         update_task_status(task_id, "running", "Generating embeddings for infospace")
     
     async def _embed_infospace():
         with Session(engine) as session:
-            # Service uses user_id to look up stored credentials
-            service = EmbeddingService(session, user_id=user_id)
+            # Service uses runtime API keys if provided, otherwise falls back to stored credentials
+            service = EmbeddingService(session, user_id=user_id, runtime_api_keys=api_keys)
             
             # Convert asset_kinds strings to enum
             kinds = None

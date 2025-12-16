@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Copy, ExternalLink, HelpCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import { SingleFragmentProps } from './types';
 import { 
@@ -125,7 +125,7 @@ export function FragmentCard({
       {fragment.timestamp && (
         <div className="mt-2 text-xs text-muted-foreground">
           <span className="font-medium">Curated:</span>{' '}
-          {formatDistanceToNow(new Date(fragment.timestamp), { addSuffix: true })}
+          {formatDistanceToNowStrict(new Date(fragment.timestamp), { addSuffix: true })}
         </div>
       )}
     </div>

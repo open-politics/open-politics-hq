@@ -1,15 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { 
   Layers, 
-  ArrowRight,
-  Loader2,
-  AlertCircle,
+  ArrowLeft,
   Calendar,
   Hash,
   Download,
@@ -18,19 +15,22 @@ import {
   MoreHorizontal,
   Upload,
   File,
-  Eye,
+  FolderOutput,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import {
   AssetRead,
   AssetKind,
   BundleRead,
 } from '@/client';
+import type { TreeNode } from '@/client';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import AssetDetailView from './AssetDetailView';
-import AssetSelector, { AssetTreeItem, getAssetIcon } from '@/components/collection/assets/AssetSelector';
+import { getAssetIcon } from '@/components/collection/assets/AssetSelector';
+import { AssetFeedView } from '@/components/collection/assets/Feed';
+import type { AssetFeedItem } from '@/components/collection/assets/Feed';
+import { isDisplayableKind } from '@/components/collection/assets/assetKindConfig';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,6 +73,39 @@ const getCompositionStats = (children: any[]) => {
   return { stats, totalChildAssets };
 };
 
+// Convert TreeNode to AssetRead for feed display
+function treeNodeToAsset(node: TreeNode): AssetRead {
+  const assetId = parseInt(node.id.replace('asset-', ''), 10);
+  
+  return {
+    id: assetId,
+    uuid: node.id,
+    kind: node.kind || 'text',
+    title: node.name,
+    created_at: node.created_at || node.updated_at,
+    updated_at: node.updated_at,
+    parent_asset_id: node.parent_id ? parseInt(node.parent_id.replace('asset-', ''), 10) : null,
+    part_index: null,
+    infospace_id: 0,
+    source_id: null,
+    is_container: node.is_container || false,
+    stub: node.stub || false,
+    source_metadata: node.source_metadata || null,
+    text_content: (node.preview as any)?.summary || (node.preview as any)?.text_content || null,
+    blob_path: (node.source_metadata as any)?.blob_path || null,
+  } as AssetRead;
+}
+
+// Convert bundle children to feed items
+function bundleChildrenToFeedItems(children: TreeNode[]): AssetFeedItem[] {
+  return children
+    .filter(node => node.type === 'asset' && node.kind && isDisplayableKind(node.kind))
+    .map(node => ({
+      asset: treeNodeToAsset(node),
+      childAssets: undefined,
+    }));
+}
+
 interface BundleDetailViewProps {
   selectedBundleId: number | null;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
@@ -96,11 +129,9 @@ export default function BundleDetailView({
     childrenCache,
     fetchChildren,
     getFullBundle,
-    getFullAsset,
   } = useTreeStore();
 
   const [selectedBundle, setSelectedBundle] = useState<BundleRead | null>(null);
-  const [treeSelectedItems, setTreeSelectedItems] = useState<Set<string>>(new Set());
 
   // Load bundle details when bundle ID changes
   useEffect(() => {
@@ -108,97 +139,68 @@ export default function BundleDetailView({
       getFullBundle(selectedBundleId).then(bundle => {
         setSelectedBundle(bundle || null);
       });
+      // Ensure children are loaded for the feed
+      const bundleNodeId = `bundle-${selectedBundleId}`;
+      if (!childrenCache.has(bundleNodeId)) {
+        fetchChildren(bundleNodeId);
+      }
     } else {
       setSelectedBundle(null);
     }
-  }, [selectedBundleId, getFullBundle]);
+  }, [selectedBundleId, getFullBundle, fetchChildren, childrenCache]);
 
-  // Get bundle children from cache for composition stats
+  // Get bundle children from cache
   const bundleChildren = useMemo(() => {
     if (!selectedBundleId) return [];
     const bundleNodeId = `bundle-${selectedBundleId}`;
     return childrenCache.get(bundleNodeId) || [];
   }, [selectedBundleId, childrenCache]);
 
+  // Convert to feed items
+  const feedItems = useMemo(() => 
+    bundleChildrenToFeedItems(bundleChildren), [bundleChildren]
+  );
+
+  // Get available kinds for filter badges
+  const availableKinds = useMemo(() => {
+    const kinds = new Set<AssetKind>();
+    bundleChildren.forEach(node => {
+      if (node.type === 'asset' && node.kind && isDisplayableKind(node.kind)) {
+        kinds.add(node.kind);
+      }
+    });
+    return Array.from(kinds);
+  }, [bundleChildren]);
+
   // Compute composition stats
   const { stats: compositionStats, totalChildAssets } = useMemo(() => 
     getCompositionStats(bundleChildren), [bundleChildren]
   );
 
-  // Handle item view from tree
-  const handleItemView = useCallback(async (item: AssetTreeItem) => {
-    if (item.type === 'asset' && item.asset) {
-      onAssetSelect(item.asset.id);
-    } else if (item.type === 'folder' && item.bundle) {
-      // Could navigate to nested bundle if needed
-      toast.info(`Viewing nested bundle: ${item.bundle.name}`);
-    }
+  // Handle asset click from feed
+  const handleAssetClick = useCallback((asset: AssetRead) => {
+    onAssetSelect(asset.id);
   }, [onAssetSelect]);
-
-  // Handle item actions (custom actions for items in bundle view)
-  const renderItemActions = useCallback((item: AssetTreeItem) => {
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-          <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem 
-            onClick={(e) => {
-              e.stopPropagation();
-              handleItemView(item);
-            }}
-          >
-            <Eye className="mr-2 h-4 w-4" />
-            View Details
-          </DropdownMenuItem>
-          <DropdownMenuItem 
-            onClick={(e) => {
-              e.stopPropagation();
-              toast.info('Download functionality coming soon');
-            }}
-          >
-            <Download className="mr-2 h-4 w-4" />
-            Download
-          </DropdownMenuItem>
-          <DropdownMenuItem 
-            onClick={(e) => {
-              e.stopPropagation();
-              toast.info('Share functionality coming soon');
-            }}
-          >
-            <Share2 className="mr-2 h-4 w-4" />
-            Share
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }, [handleItemView]);
 
   // If viewing a specific asset, show asset detail view
   if (selectedAssetId) {
     return (
       <div className="h-full flex flex-col">
-        <div className="flex-none p-2 sm:p-3 border-b bg-muted/30">
+        <div className="flex-none p-2 sm:p-3 border-b">
           <div className="flex items-center gap-2 min-w-0">
             <Button 
               variant="ghost" 
               size="sm"
               onClick={() => onAssetSelect(null)}
-              className="h-7 sm:h-8 px-2 shrink-0"
+              className="h-7 sm:h-7 px-2 shrink-0"
             >
-              <ArrowRight className="h-3 w-3 sm:h-4 sm:w-4 rotate-180 mr-1" />
+              <FolderOutput className="h-3 w-3 sm:h-4 sm:w-4 text-blue-400 mr-1" />
               <span className="text-xs sm:text-sm">Back to Bundle</span>
             </Button>
             <Separator orientation="vertical" className="h-4" />
             <span className="text-xs sm:text-sm text-muted-foreground truncate flex-1 min-w-0">
               {selectedBundle?.name}
             </span>
-            <Badge variant="secondary" className="text-xs bg-muted border-muted-foreground/30 shrink-0">
-              Asset
-            </Badge>
           </div>
         </div>
         <div className="flex-1 min-h-0">
@@ -231,17 +233,13 @@ export default function BundleDetailView({
   return (
     <div className="h-full flex flex-col">
       {/* Bundle Header */}
-      <div className="flex-none p-2 sm:p-4 border-b bg-muted/30">
+      <div className="flex-none p-2 px-4 sm:p-4 border-b">
         <div className="flex items-start justify-between gap-2 sm:gap-4 mb-2 sm:mb-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <Layers className="h-4 w-4 sm:h-5 sm:w-5 text-primary shrink-0" />
               <h2 className="text-sm sm:text-lg font-semibold truncate">
                 {selectedBundle.name || `Bundle ${selectedBundle.id}`}
               </h2>
-              <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30 shrink-0">
-                Bundle
-              </Badge>
             </div>
             
             {/* Bundle Metadata */}
@@ -252,18 +250,18 @@ export default function BundleDetailView({
               </div>
               <div className="flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
-                <span>Updated {formatDistanceToNow(new Date(selectedBundle.updated_at), { addSuffix: true })}</span>
+                <span>Updated {formatDistanceToNowStrict(new Date(selectedBundle.updated_at), { addSuffix: true })}</span>
               </div>
               <div className="flex items-center gap-1">
                 <File className="h-3 w-3" />
                 <span>{bundleChildren.length} items</span>
               </div>
               
-              {/* Compact Bundle Composition */}
+              {/* Compact Bundle Composition - hidden on small screens */}
               {Array.from(compositionStats.entries()).length > 0 && (
                 <>
-                  <Separator orientation="vertical" className="h-3" />
-                  <div className="flex items-center gap-2">
+                  <Separator orientation="vertical" className="h-3 hidden sm:block" />
+                  <div className="hidden sm:flex items-center gap-2">
                     {Array.from(compositionStats.entries()).map(([kind, data]) => (
                       <TooltipProvider key={kind} delayDuration={100}>
                         <Tooltip>
@@ -346,16 +344,17 @@ export default function BundleDetailView({
         </div>
       </div>
 
-      {/* Bundle Contents - Tree View */}
+      {/* Bundle Contents - Feed View */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <AssetSelector
-          selectedItems={treeSelectedItems}
-          onSelectionChange={setTreeSelectedItems}
-          onItemView={handleItemView}
-          onItemDoubleClick={handleItemView}
-          renderItemActions={renderItemActions}
-          compact={false}
-          filterByBundleId={selectedBundleId}
+        <AssetFeedView
+          items={feedItems}
+          availableKinds={availableKinds}
+          onAssetClick={handleAssetClick}
+          title={``}
+          cardSize="sm"
+          columns={2}
+          showControls={true}
+          emptyMessage="No items in this bundle yet."
         />
       </div>
     </div>

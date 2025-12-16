@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Folder, FileText, Link as LinkIcon, Image as ImageIcon, Video, Music, File as FileIcon, Download } from 'lucide-react';
 import { BundlePreview, AssetPreview } from '@/zustand_stores/storeShareables';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { Button } from '@/components/ui/button';
 
 interface BundlePublicViewProps {
@@ -47,7 +47,7 @@ const BundlePublicView: React.FC<BundlePublicViewProps> = ({ bundle, token, onAs
             <div className="flex-grow">
                 <CardTitle className="text-2xl font-bold">{bundle.name}</CardTitle>
                 <CardDescription>
-                    Folder &middot; {bundle.assets.length} item(s) &middot; Last updated {formatDistanceToNow(new Date(bundle.updated_at))} ago
+                    Folder &middot; {bundle.assets.length} item(s) &middot; Last updated {formatDistanceToNowStrict(new Date(bundle.updated_at))} ago
                 </CardDescription>
                 {bundle.description && <p className="text-sm text-muted-foreground mt-2">{bundle.description}</p>}
             </div>

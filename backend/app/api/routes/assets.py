@@ -3,7 +3,7 @@ import logging
 from typing import Any, List, Optional, Dict
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, BackgroundTasks, UploadFile, File, Form
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, Field
 import json
 
 from app.models import (

@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Copy, ExternalLink, Loader2, HelpCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import { SingleFragmentProps } from './types';
 import { 
@@ -125,7 +125,7 @@ export function FragmentFull({
         {fragment.timestamp && (
           <div className="flex items-center gap-1">
             <span className="font-medium">Curated:</span>
-            <span>{formatDistanceToNow(new Date(fragment.timestamp), { addSuffix: true })}</span>
+            <span>{formatDistanceToNowStrict(new Date(fragment.timestamp), { addSuffix: true })}</span>
           </div>
         )}
         {fragment.curated_by_ref && (

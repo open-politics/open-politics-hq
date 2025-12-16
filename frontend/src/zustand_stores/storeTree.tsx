@@ -40,6 +40,7 @@ interface TreeState {
   fetchChildren: (parentId: string) => Promise<TreeNode[]>;
   getFullAsset: (assetId: number) => Promise<AssetRead>;
   getFullBundle: (bundleId: number) => Promise<BundleRead>;
+  batchGetAssets: (assetIds: number[]) => Promise<AssetRead[]>;
   clearCache: () => void;
   reset: () => void;
 }
@@ -273,6 +274,75 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       return bundle;
     } catch (err: any) {
       console.error('[TreeStore] Failed to fetch full bundle:', err);
+      throw err;
+    }
+  },
+  
+  /**
+   * Batch fetch multiple assets efficiently
+   * Uses the tree API's batch endpoint for optimal performance
+   */
+  batchGetAssets: async (assetIds: number[]): Promise<AssetRead[]> => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) {
+      throw new Error('No active infospace');
+    }
+    
+    if (assetIds.length === 0) {
+      return [];
+    }
+    
+    const state = get();
+    
+    // Check cache first - return cached assets and identify uncached ones
+    const cachedAssets: AssetRead[] = [];
+    const uncachedIds: number[] = [];
+    
+    for (const id of assetIds) {
+      const cached = state.fullAssetsCache.get(id);
+      if (cached) {
+        cachedAssets.push(cached);
+      } else {
+        uncachedIds.push(id);
+      }
+    }
+    
+    // If all cached, return early
+    if (uncachedIds.length === 0) {
+      console.log('[TreeStore] All assets found in cache:', assetIds.length);
+      // Preserve original order
+      const assetMap = new Map(cachedAssets.map(a => [a.id, a]));
+      return assetIds.map(id => assetMap.get(id)!).filter(Boolean);
+    }
+    
+    console.log('[TreeStore] Batch fetching assets:', {
+      total: assetIds.length,
+      cached: cachedAssets.length,
+      toFetch: uncachedIds.length,
+    });
+    
+    try {
+      // Use TreeNavigationService for efficient batch fetch
+      const fetchedAssets = await TreeNavigationService.batchGetAssets({
+        infospaceId: activeInfospace.id,
+        requestBody: { asset_ids: uncachedIds },
+      });
+      
+      // Cache fetched assets
+      set(state => {
+        const newCache = new Map(state.fullAssetsCache);
+        for (const asset of fetchedAssets) {
+          newCache.set(asset.id, asset);
+        }
+        return { fullAssetsCache: newCache };
+      });
+      
+      // Combine cached and fetched, preserving original order
+      const allAssets = [...cachedAssets, ...fetchedAssets];
+      const assetMap = new Map(allAssets.map(a => [a.id, a]));
+      return assetIds.map(id => assetMap.get(id)!).filter(Boolean);
+    } catch (err: any) {
+      console.error('[TreeStore] Failed to batch fetch assets:', err);
       throw err;
     }
   },

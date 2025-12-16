@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useSourceStore } from '@/zustand_stores/storeSources';
+import { useBundleStore } from '@/zustand_stores/storeBundles';
 import useAuth from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,63 +11,27 @@ import {
   Repeat, 
   Plus, 
   Search, 
-  Settings, 
-  Play, 
-  Pause, 
-  MoreVertical,
-  Globe,
-  Rss,
-  FileText,
-  Database,
-  Clock,
-  CheckCircle,
   AlertCircle,
-  XCircle,
-  ChevronLeft
+  ChevronLeft,
+  TrendingUp
 } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import UnifiedSourceConfiguration from '@/components/collection/sources/configuration/UnifiedSourceConfiguration';
 import SearchComponent from '@/components/collection/search/SearchComponent';
 import SourceEditDialog from '@/components/collection/sources/SourceEditDialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { formatDistanceToNow } from 'date-fns';
-
-const sourceKindIcons = {
-  'rss': Rss,
-  'search': Search,
-  'url_list': Globe,
-  'site_discovery': Globe,
-  'upload': FileText,
-  'text_block_ingest': FileText,
-  'default': Database
-};
-
-const statusColors = {
-  'pending': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
-  'processing': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
-  'complete': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
-  'failed': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
-};
-
-const statusIcons = {
-  'pending': Clock,
-  'processing': Repeat,
-  'complete': CheckCircle,
-  'failed': XCircle
-};
+import { StreamCard } from './StreamCard';
+import { SourcesService } from '@/client';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { toast } from 'sonner';
 
 interface DataSourceManagerProps {
   onClose?: () => void;
 }
 
 export default function DataSourceManager({ onClose }: DataSourceManagerProps = {}) {
-  const { sources, isLoading, error, fetchSources, triggerSourceProcessing, deleteSource } = useSourceStore();
+  const { sources, isLoading, error, fetchSources, deleteSource } = useSourceStore();
+  const { bundles, fetchBundles } = useBundleStore();
+  const { activeInfospace } = useInfospaceStore();
   const { isLoggedIn, isLoading: authLoading } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<any | null>(null);
@@ -76,8 +41,11 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
     // Only fetch sources when user is authenticated
     if (isLoggedIn && !authLoading) {
       fetchSources();
+      if (activeInfospace?.id) {
+        fetchBundles(activeInfospace.id);
+      }
     }
-  }, [fetchSources, isLoggedIn, authLoading]);
+  }, [fetchSources, fetchBundles, isLoggedIn, authLoading, activeInfospace?.id]);
 
   const handleSuccess = () => {
     setIsCreateOpen(false);
@@ -89,11 +57,101 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
     fetchSources();
   };
 
-  const handleTriggerProcessing = async (sourceId: number) => {
+  // Group sources by status
+  const groupedSources = useMemo(() => {
+    const statusLower = (s: any) => (s.status || '').toLowerCase();
+    const active = sources.filter(s => (s.is_active ?? false) && statusLower(s) === 'active');
+    const paused = sources.filter(s => !(s.is_active ?? false) || statusLower(s) === 'paused');
+    const other = sources.filter(s => 
+      !active.includes(s) && !paused.includes(s)
+    );
+    return { active, paused, other };
+  }, [sources]);
+
+  // Calculate aggregate stats
+  const aggregateStats = useMemo(() => {
+    const activeSources = groupedSources.active;
+    const totalItemsPerHour = activeSources.reduce((sum, s) => {
+      const itemsLastPoll = s.items_last_poll ?? 0;
+      const pollInterval = (s as any).poll_interval_seconds ?? 300;
+      const itemsPerHour = itemsLastPoll > 0 
+        ? Math.round((itemsLastPoll / pollInterval) * 3600)
+        : 0;
+      return sum + itemsPerHour;
+    }, 0);
+    const totalItemsIngested = sources.reduce((sum, s) => sum + (s.total_items_ingested ?? 0), 0);
+    
+    return {
+      activeCount: activeSources.length,
+      totalItemsPerHour,
+      totalItemsIngested,
+    };
+  }, [groupedSources, sources]);
+
+  // Get bundle names for display
+  const getBundleName = (bundleId?: number | null) => {
+    if (!bundleId) return undefined;
+    return bundles.find(b => b.id === bundleId)?.name;
+  };
+
+  const handleActivate = async (sourceId: number) => {
+    if (!activeInfospace?.id) return;
     try {
-      await triggerSourceProcessing(sourceId);
+      // Note: These methods will be available after frontend client regeneration
+      const activateMethod = (SourcesService as any).activateStream;
+      if (!activateMethod) {
+        toast.error('Stream activation not yet available - please regenerate frontend client');
+        return;
+      }
+      await activateMethod({
+        infospaceId: activeInfospace.id,
+        sourceId,
+      });
+      toast.success('Stream activated');
+      fetchSources();
     } catch (error) {
-      console.error('Failed to trigger processing:', error);
+      toast.error('Failed to activate stream');
+      console.error(error);
+    }
+  };
+
+  const handlePause = async (sourceId: number) => {
+    if (!activeInfospace?.id) return;
+    try {
+      const pauseMethod = (SourcesService as any).pauseStream;
+      if (!pauseMethod) {
+        toast.error('Stream pause not yet available - please regenerate frontend client');
+        return;
+      }
+      await pauseMethod({
+        infospaceId: activeInfospace.id,
+        sourceId,
+      });
+      toast.success('Stream paused');
+      fetchSources();
+    } catch (error) {
+      toast.error('Failed to pause stream');
+      console.error(error);
+    }
+  };
+
+  const handlePoll = async (sourceId: number) => {
+    if (!activeInfospace?.id) return;
+    try {
+      const pollMethod = (SourcesService as any).pollSource;
+      if (!pollMethod) {
+        toast.error('Poll not yet available - please regenerate frontend client');
+        return;
+      }
+      await pollMethod({
+        infospaceId: activeInfospace.id,
+        sourceId,
+      });
+      toast.success('Poll triggered');
+      fetchSources();
+    } catch (error) {
+      toast.error('Failed to trigger poll');
+      console.error(error);
     }
   };
 
@@ -111,136 +169,52 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
     }
   };
 
-  const renderSourceCard = (source: any) => {
-    const IconComponent = sourceKindIcons[source.kind] || sourceKindIcons.default;
-    const StatusIcon = statusIcons[source.status] || Clock;
-    const statusColor = statusColors[source.status] || statusColors.pending;
-
-    return (
-      <Card key={source.id} className="hover:shadow-md transition-shadow">
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/20">
-                <IconComponent className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <CardTitle className="text-base">{source.name}</CardTitle>
-                <CardDescription className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">
-                    {source.kind.replace('_', ' ')}
-                  </Badge>
-                  <Badge className={`text-xs ${statusColor}`}>
-                    <StatusIcon className="h-3 w-3 mr-1" />
-                    {source.status}
-                  </Badge>
-                </CardDescription>
-              </div>
-            </div>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleTriggerProcessing(source.id)}>
-                  <Play className="h-4 w-4 mr-2" />
-                  Run Now
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleEditSource(source)}>
-                  <Settings className="h-4 w-4 mr-2" />
-                  Configure
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem 
-                  className="text-red-600"
-                  onClick={() => handleDeleteSource(source.id, source.name)}
-                >
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </CardHeader>
-
-        <CardContent className="pt-0">
-          <div className="space-y-2 text-sm text-muted-foreground">
-            {source.details?.feed_url && (
-              <div className="flex items-center gap-2">
-                <Globe className="h-3 w-3" />
-                <span className="truncate">{source.details.feed_url}</span>
-              </div>
-            )}
-            {source.details?.search_config?.query && (
-              <div className="flex items-center gap-2">
-                <Search className="h-3 w-3" />
-                <span className="truncate">"{source.details.search_config.query}"</span>
-              </div>
-            )}
-            {source.updated_at && (
-              <div className="flex items-center gap-2">
-                <Clock className="h-3 w-3" />
-                <span>Updated {formatDistanceToNow(new Date(source.updated_at))} ago</span>
-              </div>
-            )}
-            {source.enable_monitoring && (
-              <div className="flex items-center gap-2">
-                <Repeat className="h-3 w-3 text-blue-500" />
-                <span>Monitoring enabled</span>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
   return (
-    <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-1 sm:px-2 overflow-hidden">
+    <div className="flex flex-col h-full w-full max-w-screen-3xl mx-auto px-2 sm:px-4 md:px-6 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
+        <div className="flex items-center gap-2 sm:gap-3">
           {onClose && (
             <Button 
               variant="ghost" 
               size="sm" 
               onClick={onClose}
-              className="h-9 w-9 p-0"
+              className="h-8 w-8 sm:h-9 sm:w-9 p-0 flex-shrink-0"
             >
-              <ChevronLeft className="h-5 w-5" />
+              <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
             </Button>
           )}
-          <div className="p-2.5 flex items-center gap-2 rounded-md bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm">
-            <RadioTower className="h-6 w-6 text-blue-700 dark:text-blue-400" />
-            <Repeat className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+          <div className="p-2 sm:p-2.5 flex items-center gap-1.5 sm:gap-2 rounded-md bg-blue-50/20 dark:bg-blue-950/10 border border-blue-200 dark:border-blue-800 shadow-sm flex-shrink-0">
+            <RadioTower className="h-5 w-5 sm:h-6 sm:w-6 text-blue-700 dark:text-blue-400" />
+            <Repeat className="h-5 w-5 sm:h-6 sm:w-6 text-blue-700 dark:text-blue-400" />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Data Ingestion</h1>
-            <p className="text-gray-600 dark:text-gray-400 text-sm">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 truncate">Data Ingestion</h1>
+            <p className="text-gray-600 dark:text-gray-400 text-xs sm:text-sm truncate">
               Search, discover, and manage your data sources
             </p>
           </div>
         </div>
-        <Button onClick={() => setIsCreateOpen(true)}>
+        <Button onClick={() => setIsCreateOpen(true)} className="w-full sm:w-auto flex-shrink-0" size="sm">
           <Plus className="h-4 w-4 mr-2" />
-          New Source
+          <span className="hidden xs:inline">New Source</span>
+          <span className="xs:hidden">New</span>
         </Button>
       </div>
 
       {/* Main Content with Tabs */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="grid w-full grid-cols-2 mb-4">
-            <TabsTrigger value="search" className="flex items-center gap-2">
-              <Search className="h-4 w-4" />
-              Search & Discover
+          <TabsList className="grid w-full grid-cols-2 mb-3 sm:mb-4">
+            <TabsTrigger value="search" className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm">
+              <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">Search & Discover</span>
+              <span className="xs:hidden">Search</span>
             </TabsTrigger>
-            <TabsTrigger value="sources" className="flex items-center gap-2">
-              <RadioTower className="h-4 w-4" />
-              Managed Sources
+            <TabsTrigger value="sources" className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm">
+              <RadioTower className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">Managed Sources</span>
+              <span className="xs:hidden">Sources</span>
             </TabsTrigger>
           </TabsList>
 
@@ -255,7 +229,7 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
             <TabsContent value="sources" className="h-full m-0 overflow-y-auto">
               {isLoading && (
                 <div className="flex items-center justify-center h-32">
-                  <div className="flex items-center gap-2 text-muted-foreground">
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm">
                     <Repeat className="h-4 w-4 animate-spin" />
                     Loading sources...
                   </div>
@@ -264,10 +238,10 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
               
               {error && (
                 <Card className="border-red-200 bg-red-50 dark:bg-red-950/20">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 text-red-600">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>{error}</span>
+                  <CardContent className="p-3 sm:p-4">
+                    <div className="flex items-center gap-2 text-red-600 text-sm">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                      <span className="break-words">{error}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -277,21 +251,110 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
                 <>
                   {sources.length === 0 ? (
                     <Card className="border-dashed">
-                      <CardContent className="flex flex-col items-center justify-center py-12">
-                        <RadioTower className="h-12 w-12 text-muted-foreground mb-4" />
-                        <h3 className="text-lg font-medium mb-2">No sources configured</h3>
-                        <p className="text-muted-foreground text-center mb-4">
+                      <CardContent className="flex flex-col items-center justify-center py-8 sm:py-12 px-4">
+                        <RadioTower className="h-10 w-10 sm:h-12 sm:w-12 text-muted-foreground mb-3 sm:mb-4" />
+                        <h3 className="text-base sm:text-lg font-medium mb-2 text-center">No sources configured</h3>
+                        <p className="text-muted-foreground text-center mb-3 sm:mb-4 text-sm">
                           Create your first data source to start ingesting content
                         </p>
-                        <Button onClick={() => setIsCreateOpen(true)}>
+                        <Button onClick={() => setIsCreateOpen(true)} size="sm">
                           <Plus className="h-4 w-4 mr-2" />
                           Create Source
                         </Button>
                       </CardContent>
                     </Card>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {sources.map(renderSourceCard)}
+                    <div className="space-y-4 sm:space-y-6">
+                      {/* Aggregate Stats */}
+                      {aggregateStats.activeCount > 0 && (
+                        <Card className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
+                          <CardContent className="p-3 sm:p-4">
+                            <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                              <div className="text-center sm:text-left">
+                                <p className="text-xs sm:text-sm text-muted-foreground truncate">Active Streams</p>
+                                <p className="text-xl sm:text-2xl font-bold">{aggregateStats.activeCount}</p>
+                              </div>
+                              <div className="text-center sm:text-right">
+                                <p className="text-xs sm:text-sm text-muted-foreground truncate">Items/Hour</p>
+                                <p className="text-xl sm:text-2xl font-bold flex items-center justify-center sm:justify-end gap-1">
+                                  <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5" />
+                                  {aggregateStats.totalItemsPerHour}
+                                </p>
+                              </div>
+                              <div className="text-center sm:text-right">
+                                <p className="text-xs sm:text-sm text-muted-foreground truncate">Total Ingested</p>
+                                <p className="text-xl sm:text-2xl font-bold">{aggregateStats.totalItemsIngested.toLocaleString()}</p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* Active Streams */}
+                      {groupedSources.active.length > 0 && (
+                        <div>
+                          <h3 className="text-base sm:text-lg font-semibold mb-2 sm:mb-3">
+                            Active Streams ({groupedSources.active.length})
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                            {groupedSources.active.map(source => (
+                              <StreamCard
+                                key={source.id}
+                                source={source as any}
+                                outputBundleName={getBundleName(source.output_bundle_id)}
+                                onActivate={handleActivate}
+                                onPause={handlePause}
+                                onPoll={handlePoll}
+                                onConfigure={handleEditSource}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Paused Streams */}
+                      {groupedSources.paused.length > 0 && (
+                        <div>
+                          <h3 className="text-base sm:text-lg font-semibold mb-2 sm:mb-3">
+                            Paused Streams ({groupedSources.paused.length})
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                            {groupedSources.paused.map(source => (
+                              <StreamCard
+                                key={source.id}
+                                source={source as any}
+                                outputBundleName={getBundleName(source.output_bundle_id)}
+                                onActivate={handleActivate}
+                                onPause={handlePause}
+                                onPoll={handlePoll}
+                                onConfigure={handleEditSource}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Other Sources */}
+                      {groupedSources.other.length > 0 && (
+                        <div>
+                          <h3 className="text-base sm:text-lg font-semibold mb-2 sm:mb-3">
+                            Other Sources ({groupedSources.other.length})
+                          </h3>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                            {groupedSources.other.map(source => (
+                              <StreamCard
+                                key={source.id}
+                                source={source as any}
+                                outputBundleName={getBundleName(source.output_bundle_id)}
+                                onActivate={handleActivate}
+                                onPause={handlePause}
+                                onPoll={handlePoll}
+                                onConfigure={handleEditSource}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -302,9 +365,9 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
       </div>
 
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create New Source</DialogTitle>
+            <DialogTitle className="text-base sm:text-lg">Create New Stream</DialogTitle>
           </DialogHeader>
           <UnifiedSourceConfiguration onSuccess={handleSuccess} />
         </DialogContent>

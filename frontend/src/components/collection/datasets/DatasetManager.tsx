@@ -12,7 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Checkbox } from "@/components/ui/checkbox";
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import DatasetCreateDialog from './DatasetCreateDialog';
 
@@ -306,7 +306,7 @@ const DatasetManager: React.FC = () => {
                                             <TableCell className="text-center text-sm">{dataset.source_scheme_ids?.length || 0}</TableCell>
                                             <TableCell className="text-center text-sm">{dataset.source_job_ids?.length || 0}</TableCell>
                                             <TableCell className="text-muted-foreground text-xs">
-                                                {dataset.updated_at ? formatDistanceToNow(new Date(dataset.updated_at), { addSuffix: true }) : '-'}
+                                                {dataset.updated_at ? formatDistanceToNowStrict(new Date(dataset.updated_at), { addSuffix: true }) : '-'}
                                             </TableCell>
                                             <TableCell className="text-right pr-4">
                                                 <div className="flex justify-end gap-1">

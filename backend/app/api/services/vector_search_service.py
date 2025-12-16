@@ -137,14 +137,30 @@ class VectorSearchService:
         ).first()
         
         if not embedding_model:
-            logger.warning(
+            # Auto-register the model if it doesn't exist (e.g., after clearing embeddings)
+            # This allows semantic search to work even if no assets have been embedded yet
+            logger.info(
                 f"Embedding model '{infospace.embedding_model}' with provider '{provider_name}' "
-                f"not found in database. This usually means no assets have been embedded yet with this model."
+                f"not found in database. Auto-registering..."
             )
-            raise ValueError(
-                f"Embedding model {infospace.embedding_model} (provider: {provider_name}) not found in database. "
-                f"Please run embedding generation for this infospace first."
-            )
+            try:
+                from app.api.services.embedding_service import EmbeddingService
+                embedding_service = EmbeddingService(
+                    self.session,
+                    runtime_api_keys=self.runtime_api_keys
+                )
+                embedding_model = await embedding_service.ensure_embedding_model_registered(
+                    provider=provider_name,
+                    model_name=infospace.embedding_model,
+                    dimension=infospace.embedding_dim
+                )
+                logger.info(f"Auto-registered embedding model '{infospace.embedding_model}'")
+            except Exception as e:
+                logger.error(f"Failed to auto-register embedding model: {e}")
+                raise ValueError(
+                    f"Embedding model {infospace.embedding_model} (provider: {provider_name}) not found in database "
+                    f"and could not be auto-registered: {str(e)}. Please run embedding generation for this infospace first."
+                )
         
         # Build the search query using raw SQL for pgvector operations
         # We'll use cosine distance: 1 - cosine_similarity

@@ -47,9 +47,8 @@ import ProviderSelector from '@/components/collection/management/ProviderSelecto
 import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import AssetDetailOverlay from '@/components/collection/assets/Views/AssetDetailOverlay'
-import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext'
-import { formatDistanceToNow } from 'date-fns'
+import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider'
+import { formatDistanceToNowStrict } from 'date-fns'
 import { Kbd } from '@/components/ui/kbd'
 import {
   Popover,
@@ -72,6 +71,8 @@ import AssetSelector, { AssetTreeItem } from '@/components/collection/assets/Ass
 import { AssetRead } from '@/client'
 import { useTreeStore } from '@/zustand_stores/storeTree'
 import { PersistentTaskTracker } from './PersistentTaskTracker'
+import { MessageToolPanel } from './MessageToolPanel'
+import { MessageTaskPanel } from './MessageTaskPanel'
 
 interface IntelligenceChatProps {
   className?: string
@@ -91,7 +92,6 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(true)
   const [streamEnabled, setStreamEnabled] = useState<boolean>(true)
   const [toolsEnabled, setToolsEnabled] = useState<boolean>(true)
-  const [tools, setTools] = useState<Tool[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Conversation management state
@@ -99,8 +99,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null)
   const [currentConversationTitle, setCurrentConversationTitle] = useState<string>('')
 
-  // Asset detail overlay state
-  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null)
+  // Asset detail - use layout-level context
+  const { openDetailOverlay: openAssetDetail, openBundleDetail } = useAssetDetail()
   
   // Message editing state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
@@ -159,11 +159,10 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     }
   }
   
-  // Bundle detail handler - just show info for now
+  // Bundle detail handler - opens bundle in the inspector panel
   const handleBundleClick = (bundleId: number) => {
-    toast.info(`Bundle ${bundleId}`, {
-      description: 'Bundle detail view available in Asset Manager'
-    })
+    console.log('[Chat] Opening bundle:', bundleId);
+    openBundleDetail(bundleId);
   }
   
   // Helper to fetch image with authentication and create blob URL
@@ -1228,9 +1227,29 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     return messages.map(formatMessageForCopy).join('\n')
   }
 
+  // Helper to check if message has tasks
+  const messageHasTasks = (message: ChatMessage): boolean => {
+    if (message.role !== 'assistant' || !message.tool_executions) return false
+    return message.tool_executions.some(exec => {
+      const toolName = exec.tool_name
+      const result = exec.structured_content || exec.result
+      return (
+        toolName === 'tasks' &&
+        result &&
+        typeof result === 'object' &&
+        ('tasks' in result || 'task' in result)
+      )
+    })
+  }
+
   const renderMessage = (message: ChatMessage) => {
     const isUser = message.role === 'user'
     const isEditing = editingMessageId === message.id
+    const hasTasks = !isUser && messageHasTasks(message)
+    
+    const toolExecutions = message.tool_executions || []
+    const nonTaskExecutions = toolExecutions.filter(exec => exec.tool_name !== 'tasks')
+    const showToolSidebar = nonTaskExecutions.length > 0 || hasTasks
 
     return (
       <div key={message.id} className={cn(
@@ -1238,22 +1257,27 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
         isUser ? "justify-end" : "justify-start"
       )}>
         <div className={cn(
-          "flex flex-col sm:flex-row gap-1.5 sm:gap-3 max-w-[98%] sm:max-w-[75%] lg:max-w-[65%]",
-          isUser ? "items-end sm:flex-row-reverse" : "items-start sm:flex-row"
+          "flex flex-col @xl:flex-row gap-3 w-full max-w-full overflow-hidden",
+          isUser ? "items-end @xl:items-start" : "items-start"
         )}>
           <div className={cn(
-            "flex h-6 w-6 sm:h-8 sm:w-8 shrink-0 select-none items-center justify-center rounded-full",
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+            "flex gap-1.5 sm:gap-3 flex-1 min-w-0 max-w-full",
+            isUser ? "flex-row-reverse items-end " : "items-start"
           )}>
-            {isUser ? <User className="h-3 w-3 sm:h-4 sm:w-4" /> : <Bot className="h-3 w-3 sm:h-4 sm:w-4" />}
-          </div>
+            <div className={cn(
+              "flex h-6 w-6 sm:h-8 sm:w-8 shrink-0 select-none items-center justify-center rounded-full",
+              isUser ? "bg-primary text-primary-foreground" : "bg-muted"
+            )}>
+              {isUser ? <User className="h-3 w-3 sm:h-4 sm:w-4" /> : <Bot className="h-3 w-3 sm:h-4 sm:w-4" />}
+            </div>
 
-          <div className={cn(
-            "rounded-lg px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm relative group w-full",
-            isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted"
-          )}>
+            <div className={cn(
+              "rounded-lg px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm relative group flex-1 min-w-0 overflow-hidden",
+              "",
+              isUser
+                ? "bg-primary text-primary-foreground min-w-0 max-w-[40vw]"
+                : "bg-muted @xl:max-w-[60vw]"
+            )}>
             {isEditing ? (
               // Edit mode for user messages
               <div className="space-y-2">
@@ -1307,7 +1331,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                             <div
                               key={imageAsset.id}
                               className="relative group cursor-pointer rounded overflow-hidden border border-primary-foreground/20 hover:border-primary-foreground/40 transition-colors"
-                              onClick={() => setSelectedAssetId(imageAsset.id)}
+                              onClick={() => openAssetDetail(imageAsset.id)}
                               title={`${imageAsset.title} - Click to view full image`}
                             >
                               {blobUrl ? (
@@ -1353,10 +1377,12 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                   <AssistantMessageRenderer
                     content={message.content}
                     messageId={message.id}
-                    toolExecutions={message.tool_executions}
+                    toolExecutions={toolExecutions}
                     thinkingTrace={message.thinking_trace}
-                    onAssetClick={(assetId) => setSelectedAssetId(assetId)}
+                    onAssetClick={openAssetDetail}
                     onBundleClick={handleBundleClick}
+                    hideTaskTools={hasTasks}
+                    collapseToolsOnDesktop={nonTaskExecutions.length > 0}
                   />
                 )}
 
@@ -1403,6 +1429,26 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               </>
             )}
           </div>
+          </div>
+          
+          {/* Tool Sidebar - shown on wide containers */}
+          {showToolSidebar && (
+            <div className="hidden @xl:flex @xl:max-w-[32.5vw] flex-col gap-3 min-w-0 shrink sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto overflow-x-hidden">
+              {nonTaskExecutions.length > 0 && (
+                <MessageToolPanel
+                  toolExecutions={nonTaskExecutions}
+                  onAssetClick={openAssetDetail}
+                  onBundleClick={handleBundleClick}
+                />
+              )}
+              {hasTasks && (
+                <MessageTaskPanel
+                  toolExecutions={toolExecutions}
+                  defaultOpen={false}
+                />
+              )}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -1560,7 +1606,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                           {conv.updated_at && (
                             <>
                               <span className="shrink-0">•</span>
-                              <span className="truncate">{formatDistanceToNow(new Date(conv.updated_at), { addSuffix: false })}</span>
+                              <span className="truncate">{formatDistanceToNowStrict(new Date(conv.updated_at), { addSuffix: false })}</span>
                             </>
                           )}
                         </div>
@@ -1835,6 +1881,28 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
+                        onClick={() => setToolsEnabled(!toolsEnabled)}
+                        className={cn(
+                          "px-2.5 py-0.5 rounded text-xs font-medium transition-colors whitespace-nowrap",
+                          toolsEnabled 
+                            ? "bg-primary text-primary-foreground" 
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                        )}
+                      >
+                        Tools
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Enable tool calls (search, analyze, etc.)</p>
+                      <p>Cheaper without, more capable with.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
                         onClick={() => setStreamEnabled(!streamEnabled)}
                         className={cn(
                           "px-2.5 py-0.5 rounded text-xs font-medium transition-colors whitespace-nowrap",
@@ -1913,9 +1981,9 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
           )}
         </CardHeader>
 
-        <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+        <CardContent className="flex-1 flex flex-col min-h-0 p-0 scrollbar-hide">
           <Conversation className="flex-1">
-            <ConversationContent className="px-2 sm:px-4">
+            <ConversationContent className="px-2 sm:px-4 scrollbar-hide">
               {/* Task Tracker - Sticky at top of conversation */}
               <PersistentTaskTracker messages={messages} />
               
@@ -1973,7 +2041,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       <ToolExecutionList
                         executions={activeToolExecutions}
                         compact={false}
-                        onAssetClick={(assetId) => setSelectedAssetId(assetId)}
+                        onAssetClick={openAssetDetail}
                         onBundleClick={() => { }}
                       />
                     </div>
@@ -2029,7 +2097,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       {/* Thumbnail preview */}
                       <div 
                         className="relative rounded overflow-hidden border border-blue-300 dark:border-blue-700 cursor-pointer hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
-                        onClick={() => setSelectedAssetId(asset.id)}
+                        onClick={() => openAssetDetail(asset.id)}
                         title={`${asset.title} - Click to view full image`}
                       >
                         {imageBlobUrls.has(asset.id) ? (
@@ -2500,16 +2568,6 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
           </div>
           
         </CardContent>
-
-        {/* Asset Detail Overlay - View individual assets */}
-        <TextSpanHighlightProvider>
-          <AssetDetailOverlay
-            open={selectedAssetId !== null}
-            onClose={() => setSelectedAssetId(null)}
-            assetId={selectedAssetId}
-            highlightAssetIdOnOpen={null}
-          />
-        </TextSpanHighlightProvider>
         
       </Card>
     </div>

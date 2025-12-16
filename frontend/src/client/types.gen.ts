@@ -92,6 +92,16 @@ export type AnnotationRunCreate = {
     schema_ids: Array<number>;
     target_asset_ids?: (Array<number> | null);
     target_bundle_id?: (number | null);
+    source_bundle_id?: (number | null);
+    run_type?: (string | null);
+    flow_execution_id?: (number | null);
+    tags?: (Array<string> | null);
+    trigger_type?: (string | null);
+    trigger_context?: ({
+    [key: string]: unknown;
+} | null);
+    pipeline_execution_id?: (number | null);
+    triggered_by_source_id?: (number | null);
 };
 
 /**
@@ -137,6 +147,9 @@ export type AnnotationRunRead = {
     infospace_id: number;
     user_id: number;
     status: RunStatus;
+    run_type?: string;
+    flow_execution_id?: (number | null);
+    tags?: Array<string>;
     created_at: string;
     updated_at: string;
     started_at: (string | null);
@@ -144,6 +157,14 @@ export type AnnotationRunRead = {
     error_message: (string | null);
     annotation_count?: (number | null);
     schema_ids?: (Array<number> | null);
+    trigger_type?: string;
+    trigger_context?: {
+        [key: string]: unknown;
+    };
+    pipeline_execution_id?: (number | null);
+    triggered_by_source_id?: (number | null);
+    monitor_id?: (number | null);
+    source_bundle_id?: (number | null);
 };
 
 export type AnnotationRunsOut = {
@@ -346,7 +367,7 @@ export type AssetTransferRequest = {
     asset_ids: Array<number>;
     source_infospace_id: number;
     target_infospace_id: number;
-    copy?: boolean;
+    should_copy?: boolean;
 };
 
 export type AssetUpdate = {
@@ -379,6 +400,13 @@ export type BackupShareRequest = {
     backup_id: number;
     is_shareable?: boolean;
     expiration_hours?: (number | null);
+};
+
+export type BatchGetAssetsRequest = {
+    /**
+     * List of asset IDs to fetch
+     */
+    asset_ids: Array<number>;
 };
 
 export type Body_assets_add_files_to_bundle_background = {
@@ -712,6 +740,10 @@ export type ChatRequest = {
     temperature?: (number | null);
     max_tokens?: (number | null);
     thinking_enabled?: boolean;
+    tools_enabled?: boolean;
+    tools?: (Array<{
+    [key: string]: unknown;
+}> | null);
     api_keys?: ({
     [key: string]: string;
 } | null);
@@ -842,6 +874,11 @@ export type DatasetUpdate = {
     asset_ids?: (Array<number> | null);
 };
 
+export type DeleteFragmentResponse = {
+    success: boolean;
+    message: string;
+};
+
 /**
  * Request for creating assets directly from search result data
  */
@@ -923,6 +960,15 @@ export type ExternalSearchRequest = {
     country?: (string | null);
 };
 
+/**
+ * Response for the feed assets endpoint
+ */
+export type FeedAssetsResponse = {
+    assets: Array<AssetRead>;
+    total: number;
+    has_more: boolean;
+};
+
 export type FieldJustificationConfig = {
     enabled: boolean;
     custom_prompt?: (string | null);
@@ -940,6 +986,130 @@ export type FileUploadResponse = {
 };
 
 /**
+ * Schema for creating a Flow.
+ */
+export type FlowCreate = {
+    name: string;
+    description?: (string | null);
+    input_type?: string;
+    input_source_id?: (number | null);
+    input_bundle_id?: (number | null);
+    trigger_mode?: string;
+    steps?: Array<{
+        [key: string]: unknown;
+    }>;
+    views_config?: (Array<{
+    [key: string]: unknown;
+}> | null);
+    tags?: (Array<string> | null);
+};
+
+/**
+ * Schema for triggering a Flow execution.
+ */
+export type FlowExecutionCreate = {
+    asset_ids?: (Array<number> | null);
+    tags?: (Array<string> | null);
+};
+
+/**
+ * Schema for reading a FlowExecution.
+ */
+export type FlowExecutionRead = {
+    id: number;
+    uuid: string;
+    flow_id: number;
+    triggered_by: string;
+    triggered_by_task_id?: (number | null);
+    triggered_by_source_id?: (number | null);
+    trigger_context?: {
+        [key: string]: unknown;
+    };
+    status: string;
+    started_at?: (string | null);
+    completed_at?: (string | null);
+    error_message?: (string | null);
+    input_asset_ids?: Array<number>;
+    output_asset_ids?: Array<number>;
+    step_outputs?: {
+        [key: string]: unknown;
+    };
+    tags?: Array<string>;
+    created_at: string;
+};
+
+/**
+ * Paginated list of FlowExecutions.
+ */
+export type FlowExecutionsOut = {
+    data: Array<FlowExecutionRead>;
+    count: number;
+};
+
+/**
+ * Schema for reading a Flow.
+ */
+export type FlowRead = {
+    name: string;
+    description?: (string | null);
+    input_type?: string;
+    input_source_id?: (number | null);
+    input_bundle_id?: (number | null);
+    trigger_mode?: string;
+    steps?: Array<{
+        [key: string]: unknown;
+    }>;
+    views_config?: (Array<{
+    [key: string]: unknown;
+}> | null);
+    tags?: (Array<string> | null);
+    id: number;
+    uuid: string;
+    infospace_id: number;
+    user_id: number;
+    status: string;
+    linked_task_id?: (number | null);
+    cursor_state?: {
+        [key: string]: unknown;
+    };
+    total_executions?: number;
+    total_assets_processed?: number;
+    last_execution_at?: (string | null);
+    last_execution_status?: (string | null);
+    consecutive_failures?: number;
+    created_at: string;
+    updated_at: string;
+};
+
+/**
+ * Paginated list of Flows.
+ */
+export type FlowsOut = {
+    data: Array<FlowRead>;
+    count: number;
+};
+
+/**
+ * Schema for updating a Flow.
+ */
+export type FlowUpdate = {
+    name?: (string | null);
+    description?: (string | null);
+    status?: (string | null);
+    input_type?: (string | null);
+    input_source_id?: (number | null);
+    input_bundle_id?: (number | null);
+    trigger_mode?: (string | null);
+    steps?: (Array<{
+    [key: string]: unknown;
+}> | null);
+    views_config?: (Array<{
+    [key: string]: unknown;
+}> | null);
+    tags?: (Array<string> | null);
+};
+
+/**
  * Request to generate embeddings for a single asset.
  */
 export type GenerateAssetEmbeddingsRequest = {
@@ -951,6 +1121,12 @@ export type GenerateAssetEmbeddingsRequest = {
      * Process in background
      */
     async_processing?: boolean;
+    /**
+     * Runtime API keys for cloud providers
+     */
+    api_keys?: ({
+    [key: string]: string;
+} | null);
 };
 
 /**
@@ -1091,32 +1267,6 @@ export type InfospaceUpdate = {
     icon?: (string | null);
 };
 
-export type IntelligencePipelineCreate = {
-    name: string;
-    description?: (string | null);
-    source_bundle_ids: Array<number>;
-    steps: Array<PipelineStepCreate>;
-};
-
-export type IntelligencePipelineRead = {
-    name: string;
-    description?: (string | null);
-    source_bundle_ids: Array<number>;
-    id: number;
-    uuid: string;
-    infospace_id: number;
-    user_id: number;
-    linked_task_id: (number | null);
-    steps: Array<PipelineStepRead>;
-};
-
-export type IntelligencePipelineUpdate = {
-    name?: (string | null);
-    description?: (string | null);
-    source_bundle_ids?: (Array<number> | null);
-    steps?: (Array<PipelineStepCreate> | null);
-};
-
 export type Message = {
     message: string;
 };
@@ -1145,47 +1295,6 @@ export type ModelListResponse = {
     providers: Array<string>;
 };
 
-export type MonitorCreate = {
-    name: string;
-    description?: (string | null);
-    schedule: string;
-    target_bundle_ids: Array<number>;
-    target_schema_ids: Array<number>;
-    run_config_override?: ({
-    [key: string]: unknown;
-} | null);
-};
-
-export type MonitorRead = {
-    name: string;
-    description?: (string | null);
-    schedule: string;
-    target_bundle_ids: Array<number>;
-    target_schema_ids: Array<number>;
-    run_config_override?: ({
-    [key: string]: unknown;
-} | null);
-    id: number;
-    uuid: string;
-    infospace_id: number;
-    user_id: number;
-    linked_task_id: number;
-    status: string;
-    last_checked_at?: (string | null);
-};
-
-export type MonitorUpdate = {
-    name?: (string | null);
-    description?: (string | null);
-    schedule?: (string | null);
-    target_bundle_ids?: (Array<number> | null);
-    target_schema_ids?: (Array<number> | null);
-    run_config_override?: ({
-    [key: string]: unknown;
-} | null);
-    status?: (string | null);
-};
-
 export type NewPassword = {
     token: string;
     new_password: string;
@@ -1205,60 +1314,6 @@ export type Paginated = {
 };
 
 export type PermissionLevel = 'read_only' | 'edit' | 'full_access';
-
-export type PipelineExecutionRead = {
-    id: number;
-    pipeline_id: number;
-    status: string;
-    trigger_type: string;
-    started_at: string;
-    completed_at: (string | null);
-    triggering_asset_ids: (Array<number> | null);
-};
-
-export type PipelineStepCreate = {
-    name: string;
-    step_order: number;
-    /**
-     * Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE
-     */
-    step_type: string;
-    /**
-     * Configuration for the step
-     */
-    configuration: {
-        [key: string]: unknown;
-    };
-    /**
-     * Source of input for this step
-     */
-    input_source: {
-        [key: string]: unknown;
-    };
-};
-
-export type PipelineStepRead = {
-    name: string;
-    step_order: number;
-    /**
-     * Type of step: ANNOTATE, FILTER, ANALYZE, BUNDLE
-     */
-    step_type: string;
-    /**
-     * Configuration for the step
-     */
-    configuration: {
-        [key: string]: unknown;
-    };
-    /**
-     * Source of input for this step
-     */
-    input_source: {
-        [key: string]: unknown;
-    };
-    id: number;
-    pipeline_id: number;
-};
 
 /**
  * Status for asset processing (creating child assets).
@@ -1532,16 +1587,20 @@ export type SharedResourcePreview = {
     content: (AssetPreview | BundlePreview | AnnotationRunPreview);
 };
 
+/**
+ * Request to create a source with optional streaming configuration.
+ */
 export type SourceCreateRequest = {
     name: string;
     kind: string;
     details?: {
         [key: string]: unknown;
     };
-    enable_monitoring?: boolean;
-    schedule?: (string | null);
     target_bundle_id?: (number | null);
     target_bundle_name?: (string | null);
+    is_active?: (boolean | null);
+    poll_interval_seconds?: (number | null);
+    output_bundle_id?: (number | null);
 };
 
 export type SourceRead = {
@@ -1563,10 +1622,26 @@ export type SourceRead = {
 } | null);
     monitoring_tasks?: Array<TaskRead>;
     asset_count?: (number | null);
+    is_active: boolean;
+    poll_interval_seconds: number;
+    output_bundle_id?: (number | null);
+    cursor_state?: {
+        [key: string]: unknown;
+    };
+    last_poll_at?: (string | null);
+    next_poll_at?: (string | null);
+    items_last_poll?: number;
+    total_items_ingested?: number;
+    consecutive_failures?: number;
+    last_error_at?: (string | null);
     /**
      * True if the source has any enabled monitoring tasks.
      */
     readonly is_monitored: boolean;
+    /**
+     * Return health indicator: healthy, degraded, failing.
+     */
+    readonly stream_health: string;
 };
 
 export type SourcesOut = {
@@ -1592,6 +1667,9 @@ export type SourceUpdate = {
     details?: ({
     [key: string]: unknown;
 } | null);
+    is_active?: (boolean | null);
+    poll_interval_seconds?: (number | null);
+    output_bundle_id?: (number | null);
 };
 
 export type TaskCreate = {
@@ -1626,7 +1704,7 @@ export type TasksOut = {
 
 export type TaskStatus = 'active' | 'paused' | 'error';
 
-export type TaskType = 'ingest' | 'annotate' | 'pipeline' | 'monitor';
+export type TaskType = 'ingest' | 'annotate' | 'pipeline' | 'monitor' | 'flow' | 'source_poll' | 'embed' | 'backup' | 'custom';
 
 export type TaskUpdate = {
     name?: (string | null);
@@ -1693,6 +1771,14 @@ export type TreeNode = {
     preview?: ({
     [key: string]: unknown;
 } | null);
+    has_active_sources?: (boolean | null);
+    active_source_count?: (number | null);
+    has_monitors?: (boolean | null);
+    monitor_count?: (number | null);
+    is_pipeline_input?: (boolean | null);
+    pipeline_input_count?: (number | null);
+    is_pipeline_output?: (boolean | null);
+    pipeline_output_count?: (number | null);
 };
 
 /**
@@ -1924,6 +2010,14 @@ export type PromoteFragmentData = {
 };
 
 export type PromoteFragmentResponse = (AnnotationRead);
+
+export type DeleteFragmentData = {
+    assetId: number;
+    fragmentKey: string;
+    infospaceId: number;
+};
+
+export type DeleteFragmentResponse2 = (DeleteFragmentResponse);
 
 export type CreateRunData = {
     infospaceId: number;
@@ -3325,6 +3419,139 @@ export type CreateKeywordFilterResponse = ({
     [key: string]: unknown;
 });
 
+export type CreateFlowData = {
+    infospaceId: number;
+    requestBody: FlowCreate;
+};
+
+export type CreateFlowResponse = (FlowRead);
+
+export type ListFlowsData = {
+    infospaceId: number;
+    /**
+     * Filter by input type
+     */
+    inputType?: (string | null);
+    limit?: number;
+    skip?: number;
+    /**
+     * Filter by status
+     */
+    status?: (string | null);
+    /**
+     * Comma-separated tags to filter by
+     */
+    tags?: (string | null);
+};
+
+export type ListFlowsResponse = (FlowsOut);
+
+export type CreateFlow1Data = {
+    infospaceId: number;
+    requestBody: FlowCreate;
+};
+
+export type CreateFlow1Response = (FlowRead);
+
+export type ListFlows1Data = {
+    infospaceId: number;
+    /**
+     * Filter by input type
+     */
+    inputType?: (string | null);
+    limit?: number;
+    skip?: number;
+    /**
+     * Filter by status
+     */
+    status?: (string | null);
+    /**
+     * Comma-separated tags to filter by
+     */
+    tags?: (string | null);
+};
+
+export type ListFlows1Response = (FlowsOut);
+
+export type GetFlowData = {
+    flowId: number;
+    infospaceId: number;
+};
+
+export type GetFlowResponse = (FlowRead);
+
+export type UpdateFlowData = {
+    flowId: number;
+    infospaceId: number;
+    requestBody: FlowUpdate;
+};
+
+export type UpdateFlowResponse = (FlowRead);
+
+export type DeleteFlowData = {
+    flowId: number;
+    infospaceId: number;
+};
+
+export type DeleteFlowResponse = (void);
+
+export type ActivateFlowData = {
+    flowId: number;
+    infospaceId: number;
+};
+
+export type ActivateFlowResponse = (FlowRead);
+
+export type PauseFlowData = {
+    flowId: number;
+    infospaceId: number;
+};
+
+export type PauseFlowResponse = (FlowRead);
+
+export type TriggerFlowExecutionData = {
+    flowId: number;
+    infospaceId: number;
+    requestBody?: (FlowExecutionCreate | null);
+};
+
+export type TriggerFlowExecutionResponse = (FlowExecutionRead);
+
+export type ListFlowExecutionsData = {
+    flowId: number;
+    infospaceId: number;
+    limit?: number;
+    skip?: number;
+    /**
+     * Filter by status
+     */
+    status?: (string | null);
+};
+
+export type ListFlowExecutionsResponse = (FlowExecutionsOut);
+
+export type GetFlowExecutionData = {
+    executionId: number;
+    flowId: number;
+    infospaceId: number;
+};
+
+export type GetFlowExecutionResponse = (FlowExecutionRead);
+
+export type GetPendingAssetsData = {
+    flowId: number;
+    infospaceId: number;
+};
+
+export type GetPendingAssetsResponse = (Array<number>);
+
+export type ResetFlowCursorData = {
+    flowId: number;
+    infospaceId: number;
+};
+
+export type ResetFlowCursorResponse = (FlowRead);
+
 export type CreateInfospaceData = {
     requestBody: InfospaceCreate;
 };
@@ -3535,85 +3762,6 @@ export type RecoverPasswordHtmlContentData = {
 };
 
 export type RecoverPasswordHtmlContentResponse = (string);
-
-export type CreateMonitorData = {
-    infospaceId: number;
-    requestBody: MonitorCreate;
-};
-
-export type CreateMonitorResponse = (MonitorRead);
-
-export type ListMonitorsData = {
-    infospaceId: number;
-    limit?: number;
-    skip?: number;
-};
-
-export type ListMonitorsResponse = (Array<MonitorRead>);
-
-export type GetMonitorData = {
-    monitorId: number;
-};
-
-export type GetMonitorResponse = (MonitorRead);
-
-export type UpdateMonitorData = {
-    monitorId: number;
-    requestBody: MonitorUpdate;
-};
-
-export type UpdateMonitorResponse = (MonitorRead);
-
-export type DeleteMonitorData = {
-    monitorId: number;
-};
-
-export type DeleteMonitorResponse = (void);
-
-export type ExecuteMonitorManuallyData = {
-    monitorId: number;
-};
-
-export type ExecuteMonitorManuallyResponse = (Message);
-
-export type CreatePipelineData = {
-    infospaceId: number;
-    requestBody: IntelligencePipelineCreate;
-};
-
-export type CreatePipelineResponse = (IntelligencePipelineRead);
-
-export type ListPipelinesData = {
-    infospaceId: number;
-};
-
-export type ListPipelinesResponse = (Array<IntelligencePipelineRead>);
-
-export type GetPipelineData = {
-    pipelineId: number;
-};
-
-export type GetPipelineResponse = (IntelligencePipelineRead);
-
-export type UpdatePipelineData = {
-    pipelineId: number;
-    requestBody: IntelligencePipelineUpdate;
-};
-
-export type UpdatePipelineResponse = (IntelligencePipelineRead);
-
-export type DeletePipelineData = {
-    pipelineId: number;
-};
-
-export type DeletePipelineResponse = (void);
-
-export type ExecutePipelineData = {
-    pipelineId: number;
-    requestBody: Array<number>;
-};
-
-export type ExecutePipelineResponse = (PipelineExecutionRead);
 
 export type SearchContentData = {
     args: unknown;
@@ -3849,6 +3997,48 @@ export type CreateRssSourceData = {
 };
 
 export type CreateRssSourceResponse = (SourceRead);
+
+export type ActivateStreamData = {
+    infospaceId: number;
+    sourceId: number;
+};
+
+export type ActivateStreamResponse = (SourceRead);
+
+export type PauseStreamData = {
+    infospaceId: number;
+    sourceId: number;
+};
+
+export type PauseStreamResponse = (SourceRead);
+
+export type PollSourceData = {
+    infospaceId: number;
+    sourceId: number;
+};
+
+export type PollSourceResponse = ({
+    [key: string]: unknown;
+});
+
+export type GetStreamStatsData = {
+    infospaceId: number;
+    sourceId: number;
+};
+
+export type GetStreamStatsResponse = ({
+    [key: string]: unknown;
+});
+
+export type GetPollHistoryData = {
+    infospaceId: number;
+    limit?: number;
+    sourceId: number;
+};
+
+export type GetPollHistoryResponse = ({
+    [key: string]: unknown;
+});
 
 export type InitiateDiscourseLoginResponse = (unknown);
 
@@ -4142,6 +4332,33 @@ export type DeleteTreeNodesData = {
 };
 
 export type DeleteTreeNodesResponse = (Message);
+
+export type GetFeedAssetsData = {
+    infospaceId: number;
+    /**
+     * Filter by asset kinds
+     */
+    kinds?: Array<string>;
+    limit?: number;
+    skip?: number;
+    /**
+     * Sort field: created_at, updated_at
+     */
+    sortBy?: string;
+    /**
+     * Sort order: asc, desc
+     */
+    sortOrder?: string;
+};
+
+export type GetFeedAssetsResponse = (FeedAssetsResponse);
+
+export type BatchGetAssetsData = {
+    infospaceId: number;
+    requestBody: BatchGetAssetsRequest;
+};
+
+export type BatchGetAssetsResponse = (Array<AssetRead>);
 
 export type CreateUserBackupData = {
     requestBody: UserBackupCreate;

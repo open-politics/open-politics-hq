@@ -14,7 +14,6 @@ from app.models import (
     AnnotationRun,
     ResultStatus,
     RunAggregate,
-    MonitorAggregate,
 )
 from app.schemas import AnnotationCreate
 from app.api.services.service_utils import validate_infospace_access
@@ -941,19 +940,22 @@ class AnnotationService:
         self,
         user_id: int,
         infospace_id: int,
-        run_in: Any
+        run_in: Any,
+        queue_task: bool = True
     ) -> AnnotationRun:
         """
-        Create a new Annotation Run and trigger its processing.
-        
+        Create a new Annotation Run and optionally trigger its processing.
+
         Args:
             user_id: ID of the user creating the run
             infospace_id: ID of the infospace
             run_in: AnnotationRunCreate object containing run details
-            
+            queue_task: If True (default), queue Celery task for async processing.
+                       If False, just create the run record (caller handles execution).
+
         Returns:
             The created AnnotationRun
-            
+
         Raises:
             ValueError: If validation fails (e.g., schema not found)
         """
@@ -974,9 +976,9 @@ class AnnotationService:
             db_schemas.append(schema)
 
         # Validate target assets or bundle
-        # Allow empty target_asset_ids for curation runs (they will be populated as annotations are created)
-        if run_in.target_asset_ids is None and run_in.target_bundle_id is None:
-            raise ValueError("Either target_asset_ids or target_bundle_id must be provided.")
+        # Allow empty target_asset_ids for continuous runs (source_bundle_id) or curation runs
+        if run_in.target_asset_ids is None and run_in.target_bundle_id is None and run_in.source_bundle_id is None:
+            raise ValueError("Either target_asset_ids, target_bundle_id, or source_bundle_id must be provided.")
         if run_in.target_asset_ids is not None and run_in.target_bundle_id is not None:
             raise ValueError("Provide either target_asset_ids or target_bundle_id, not both.")
 
@@ -1003,6 +1005,13 @@ class AnnotationService:
             include_parent_context=run_in.include_parent_context,
             context_window=run_in.context_window,
             views_config=run_in.views_config or [],
+            # ═══ TRIGGER TRACKING ═══
+            trigger_type=getattr(run_in, 'trigger_type', 'manual'),
+            trigger_context=getattr(run_in, 'trigger_context', None) or {},
+            pipeline_execution_id=getattr(run_in, 'pipeline_execution_id', None),
+            triggered_by_source_id=getattr(run_in, 'triggered_by_source_id', None),
+            # ═══ NEW: Continuous run support ═══
+            source_bundle_id=getattr(run_in, 'source_bundle_id', None),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )
@@ -1011,20 +1020,23 @@ class AnnotationService:
         self.session.commit()
         self.session.refresh(db_run)
 
-        # Trigger the Celery task
-        try:
-            process_annotation_run.delay(db_run.id)
-            logger.info(f"Service: Annotation task for run {db_run.id} ('{db_run.name}') queued successfully.")
-        except Exception as e_celery:
-            logger.error(f"Service: Failed to queue annotation task for run {db_run.id}: {e_celery}")
-            # Potentially mark run as failed or requiring manual trigger
-            db_run.status = RunStatus.FAILED
-            db_run.error_message = f"Failed to queue Celery task: {e_celery}"
-            self.session.add(db_run)
-            self.session.commit()
-            self.session.refresh(db_run)
-            # Re-raise or handle appropriately depending on desired behavior
-            raise ValueError(f"Failed to queue annotation task: {e_celery}") from e_celery
+        # Trigger the Celery task if requested
+        if queue_task:
+            try:
+                process_annotation_run.delay(db_run.id)
+                logger.info(f"Service: Annotation task for run {db_run.id} ('{db_run.name}') queued successfully.")
+            except Exception as e_celery:
+                logger.error(f"Service: Failed to queue annotation task for run {db_run.id}: {e_celery}")
+                # Potentially mark run as failed or requiring manual trigger
+                db_run.status = RunStatus.FAILED
+                db_run.error_message = f"Failed to queue Celery task: {e_celery}"
+                self.session.add(db_run)
+                self.session.commit()
+                self.session.refresh(db_run)
+                # Re-raise or handle appropriately depending on desired behavior
+                raise ValueError(f"Failed to queue annotation task: {e_celery}") from e_celery
+        else:
+            logger.info(f"Service: Annotation run {db_run.id} ('{db_run.name}') created without queuing task (caller handles execution).")
 
         return db_run 
 
@@ -1134,6 +1146,40 @@ class AnnotationService:
 
         return annotation
 
+    def delete_fragment(
+        self, user_id: int, infospace_id: int, asset_id: int, fragment_key: str
+    ) -> bool:
+        """
+        Deletes a fragment from an asset's curated fragments.
+        Returns True if deletion was successful, False if fragment wasn't found.
+        """
+        from sqlalchemy.orm.attributes import flag_modified
+        
+        asset = self.session.get(Asset, asset_id)
+        if not asset:
+            raise ValueError(f"Asset {asset_id} not found")
+        
+        if asset.infospace_id != infospace_id:
+            raise ValueError(f"Asset {asset_id} does not belong to infospace {infospace_id}")
+        
+        fragments = asset.fragments or {}
+        
+        if fragment_key not in fragments:
+            return False
+        
+        # Remove the fragment
+        del fragments[fragment_key]
+        asset.fragments = fragments
+        
+        # Mark as modified for SQLAlchemy
+        flag_modified(asset, "fragments")
+        
+        self.session.add(asset)
+        self.session.commit()
+        
+        logger.info(f"Deleted fragment '{fragment_key}' from asset {asset_id} by user {user_id}")
+        return True
+
     def compute_run_aggregates(self, run_id: int) -> List[RunAggregate]:
         annotations = self.session.exec(select(Annotation).where(Annotation.run_id == run_id)).all()
         field_stats: Dict[str, Dict[str, Any]] = {}
@@ -1208,46 +1254,3 @@ class AnnotationService:
 
         self.session.commit()
         return created
-
-    def update_monitor_aggregates(self, monitor_id: int, run_id: int) -> None:
-        # Merge the latest run aggregates into monitor aggregates with a simple replace/accumulate strategy
-        run_aggs = self.session.exec(select(RunAggregate).where(RunAggregate.run_id == run_id)).all()
-        existing = self.session.exec(select(MonitorAggregate).where(MonitorAggregate.monitor_id == monitor_id)).all()
-        existing_map: Dict[Tuple[str, str], MonitorAggregate] = {(m.field_path, m.sketch_kind): m for m in existing}
-
-        for ra in run_aggs:
-            key = (ra.field_path, ra.sketch_kind)
-            if key not in existing_map:
-                ma = MonitorAggregate(
-                    monitor_id=monitor_id,
-                    field_path=ra.field_path,
-                    value_kind=ra.value_kind,
-                    sketch_kind=ra.sketch_kind,
-                    payload=ra.payload,
-                )
-                self.session.add(ma)
-            else:
-                ma = existing_map[key]
-                # Naive merge rules
-                if ra.sketch_kind in ("count", "bool_counts"):
-                    for k, v in ra.payload.items():
-                        if isinstance(v, (int, float)):
-                            ma.payload[k] = ma.payload.get(k, 0) + v
-                elif ra.sketch_kind in ("number_summary",):
-                    # Replace with latest for simplicity; future: maintain windowed aggregates
-                    ma.payload = ra.payload
-                elif ra.sketch_kind in ("topk",):
-                    # Merge counters
-                    c_existing = Counter({k: v for k, v in ma.payload.get("topk", [])})
-                    c_new = Counter({k: v for k, v in ra.payload.get("topk", [])})
-                    merged = (c_existing + c_new).most_common(10)
-                    ma.payload["topk"] = merged
-                elif ra.sketch_kind in ("datetime_minmax",):
-                    # Expand min/max window
-                    ma.payload["min"] = min(ma.payload.get("min"), ra.payload.get("min")) if ma.payload.get("min") else ra.payload.get("min")
-                    ma.payload["max"] = max(ma.payload.get("max"), ra.payload.get("max")) if ma.payload.get("max") else ra.payload.get("max")
-                else:
-                    ma.payload = ra.payload
-                self.session.add(ma)
-
-        self.session.commit() 
