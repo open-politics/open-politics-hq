@@ -10,42 +10,61 @@ Open source intelligence platform for structured document analysis.
 
 ## Overview
 
-A containerized toolstack for ingesting, storing, labeling, and analyzing documents at scale. Ingest content from files, URLs, RSS feeds, and search results. Define analytical schemas in natural language. Apply them across your data using LLMs. Store results in PostgreSQL with vector search. Export structured data, visualizations, and dashboards.
+A platform to manage your data, write with sources, and analyze documents at scale. Ingest content from files, URLs, RSS feeds, and search results — set up recurring ingestion to keep your workspace updated. Annotate documents with structured labels. Run analysis across your data. Chat with your documents through a conversational interface.
 
 Self-hostable via Docker Compose or Kubernetes. Supports multiple LLM providers (Anthropic, OpenAI, Google, Ollama) or run models locally. Open source under AGPLv3.
 
-## What This Is
+<img src=".github/assets/images/asset-manager.png" alt="Asset Manager">
+<img src=".github/assets/images/annotation-schema.png" alt="Annotation Schema">
+<img src=".github/assets/images/dashboard.png" alt="Dashboard">
 
-Define analytical questions in natural language (schemas). Apply them at scale across documents. Get structured, reproducible outputs.
+## Core Idea
 
-Example schema:
+Define what you're looking for in natural language (schemas). Apply them at scale across your documents. Get structured, reproducible outputs.
 
+**Example: Analyzing news coverage**
 ```
 Primary source cited? → [government, activist, expert, anonymous]
 Emotional intensity?  → 1-5
 Which side gets final word? → string
 ```
 
-<img src=".github/assets/images/dashboard.png" alt="Table with annotation">
+**Example: Extracting invoice data**
+```
+Invoice number? → string
+Total amount? → number
+Date? → date
+Vendor name? → string
+```
+
+**Example: Sorting through old files**
+```
+Document type? → [contract, correspondence, report, other]
+Date range? → [pre-2020, 2020-2022, post-2022]
+Relevance? → [critical, important, archive]
+```
 
 Schemas are shareable and transparent — others can see exactly how you defined your framework, critique it, refine it, or apply it to their own data.
 
-<img src=".github/assets/images/annotation-schema.png" alt="Example annotation schema">
-
-Open source. Self-hostable, or bring your own LLM keys and use the hosted variant.
-
-For the full story, see the [manifest](https://docs.open-politics.org/pages/project/manifest).
-
 ## Core Concepts
 
-- **Infospaces** — project workspaces with their own vector index
-- **Assets** — your documents (PDFs, CSVs, articles, feeds)
+**Infospaces** — project workspaces that keep your data separate. Each has its own vector index for semantic search.
 
-<img src=".github/assets/images/asset-manager.png" alt="Example result">
+Within an infospace:
 
-- **Schemas** — your analytical lens, defined in natural language
-- **Annotations** — structured outputs from running schemas on assets
-- **Chat** — conversational interface to all of the above
+- **Assets** — your documents (PDFs, CSVs, articles, feeds). Composable: a PDF breaks into pages, a CSV into rows. Organize with bundles for batch analysis.
+- **Schemas** — your analytical lens, defined in natural language with strict output definitions.
+- **Analysis** — run schemas across assets to produce structured annotations.
+- **Dashboards** — explore results through tables, charts, maps. Export or share.
+- **Chat** — conversational interface to query assets, build schemas, run analysis, find similar items.
+
+```
+Infospace
+├── Assets (PDFs, CSVs, articles, feeds)
+│   └── Bundles (organize for batch analysis)
+├── Schemas (analytical questions)
+└── Analysis → Annotations → Dashboards
+```
 
 See the [overview](https://docs.open-politics.org/pages/app/overview) for details.
 
@@ -60,6 +79,7 @@ cp .env.example .env
 chmod +x prepare.sh
 ./prepare.sh # creates the .store/ geocoder directory and makes it writable
 ```
+
 Edit the .env file. Any values that are still set to `changeThis` will prevent the container from starting.
 ```bash
 FIRST_SUPERUSER=app_user
