@@ -109,6 +109,9 @@ For hosted option, Kubernetes, or hybrid setups, see the [installation guide](ht
 
 For deployment options (hosted, Kubernetes, hybrid), see the [installation guide](https://docs.open-politics.org/pages/app/installation-self-hosted) or look at the [deployment options](.deployments).
 
+## Development
+Look inside of backend/README.md and frontend/README.md for respective development guides (wip)
+
 ## Contributing
 
 We're building in the open. See the [docs](https://docs.open-politics.org/pages/project/manifest#contact--contributing) or open an issue.
