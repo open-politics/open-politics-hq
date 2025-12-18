@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Literal, Union, Set
 from dataclasses import dataclass
 
 from sqlmodel import SQLModel, Field
-from pydantic import computed_field, ConfigDict
+from pydantic import computed_field, ConfigDict, field_validator
 
 from .models import (
     AssetKind,
@@ -581,7 +581,7 @@ class AnnotationRunRead(AnnotationRunBase):
     status: RunStatus
     run_type: str = "one_off"  # one_off | flow_step
     flow_execution_id: Optional[int] = None
-    tags: List[str] = []
+    tags: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
     started_at: Optional[datetime]
@@ -591,11 +591,12 @@ class AnnotationRunRead(AnnotationRunBase):
     schema_ids: Optional[List[int]] = None
     # ═══ TRIGGER TRACKING ═══
     trigger_type: str = "manual"
-    trigger_context: Dict[str, Any] = Field(default_factory=dict)
+    trigger_context: Optional[Dict[str, Any]] = Field(default_factory=dict)
     pipeline_execution_id: Optional[int] = None
     triggered_by_source_id: Optional[int] = None
     monitor_id: Optional[int] = None
     source_bundle_id: Optional[int] = None  # NEW: For continuous runs watching a bundle
+
 
 class AnnotationRunsOut(SQLModel):
     data: List[AnnotationRunRead]
@@ -886,7 +887,7 @@ class FlowExecutionRead(SQLModel):
     input_asset_ids: List[int] = []
     output_asset_ids: List[int] = []
     step_outputs: Dict[str, Any] = {}
-    tags: List[str] = []
+    tags: Optional[List[str]] = None
     created_at: datetime
 
 
