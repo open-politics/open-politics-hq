@@ -1,6 +1,6 @@
 # Open Politics HQ
 
-Open source intelligence platform for structured document analysis.
+Open source intelligence platform for structured document analysis and management.
 
 [Docs](https://docs.open-politics.org) · [Webapp](https://open-politics.org) · [Forum](https://forum.open-politics.org)
 
@@ -10,7 +10,7 @@ Open source intelligence platform for structured document analysis.
 
 ## Overview
 
-A platform to manage your data, write with sources, and analyze documents at scale. Ingest content from files, URLs, RSS feeds, and search results — set up recurring ingestion to keep your workspace updated. Annotate documents with structured labels. Run analysis across your data. Chat with your documents through a conversational interface.
+A platform to manage your data, write with sources, and analyse documents at scale. Ingest content from files, URLs, RSS feeds, and search results — set up recurring ingestion to keep your workspace updated. Annotate documents with structured labels. Run analysis across your data. Chat with your documents through a conversational interface.
 
 Self-hostable via Docker Compose or Kubernetes. Supports multiple LLM providers (Anthropic, OpenAI, Google, Ollama) or run models locally. Open source under AGPLv3.
 
@@ -52,7 +52,7 @@ Schemas are shareable and transparent — others can see exactly how you defined
 
 Within an infospace:
 
-- **Assets** — your documents (PDFs, CSVs, articles, feeds). Composable: a PDF breaks into pages, a CSV into rows. Organize with bundles for batch analysis.
+- **Assets** — your documents (PDFs, CSVs, articles, feeds). Composable: a PDF breaks into pages, a CSV into rows. Organise with bundles for batch analysis.
 - **Schemas** — your analytical lens, defined in natural language with strict output definitions.
 - **Analysis** — run schemas across assets to produce structured annotations.
 - **Dashboards** — explore results through tables, charts, maps. Export or share.
@@ -61,7 +61,7 @@ Within an infospace:
 ```
 Infospace
 ├── Assets (PDFs, CSVs, articles, feeds)
-│   └── Bundles (organize for batch analysis)
+├── Bundles (folders for organization)
 ├── Schemas (analytical questions)
 └── Analysis → Annotations → Dashboards
 ```
