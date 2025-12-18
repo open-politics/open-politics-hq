@@ -23,8 +23,8 @@ const Footer = () => {
             <h3 className="text-lg font-semibold mb-4">Quick Links</h3>
             <ul className="space-y-2">
               <li><Link href="/webpages/about" className="text-sm hover:underline">About Us</Link></li>
-              <li><Link href="https://docs.open-politics.org/" className="text-sm hover:underline">User Guide</Link></li>
-              <li><Link href="https://docs.open-politics.org/development" className="text-sm hover:underline">Documentation</Link></li>
+              <li><Link href="https://docs.open-politics.org/pages/app/overview/" className="text-sm hover:underline">User Guide</Link></li>
+              <li><Link href="https://docs.open-politics.org/pages/app/overview/development" className="text-sm hover:underline">Documentation</Link></li>
               <li><Link href="https://github.com/JimVincentW/open-politics" className="text-sm hover:underline">GitHub</Link></li>
             </ul>
           </div>

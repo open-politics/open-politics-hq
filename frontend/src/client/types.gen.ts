@@ -149,7 +149,7 @@ export type AnnotationRunRead = {
     status: RunStatus;
     run_type?: string;
     flow_execution_id?: (number | null);
-    tags?: Array<string>;
+    tags?: (Array<string> | null);
     created_at: string;
     updated_at: string;
     started_at: (string | null);
@@ -158,9 +158,9 @@ export type AnnotationRunRead = {
     annotation_count?: (number | null);
     schema_ids?: (Array<number> | null);
     trigger_type?: string;
-    trigger_context?: {
-        [key: string]: unknown;
-    };
+    trigger_context?: ({
+    [key: string]: unknown;
+} | null);
     pipeline_execution_id?: (number | null);
     triggered_by_source_id?: (number | null);
     monitor_id?: (number | null);
@@ -1034,7 +1034,7 @@ export type FlowExecutionRead = {
     step_outputs?: {
         [key: string]: unknown;
     };
-    tags?: Array<string>;
+    tags?: (Array<string> | null);
     created_at: string;
 };
 

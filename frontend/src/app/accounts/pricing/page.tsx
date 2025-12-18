@@ -307,13 +307,13 @@ export default function PricingPage() {
                   <div className="relative h-full">
                     <div className="absolute inset-0 -z-10 rounded-md overflow-hidden">
                       <GradientFlow
-                        duration={15}
-                        colors={['#7AEFFF', '#7CFF7A', '#FEEC90']}
+                        duration={20}
+                        colors={['#B8F0F7', '#C5F7C4', '#FEF5D0']}
                         fullWidth
                         radialOverlay
-                        blurAmount="5px"
+                        blurAmount="20px"
                       >
-                        <div className="w-full h-full after:content-[''] after:absolute after:inset-0 after:bg-[url('/noise.png')] after:opacity-20 after:mix-blend-overlay" />
+                        <div className="w-full h-full after:content-[''] after:absolute after:inset-0 after:bg-[url('/noise.png')] after:opacity-10 after:mix-blend-overlay" />
                       </GradientFlow>
                     </div>
                     <div className="absolute -inset-4 pointer-events-none z-10">
@@ -322,11 +322,11 @@ export default function PricingPage() {
                       <FloatingSparkle className="absolute bottom-0 left-1/4" style={{ animationDelay: '0.1s' }}>✨</FloatingSparkle>
                     </div>
                     <GlowingCard
-                      background="linear-gradient(135deg, #7AEFFF, #7CFF7A, #FEEC90)"
-                      darkBackground="linear-gradient(135deg, rgba(122, 239, 255, 0.2), rgba(124, 255, 122, 0.2), rgba(254, 236, 144, 0.2))"
-                      glowIntensity={0.2}
-                      glowSize={80}
-                      glowColor="122, 239, 255"
+                      background="linear-gradient(135deg, #B8F0F7, #C5F7C4, #FEF5D0)"
+                      darkBackground="linear-gradient(135deg, rgba(184, 240, 247, 0.1), rgba(197, 247, 196, 0.1), rgba(254, 245, 208, 0.1))"
+                      glowIntensity={0.1}
+                      glowSize={60}
+                      glowColor="184, 240, 247"
                     >
                       <Card className="h-full">
                         <div className="flex flex-col h-full">
@@ -421,13 +421,13 @@ export default function PricingPage() {
                   <div className="relative h-full">
                     <div className="absolute inset-0 -z-10 rounded-md overflow-hidden">
                       <GradientFlow
-                        duration={15}
-                        colors={['#E478FF', '#FFC978', '#FEEC90']}
+                        duration={20}
+                        colors={['#ECC5FF', '#FFE5C4', '#FEF5D0']}
                         fullWidth
                         radialOverlay
-                        blurAmount="15px"
+                        blurAmount="20px"
                       >
-                        <div className="w-full h-full after:content-[''] after:absolute after:inset-0 after:bg-[url('/noise.png')] after:opacity-20 after:mix-blend-overlay" />
+                        <div className="w-full h-full after:content-[''] after:absolute after:inset-0 after:bg-[url('/noise.png')] after:opacity-10 after:mix-blend-overlay" />
                       </GradientFlow>
                     </div>
                     <div className="absolute -inset-4 pointer-events-none z-10">
@@ -436,11 +436,11 @@ export default function PricingPage() {
                       <FloatingSparkle className="absolute bottom-0 left-0" style={{ animationDelay: '0.8s' }}>✨</FloatingSparkle>
                     </div>
                     <GlowingCard
-                      background="linear-gradient(225deg, #E478FF, #FFC978, #FEEC90)"
-                      darkBackground="linear-gradient(225deg, rgba(228, 120, 255, 0.2), rgba(255, 201, 120, 0.2), rgba(254, 236, 144, 0.2))"
-                      glowIntensity={0.2}
-                      glowSize={80}
-                      glowColor="228, 120, 255"
+                      background="linear-gradient(225deg, #ECC5FF, #FFE5C4, #FEF5D0)"
+                      darkBackground="linear-gradient(225deg, rgba(236, 197, 255, 0.1), rgba(255, 229, 196, 0.1), rgba(254, 245, 208, 0.1))"
+                      glowIntensity={0.1}
+                      glowSize={60}
+                      glowColor="236, 197, 255"
                     >
                       <Card className="h-full">
                         <div className="flex flex-col h-full">
@@ -535,7 +535,7 @@ export default function PricingPage() {
             size="lg"
             className=""
           >
-            <a href="https://docs.open-politics.org/pages/project/manifest">
+            <a href="https://docs.open-politics.org/pages/app/overview/pages/project/manifest">
             Learn More About Our Mission
             </a>
           </Button>

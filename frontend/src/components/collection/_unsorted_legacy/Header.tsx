@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { FaGithub } from "react-icons/fa6";
+import { GithubIcon } from "lucide-react";
 import { Menu, X, ChevronRight, Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
@@ -81,7 +81,7 @@ const Header = () => {
                   
                   <NavigationMenuItem>
                     <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
-                      <Link href="https://docs.open-politics.org">Documentation</Link>
+                      <Link href="https://docs.open-politics.org/pages/app/overview">Documentation</Link>
                     </NavigationMenuLink>
                   </NavigationMenuItem>
 
@@ -113,37 +113,16 @@ const Header = () => {
                     </NavigationMenuContent>
                   </NavigationMenuItem>
 
-                  <NavigationMenuItem>
-                    <NavigationMenuTrigger>
-                      <FaGithub className="h-4 w-4" />
-                    </NavigationMenuTrigger>
-                    <NavigationMenuContent>
-                      <div className="w-52 p-2">
-                        <NavigationMenuLink asChild>
-                          <a 
-                            href="https://github.com/open-politics/open-politics" 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                          >
-                            <Code className="h-4 w-4 shrink-0" />
-                            <span>Webapp (HQ)</span>
-                          </a>
-                        </NavigationMenuLink>
-                        <NavigationMenuLink asChild>
-                          <a 
-                            href="https://github.com/open-politics/opol" 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                          >
-                            <Database className="h-4 w-4 shrink-0" />
-                            <span>Data Engine (OPOL)</span>
-                          </a>
-                        </NavigationMenuLink>
-                      </div>
-                    </NavigationMenuContent>
-                  </NavigationMenuItem>
+                  <NavigationMenuLink asChild>
+                      <a 
+                        href="https://github.com/open-politics/open-politics" 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <GithubIcon className="h-4 w-4 shrink-0" />
+                      </a>
+                  </NavigationMenuLink>
 
                   {/* Auth Navigation */}
                   {isLoggedIn && !isLoggingOut ? (
@@ -216,7 +195,7 @@ const Header = () => {
                       </SidebarMenuItem>
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild>
-                          <Link href="https://docs.open-politics.org">Documentation</Link>
+                          <Link href="https://docs.open-politics.org/pages/app/overview">Documentation</Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
 
@@ -244,22 +223,12 @@ const Header = () => {
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild>
                           <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-                            <Code className="h-4 w-4 shrink-0" />
-                            <span>GitHub (HQ)</span>
-                          </a>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                      <SidebarMenuItem>
-                        <SidebarMenuButton asChild>
-                          <a href="https://github.com/open-politics/opol" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-                            <Database className="h-4 w-4 shrink-0" />
-                            <span>GitHub (OPOL)</span>
+                            <GithubIcon className="h-4 w-4 shrink-0" />
                           </a>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
 
                       <div className="my-3 border-t border-border/50"></div>
-
                       {isLoggedIn && !isLoggingOut ? (
                         <SidebarMenuItem>
                           <SidebarMenuButton asChild>

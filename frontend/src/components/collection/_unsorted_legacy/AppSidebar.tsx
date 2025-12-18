@@ -87,7 +87,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     },
     {
       title: "Documentation",
-      url: "https://docs.open-politics.org",
+      url: "https://docs.open-politics.org/pages/app/overview",
       icon: BookOpen,
     },
     {
@@ -118,14 +118,14 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       colorClass: "sidebar-blue",
       description: "One-off annotation runs",
     },
-    {
-      title: "Flows",
-      url: "/hq/infospaces/flows",
-      icon: Workflow,
-      isActive: true,
-      colorClass: "sidebar-orange",
-      description: "Automated processing pipelines",
-    },
+    // {
+    //   title: "Flows",
+    //   url: "/hq/infospaces/flows",
+    //   icon: Workflow,
+    //   isActive: true,
+    //   colorClass: "sidebar-orange",
+    //   description: "Automated processing pipelines",
+    // },
   ], [])
 
   const storesNav = React.useMemo(() => [
