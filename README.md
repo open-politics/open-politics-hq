@@ -117,8 +117,8 @@ Look inside of backend/README.md and frontend/README.md for respective developme
 We're building in the open. See the [docs](https://docs.open-politics.org/pages/project/manifest#contact--contributing) or open an issue.
 
 ## License
-
-AGPLv3 — see [LICENSE](LICENSE)
+AGPLv3 - see [LICENSE](LICENSE) \
+Use, modify, distribute freely. Services built on it must also be open source. Enterprise licenses available for private modifications under strict ethical guidelines.
 
 ## Contact
 
