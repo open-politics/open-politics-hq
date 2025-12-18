@@ -93,7 +93,7 @@ Each Information Space is a dedicated vector space. Use vector embeddings from l
 ## Links
 
 - **[Webapp](https://open-politics.org)** — hosted instance (public registration opening soon)
-- **[Documentation](https://docs.open-politics.org)** — user guides and tutorials
+- **[Documentation](https://docs.open-politics.org/pages/app/overview)** — user guides and tutorials
 - **[Forum](https://forum.open-politics.org)** — community discussions
 
 ## Getting Started
