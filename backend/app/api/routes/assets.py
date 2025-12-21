@@ -495,6 +495,110 @@ async def ingest_search_results(
             detail=f"Bulk search results ingestion failed: {str(e)}"
         )
 
+@router.post("/{asset_id}/materialize-csv", response_model=AssetRead)
+async def materialize_csv_from_rows(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    infospace_id: int,
+    asset_id: int,
+    storage_provider: StorageProviderDep,
+) -> Any:
+    """
+    Materialize a chat-generated CSV container into a real CSV file.
+    
+    Generates a CSV file from the row assets and uploads it to storage,
+    then updates the parent asset with the blob_path.
+    """
+    # Validate infospace access
+    validate_infospace_access(session, infospace_id, current_user.id)
+    
+    # Get the CSV container asset
+    asset = session.get(Asset, asset_id)
+    if not asset or asset.infospace_id != infospace_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Asset {asset_id} not found"
+        )
+    
+    if asset.kind != AssetKind.CSV:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Asset is not a CSV container (kind: {asset.kind.value})"
+        )
+    
+    # Get columns from metadata
+    columns = asset.source_metadata.get("columns", [])
+    if not columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CSV container has no column schema defined"
+        )
+    
+    # Get all child rows ordered by part_index
+    child_rows = session.exec(
+        select(Asset)
+        .where(Asset.parent_asset_id == asset_id)
+        .where(Asset.kind == AssetKind.CSV_ROW)
+        .order_by(Asset.part_index)
+    ).all()
+    
+    if len(child_rows) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CSV container has no rows to materialize"
+        )
+    
+    # Generate CSV content
+    import csv
+    from io import StringIO
+    
+    csv_buffer = StringIO()
+    writer = csv.DictWriter(csv_buffer, fieldnames=columns)
+    writer.writeheader()
+    
+    for row_asset in child_rows:
+        row_data = row_asset.source_metadata.get("original_row_data", {})
+        # Ensure all columns are present
+        row_dict = {col: row_data.get(col, "") for col in columns}
+        writer.writerow(row_dict)
+    
+    csv_content = csv_buffer.getvalue()
+    csv_buffer.close()
+    
+    # Upload to blob storage
+    filename = f"{asset.title.replace(' ', '_')}.csv"
+    csv_bytes = csv_content.encode('utf-8')
+    
+    # Generate object name (storage path)
+    import uuid
+    object_name = f"infospaces/{infospace_id}/csv_materialized/{uuid.uuid4().hex[:10]}_{filename}"
+    
+    await storage_provider.upload_from_bytes(
+        file_bytes=csv_bytes,
+        object_name=object_name,
+        filename=filename,
+        content_type='text/csv'
+    )
+    
+    blob_path = object_name
+    
+    # Update the asset with the blob_path
+    asset.blob_path = blob_path
+    if asset.source_metadata is None:
+        asset.source_metadata = {}
+    asset.source_metadata['materialized_at'] = datetime.now(timezone.utc).isoformat()
+    asset.source_metadata['materialized_row_count'] = len(child_rows)
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    
+    logger.info(f"Materialized CSV {asset_id}: {len(child_rows)} rows -> {blob_path}")
+    
+    return asset
+
+
+
 @router.post("/{asset_id}/reprocess", response_model=Message)
 async def reprocess_asset(
     *,

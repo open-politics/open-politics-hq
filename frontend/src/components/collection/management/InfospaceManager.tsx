@@ -9,7 +9,7 @@ import EditInfospaceOverlay from '@/components/collection/management/EditInfospa
 import EmbeddingManager from '@/components/collection/management/EmbeddingManager';
 import { InfospaceRowData } from '@/components/collection/tables/columns';
 import InfospacesPage from '@/components/collection/tables/page';
-import { PlusCircle, Upload, Trash2, Loader2, Archive, History, Download } from 'lucide-react';
+import { PlusCircle, Upload, Trash2, Loader2, Archive, History, Download, Database } from 'lucide-react';
 import { InfospaceRead, InfospaceBackupRead, InfospaceBackupCreate } from '@/client';
 import { BackupsService } from '@/client';
 import { toast } from 'sonner';
@@ -41,6 +41,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group';
 import { formatDistanceToNowStrict, format } from 'date-fns';
 
 interface InfospaceManagerProps {
@@ -73,7 +74,13 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
     deleteInfospace,
     isLoading,
     infospaces,
+    setActiveInfospace,
   } = useInfospaceStore();
+  
+  // Auto-select first infospace if none is active
+  if (!activeInfospace && infospaces.length > 0) {
+    setActiveInfospace(infospaces[0].id);
+  }
   
   // Easter egg: Globe toggle
   const { preferences, togglePreference } = useUserPreferencesStore();
@@ -401,10 +408,28 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
 
   return (
     <div className="space-y-4 w-full">
-      <div className="flex justify-between items-center">
+
+      {/* Show content if we have infospaces, or empty state if not */}
+      {infospaces.length > 0 ? (
+        activeInfospace && (
+          <>
+            {/* Infospaces Table - No Card wrapper */}
+            <div className="p-4 ">
+              <InfospacesPage 
+                onEdit={handleEdit}
+                enableRowSelection={true}
+                rowSelection={rowSelection}
+                onRowSelectionChange={setRowSelection}
+              />
+            </div>
+            {/* Embedding Manager */}
+
+
+            {/* Unified Toolbar */}
+      <div className="flex flex-col sm:flex-row flex-wrap items-start px-4 md:px-3 sm:items-center justify-between gap-3 px-2 mt-2 md:mt-2 w-full">
         {/* Bulk Actions - shown when items are selected */}
-        {selectedCount > 0 && (
-          <div className="flex items-center gap-2">
+        {selectedCount > 0 ? (
+          <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground">
               {selectedCount} infospace{selectedCount > 1 ? 's' : ''} selected
             </span>
@@ -422,76 +447,159 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
               Delete Selected
             </Button>
           </div>
-        )}
+        ) : (
+          <>
+            {/* Primary Actions */}
+            <div className="w-full sm:w-auto">
+              <Button onClick={handleOpenCreateOverlay} size="sm" disabled={isBulkDeleting} className="w-full sm:w-auto">
+                <PlusCircle className="mr-2 h-4 w-4" /> New Infospace
+              </Button>
+            </div>
 
-        {/* Regular Actions */}
-        <div className="flex gap-2">
-          <Button onClick={handleImportButtonClick} variant="outline" disabled={isLoading || isBulkDeleting}>
-            <Upload className="mr-2 h-4 w-4" /> {isLoading ? 'Importing...' : 'Import Infospace'}
-          </Button>
-          <Button onClick={handleOpenCreateOverlay} disabled={isBulkDeleting}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Create New Infospace
-          </Button>
-          <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleFileImport} 
-              className="hidden" 
-              accept=".zip,.json"
-          />
-        </div>
+            {/* Backup Actions - only shown when active infospace exists and no selection */}
+            {activeInfospace && (
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-0 w-full sm:w-auto">
+                {/* Desktop: ButtonGroup, Mobile: Individual buttons with spacing */}
+                <div className="hidden sm:block">
+                  <ButtonGroup className="">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleBackupInfospace(activeInfospace)}
+                            disabled={isBulkDeleting}
+                          >
+                            <Archive className="h-4 w-4 mr-2" />
+                            Create Backup
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Create a backup of the current infospace</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleViewBackups(activeInfospace)}
+                            disabled={isBulkDeleting}
+                          >
+                            <History className="h-4 w-4 mr-2" />
+                            View Backups
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>View and restore backups</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <Button onClick={handleImportButtonClick} size="sm" variant="outline" disabled={isLoading || isBulkDeleting}>
+                      <Download className="mr-2 h-4 w-4" /> Import Infospace
+                    </Button>
+                  </ButtonGroup>
+                </div>
+                
+                {/* Mobile: Individual buttons stacked */}
+                <div className="grid grid-cols-2 gap-2 w-full sm:hidden">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleBackupInfospace(activeInfospace)}
+                          disabled={isBulkDeleting}
+                          className="w-full justify-start"
+                        >
+                          <Archive className="h-4 w-4 mr-2" />
+                          Create Backup
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Create a backup of the current infospace</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                          <Button 
+                          onClick={handleImportButtonClick} 
+                          size="sm" 
+                          variant="outline" 
+                          disabled={isLoading || isBulkDeleting}
+                          className="w-full justify-start"
+                        >
+                          <Download className="mr-2 h-4 w-4" /> Import Infospace
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>View and restore backups</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleViewBackups(activeInfospace)}
+                      disabled={isBulkDeleting}
+                      className="w-full justify-start"
+                    >
+                    <History className="h-4 w-4 mr-2" />
+                    View Backups
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          onChange={handleFileImport} 
+          className="hidden" 
+          accept=".zip,.json"
+        />
       </div>
 
-      <Card className="p-0">
-        <InfospacesPage 
-          onEdit={handleEdit}
-          enableRowSelection={true}
-          rowSelection={rowSelection}
-          onRowSelectionChange={setRowSelection}
-        />
-      </Card>
 
-      {/* Quick Actions for Active Infospace */}
-      {activeInfospace && (
-        <>
-          <Card className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium">Quick Actions for "{activeInfospace.name}"</h3>
-                
-                <p className="text-sm text-muted-foreground">Manage backups for your active infospace</p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => handleBackupInfospace(activeInfospace)}
-                  disabled={isBulkDeleting}
-                >
-                  <Archive className="mr-2 h-4 w-4" />
-                  Create Backup
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => handleViewBackups(activeInfospace)}
-                  disabled={isBulkDeleting}
-                >
-                  <History className="mr-2 h-4 w-4" />
-                  View Backups
-                </Button>
-              </div>
+            <div className="p-4">
+              <EmbeddingManager 
+                infospace={activeInfospace}
+                onInfospaceUpdate={(updated) => {
+                  useInfospaceStore.getState().fetchInfospaceById(updated.id);
+                }}
+              />
             </div>
-          </Card>
-
-          {/* Embedding Manager */}
-          <EmbeddingManager 
-            infospace={activeInfospace}
-            onInfospaceUpdate={(updated) => {
-              // Refresh the infospace from the server to get updated data
-              useInfospaceStore.getState().fetchInfospaceById(updated.id);
-            }}
-          />
-        </>
+          </>
+        )
+      ) : (
+        !isLoading && (
+          <div className="flex p-4 md:p-2 flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/30">
+            <Database className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No Infospaces Yet</h3>
+            <p className="text-sm text-muted-foreground mb-4 max-w-md">
+              Get started by creating your first infospace or importing an existing one.
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={handleOpenCreateOverlay}>
+                <PlusCircle className="mr-2 h-4 w-4" /> Create Infospace
+              </Button>
+              <Button onClick={handleImportButtonClick} variant="outline">
+                <Upload className="mr-2 h-4 w-4" /> Import
+              </Button>
+            </div>
+          </div>
+        )
       )}
+
+      
 
       {/* Create Backup Dialog */}
       <Dialog open={isBackupDialogOpen} onOpenChange={setIsBackupDialogOpen}>

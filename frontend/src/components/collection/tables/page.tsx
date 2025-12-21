@@ -64,9 +64,7 @@ export default function InfospacesPage({
   });
 
   return (
-    <div className="h-full p-4">
-      <div className="flex justify-center items-center">
-      </div>
+    <div className="p-4 md:p-2">  
       <DataTable
         columns={tableColumns}
         data={infospaces as unknown as InfospaceRowData[]}
@@ -74,6 +72,6 @@ export default function InfospacesPage({
         rowSelection={rowSelection}
         onRowSelectionChange={onRowSelectionChange}
         />
-    </div>
+      </div>
   );
 } 

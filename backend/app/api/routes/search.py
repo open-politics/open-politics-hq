@@ -159,9 +159,6 @@ async def search_and_ingest(
                 detail=str(e)
             )
         
-        # Initialize the content ingestion service with the custom search provider
-        content_ingestion_service = ContentIngestionService(session=db, search_provider=search_provider)
-        
         # Configure search options
         search_options = {
             'limit': request.limit,
@@ -195,74 +192,117 @@ async def search_and_ingest(
                 search_options['provider_params']['country'] = request.country
         
         if request.create_assets:
-            # Use the unified search and ingest method
-            assets = await content_ingestion_service.search_and_ingest(
+            # Use SearchHandler to create assets from search results
+            from app.api.handlers import SearchHandler
+            from app.schemas import SearchResult
+            
+            # First, perform the search using the provider directly
+            provider_params = search_options.get('provider_params', {})
+            raw_results = await search_provider.search(
+                query=request.query,
+                limit=request.limit,
+                **provider_params
+            )
+            
+            logger.info(f"Search provider returned {len(raw_results)} results")
+            
+            # Convert dict results to SearchResult objects
+            search_results = []
+            for result_dict in raw_results:
+                search_result = SearchResult(
+                    title=result_dict.get("title", ""),
+                    url=result_dict.get("url", ""),
+                    content=result_dict.get("content", ""),
+                    score=result_dict.get("score"),
+                    provider=request.provider,
+                    raw_data=result_dict.get("raw", result_dict)  # Use 'raw' if present, else entire dict
+                )
+                search_results.append(search_result)
+            
+            # Then create assets from the results
+            handler = SearchHandler(db)
+            assets = await handler.handle_bulk(
+                results=search_results,
                 query=request.query,
                 infospace_id=request.infospace_id,
                 user_id=current_user.id,
-                search_method="text",  # Using text search for external providers
-                limit=request.limit,
-                bundle_id=request.bundle_id,
                 options=search_options
             )
+            
+            # Add to bundle if specified
+            if request.bundle_id and assets:
+                # Only add top-level assets (not children)
+                asset_ids = [asset.id for asset in assets if asset.parent_asset_id is None]
+                
+                if asset_ids:
+                    from app.models import Bundle, Asset
+                    bundle = db.get(Bundle, request.bundle_id)
+                    if bundle:
+                        for asset_id in asset_ids:
+                            asset = db.get(Asset, asset_id)
+                            if asset:
+                                asset.bundle_id = request.bundle_id
+                                db.add(asset)
+                        
+                        bundle.asset_count = (bundle.asset_count or 0) + len(asset_ids)
+                        db.add(bundle)
+                        db.commit()
+                        logger.info(f"Added {len(asset_ids)} assets to bundle {request.bundle_id}")
             
             logger.info(f"Created {len(assets)} assets from search query '{request.query}'")
             
             return SearchAndIngestResponse(
                 query=request.query,
                 provider=request.provider,
-                results_found=len(assets),
+                results_found=len(raw_results),
                 assets_created=len(assets),
                 asset_ids=[asset.id for asset in assets],
                 status="success",
                 message=f"Successfully created {len(assets)} assets from search query '{request.query}'"
             )
         else:
-            # Just search without creating assets
-            search_results = await content_ingestion_service._search_with_provider(
+            # Just search without creating assets - use the provider directly
+            provider_params = search_options.get('provider_params', {})
+            raw_results = await search_provider.search(
                 query=request.query,
                 limit=request.limit,
-                options=search_options
+                **provider_params
             )
             
-            # Convert SearchResult objects to dictionaries, preserving all rich data
+            # Results are already dictionaries from the provider, just format them
             results_data = []
-            for result in search_results:
+            for result in raw_results:
                 result_dict = {
-                    "title": result.title,
-                    "url": result.url,
-                    "content": result.content,
-                    "score": result.score,
-                    "raw": result.raw_data
+                    "title": result.get("title", ""),
+                    "url": result.get("url", ""),
+                    "content": result.get("content", ""),
+                    "score": result.get("score"),
+                    "raw": result.get("raw", result)
                 }
                 
-                # Extract additional fields from raw_data if available
-                if result.raw_data:
-                    # Add raw_content if available (full article text)
-                    if "raw_content" in result.raw_data:
-                        result_dict["raw_content"] = result.raw_data["raw_content"]
-                    
-                    # Add favicon if available
-                    if "favicon" in result.raw_data:
-                        result_dict["favicon"] = result.raw_data["favicon"]
-                    
-                    # Add published_date if available
-                    if "published_date" in result.raw_data:
-                        result_dict["published_date"] = result.raw_data["published_date"]
+                # Extract additional fields if available
+                if "raw_content" in result:
+                    result_dict["raw_content"] = result["raw_content"]
+                
+                if "favicon" in result:
+                    result_dict["favicon"] = result["favicon"]
+                
+                if "published_date" in result:
+                    result_dict["published_date"] = result["published_date"]
                 
                 results_data.append(result_dict)
             
-            logger.info(f"Found {len(search_results)} search results for query '{request.query}'")
+            logger.info(f"Found {len(raw_results)} search results for query '{request.query}'")
             
             return SearchAndIngestResponse(
                 query=request.query,
                 provider=request.provider,
-                results_found=len(search_results),
+                results_found=len(raw_results),
                 results=results_data,
                 assets_created=0,
                 asset_ids=[],
                 status="success",
-                message=f"Found {len(search_results)} search results for query '{request.query}'"
+                message=f"Found {len(raw_results)} search results for query '{request.query}'"
             )
         
     except Exception as e:
@@ -365,6 +405,10 @@ async def create_assets_from_results(
         
         query = request.search_metadata.get('query', 'Search Results') if request.search_metadata else 'Search Results'
         
+        # Use SearchHandler to create assets from search results
+        from app.api.handlers import SearchHandler
+        handler = SearchHandler(db)
+        
         # Process each search result
         for i, result_data in enumerate(request.search_results):
             try:
@@ -379,9 +423,14 @@ async def create_assets_from_results(
                     raw_data=result_data.get("raw", {})
                 )
                 
-                # Create asset directly from search result data
-                asset = await content_ingestion_service._create_asset_from_search_result(
-                    search_result, query, request.infospace_id, current_user.id, i
+                # Create asset using SearchHandler
+                asset = await handler.handle(
+                    result=search_result,
+                    query=query,
+                    infospace_id=request.infospace_id,
+                    user_id=current_user.id,
+                    rank=i,
+                    options={}
                 )
                 created_assets.append(asset)
                 

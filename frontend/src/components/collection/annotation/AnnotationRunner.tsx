@@ -430,7 +430,7 @@ export default function AnnotationRunner({
               <div className="flex items-center gap-1">
                 <span
                     id="run-name-editable"
-                    className={`font-medium text-base px-1 truncate ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
+                    className={`font-medium text-base px-1 truncate max-w-[40vw] ${isEditingName ? 'outline outline-1 outline-primary bg-background' : 'hover:bg-muted/50 cursor-text'}`}
                     contentEditable={isEditingName ? 'true' : 'false'}
                     suppressContentEditableWarning={true}
                     onBlur={(e) => handleUpdate('name', e.currentTarget.innerText)}
@@ -471,7 +471,7 @@ export default function AnnotationRunner({
                     </Tooltip>
                 </TooltipProvider>
               </div>
-              <div className="fixed top-0 right-0 md:relative mt-2 flex items-center gap-2 flex-wrap">
+              <div className="fixed right-0 md:relative mt-24 flex items-center gap-2 flex-wrap">
                 {activeRun?.status !== 'completed' && (
                   <Badge variant="ghost" className="capitalize">
                     {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}

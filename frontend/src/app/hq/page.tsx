@@ -23,8 +23,37 @@ function DesksPage() {
   };
 
   return (
-    <div className="p-6 max-h-full rounded-lg overflow-y-auto">
-      
+    <div className="h-full p-6 flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
+      {/* Compact Infospace Indicator - Top Right */}
+      <div className="flex justify-end mb-2">
+        <Card className="bg-gray-50/40 dark:bg-gray-900/20 border-gray-200 dark:border-gray-700 w-auto max-w-xs">
+          <CardHeader className="p-1">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1 rounded bg-gray-500/15 dark:bg-gray-500/20">
+                  <Database className="w-3.5 h-3.5 text-gray-700 dark:text-gray-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">
+                    {activeInfospace?.name || 'No active infospace'}
+                  </div>
+                  {activeInfospace?.embedding_model && (
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Sparkles className="w-3 h-3" />
+                      <span>Embeddings active</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <Link href="/hq/infospaces/infospace-manager">
+                <Button variant="ghost" size="sm" className="h-7 px-2">
+                  <Settings className="w-3.5 h-3.5" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+        </Card>
+      </div>
 
       {/* Tools Section */}
       <div className="mb-6">
@@ -118,111 +147,32 @@ function DesksPage() {
         </div>
       </div>
 
-      {/* Infospace & Settings Section */}
+      {/* Provider Configuration Section - Full Width */}
       <div>
-        <h2 className="text-lg font-medium mb-4 text-gray-700 dark:text-gray-300">Infospace & Settings</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* AI Provider Configuration Card */}
-          <div className="group">
-            <Card className="bg-gray-50/40 dark:bg-gray-900/20 group-hover:shadow-sm group-hover:border-gray-400 dark:group-hover:border-gray-600 transition-all duration-200">
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-gray-500/15 dark:bg-gray-500/20 text-gray-700 dark:text-gray-400">
-                    <Settings className="w-4 h-4" />
-                  </div>
-                  <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
-                    Provider Configuration
-                  </CardTitle>
-                </div>
+        <h2 className="text-lg font-medium mb-4 text-gray-700 dark:text-gray-300">Foundation Services & Provider Configuration</h2>
+        <Card className="bg-gray-50/40 dark:bg-gray-900/20 border-gray-300 dark:border-gray-700">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-3">
+              <div className="p-1.5 rounded-md bg-gray-500/15 dark:bg-gray-500/20 text-gray-700 dark:text-gray-400">
+                <Settings className="w-4 h-4" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
+                  Manage AI, Search, Embedding, and Geocoding Providers
+                </CardTitle>
                 <CardDescription className="text-sm text-gray-600 dark:text-gray-400">
-                  Manage AI, search, embedding, and geocoding providers
+                  Configure your AI models and service providers
                 </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0 space-y-4">
-                <ProviderHub />
-                <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                  <ModelManager showModels={true} showProviderSelector={false} />
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="group">
-            <Card className="bg-gray-50/40 dark:bg-gray-900/20 group-hover:shadow-sm group-hover:border-gray-400 dark:group-hover:border-gray-600 transition-all duration-200">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-1.5 rounded-md bg-gray-500/15 dark:bg-gray-500/20 text-gray-700 dark:text-gray-400">
-                      <Database className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
-                        Infospaces
-                      </CardTitle>
-                      <CardDescription className="text-sm text-gray-600 dark:text-blue-200">
-                        {activeInfospace ? `Active: ${activeInfospace.name}` : 'No active infospace'}
-                      </CardDescription>
-                    </div>
-                  </div>
-                  <Link href="/hq/infospaces/infospace-manager">
-                    <Button variant="outline" size="sm">
-                      <Settings className="w-4 h-4 mr-1" />
-                      Manage
-                    </Button>
-                  </Link>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="space-y-3">
-                  {/* Infospace List */}
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {infospaces.slice(0, 3).map((infospace) => (
-                      <div 
-                        key={infospace.id}
-                        className={`group flex items-center justify-between p-2 rounded text-sm transition-colors ${
-                          infospace.id === activeInfospace?.id 
-                            ? 'bg-gray-50/20 dark:bg-gray-800/30 border border-gray-200 dark:border-gray-600' 
-                            : ''
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${infospace.id === activeInfospace?.id ? 'bg-gray-600 dark:bg-gray-400' : 'bg-gray-400 dark:bg-gray-500'}`}></div>
-                          <span className="truncate">{infospace.name}</span>
-                          {infospace.embedding_model && (
-                            <div title="This infospace has created embeddings for its content">
-                              <Sparkles className="w-3 h-3 text-muted-foreground" />
-                            </div>
-                          )}
-                        </div>
-                        {infospace.id === activeInfospace?.id ? (
-                          ""
-                        ) : (
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-6 px-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSwitchInfospace(infospace.id);
-                            }}
-                          >
-                            Switch
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                    {infospaces.length > 3 && (
-                      <div className="text-xs text-muted-foreground text-center py-1">
-                        +{infospaces.length - 3} more infospaces
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-        </div>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-4">
+            <ProviderHub />
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <ModelManager showModels={true} showProviderSelector={false} />
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

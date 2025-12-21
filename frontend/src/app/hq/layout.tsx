@@ -22,8 +22,6 @@ import BundleDetailView from "@/components/collection/assets/Views/BundleDetailV
 import { TextSpanHighlightProvider } from "@/components/collection/contexts/TextSpanHighlightContext"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
 import { useEffect, useState, useRef } from 'react';
-import createGlobe from "cobe";
-import { useTheme } from "next-themes"; 
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 
@@ -171,7 +169,7 @@ function MainContentWithInspector({
       <>
         <main 
           ref={mainContentRef}
-          className="flex-1 h-full overflow-y-auto relative z-10 focus:outline-none @container" 
+          className="flex-1 h-full relative z-10 focus:outline-none @container" 
           tabIndex={-1}
         >
           {children}
@@ -221,15 +219,13 @@ function MainContentWithInspector({
 
 // Component that uses the sidebar context
 function SidebarContent({ children, user }: { children: React.ReactNode, user: any }) {
-  const { open, isMobile: sidebarMobile } = useSidebar();
-  const { resolvedTheme } = useTheme();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { isMobile: sidebarMobile } = useSidebar();
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const breadcrumbs = useBreadcrumbs(activeInfospace);
   const mainContentRef = useRef<HTMLDivElement>(null);
   
   // User preferences
-  const { preferences, initializePreferences, togglePreference, updatePreference } = useUserPreferencesStore();
+  const { preferences, initializePreferences, updatePreference } = useUserPreferencesStore();
   
   // Initialize preferences from user data
   useEffect(() => {
@@ -262,80 +258,10 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Initialize and animate the globe (only if enabled)
-  useEffect(() => {
-    if (!canvasRef.current || !preferences.globe_enabled) return;
-
-    // Set to Berlin
-    let phi = 52.5;
-    let width = 0;
-    const onResize = () => canvasRef.current && (width = canvasRef.current.offsetWidth);
-    window.addEventListener('resize', onResize);
-    onResize();
-
-    const globe = createGlobe(canvasRef.current, {
-      devicePixelRatio: 2,
-      width: width * 2,
-      height: width * 2,
-      phi: 0,
-      theta: 0.3,
-      dark: resolvedTheme === 'dark' ? 1 : 0,
-      diffuse: 3,
-      mapSamples: 16000,
-      mapBrightness: 1.2,
-      baseColor: resolvedTheme === 'dark' ? [0.3, 0.3, 0.3] : [1, 1, 1],
-      markerColor: [251 / 255, 100 / 255, 21 / 255],
-      glowColor: resolvedTheme === 'dark' ? [0.1, 0.1, 0.1] : [0.5, 0.5, 0.5],
-      markers: [],
-      onRender: (state) => {
-        state.phi = phi;
-        phi += 0.001; // Slower rotation speed
-        state.width = width * 2;
-        state.height = width * 2;
-      }
-    });
-
-    setTimeout(() => canvasRef.current && (canvasRef.current.style.opacity = '1'));
-    return () => {
-      globe.destroy();
-      window.removeEventListener('resize', onResize);
-    };
-  }, [resolvedTheme, preferences.globe_enabled]);
-
   return (
     <>
       <AppSidebar className="fixed md:relative h-full md:h-auto" />
-      <SidebarInset
-        className="max-w-full overflow-hidden"
-        style={{
-          // Drive the globe shift with a CSS variable; animation handled by child wrapper
-          ["--globe-shift"]: sidebarMobile
-            ? "0px"
-            : open
-              ? "calc(var(--sidebar-width)/2)"
-              : "calc(var(--sidebar-width-icon)/2)",
-        } as React.CSSProperties}
-      >
-        {/* Background Globe - Only render if enabled */}
-        {preferences.globe_enabled && (
-          <div className="fixed top-1/2 left-1/2 pointer-events-none z-[1] -translate-x-1/2 -translate-y-1/2">
-            <div className="transition-transform 
-                        duration-300 ease-out transform-gpu will-change-transform translate-x-[var(--globe-shift)]
-                        dark:scale-105 opacity-40 dark:opacity-60">
-              <canvas
-                ref={canvasRef}
-                style={{ 
-                  width: 1000,    
-                  height: 1000, 
-                  aspectRatio: 1,
-                  opacity: 0,
-                  transition: 'opacity 1s ease'
-                }}
-              />
-            </div>
-          </div>
-        )}
-        
+      <SidebarInset className="max-w-full overflow-hidden">
         <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-2 px-4 relative z-10">
           <SidebarTrigger className="-ml-1" />
           <div className="h-4 w-[1px] mx-2 bg-border" />

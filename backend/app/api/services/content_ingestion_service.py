@@ -367,6 +367,10 @@ class ContentIngestionService:
         """
         # For CSV assets, use smart update instead of delete+recreate
         if asset.kind == AssetKind.CSV:
+            # If CSV has no blob_path (chat-generated), materialize it first
+            if not asset.blob_path:
+                await self._materialize_csv_from_rows(asset)
+            
             await self._reprocess_csv_preserving_children(asset, options or {})
         else:
             # For other asset types, use the old behavior (delete + recreate)
@@ -382,6 +386,71 @@ class ContentIngestionService:
             
             # Reprocess
             await self._process_content(asset, options or {})
+    
+    async def _materialize_csv_from_rows(self, asset: Asset) -> None:
+        """
+        Materialize a chat-generated CSV container into a real file.
+        
+        Generates CSV content from child row assets and uploads to storage.
+        """
+        from app.models import AssetKind
+        import csv
+        from io import StringIO
+        import uuid
+        
+        logger.info(f"Materializing CSV {asset.id} from {asset.source_metadata.get('row_count', 0)} rows")
+        
+        # Get columns from metadata
+        columns = asset.source_metadata.get("columns", [])
+        if not columns:
+            raise ValueError(f"CSV container {asset.id} has no column schema")
+        
+        # Get all child rows ordered by part_index
+        child_rows = self.session.exec(
+            select(Asset)
+            .where(Asset.parent_asset_id == asset.id)
+            .where(Asset.kind == AssetKind.CSV_ROW)
+            .order_by(Asset.part_index)
+        ).all()
+        
+        if len(child_rows) == 0:
+            raise ValueError(f"CSV container {asset.id} has no rows to materialize")
+        
+        # Generate CSV content
+        csv_buffer = StringIO()
+        writer = csv.DictWriter(csv_buffer, fieldnames=columns)
+        writer.writeheader()
+        
+        for row_asset in child_rows:
+            row_data = row_asset.source_metadata.get("original_row_data", {})
+            row_dict = {col: row_data.get(col, "") for col in columns}
+            writer.writerow(row_dict)
+        
+        csv_content = csv_buffer.getvalue()
+        csv_buffer.close()
+        
+        # Upload to storage
+        filename = f"{asset.title.replace(' ', '_')}.csv"
+        csv_bytes = csv_content.encode('utf-8')
+        object_name = f"infospaces/{asset.infospace_id}/csv_materialized/{uuid.uuid4().hex[:10]}_{filename}"
+        
+        await self.storage_provider.upload_from_bytes(
+            file_bytes=csv_bytes,
+            object_name=object_name,
+            filename=filename,
+            content_type='text/csv'
+        )
+        
+        # Update asset with blob_path
+        asset.blob_path = object_name
+        if asset.source_metadata is None:
+            asset.source_metadata = {}
+        asset.source_metadata['materialized_at'] = datetime.now(timezone.utc).isoformat()
+        asset.source_metadata['materialized_row_count'] = len(child_rows)
+        self.session.add(asset)
+        self.session.commit()
+        
+        logger.info(f"Materialized CSV {asset.id}: {len(child_rows)} rows -> {object_name}")
     
     async def _reprocess_csv_preserving_children(
         self,

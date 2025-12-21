@@ -47,16 +47,42 @@ class AssetService:
 
         if existing_by_source is not None:
             incoming_hash = asset_data.get("content_hash")
-            if incoming_hash and existing_by_source.content_hash == incoming_hash:
+            existing_hash = existing_by_source.content_hash
+            
+            # Check if both have content hashes and they match
+            if incoming_hash and existing_hash and incoming_hash == existing_hash:
                 # Exact duplicate: skip and return existing
+                logger.debug(f"Skipping duplicate asset (same content_hash): {existing_by_source.id}")
                 return existing_by_source
-            # Versioned duplicate: chain to previous
-            sm = dict(asset_data.get("source_metadata") or {})
-            sm["previous_asset_id"] = existing_by_source.id
-            sm["version"] = (existing_by_source.source_metadata or {}).get("version", 1) + 1
-            asset_data["source_metadata"] = sm
-            # Set first-class column too
-            asset_data["previous_asset_id"] = existing_by_source.id
+            
+            # If we have hashes but they differ, it's a content update
+            # If one or both lack hashes, we can't be sure - treat as potential duplicate
+            # For RSS feeds specifically, if source_identifier is the same, it's likely the same article
+            # so we should skip it even without content_hash comparison
+            if incoming_hash and not existing_hash:
+                # Update existing asset's content_hash if it didn't have one
+                logger.debug(f"Updating content_hash for existing asset: {existing_by_source.id}")
+                existing_by_source.content_hash = incoming_hash
+                self.session.add(existing_by_source)
+                self.session.commit()
+                self.session.refresh(existing_by_source)
+                return existing_by_source
+            
+            # If neither have content_hash, assume same source_identifier = duplicate for RSS
+            if not incoming_hash and not existing_hash:
+                logger.debug(f"Skipping duplicate asset (same source_identifier, no hashes): {existing_by_source.id}")
+                return existing_by_source
+            
+            # Only create versioned duplicate if hashes exist and differ
+            if incoming_hash and existing_hash and incoming_hash != existing_hash:
+                # Versioned duplicate: chain to previous
+                sm = dict(asset_data.get("source_metadata") or {})
+                sm["previous_asset_id"] = existing_by_source.id
+                sm["version"] = (existing_by_source.source_metadata or {}).get("version", 1) + 1
+                asset_data["source_metadata"] = sm
+                # Set first-class column too
+                asset_data["previous_asset_id"] = existing_by_source.id
+                logger.debug(f"Creating new version of asset {existing_by_source.id} (content changed)")
 
         # Dedupe by content hash if available
         if asset_data.get("content_hash"):

@@ -83,7 +83,8 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
     };
     
     loadCSV();
-  }, [blobPath, fetchMediaBlob]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blobPath]); // Only re-run when blobPath changes, not fetchMediaBlob (stable via useCallback)
 
   // Parse CSV text into rows and columns
   const parseCSV = (text: string) => {

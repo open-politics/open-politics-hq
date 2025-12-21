@@ -187,7 +187,7 @@ export default function ContentSearchPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-200px)] flex flex-col max-w-7xl mx-auto p-6">
+    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

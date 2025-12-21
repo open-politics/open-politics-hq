@@ -51,6 +51,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { BundleActivityIndicators } from './BundleActivityIndicators';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
+import { useTextSearch } from '@/hooks/useTextSearch';
 import { 
   getAssetIcon, 
   formatAssetKind, 
@@ -123,6 +124,8 @@ interface AssetSelectorProps {
     compact?: boolean;
     // Filter to show only children of a specific bundle (for bundle detail view)
     filterByBundleId?: number | null;
+    sortBy?: 'name' | 'updated_at' | 'created_at';
+    sortOrder?: 'asc' | 'desc';
 }
 
 export default function AssetSelector({
@@ -136,6 +139,8 @@ export default function AssetSelector({
     autoFocusSearch = false,
     compact = false,
     filterByBundleId = null,
+    sortBy = 'name',
+    sortOrder = 'asc',
 }: AssetSelectorProps) {
   const { activeInfospace } = useInfospaceStore();
   
@@ -172,7 +177,7 @@ export default function AssetSelector({
   }, [debouncedSearchTerm, onSearchTermChange]);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
-  const [sortOption, setSortOption] = useState('kind-updated_at-desc');
+  const [sortOption, setSortOption] = useState(`${sortBy}-${sortOrder}`);
   
   // Search mode: semantic vs text
   const [useSemanticMode, setUseSemanticMode] = useState(() => {
@@ -193,6 +198,20 @@ export default function AssetSelector({
   } = useSemanticSearch({
     query: debouncedSearchTerm,
     enabled: semanticSearchEnabled,
+    limit: 100,
+    bundleId: filterByBundleId || undefined,
+    assetKinds: assetTypeFilter !== 'all' ? [assetTypeFilter] : undefined,
+  });
+  
+  // Text search hook (enabled when NOT in semantic mode or semantic search has debouncedSearchTerm)
+  const textSearchEnabled = !useSemanticMode && debouncedSearchTerm.trim().length > 0;
+  const {
+    results: textSearchResults,
+    isLoading: isTextSearching,
+    error: textSearchError,
+  } = useTextSearch({
+    query: debouncedSearchTerm,
+    enabled: textSearchEnabled,
     limit: 100,
     bundleId: filterByBundleId || undefined,
     assetKinds: assetTypeFilter !== 'all' ? [assetTypeFilter] : undefined,
@@ -511,14 +530,24 @@ export default function AssetSelector({
     return Array.from(kinds).sort();
   }, [rootNodes, childrenCache]);
 
-  // Create map of semantic search results (asset_id -> score) - must be before assetTree
-  const semanticScoreMap = useMemo(() => {
+  // Create map of search results (asset_id -> score) - works for both semantic and text search
+  const searchScoreMap = useMemo(() => {
     const map = new Map<number, number>();
-    semanticResults.forEach(result => {
-      map.set(result.asset.id, result.score);
-    });
+    
+    // Use semantic results if in semantic mode
+    if (useSemanticMode && semanticResults.length > 0) {
+      semanticResults.forEach(result => {
+        map.set(result.asset.id, result.score);
+      });
+    } else if (!useSemanticMode && textSearchResults.length > 0) {
+      // Use text search results if in text mode
+      textSearchResults.forEach(result => {
+        map.set(result.asset.id, result.score);
+      });
+    }
+    
     return map;
-  }, [semanticResults]);
+  }, [useSemanticMode, semanticResults, textSearchResults]);
 
   // OLD N+1 FETCHING LOGIC - REMOVED! 🎉
 
@@ -681,10 +710,12 @@ export default function AssetSelector({
 
     // Parse sort option - supports both "key-direction" and "primary-secondary-direction" formats
     const sortParts = sortOption.split('-');
-    const isCompoundSort = sortParts.length === 3; // e.g., "kind-updated_at-desc"
+    const isCompoundSort = sortParts.length === 3; // e.g., "name-desc"
     const primaryKey = sortParts[0] as SortKey;
     const secondaryKey = isCompoundSort ? sortParts[1] as SortKey : null;
     const sortDirection = (isCompoundSort ? sortParts[2] : sortParts[1]) as SortDirection;
+
+    
     
     const sortItemsRecursively = (items: AssetTreeItem[]): AssetTreeItem[] => {
         const sortedItems = [...items].sort((a, b) => {
@@ -758,6 +789,27 @@ export default function AssetSelector({
       return { ...treeItem, asset: result.asset };
     });
   }, [useSemanticMode, semanticSearchEnabled, semanticResults, assetTypeFilter, assetReadToTreeNode, convertTreeNodeToTreeItem]);
+  
+  // Convert text search results to AssetTreeItems (same pattern as semantic)
+  const textSearchTreeItems = useMemo(() => {
+    if (useSemanticMode || !textSearchEnabled || textSearchResults.length === 0) {
+      return [];
+    }
+    
+    // Filter by asset type (should already be filtered by backend, but double-check)
+    const filteredResults = textSearchResults.filter(result => {
+      const typeMatch = assetTypeFilter === 'all' || result.asset.kind === assetTypeFilter;
+      return typeMatch;
+    });
+    
+    // Convert AssetRead -> TreeNode -> AssetTreeItem
+    return filteredResults.map(result => {
+      const treeNode = assetReadToTreeNode(result.asset);
+      const treeItem = convertTreeNodeToTreeItem(treeNode, 0);
+      // Use full asset data we already have
+      return { ...treeItem, asset: result.asset };
+    });
+  }, [useSemanticMode, textSearchEnabled, textSearchResults, assetTypeFilter, assetReadToTreeNode, convertTreeNodeToTreeItem]);
 
   // Filter tree based on search and type
   const filteredTree = useMemo(() => {
@@ -766,7 +818,12 @@ export default function AssetSelector({
       return semanticTreeItems;
     }
     
-    // Text search mode (original logic)
+    // If text search is active and has results, return text search results as flat list
+    if (!useSemanticMode && textSearchEnabled && textSearchTreeItems.length > 0) {
+      return textSearchTreeItems;
+    }
+    
+    // No search active - use client-side filtering on tree (legacy behavior when no query)
     const filterItems = (items: AssetTreeItem[]): AssetTreeItem[] => {
       return items.reduce((acc: AssetTreeItem[], item) => {
         const filteredChildren = item.children ? filterItems(item.children) : undefined;
@@ -787,7 +844,7 @@ export default function AssetSelector({
       }, []);
     };
     return filterItems(assetTree);
-  }, [assetTree, debouncedSearchTerm, assetTypeFilter, useSemanticMode, semanticSearchEnabled, semanticResults, semanticScoreMap]);
+  }, [assetTree, debouncedSearchTerm, assetTypeFilter, useSemanticMode, semanticSearchEnabled, semanticTreeItems, textSearchEnabled, textSearchTreeItems]);
 
   // NEW: Lazy load children when expanding nodes - optimized
   const toggleExpanded = useCallback(async (itemId: string) => {
@@ -1306,7 +1363,7 @@ export default function AssetSelector({
                   </div>
                 ) : (
                   <>
-                    <span className="text-sm font-normal truncate flex-1 min-w-0">{item.name}</span>
+                    <span className="text-sm font-normal truncate flex-1 max-w-32 sm:max-w-40 md:max-w-64">{item.name}</span>
                     {/* Inline activity indicators for bundles */}
                     {item.bundle && (
                       <BundleActivityIndicators
@@ -1326,11 +1383,6 @@ export default function AssetSelector({
             </div>
             {/* Actions - always at the end */}
             <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-              {item.type === 'folder' && (
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Bundle Details">
-                  <Eye className="h-4 w-4" />
-                </Button>
-              )}
               {renderItemActions ? renderItemActions(item) : (
                 <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
               )}
@@ -1447,10 +1499,10 @@ export default function AssetSelector({
             )}
           </div>
           <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded-sm shrink-0 border-secondart data-[state=checked]:bg-secondart data-[state=checked]:text-secondart-foreground" />
-          {/* Relevance score badge - between checkbox and icon */}
-          {item.asset && semanticScoreMap.has(item.asset.id) && (
+          {/* Relevance score badge - between checkbox and icon (works for both semantic and text search) */}
+          {item.asset && searchScoreMap.has(item.asset.id) && (
             <RelevanceBadge 
-              score={semanticScoreMap.get(item.asset.id)!} 
+              score={searchScoreMap.get(item.asset.id)!} 
               size="sm"
               className="shrink-0"
             />
@@ -1462,7 +1514,7 @@ export default function AssetSelector({
           )}
 
           {/* Middle flexible section: name + metadata */}
-          <div className="flex-1 min-w-0 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
+          <div className="flex-1 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
             {isEditing ? (
               <div className="flex items-center gap-0.5">
                 <Input value={editingItem.value} onChange={(e) => setEditingItem({ ...editingItem, value: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEditing(); if (e.key === 'Escape') handleCancelEdit(); }} autoFocus className="h-7 text-sm" onClick={(e) => e.stopPropagation()} />
@@ -1470,8 +1522,8 @@ export default function AssetSelector({
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleCancelEdit();}}><X className="h-4 w-4 text-red-600"/></Button>
               </div>
             ) : (
-              <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-                <span className="text-sm font-normal truncate flex-1 min-w-0">{item.name}</span>
+              <div className="flex items-center gap-2 overflow-hidden">
+                <span className="text-sm font-normal truncate flex-1 max-w-32 sm:max-w-40 md:max-w-64 lg:max-w-96">{item.name}</span>
               </div>
             )}
           </div>
@@ -1657,7 +1709,7 @@ export default function AssetSelector({
             <div className="flex items-center gap-2">
               <InputGroup className="flex-grow">
                 <InputGroupAddon>
-                  {isSemanticSearching ? (
+                  {(isSemanticSearching || isTextSearching) ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Search className="h-3.5 w-3.5" />
@@ -1665,7 +1717,7 @@ export default function AssetSelector({
                 </InputGroupAddon>
                 <InputGroupInput 
                   ref={searchInputRef}
-                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Search with @..."} 
+                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Text search..."} 
                   className="text-sm h-8" 
                   value={searchTerm} 
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -1732,7 +1784,7 @@ export default function AssetSelector({
               />
               <InputGroup className="flex-grow h-8 ml-1 sm:ml-2">
                 <InputGroupAddon>
-                  {isSemanticSearching ? (
+                  {(isSemanticSearching || isTextSearching) ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <Search className="h-3 w-3" />
@@ -1740,7 +1792,7 @@ export default function AssetSelector({
                 </InputGroupAddon>
                 <InputGroupInput 
                   ref={searchInputRef} 
-                  placeholder={useSemanticMode && isSemanticAvailable ? "Search..." : "Search..."} 
+                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Text search..."} 
                   value={searchTerm} 
                   onChange={(e) => setSearchTerm(e.target.value)} 
                 />

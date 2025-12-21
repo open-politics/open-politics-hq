@@ -141,11 +141,13 @@ export const AssetCrudRenderer: ToolResultRenderer = {
     }
   },
   
-  render: ({ result, compact }: ToolResultRenderProps) => {
+  render: ({ result, compact, onAssetClick }: ToolResultRenderProps) => {
     const status = result.status;
     const title = result.asset_title || `Asset #${result.asset_id}`;
     const kind = result.asset_kind;
+    const assetId = result.asset_id;
     const isCsvRow = kind === 'csv_row';
+    const isCsvContainer = kind === 'csv';
     
     // Icon based on status
     let Icon = CheckCircle2;
@@ -175,16 +177,84 @@ export const AssetCrudRenderer: ToolResultRenderer = {
       );
     }
     
+    // CSV Container - show dataset info
+    if (isCsvContainer && result.columns) {
+      const columns = result.columns;
+      const columnCount = result.column_count || columns.length;
+      const rowCount = result.row_count || 0;
+      
+      return (
+        <div 
+          className={cn(
+            "px-3 py-2 rounded-md border bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800",
+            assetId && onAssetClick && "cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-950/30 transition-colors"
+          )}
+          onClick={assetId && onAssetClick ? () => onAssetClick(assetId) : undefined}
+          role={assetId && onAssetClick ? "button" : undefined}
+          title={assetId && onAssetClick ? "Click to view dataset details" : undefined}
+        >
+          <div className="flex items-center gap-2 mb-2 text-sm text-emerald-900 dark:text-emerald-100">
+            <Icon className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span className="font-medium">{action} CSV Dataset</span>
+            {assetId && (
+              <span className="text-xs text-emerald-700 dark:text-emerald-300">#{assetId}</span>
+            )}
+          </div>
+          
+          <div className="text-sm mb-2">
+            <strong className="text-emerald-900 dark:text-emerald-100">{title}</strong>
+          </div>
+          
+          <div className="flex flex-wrap gap-2 text-xs text-emerald-700 dark:text-emerald-300">
+            <Badge variant="outline" className="bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200">
+              {columnCount} columns
+            </Badge>
+            <Badge variant="outline" className="bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200">
+              {rowCount} rows
+            </Badge>
+          </div>
+          
+          <div className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">
+            <span className="font-medium">Columns:</span> {columns.join(', ')}
+          </div>
+        </div>
+      );
+    }
+    
     // CSV Row - show as table
     if (isCsvRow && result.row_data) {
       const columns = Object.keys(result.row_data);
       const values = Object.values(result.row_data);
+      const parentId = result.parent_asset_id;
       
       return (
-        <div className="px-3 py-2 rounded-md border bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
+        <div 
+          className={cn(
+            "px-3 py-2 rounded-md border bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800",
+            assetId && onAssetClick && "cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-950/30 transition-colors"
+          )}
+          onClick={assetId && onAssetClick ? () => onAssetClick(assetId) : undefined}
+          role={assetId && onAssetClick ? "button" : undefined}
+          title={assetId && onAssetClick ? "Click to view row details" : undefined}
+        >
           <div className="flex items-center gap-2 mb-2 text-sm text-blue-900 dark:text-blue-100">
             <Icon className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
             <span className="font-medium">{action} CSV row</span>
+            {assetId && (
+              <span className="text-xs text-blue-700 dark:text-blue-300">#{assetId}</span>
+            )}
+            {parentId && onAssetClick && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAssetClick(parentId);
+                }}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline ml-2"
+                title="View parent dataset"
+              >
+                (parent #{parentId})
+              </button>
+            )}
           </div>
           
           <div className="overflow-x-auto">
@@ -213,13 +283,28 @@ export const AssetCrudRenderer: ToolResultRenderer = {
       );
     }
     
-    // Regular asset display
+    // Regular asset display - clickable
+    const handleClick = assetId && onAssetClick && status !== 'deleted' 
+      ? () => onAssetClick(assetId) 
+      : undefined;
+    
     return (
-      <div className="flex items-center gap-2 px-3 py-2 rounded-md border text-sm bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100">
+      <div 
+        className={cn(
+          "flex items-center gap-2 px-3 py-2 rounded-md border text-sm bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100",
+          handleClick && "cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-950/30 transition-colors"
+        )}
+        onClick={handleClick}
+        role={handleClick ? "button" : undefined}
+        title={handleClick ? "Click to view asset details" : undefined}
+      >
         <Icon className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
         <span className="flex-1">
           {action} <strong>{title}</strong>
         </span>
+        {assetId && (
+          <span className="text-xs text-blue-700 dark:text-blue-300">#{assetId}</span>
+        )}
         {kind && (
           <Badge variant="outline" className="text-xs">
             {kind}

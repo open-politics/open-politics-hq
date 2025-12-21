@@ -26,10 +26,10 @@ import {
 } from '@/client';
 import type { TreeNode } from '@/client';
 import { useTreeStore } from '@/zustand_stores/storeTree';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import AssetDetailView from './AssetDetailView';
 import { getAssetIcon } from '@/components/collection/assets/AssetSelector';
 import { AssetFeedView } from '@/components/collection/assets/Feed';
-import type { AssetFeedItem } from '@/components/collection/assets/Feed';
 import { isDisplayableKind } from '@/components/collection/assets/assetKindConfig';
 import {
   DropdownMenu,
@@ -73,38 +73,8 @@ const getCompositionStats = (children: any[]) => {
   return { stats, totalChildAssets };
 };
 
-// Convert TreeNode to AssetRead for feed display
-function treeNodeToAsset(node: TreeNode): AssetRead {
-  const assetId = parseInt(node.id.replace('asset-', ''), 10);
-  
-  return {
-    id: assetId,
-    uuid: node.id,
-    kind: node.kind || 'text',
-    title: node.name,
-    created_at: node.created_at || node.updated_at,
-    updated_at: node.updated_at,
-    parent_asset_id: node.parent_id ? parseInt(node.parent_id.replace('asset-', ''), 10) : null,
-    part_index: null,
-    infospace_id: 0,
-    source_id: null,
-    is_container: node.is_container || false,
-    stub: node.stub || false,
-    source_metadata: node.source_metadata || null,
-    text_content: (node.preview as any)?.summary || (node.preview as any)?.text_content || null,
-    blob_path: (node.source_metadata as any)?.blob_path || null,
-  } as AssetRead;
-}
-
-// Convert bundle children to feed items
-function bundleChildrenToFeedItems(children: TreeNode[]): AssetFeedItem[] {
-  return children
-    .filter(node => node.type === 'asset' && node.kind && isDisplayableKind(node.kind))
-    .map(node => ({
-      asset: treeNodeToAsset(node),
-      childAssets: undefined,
-    }));
-}
+// Note: AssetFeedView now loads bundle children directly via AssetSelector
+// when filterByBundleId is provided, so we don't need conversion functions
 
 interface BundleDetailViewProps {
   selectedBundleId: number | null;
@@ -114,6 +84,7 @@ interface BundleDetailViewProps {
   onAssetDragStart?: (asset: AssetRead, event: React.DragEvent) => void;
   onAssetDragEnd?: () => void;
   highlightAssetId: number | null;
+  layout?: 'grid' | 'bento' | 'list';
 }
 
 export default function BundleDetailView({ 
@@ -123,8 +94,10 @@ export default function BundleDetailView({
   onAssetSelect,
   onAssetDragStart,
   onAssetDragEnd,
-  highlightAssetId
+  highlightAssetId,
+  layout = 'list'
 }: BundleDetailViewProps) {
+  const { activeInfospace } = useInfospaceStore();
   const {
     childrenCache,
     fetchChildren,
@@ -149,19 +122,14 @@ export default function BundleDetailView({
     }
   }, [selectedBundleId, getFullBundle, fetchChildren, childrenCache]);
 
-  // Get bundle children from cache
+  // Get bundle children from cache for metadata display
   const bundleChildren = useMemo(() => {
     if (!selectedBundleId) return [];
     const bundleNodeId = `bundle-${selectedBundleId}`;
     return childrenCache.get(bundleNodeId) || [];
   }, [selectedBundleId, childrenCache]);
 
-  // Convert to feed items
-  const feedItems = useMemo(() => 
-    bundleChildrenToFeedItems(bundleChildren), [bundleChildren]
-  );
-
-  // Get available kinds for filter badges
+  // Get available kinds for filter badges (still used by AssetFeedView)
   const availableKinds = useMemo(() => {
     const kinds = new Set<AssetKind>();
     bundleChildren.forEach(node => {
@@ -347,7 +315,8 @@ export default function BundleDetailView({
       {/* Bundle Contents - Feed View */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <AssetFeedView
-          items={feedItems}
+          infospaceId={activeInfospace?.id}
+          filterByBundleId={selectedBundleId}
           availableKinds={availableKinds}
           onAssetClick={handleAssetClick}
           title={``}
@@ -355,6 +324,7 @@ export default function BundleDetailView({
           columns={2}
           showControls={true}
           emptyMessage="No items in this bundle yet."
+          layout={layout}
         />
       </div>
     </div>

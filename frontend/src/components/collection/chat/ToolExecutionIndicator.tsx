@@ -17,7 +17,7 @@
  * See toolcalls/README.md for the new architecture.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -43,6 +43,7 @@ interface ToolExecutionIndicatorProps {
   compact?: boolean
   onAssetClick?: (assetId: number) => void
   onBundleClick?: (bundleId: number) => void
+  defaultExpanded?: boolean
 }
 
 /**
@@ -52,8 +53,13 @@ function hasRegisteredRenderer(toolName: string, result: any): boolean {
   return toolResultRegistry.getRenderer(toolName, result) !== null;
 }
 
-export function ToolExecutionIndicator({ execution, compact = false, onAssetClick, onBundleClick }: ToolExecutionIndicatorProps) {
-  const [isExpanded, setIsExpanded] = useState(true) // Default to expanded
+export function ToolExecutionIndicator({ execution, compact = false, onAssetClick, onBundleClick, defaultExpanded = true }: ToolExecutionIndicatorProps) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  
+  // Update expanded state when defaultExpanded changes (e.g., when a newer execution completes)
+  useEffect(() => {
+    setIsExpanded(defaultExpanded)
+  }, [defaultExpanded])
   
   // Get the result to display
   const resultToDisplay = execution.structured_content || execution.result;
@@ -260,6 +266,14 @@ export function ToolExecutionList({ executions, compact = false, onAssetClick, o
   const completedCount = executions.filter(e => e.status === 'completed').length
   const failedCount = executions.filter(e => e.status === 'failed').length
   
+  // Find the last completed execution (most recent one with results)
+  const lastCompletedIndex = executions.reduce((lastIdx, execution, currentIdx) => {
+    if (execution.status === 'completed' && (execution.structured_content || execution.result)) {
+      return currentIdx
+    }
+    return lastIdx
+  }, -1)
+  
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -285,13 +299,14 @@ export function ToolExecutionList({ executions, compact = false, onAssetClick, o
       </div>
       
       <div className="space-y-2">
-        {executions.map(execution => (
+        {executions.map((execution, index) => (
           <ToolExecutionIndicator 
             key={execution.id} 
             execution={execution} 
             compact={compact}
             onAssetClick={onAssetClick}
             onBundleClick={onBundleClick}
+            defaultExpanded={index === lastCompletedIndex}
           />
         ))}
       </div>

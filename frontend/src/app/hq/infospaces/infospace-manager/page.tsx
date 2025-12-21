@@ -6,10 +6,8 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 export default function InfospaceDashboardPage() {
   const { activeInfospace } = useInfospaceStore();
   return (
-    <div className="relative flex flex-col items-center mx-auto top-4 min-h-screen overflow-visible bg-primary-950">
-      <div className="flex flex-col items-center w-full max-w-8xl p-4 max-h-[calc(100vh-200px)] overflow-y-auto">
+    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
         <InfospaceManager activeInfospace={activeInfospace} />
-      </div>
     </div>
   );
 };

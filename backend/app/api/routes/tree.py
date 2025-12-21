@@ -7,14 +7,14 @@ Returns minimal metadata for fast initial rendering and lazy-loads children on d
 """
 
 import logging
-from typing import Any, List
+from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import Session, select, delete
-from sqlalchemy import update
+from sqlalchemy import update, or_, func
 from pydantic import BaseModel, Field
 
 from app.api import deps
-from app.models import Asset, Bundle
+from app.models import Asset, Bundle, AssetKind
 from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead
 from app.api.services.service_utils import validate_infospace_access
 from app.api.utils.tree_builder import (
@@ -516,4 +516,218 @@ def batch_get_assets(
     
     logger.info(f"Batch fetched {len(result)} assets for infospace {infospace_id}")
     return result
+
+
+class TextSearchResult(BaseModel):
+    """Single text search result with relevance score."""
+    asset: AssetRead
+    score: float = Field(description="Relevance score (0-1, higher is better)")
+    match_type: str = Field(description="Where the match was found: 'title', 'content', or 'bundle'")
+    match_context: Optional[str] = Field(None, description="Snippet of matching content")
+
+
+class TextSearchResponse(BaseModel):
+    """Response from text search."""
+    query: str
+    results: List[TextSearchResult]
+    total_found: int
+    infospace_id: int
+
+
+@router.get("/infospaces/{infospace_id}/tree/text-search", response_model=TextSearchResponse)
+def text_search_assets(
+    *,
+    infospace_id: int,
+    query: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
+    asset_kinds: Optional[List[AssetKind]] = Query(None, description="Filter by asset types"),
+    bundle_id: Optional[int] = Query(None, description="Search within specific bundle"),
+    db: Session = deps.Depends(deps.get_db),
+    current_user = deps.Depends(deps.get_current_user),
+) -> Any:
+    """
+    Comprehensive text search across all assets in an infospace.
+    
+    Search strategy (prioritized):
+    1. **Title matches** - Exact and partial matches in asset titles (highest priority)
+    2. **Bundle members** - Assets in bundles with matching names
+    3. **Fulltext content** - Searches text_content field (fallback)
+    
+    This searches ALL assets regardless of bundle membership or tree visibility,
+    making it much more useful than the client-side filtering.
+    
+    Returns assets with relevance scores based on match quality.
+    """
+    validate_infospace_access(db, infospace_id, current_user.id)
+    
+    search_term = query.strip().lower()
+    if not search_term:
+        return TextSearchResponse(
+            query=query,
+            results=[],
+            total_found=0,
+            infospace_id=infospace_id
+        )
+    
+    logger.info(f"Text search in infospace {infospace_id}: '{query}' (kinds={asset_kinds}, bundle={bundle_id})")
+    
+    # Build base query
+    base_query = (
+        select(Asset)
+        .where(Asset.infospace_id == infospace_id)
+        .where(Asset.user_id == current_user.id)
+    )
+    
+    # Apply filters
+    if asset_kinds:
+        base_query = base_query.where(Asset.kind.in_(asset_kinds))
+    
+    if bundle_id is not None:
+        # Search within specific bundle - get bundle and its assets
+        bundle = db.get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != infospace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Bundle {bundle_id} not found"
+            )
+        
+        # Get asset IDs in this bundle
+        asset_ids = [asset.id for asset in bundle.assets]
+        if not asset_ids:
+            return TextSearchResponse(
+                query=query,
+                results=[],
+                total_found=0,
+                infospace_id=infospace_id
+            )
+        base_query = base_query.where(Asset.id.in_(asset_ids))
+    
+    # Phase 1: Title matches (highest priority)
+    title_query = base_query.where(
+        func.lower(Asset.title).contains(search_term)
+    )
+    title_matches = db.exec(title_query).all()
+    
+    # Phase 2: Bundle name matches - find assets in bundles with matching names
+    bundle_matches = []
+    if not bundle_id:  # Only search bundles if not already filtering by one
+        # Find bundles with matching names
+        matching_bundles = db.exec(
+            select(Bundle)
+            .where(Bundle.infospace_id == infospace_id)
+            .where(func.lower(Bundle.name).contains(search_term))
+        ).all()
+        
+        # Get all assets from matching bundles
+        for bundle in matching_bundles:
+            for asset in bundle.assets:
+                # Apply kind filter if specified
+                if asset_kinds and asset.kind not in asset_kinds:
+                    continue
+                # Only add if not already in title matches
+                if asset not in title_matches:
+                    bundle_matches.append((asset, bundle.name))
+    
+    # Phase 3: Fulltext content matches (lowest priority)
+    # Exclude assets already found in title/bundle matches
+    found_ids = {a.id for a in title_matches} | {a[0].id for a in bundle_matches}
+    
+    content_query = base_query.where(
+        Asset.text_content.isnot(None),
+        func.lower(Asset.text_content).contains(search_term)
+    )
+    if found_ids:
+        content_query = content_query.where(Asset.id.not_in(found_ids))
+    
+    content_matches = db.exec(content_query).all()
+    
+    # Build results with scores and match types
+    results: List[TextSearchResult] = []
+    
+    # Title matches - highest score (0.8-1.0)
+    for asset in title_matches:
+        title_lower = asset.title.lower()
+        # Exact match gets 1.0, otherwise scale by position and length
+        if title_lower == search_term:
+            score = 1.0
+        elif title_lower.startswith(search_term):
+            score = 0.95
+        else:
+            # Score based on how early the match appears
+            position = title_lower.find(search_term)
+            score = 0.8 + (0.15 * (1 - position / max(len(title_lower), 1)))
+        
+        results.append(TextSearchResult(
+            asset=AssetRead.model_validate(asset),
+            score=score,
+            match_type="title",
+            match_context=asset.title[:100]
+        ))
+    
+    # Bundle matches - medium score (0.5-0.7)
+    for asset, bundle_name in bundle_matches:
+        # Score based on how well the bundle name matches
+        bundle_lower = bundle_name.lower()
+        if bundle_lower == search_term:
+            score = 0.7
+        elif bundle_lower.startswith(search_term):
+            score = 0.65
+        else:
+            score = 0.5
+        
+        results.append(TextSearchResult(
+            asset=AssetRead.model_validate(asset),
+            score=score,
+            match_type="bundle",
+            match_context=f"In bundle: {bundle_name}"
+        ))
+    
+    # Content matches - lowest score (0.3-0.5)
+    for asset in content_matches:
+        if not asset.text_content:
+            continue
+        
+        # Find the matching context (snippet around the match)
+        content_lower = asset.text_content.lower()
+        match_pos = content_lower.find(search_term)
+        
+        # Extract snippet around match
+        snippet_start = max(0, match_pos - 50)
+        snippet_end = min(len(asset.text_content), match_pos + len(search_term) + 50)
+        snippet = asset.text_content[snippet_start:snippet_end].strip()
+        
+        # Add ellipsis if truncated
+        if snippet_start > 0:
+            snippet = "..." + snippet
+        if snippet_end < len(asset.text_content):
+            snippet = snippet + "..."
+        
+        # Score based on number of occurrences (more matches = higher score)
+        occurrences = content_lower.count(search_term)
+        score = min(0.3 + (occurrences * 0.05), 0.5)
+        
+        results.append(TextSearchResult(
+            asset=AssetRead.model_validate(asset),
+            score=score,
+            match_type="content",
+            match_context=snippet[:200]  # Limit snippet length
+        ))
+    
+    # Sort by score (highest first) and apply limit
+    results.sort(key=lambda r: r.score, reverse=True)
+    results = results[:limit]
+    
+    logger.info(
+        f"Text search found {len(results)} results: "
+        f"{sum(1 for r in results if r.match_type == 'title')} title, "
+        f"{sum(1 for r in results if r.match_type == 'bundle')} bundle, "
+        f"{sum(1 for r in results if r.match_type == 'content')} content matches"
+    )
+    
+    return TextSearchResponse(
+        query=query,
+        results=results,
+        total_found=len(results),
+        infospace_id=infospace_id
+    )
 

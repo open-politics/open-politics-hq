@@ -134,6 +134,14 @@ export function MessageContentWithToolResults({
     }
   })
 
+  // Find the last completed tool execution for default expansion
+  let lastCompletedToolId: string | null = null
+  toolExecutions.forEach(exec => {
+    if (exec.status === 'completed' && (exec.structured_content || exec.result)) {
+      lastCompletedToolId = exec.id
+    }
+  })
+
   return (
     <div className="space-y-3">
       {toolExecutions.length > 0 && (
@@ -180,6 +188,7 @@ export function MessageContentWithToolResults({
                     compact={!isOperatorTool}
                     onAssetClick={onAssetClick}
                     onBundleClick={onBundleClick}
+                    defaultExpanded={execution.id === lastCompletedToolId}
                   />
                 </div>
               )

@@ -29,6 +29,16 @@ export function MessageTaskPanel({
     return toolExecutions.filter(exec => TASK_TOOL_NAMES.includes(exec.tool_name))
   }, [toolExecutions])
 
+  // Find the last completed execution (most recent one with results)
+  const lastCompletedIndex = useMemo(() => {
+    return taskExecutions.reduce((lastIdx, exec, currentIdx) => {
+      if (exec.status === 'completed' && (exec.structured_content || exec.result)) {
+        return currentIdx
+      }
+      return lastIdx
+    }, -1)
+  }, [taskExecutions])
+
   // Extract task summary from results
   const taskSummary = useMemo(() => {
     let totalTasks = 0
@@ -78,11 +88,12 @@ export function MessageTaskPanel({
       {/* Content */}
       {isExpanded && (
         <div className="p-2 space-y-2 max-h-[40vh] overflow-y-auto">
-          {taskExecutions.map(execution => (
+          {taskExecutions.map((execution, index) => (
             <ToolExecutionIndicator
               key={execution.id}
               execution={execution}
               compact={false}
+              defaultExpanded={index === lastCompletedIndex}
             />
           ))}
         </div>

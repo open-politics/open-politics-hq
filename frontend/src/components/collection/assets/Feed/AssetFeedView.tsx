@@ -36,6 +36,7 @@ import {
 } from '../assetKindConfig';
 import type { AssetFeedViewProps, AssetFeedItem } from './types';
 import type { AssetKind, AssetRead } from '@/client';
+import AssetSelector, { type AssetTreeItem } from '../AssetSelector';
 
 /**
  * AssetFeedView - A flexible feed of asset cards
@@ -83,6 +84,7 @@ export function AssetFeedView({
   
   // Filtering (initial filter, can be overridden by user)
   filterKinds: initialFilterKinds,
+  filterByBundleId,
   
   // Pre-known types from parent (e.g., tree data)
   availableKinds: preKnownKinds,
@@ -106,11 +108,19 @@ export function AssetFeedView({
   const [customFetchLoading, setCustomFetchLoading] = useState(false);
   const [customFetchError, setCustomFetchError] = useState<string | null>(null);
   
-  // Sort state for UI - default to "type, then date" (standard file manager behavior)
-  const [sortOption, setSortOption] = useState<'kind-updated_at' | 'kind-created_at' | 'created_at' | 'updated_at'>('kind-updated_at');
+  // Sort state for UI - default to "name ascending" (standard file manager behavior)
+  // Rest of the sorting logic needs to be implemented in the useFeedAssets hook
+  // This is because the useFeedAssets hook needs to know the sort order to sort the items
+  // and the sort order is not part of the AssetFeedItem interface
+  const [sortOption, setSortOption] = useState<'name-asc' | 'name-desc' | 'updated_at-desc' | 'updated_at-asc' | 'created_at-desc' | 'created_at-asc'>('name-asc');
   
   // Layout state - allow user to switch between layouts
   const [activeLayout, setActiveLayout] = useState<'grid' | 'bento' | 'list'>(layout);
+
+  // Default to list view on initial load without useEffect
+  useEffect(() => {
+    setActiveLayout(layout);
+  }, [layout]);
   
   // Local filter state - allows user to filter by type via badges
   const [activeTypeFilters, setActiveTypeFilters] = useState<Set<AssetKind>>(
@@ -123,8 +133,8 @@ export function AssetFeedView({
     infospaceId: usingInternalFetch ? infospaceId! : 0,
     limit: initialLimit,
     kinds: undefined, // Don't filter in hook, we filter locally via badges
-    sortBy: sortOption,
-    sortOrder: 'desc',
+    sortBy: sortOption.includes('name') ? 'name' : sortOption.includes('updated_at') ? 'updated_at' : sortOption.includes('created_at') ? 'created_at' : undefined,
+    sortOrder: sortOption.includes('desc') ? 'desc' : 'asc',
   });
   
   // Determine which raw data to use
@@ -246,6 +256,17 @@ export function AssetFeedView({
   const handleCardClick = useCallback((asset: AssetRead) => {
     onAssetClick?.(asset);
   }, [onAssetClick]);
+  
+  // Handle AssetSelector item view (for list layout)
+  const handleSelectorItemView = useCallback((item: AssetTreeItem) => {
+    if (item.asset) {
+      onAssetClick?.(item.asset);
+    }
+  }, [onAssetClick]);
+  
+  // List view can only use AssetSelector when we have an infospaceId
+  // (AssetSelector requires infospace to load from tree store)
+  const canUseListView = activeLayout === 'list' && usingInternalFetch && infospaceId;
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
@@ -317,10 +338,16 @@ export function AssetFeedView({
                       value={sortOption} 
                       onValueChange={(v) => setSortOption(v as any)}
                     >
-                      <DropdownMenuRadioItem value="kind-updated_at">
+                      <DropdownMenuRadioItem value="name-asc">
                         <span className="flex items-center gap-2">
-                          <span className="text-muted-foreground">📁</span>
-                          Type, then Date
+                          <span className="text-muted-foreground">A→Z</span>
+                          Name Ascending
+                        </span>
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="name-desc">
+                        <span className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Z→A</span>
+                          Z→A
                         </span>
                       </DropdownMenuRadioItem>
                       <DropdownMenuRadioItem value="created_at">
@@ -329,6 +356,7 @@ export function AssetFeedView({
                       <DropdownMenuRadioItem value="updated_at">
                         Recently Updated
                       </DropdownMenuRadioItem>
+
                     </DropdownMenuRadioGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -422,8 +450,20 @@ export function AssetFeedView({
             </div>
           )}
           
-          {/* Cards grid */}
-          {items.length > 0 && (
+          {/* Content - List view uses AssetSelector when possible, Grid/Bento use cards */}
+          {canUseListView ? (
+            <div className="h-full w-full min-h-[600px]">
+              <AssetSelector
+                selectedItems={new Set<string>()}
+                onSelectionChange={() => {}} // Feed view doesn't need selection
+                onItemView={handleSelectorItemView}
+                compact={true}
+                filterByBundleId={filterByBundleId ?? null}
+                sortBy={sortOption.includes('name') ? 'name' : sortOption.includes('updated_at') ? 'updated_at' : sortOption.includes('created_at') ? 'created_at' : undefined}
+                sortOrder={sortOption.includes('desc') ? 'desc' : 'asc'}
+              />
+            </div>
+          ) : items.length > 0 ? (
             <CardGrid columns={columns} layout={activeLayout}>
               {items.map((item) => (
                 <motion.div
@@ -446,7 +486,7 @@ export function AssetFeedView({
                 </motion.div>
               ))}
             </CardGrid>
-          )}
+          ) : null}
           
           {/* Load more indicator */}
           {hasMore && (

@@ -24,6 +24,7 @@ interface TreeState {
   // Loading states
   isLoadingRoot: boolean;
   isLoadingChildren: Set<string>;  // parent IDs currently loading
+  pendingChildrenRequests: Map<string, Promise<TreeNode[]>>;  // Deduplication map
   
   // Full data cache (only loaded when needed)
   fullAssetsCache: Map<number, AssetRead>;  // asset_id -> full asset
@@ -51,6 +52,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   childrenCache: new Map(),
   isLoadingRoot: false,
   isLoadingChildren: new Set(),
+  pendingChildrenRequests: new Map(),
   fullAssetsCache: new Map(),
   fullBundlesCache: new Map(),
   totalBundles: 0,
@@ -118,6 +120,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   
   /**
    * Fetch children of a node (lazy loading)
+   * Uses promise deduplication to prevent concurrent duplicate requests
    */
   fetchChildren: async (parentId: string): Promise<TreeNode[]> => {
     const { activeInfospace } = useInfospaceStore.getState();
@@ -134,65 +137,85 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       return cached;
     }
     
-    // Check if already loading
-    if (state.isLoadingChildren.has(parentId)) {
-      console.log('[TreeStore] Already loading children for:', parentId);
-      // Wait a bit and check cache again
-      await new Promise(resolve => setTimeout(resolve, 100));
-      const nowCached = get().childrenCache.get(parentId);
-      if (nowCached) return nowCached;
-      throw new Error('Children loading timed out');
+    // Check if there's already a pending request for these children
+    const pending = state.pendingChildrenRequests.get(parentId);
+    if (pending) {
+      console.log('[TreeStore] Reusing pending request for children:', parentId);
+      return pending;
     }
     
     console.log('[TreeStore] Fetching children for:', parentId);
     
-    // Mark as loading
-    set(state => ({
-      isLoadingChildren: new Set([...state.isLoadingChildren, parentId]),
-    }));
+    // Create the fetch promise
+    const fetchPromise = (async () => {
+      // Mark as loading
+      set(state => ({
+        isLoadingChildren: new Set([...state.isLoadingChildren, parentId]),
+      }));
+      
+      try {
+        const response: TreeChildrenResponse = await TreeNavigationService.getTreeChildren({
+          infospaceId: activeInfospace.id,
+          parentId: parentId,
+          limit: 500,  // High limit for now, we can paginate later
+        });
+        
+        console.log('[TreeStore] Children loaded for', parentId, ':', {
+          count: response.children.length,
+          total: response.total_children,
+          hasMore: response.has_more,
+        });
+        
+        // Update cache and cleanup
+        set(state => {
+          const newCache = new Map(state.childrenCache);
+          newCache.set(parentId, response.children);
+          
+          const newLoadingSet = new Set(state.isLoadingChildren);
+          newLoadingSet.delete(parentId);
+          
+          const newPendingRequests = new Map(state.pendingChildrenRequests);
+          newPendingRequests.delete(parentId);
+          
+          return {
+            childrenCache: newCache,
+            isLoadingChildren: newLoadingSet,
+            pendingChildrenRequests: newPendingRequests,
+          };
+        });
+        
+        return response.children;
+      } catch (err: any) {
+        console.error('[TreeStore] Failed to fetch children:', err);
+        
+        // Remove from loading set and pending requests
+        set(state => {
+          const newLoadingSet = new Set(state.isLoadingChildren);
+          newLoadingSet.delete(parentId);
+          
+          const newPendingRequests = new Map(state.pendingChildrenRequests);
+          newPendingRequests.delete(parentId);
+          
+          return { 
+            isLoadingChildren: newLoadingSet,
+            pendingChildrenRequests: newPendingRequests,
+          };
+        });
+        
+        const errorMsg = err.message || 'Failed to load children';
+        toast.error(errorMsg);
+        throw err;
+      }
+    })();
     
-    try {
-      const response: TreeChildrenResponse = await TreeNavigationService.getTreeChildren({
-        infospaceId: activeInfospace.id,
-        parentId: parentId,
-        limit: 500,  // High limit for now, we can paginate later
-      });
-      
-      console.log('[TreeStore] Children loaded for', parentId, ':', {
-        count: response.children.length,
-        total: response.total_children,
-        hasMore: response.has_more,
-      });
-      
-      // Update cache
-      set(state => {
-        const newCache = new Map(state.childrenCache);
-        newCache.set(parentId, response.children);
-        
-        const newLoadingSet = new Set(state.isLoadingChildren);
-        newLoadingSet.delete(parentId);
-        
-        return {
-          childrenCache: newCache,
-          isLoadingChildren: newLoadingSet,
-        };
-      });
-      
-      return response.children;
-    } catch (err: any) {
-      console.error('[TreeStore] Failed to fetch children:', err);
-      
-      // Remove from loading set
-      set(state => {
-        const newLoadingSet = new Set(state.isLoadingChildren);
-        newLoadingSet.delete(parentId);
-        return { isLoadingChildren: newLoadingSet };
-      });
-      
-      const errorMsg = err.message || 'Failed to load children';
-      toast.error(errorMsg);
-      throw err;
-    }
+    // Store the pending promise
+    set(state => {
+      const newPendingRequests = new Map(state.pendingChildrenRequests);
+      newPendingRequests.set(parentId, fetchPromise);
+      return { pendingChildrenRequests: newPendingRequests };
+    });
+    
+    return fetchPromise;
   },
   
   /**
@@ -370,6 +393,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       childrenCache: new Map(),
       isLoadingRoot: false,
       isLoadingChildren: new Set(),
+      pendingChildrenRequests: new Map(),
       fullAssetsCache: new Map(),
       fullBundlesCache: new Map(),
       totalBundles: 0,

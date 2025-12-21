@@ -15,7 +15,6 @@ from app.api.deps import (
     CurrentUser,
     ContentIngestionServiceDep,
     BundleServiceDep,
-    TaskServiceDep,
 )
 from app.api.services.source_service import SourceService
 from app.api.services.service_utils import validate_infospace_access
@@ -28,7 +27,6 @@ from app.schemas import (
     SourceTransferResponse,
     SourceCreateRequest,
     BundleCreate,
-    TaskCreate,
 )
 from sqlmodel import select, func
 from pydantic import BaseModel
@@ -60,11 +58,13 @@ def create_source(
     source_in: SourceCreateRequest,
     session: SessionDep,
     bundle_service: BundleServiceDep,
-    task_service: TaskServiceDep,
 ) -> SourceRead:
     """
-    Create a new source. If monitoring is enabled, a corresponding ingestion task
-    and a destination bundle will also be created.
+    Create a new source with optional streaming configuration.
+    
+    If streaming is enabled (is_active=True), the source will automatically poll
+    for new content at the specified interval. Content will be routed to the
+    output_bundle_id or a newly created bundle.
     """
     source_service = SourceService(session)
     # Use output_bundle_id (streaming) or target_bundle_id (legacy monitoring) or create new
@@ -115,20 +115,8 @@ def create_source(
         user_id=current_user.id, infospace_id=infospace_id, source_in=source_create
     )
 
-    # Create a monitoring task if enabled
-    if source_in.enable_monitoring and source_in.schedule:
-        task_create = TaskCreate(
-            name=f"Ingest from {source.name}",
-            type="ingest",
-            schedule=source_in.schedule,
-            configuration={
-                "target_bundle_id": bundle_id_to_use,
-            },
-            source_id=source.id,
-        )
-        task_service.create_task(
-            task_in=task_create, user_id=current_user.id, infospace_id=infospace_id
-        )
+    # Note: Monitoring tasks are deprecated. Use the Flows API to create
+    # processing workflows that watch this source's output bundle instead.
 
     session.refresh(source)
     return source

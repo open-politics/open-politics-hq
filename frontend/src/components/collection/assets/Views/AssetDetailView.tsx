@@ -797,7 +797,7 @@ const AssetDetailView = ({
     }
   };
 
-  const handleReprocessAsset = async (useCustomOptions: boolean = false) => {
+  const handleReprocessAsset = useCallback(async (useCustomOptions: boolean = false) => {
     if (!asset) return;
     
     setIsReprocessing(true);
@@ -829,20 +829,20 @@ const AssetDetailView = ({
               }
               
               toast.success(`Child assets refreshed! Found ${childAssets.length} CSV rows.`);
-    } catch (error) {
+            } catch (error) {
               console.error('[Reprocess] Error during refresh:', error);
               toast.error(`Reprocessing completed but refresh failed. Try clicking the "🔍 Debug & Refetch" button.`);
             }
           }
-        }, 1500); // Reduced from 2000ms to 1500ms
+        }, 1500);
       }
     } catch (error) {
       console.error('Error reprocessing asset:', error);
       toast.error(`Failed to reprocess asset: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } finally {
+    } finally {
       setIsReprocessing(false);
     }
-  };
+  }, [asset, reprocessOptions, reprocessAsset, fetchChildren, getAssetById, childAssets.length]);
 
   // --- Helper Components for Asset Content ---
 
@@ -1250,7 +1250,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
   );
 };
 
-const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAssets, isReprocessing, handleReprocessAsset, setIsReprocessDialogOpen, setSelectedChildAsset, isLoadingChildren, childrenError, isHierarchicalAsset, refreshTrigger, fetchChildren, renderTextDisplay, setActiveTab, fetchMediaBlob, activeInfospace, getAssetById }: any) => {
+const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren, childAssets, isReprocessing, handleReprocessAsset, setIsReprocessDialogOpen, setSelectedChildAsset, isLoadingChildren, childrenError, isHierarchicalAsset, fetchChildren, renderTextDisplay, setActiveTab, fetchMediaBlob, activeInfospace, getAssetById }: any) => {
     const handleRowSelect = (childAsset: AssetRead) => {
       setSelectedChildAsset(childAsset);
       setActiveTab('children');
@@ -1266,7 +1266,7 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
           if (updatedAsset) {
             console.log('[CsvOverviewContent] Parent asset refreshed');
           }
-          
+
           // Then fetch children (this should now show the new rows)
           await fetchChildren(asset.id, asset);
           console.log('[CsvOverviewContent] Children refetched');
@@ -1274,6 +1274,11 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
           console.error('[CsvOverviewContent] Error refreshing after save:', error);
         }
       }
+    };
+
+    const handleMaterializeCSV = () => {
+      // Just use the existing reprocess mechanism - it will auto-materialize if needed
+      handleReprocessAsset(false);
     };
 
     return (
@@ -1291,9 +1296,34 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
                   />
               </div>
           ) : (
-              <div className="flex-1 bg-background rounded overflow-hidden flex items-center justify-center text-muted-foreground">
-                  <FileSpreadsheet className="h-12 w-12 mb-2" />
-                  <div className="text-center"><p>No CSV file content available</p><p className="text-xs">Content may be available in individual row assets</p></div>
+              <div className="flex-1 bg-background rounded overflow-hidden flex flex-col items-center justify-center text-muted-foreground p-6">
+                  <FileSpreadsheet className="h-12 w-12 mb-4" />
+                  <div className="text-center mb-4">
+                    <p className="font-medium mb-1">No CSV file available</p>
+                    <p className="text-xs">This CSV was created via chat and has no underlying file</p>
+                  </div>
+                  {hasChildren && childAssets.length > 0 && (
+                    <Button
+                      onClick={handleMaterializeCSV}
+                      disabled={isReprocessing}
+                      className="gap-2"
+                    >
+                      {isReprocessing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Generating file & processing...
+                        </>
+                      ) : (
+                        <>
+                          <FileSpreadsheet className="h-4 w-4" />
+                          Generate & Load CSV File ({childAssets.length} rows)
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {!hasChildren && (
+                    <p className="text-xs text-muted-foreground">Add rows in the Children tab first</p>
+                  )}
               </div>
           )}
 
@@ -1320,9 +1350,8 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
                     <div>Is hierarchical asset: {isHierarchicalAsset ? 'Yes' : 'No'}</div>
                     <div>Asset ID: {asset.id}</div>
                     <div>Active tab: {activeTab}</div>
-                    <div>Refresh trigger: {refreshTrigger}</div>
                   </div>
-                  <button onClick={() => { console.log('=== DEBUG STATE ==='); console.log('childAssets:', childAssets); console.log('hasChildren:', hasChildren); console.log('isLoadingChildren:', isLoadingChildren); console.log('childrenError:', childrenError); console.log('isHierarchicalAsset:', isHierarchicalAsset); console.log('refreshTrigger:', refreshTrigger); fetchChildren(asset.id, asset); }} className="mt-2 px-2 py-1 bg-blue-100 border-blue-300 rounded hover:bg-blue-200 text-blue-800 text-xs">🔍 Debug & Refetch</button>
+                  <button onClick={() => { console.log('=== DEBUG STATE ==='); console.log('childAssets:', childAssets); console.log('hasChildren:', hasChildren); console.log('isLoadingChildren:', isLoadingChildren); console.log('childrenError:', childrenError); console.log('isHierarchicalAsset:', isHierarchicalAsset); fetchChildren(asset.id, asset); }} className="mt-2 px-2 py-1 bg-blue-100 border-blue-300 rounded hover:bg-blue-200 text-blue-800 text-xs">🔍 Debug & Refetch</button>
                 </div>
                 <div className="flex flex-wrap gap-2 mt-3">
                   <Button variant="outline" size="sm" onClick={() => handleReprocessAsset(false)} disabled={isReprocessing} className="h-7 px-2 text-xs bg-blue-100 border-blue-300 hover:bg-blue-200">{isReprocessing ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Processing...</> : <><RefreshCw className="h-3 w-3 mr-1" />Auto Reprocess</>}</Button>
@@ -1333,7 +1362,7 @@ const CsvOverviewContent = ({ asset, renderEditableField, hasChildren, childAsse
           )}
       </div>
     );
-};
+});
 
 // CSV Row Content - displays structured column data for CSV row assets
 const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, renderEditableField: any }) => {
@@ -1450,7 +1479,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
       case 'web':
         return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} />;
       case 'csv':
-        return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} refreshTrigger={refreshTrigger} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} fetchMediaBlob={fetchMediaBlob} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
+        return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} fetchMediaBlob={fetchMediaBlob} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
       case 'csv_row':
         return <CsvRowContent asset={asset} renderEditableField={renderEditableField} />;
       default:

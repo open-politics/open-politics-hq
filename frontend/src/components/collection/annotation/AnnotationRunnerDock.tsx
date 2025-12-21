@@ -487,7 +487,7 @@ export default function AnnotationRunnerDock({
             "flex items-center justify-center w-full h-full",
             isMinimized ? "sm:flex" : "sm:hidden"
           )}>
-            <div className="p-1.5 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent border border-blue-200 dark:border-blue-800 shadow-sm">
+            <div className="p-1.5 mt-1 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent border border-blue-200 dark:border-blue-800 shadow-sm">
               <Terminal className="h-7 w-7 text-blue-700 dark:text-blue-400" />
             </div>
           </div>

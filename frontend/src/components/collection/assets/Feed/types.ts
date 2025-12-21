@@ -32,7 +32,7 @@ export interface UseFeedAssetsOptions {
   /** Filter to specific asset kinds */
   kinds?: AssetKind[];
   /** Sort field - supports compound sorts like 'kind-updated_at' for type then date */
-  sortBy?: 'created_at' | 'updated_at' | 'kind-updated_at' | 'kind-created_at';
+  sortBy?: 'name' | 'created_at' | 'updated_at' | 'kind-updated_at' | 'kind-created_at';
   /** Sort direction */
   sortOrder?: 'asc' | 'desc';
 }
@@ -87,6 +87,12 @@ export interface AssetFeedViewProps {
   
   /** Filter to specific asset kinds (server-side) */
   filterKinds?: AssetKind[];
+  
+  /** 
+   * Filter to show only children of a specific bundle
+   * When provided with infospaceId, AssetSelector will only show bundle contents
+   */
+  filterByBundleId?: number | null;
   
   /** 
    * Pre-known available kinds (e.g., from tree data)

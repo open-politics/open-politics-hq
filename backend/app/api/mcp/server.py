@@ -1516,10 +1516,12 @@ async def library_hub(
     ctx: Context,
     operation: Annotated[str, "asset.create/update/delete or collection.create/add/remove/rename/delete"] = "asset.create",
     # Asset Creation Params
-    kind: Annotated[Optional[str], "Asset kind (article, text, web, csv_row)"] = None,
+    kind: Annotated[Optional[str], "Asset kind (article, text, web, csv, csv_row)"] = None,
     title: Annotated[Optional[str], "Asset title"] = None,
     content: Annotated[Optional[str], "Text content (for article/text)"] = None,
     url: Annotated[Optional[str], "URL (for web)"] = None,
+    columns: Annotated[Optional[List[str]], "Column names (for csv parent)"] = None,
+    description: Annotated[Optional[str], "Description (for csv parent or collections)"] = None,
     row_data: Annotated[Optional[Dict[str, Any]], "Column-value pairs for csv_row"] = None,
     
     # Asset Update Params
@@ -1532,7 +1534,6 @@ async def library_hub(
     bundle_id: Annotated[Optional[int], "Collection ID"] = None,
     asset_ids: Annotated[Optional[List[int]], "Assets to include"] = None,
     name: Annotated[Optional[str], "Collection name"] = None,
-    description: Annotated[Optional[str], "Collection description"] = None,
     
     # Shared
     parent_asset_id: Annotated[Optional[int], "Parent asset ID"] = None,
@@ -1544,6 +1545,8 @@ async def library_hub(
     <quick_start>
     • Create Note: library_hub(operation="asset.create", kind="text", title="Idea", content="...")
     • Save Link: library_hub(operation="asset.create", kind="web", url="https://...", title="...")
+    • Create CSV Dataset: library_hub(operation="asset.create", kind="csv", title="Survey Data", columns=["Name", "Age", "City"])
+    • Add CSV Row: library_hub(operation="asset.create", kind="csv_row", row_data={"Name": "Alice", "Age": 30}, parent_asset_id=123)
     • Create Collection: library_hub(operation="collection.create", name="Research", asset_ids=[1,2])
     • Add to Collection: library_hub(operation="collection.add", bundle_id=5, asset_ids=[10])
     </quick_start>
@@ -1567,6 +1570,8 @@ async def library_hub(
                     if title: effective_data["title"] = title
                     if content: effective_data["content"] = content
                     if url: effective_data["url"] = url
+                    if columns: effective_data["columns"] = columns
+                    if description: effective_data["description"] = description
                     if row_data: effective_data["row_data"] = row_data
                 
                 elif operation == "asset.update":
@@ -1588,12 +1593,12 @@ async def library_hub(
                     if not effective_data:
                         return ToolResult(content=[TextContent(type="text", text="❌ Missing parameters for asset.create")], structured_content={"error": "missing_params"})
                     return await _asset_create(services, ctx, effective_data, parent_asset_id)
-                
+
                 if operation == "asset.update":
                     if not effective_data:
                         return ToolResult(content=[TextContent(type="text", text="❌ Missing parameters for asset.update")], structured_content={"error": "missing_params"})
                     return await _asset_update(services, ctx, effective_data)
-                
+
                 if operation == "asset.delete":
                     if not effective_data:
                         return ToolResult(content=[TextContent(type="text", text="❌ Missing parameters for asset.delete")], structured_content={"error": "missing_params"})
@@ -2983,7 +2988,9 @@ async def _asset_create(services: Dict, ctx: Context, data: Dict[str, Any], pare
     builder = AssetBuilder(services["session"], services["user_id"], services["infospace_id"])
 
     # Route based on asset kind
-    if asset_kind == AssetKind.CSV_ROW:
+    if asset_kind == AssetKind.CSV:
+        return await _asset_create_csv_container(services, ctx, builder, data)
+    elif asset_kind == AssetKind.CSV_ROW:
         return await _asset_create_csv_row(services, ctx, builder, data, parent_asset_id)
     elif asset_kind == AssetKind.ARTICLE:
         return await _asset_create_article(services, ctx, builder, data)
@@ -2996,6 +3003,51 @@ async def _asset_create(services: Dict, ctx: Context, data: Dict[str, Any], pare
             content=[TextContent(type="text", text=f"❌ Asset kind '{kind}' not supported for creation")],
             structured_content={"error": f"Unsupported kind: {kind}"}
         )
+
+
+async def _asset_create_csv_container(services: Dict, ctx: Context, builder, data: Dict[str, Any]) -> ToolResult:
+    """Create CSV parent container asset."""
+    title = data.get("title")
+    columns = data.get("columns")
+    
+    if not title:
+        return ToolResult(
+            content=[TextContent(type="text", text="❌ 'title' field is required for CSV container creation")],
+            structured_content={"error": "title is required"}
+        )
+    
+    if not columns or not isinstance(columns, list) or len(columns) == 0:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ 'columns' field is required for CSV container creation\n\nRequired:\n- columns (list): Column names, e.g. ['Name', 'Age', 'City']\n\nReceived data: {list(data.keys())}")],
+            structured_content={
+                "error": "missing_required_fields",
+                "missing_fields": ["columns"],
+                "received_fields": list(data.keys()),
+                "required_fields": ["title", "columns"],
+                "hint": "columns should be a list of column names"
+            }
+        )
+    
+    description = data.get("description")
+    
+    asset = await builder.for_csv_container(
+        title=title,
+        columns=columns,
+        description=description
+    ).build()
+    
+    return ToolResult(
+        content=[TextContent(type="text", text=f"✅ CSV Dataset #{asset.id}: {asset.title}\nColumns: {', '.join(columns)}\n\nAdd rows with:\n  library_hub(operation='asset.create', kind='csv_row', row_data={{'Column1': 'value1', ...}}, parent_asset_id={asset.id})")],
+        structured_content={
+            "asset_id": asset.id,
+            "asset_title": asset.title,
+            "asset_kind": asset.kind.value,
+            "columns": columns,
+            "column_count": len(columns),
+            "row_count": 0,
+            "status": "created"
+        }
+    )
 
 
 async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dict[str, Any], parent_asset_id: Optional[int]) -> ToolResult:
@@ -3015,6 +3067,7 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
 
     # Get parent CSV asset if parent_asset_id provided
     parent_asset = None
+    next_part_index = 0
     if parent_asset_id:
         parent_asset = services["session"].get(Asset, parent_asset_id)
         if not parent_asset or parent_asset.infospace_id != services["infospace_id"]:
@@ -3026,13 +3079,29 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
                     "hint": "Parent must be a CSV container in your infospace"
                 }
             )
+        
+        # Get the next part_index by counting existing rows
+        from sqlmodel import select, func
+        existing_rows_count = services["session"].exec(
+            select(func.count(Asset.id))
+            .where(Asset.parent_asset_id == parent_asset_id)
+            .where(Asset.kind == AssetKind.CSV_ROW)
+        ).one()
+        next_part_index = existing_rows_count
+        
+        # Update parent's row_count in source_metadata
+        if parent_asset.source_metadata is None:
+            parent_asset.source_metadata = {}
+        parent_asset.source_metadata['row_count'] = existing_rows_count + 1
+        services["session"].add(parent_asset)
+        services["session"].commit()
 
     # Get column headers from parent if available
     column_headers = None
     if parent_asset and parent_asset.source_metadata.get("columns"):
         column_headers = parent_asset.source_metadata["columns"]
 
-    # Build and create the CSV row
+    # Build and create the CSV row with proper part_index
     if parent_asset_id:
         asset = await (builder
             .for_csv_row(
@@ -3040,6 +3109,7 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
                 column_headers=column_headers
             )
             .as_child_of(parent_asset_id)
+            .with_part_index(next_part_index)
             .build()
         )
     else:

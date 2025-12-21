@@ -436,19 +436,27 @@ export default function ModelManager({ showModels = true, className = '', showPr
       </div>
       )}
 
-      {/* Ollama Model Management */}
+      {/* Ollama Model Management - Grid Layout */}
       {isOllamaProvider && (
-        <Card className="border border-slate-200 dark:border-slate-700 bg-slate-50/20 dark:bg-slate-950/10">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium flex items-center justify-between text-gray-900 dark:text-gray-100">
-              Ollama Model Management
-              <div className="flex gap-2">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {/* Installed Models Card */}
+          <Card className="border border-slate-200 dark:border-slate-700 bg-slate-50/20 dark:bg-slate-950/10">
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
+                    Ollama Model Management
+                  </CardTitle>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Runs locally for privacy and offline use. No API key required.
+                  </p>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={checkModelDownloadStatus}
                   disabled={isRefreshing}
-                  className="text-sm"
+                  className="text-sm shrink-0"
                   title="Check model download status"
                 >
                   {isRefreshing ? (
@@ -457,336 +465,331 @@ export default function ModelManager({ showModels = true, className = '', showPr
                     <RefreshCw className="h-4 w-4" />
                   )}
                 </Button>
-                <Dialog open={isOllamaDialogOpen} onOpenChange={setIsOllamaDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="text-sm">
-                      <Download className="h-4 w-4 mr-1" />
-                      Pull Model
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-4xl bg-background/60">
-                    <DialogHeader>
-                      <DialogTitle>Pull Ollama Model</DialogTitle>
-                      <DialogDescription>
-                        Select a model to download from the Ollama registry, or enter a custom model name.
-                      </DialogDescription>
-                    </DialogHeader>
-                    
-                    {/* Custom Model Input */}
-                    <div className="p-4 border rounded-lg mb-4">
-                      <label className="text-sm font-medium mb-2 block">Custom Model Name</label>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="Enter model name (e.g. llama2:13b)"
-                          value={customModelName}
-                          onChange={(e) => setCustomModelName(e.target.value)}
-                        />
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-2">
+                <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                  Currently installed models ({availableModels.length}):
+                </div>
+                {availableModels.length > 0 ? (
+                  <div className="grid gap-2 max-h-64 overflow-y-auto pr-1">
+                    {availableModels.map((model) => (
+                      <div key={model} className="flex items-center justify-between p-2 border border-slate-200 dark:border-slate-600 rounded bg-slate-100/20 dark:bg-slate-900/50">
+                        <span className="font-mono text-sm text-gray-900 dark:text-gray-100 truncate">{model}</span>
                         <Button
-                          variant="secondary"
-                          onClick={() => {
-                            if (customModelName.trim()) {
-                              handlePullModel(customModelName.trim());
-                              setIsOllamaDialogOpen(false);
-                            }
-                          }}
-                          disabled={!customModelName.trim()}
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleRemoveModel(model)}
+                          disabled={isRemovingModel === model}
+                          className="text-xs shrink-0"
                         >
-                          Pull Custom Model
+                          {isRemovingModel === model ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
                         </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        You can enter any valid model name, even if it's not listed below
-                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 dark:text-gray-400 py-8 text-sm border border-dashed border-gray-300 dark:border-gray-600 rounded">
+                    No models installed. Pull a model to get started.
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Pull Model Card */}
+          <Card className="border border-slate-200 dark:border-slate-700 bg-slate-50/20 dark:bg-slate-950/10">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
+                Download Models
+              </CardTitle>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Pull models from the Ollama registry
+              </p>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <Dialog open={isOllamaDialogOpen} onOpenChange={setIsOllamaDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full">
+                    <Download className="h-4 w-4 mr-2" />
+                    Browse & Pull Models
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Pull Ollama Model</DialogTitle>
+                    <DialogDescription>
+                      Select a model to download from the Ollama registry, or enter a custom model name.
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  {/* Custom Model Input */}
+                  <div className="p-4 border rounded-lg mb-4">
+                    <label className="text-sm font-medium mb-2 block">Custom Model Name</label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Enter model name (e.g. llama2:13b)"
+                        value={customModelName}
+                        onChange={(e) => setCustomModelName(e.target.value)}
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          if (customModelName.trim()) {
+                            handlePullModel(customModelName.trim());
+                            setIsOllamaDialogOpen(false);
+                          }
+                        }}
+                        disabled={!customModelName.trim()}
+                      >
+                        Pull Custom Model
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      You can enter any valid model name, even if it's not listed below
+                    </p>
+                  </div>
+                  
+                  {/* Filter Controls */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg border">
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">Search</label>
+                      <Input
+                        placeholder="Search models..."
+                        value={searchFilter}
+                        onChange={(e) => setSearchFilter(e.target.value)}
+                        className="w-full"
+                      />
                     </div>
                     
-                    {/* Filter Controls */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg border">
-                      <div>
-                        <label className="text-sm font-medium mb-1 block">Search</label>
-                        <Input
-                          placeholder="Search models..."
-                          value={searchFilter}
-                          onChange={(e) => setSearchFilter(e.target.value)}
-                          className="w-full"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label className="text-sm font-medium mb-1 block">Capability</label>
-                        <Select value={capabilityFilter} onValueChange={setCapabilityFilter}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="All capabilities" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All capabilities</SelectItem>
-                            <SelectItem value="tools">🔧 Tools</SelectItem>
-                            <SelectItem value="vision">👁️ Vision</SelectItem>
-                            <SelectItem value="thinking">🧠 Thinking</SelectItem>
-                            <SelectItem value="embedding">📊 Embedding</SelectItem>
-                            <SelectItem value="cloud">☁️ Cloud</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      
-                      <div>
-                        <label className="text-sm font-medium mb-1 block">Size</label>
-                        <Select value={sizeFilter} onValueChange={setSizeFilter}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="All sizes" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All sizes</SelectItem>
-                            <SelectItem value="small">📱 Small (&lt; 2GB)</SelectItem>
-                            <SelectItem value="medium">💻 Medium (2-10GB)</SelectItem>
-                            <SelectItem value="large">🖥️ Large (&gt; 10GB)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      
-                      <div>
-                        <label className="text-sm font-medium mb-1 block">Sort By</label>
-                        <Select value={sortBy} onValueChange={setSortBy}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Sort by" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="popular">🔥 Most Popular</SelectItem>
-                            <SelectItem value="recent">🆕 Recently Updated</SelectItem>
-                            <SelectItem value="name">📝 Name (A-Z)</SelectItem>
-                            <SelectItem value="size">📏 Size (Small to Large)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    
-                    {/* Updated Filter */}
-                    <div className="px-4">
-                      <label className="text-sm font-medium mb-1 block">Last Updated</label>
-                      <Select value={updatedFilter} onValueChange={setUpdatedFilter}>
-                        <SelectTrigger className="w-full md:w-64">
-                          <SelectValue placeholder="Any time" />
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">Capability</label>
+                      <Select value={capabilityFilter} onValueChange={setCapabilityFilter}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All capabilities" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">Any time</SelectItem>
-                          <SelectItem value="recent">🆕 Recent (3 months)</SelectItem>
-                          <SelectItem value="moderate">📅 Moderate (3-12 months)</SelectItem>
-                          <SelectItem value="older">📜 Older (1+ years)</SelectItem>
+                          <SelectItem value="all">All capabilities</SelectItem>
+                          <SelectItem value="tools">🔧 Tools</SelectItem>
+                          <SelectItem value="vision">👁️ Vision</SelectItem>
+                          <SelectItem value="thinking">🧠 Thinking</SelectItem>
+                          <SelectItem value="embedding">📊 Embedding</SelectItem>
+                          <SelectItem value="cloud">☁️ Cloud</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     
-                    {/* Quick Filter Presets */}
-                    <div className="flex flex-wrap gap-2 p-3 rounded">
-                      <span className="text-xs font-medium text-slate-700 self-center">Quick presets:</span>
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">Size</label>
+                      <Select value={sizeFilter} onValueChange={setSizeFilter}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All sizes" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All sizes</SelectItem>
+                          <SelectItem value="small">📱 Small (&lt; 2GB)</SelectItem>
+                          <SelectItem value="medium">💻 Medium (2-10GB)</SelectItem>
+                          <SelectItem value="large">🖥️ Large (&gt; 10GB)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">Sort By</label>
+                      <Select value={sortBy} onValueChange={setSortBy}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sort by" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="popular">🔥 Most Popular</SelectItem>
+                          <SelectItem value="recent">🆕 Recently Updated</SelectItem>
+                          <SelectItem value="name">📝 Name (A-Z)</SelectItem>
+                          <SelectItem value="size">📏 Size (Small to Large)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  
+                  {/* Updated Filter */}
+                  <div className="px-4">
+                    <label className="text-sm font-medium mb-1 block">Last Updated</label>
+                    <Select value={updatedFilter} onValueChange={setUpdatedFilter}>
+                      <SelectTrigger className="w-full md:w-64">
+                        <SelectValue placeholder="Any time" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Any time</SelectItem>
+                        <SelectItem value="recent">🆕 Recent (3 months)</SelectItem>
+                        <SelectItem value="moderate">📅 Moderate (3-12 months)</SelectItem>
+                        <SelectItem value="older">📜 Older (1+ years)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  {/* Quick Filter Presets */}
+                  <div className="flex flex-wrap gap-2 p-3 rounded">
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-400 self-center">Quick presets:</span>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => { 
+                        setCapabilityFilter('tools');
+                        setSizeFilter('small');
+                        setSortBy('popular');
+                      }}
+                      className="text-xs h-7"
+                    >
+                      🚀 Popular Small Tools
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => { 
+                        setCapabilityFilter('thinking');
+                        setSortBy('recent');
+                      }}
+                      className="text-xs h-7"
+                    >
+                      🧠 Latest Reasoning
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => { 
+                        setCapabilityFilter('vision');
+                        setSizeFilter('medium');
+                      }}
+                      className="text-xs h-7"
+                    >
+                      👁️ Vision Models
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => { 
+                        setUpdatedFilter('recent');
+                        setSortBy('recent');
+                      }}
+                      className="text-xs h-7"
+                    >
+                      🆕 Recently Updated
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => { 
+                        setCapabilityFilter('embedding');
+                        setSizeFilter('small');
+                      }}
+                      className="text-xs h-7"
+                    >
+                      📊 Embeddings
+                    </Button>
+                  </div>
+                  
+                  {/* Results Summary & Clear Filters */}
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-muted-foreground">
+                      Showing {filteredOllamaModels.length} of {availableOllamaModels.length} models
+                    </div>
+                    {(searchFilter || capabilityFilter || sizeFilter || updatedFilter || sortBy !== 'popular') && (
                       <Button 
-                        variant="outline" 
+                        variant="ghost" 
                         size="sm"
-                        onClick={() => { 
-                          setCapabilityFilter('tools');
-                          setSizeFilter('small');
+                        onClick={() => {
+                          setSearchFilter('');
+                          setCapabilityFilter('');
+                          setSizeFilter('');
+                          setUpdatedFilter('');
                           setSortBy('popular');
                         }}
-                        className="text-xs h-7"
                       >
-                        🚀 Popular Small Tools
+                        <Filter className="h-4 w-4 mr-1" />
+                        Clear Filters
                       </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => { 
-                          setCapabilityFilter('thinking');
-                          setSortBy('recent');
-                        }}
-                        className="text-xs h-7"
-                      >
-                        🧠 Latest Reasoning
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => { 
-                          setCapabilityFilter('vision');
-                          setSizeFilter('medium');
-                        }}
-                        className="text-xs h-7"
-                      >
-                        👁️ Vision Models
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => { 
-                          setUpdatedFilter('recent');
-                          setSortBy('recent');
-                        }}
-                        className="text-xs h-7"
-                      >
-                        🆕 Recently Updated
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => { 
-                          setCapabilityFilter('embedding');
-                          setSizeFilter('small');
-                        }}
-                        className="text-xs h-7"
-                      >
-                        📊 Embeddings
-                      </Button>
-                    </div>
-                    
-                    {/* Results Summary & Clear Filters */}
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm text-muted-foreground">
-                        Showing {filteredOllamaModels.length} of {availableOllamaModels.length} models
+                    )}
+                  </div>
+                  
+                  <div className="space-y-4 max-h-96 overflow-y-auto">
+                    {filteredOllamaModels.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <Filter className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p>No models match your filters</p>
+                        <p className="text-xs">Try adjusting your search or filter criteria</p>
                       </div>
-                      {(searchFilter || capabilityFilter || sizeFilter || updatedFilter || sortBy !== 'popular') && (
-                        <Button 
-                          variant="ghost" 
+                    ) : (
+                      filteredOllamaModels.map((model) => (
+                      <div key={model.name} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-300 dark:hover:border-blue-600 bg-gray-50/10 dark:bg-gray-950/20 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-all duration-200">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <div className="font-medium">{model.name}</div>
+                            {model.capabilities && model.capabilities.length > 0 && (
+                              <div className="flex gap-1">
+                                {model.capabilities.map((cap) => (
+                                  <Badge 
+                                    key={cap} 
+                                    variant={cap === 'tools' ? 'default' : cap === 'vision' ? 'secondary' : 'outline'}
+                                    className="text-xs"
+                                  >
+                                    {cap}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-sm text-muted-foreground mb-1">{model.description}</div>
+                          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                            <span>Size: {model.size}</span>
+                            {model.pulls && <span>Downloads: {model.pulls}</span>}
+                            {model.parameters && <span>Params: {model.parameters}</span>}
+                            {model.updated && <span>Updated: {model.updated}</span>}
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
                           size="sm"
                           onClick={() => {
-                            setSearchFilter('');
-                            setCapabilityFilter('');
-                            setSizeFilter('');
-                            setUpdatedFilter('');
-                            setSortBy('popular');
+                            handlePullModel(model.name);
+                            setIsOllamaDialogOpen(false);
                           }}
+                          disabled={isPullingModel === model.name}
+                          className="ml-4 shrink-0"
                         >
-                          <Filter className="h-4 w-4 mr-1" />
-                          Clear Filters
+                          {isPullingModel === model.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
                         </Button>
-                      )}
-                    </div>
-                    
-                    <div className="space-y-4 max-h-96 overflow-y-auto">
-                      {filteredOllamaModels.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                          <Filter className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                          <p>No models match your filters</p>
-                          <p className="text-xs">Try adjusting your search or filter criteria</p>
-                        </div>
-                      ) : (
-                        filteredOllamaModels.map((model) => (
-                        <div key={model.name} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-300 dark:hover:border-blue-600 bg-gray-50/10 dark:bg-gray-950/20 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-all duration-200">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="font-medium">{model.name}</div>
-                              {model.capabilities && model.capabilities.length > 0 && (
-                                <div className="flex gap-1">
-                                  {model.capabilities.map((cap) => (
-                                    <Badge 
-                                      key={cap} 
-                                      variant={cap === 'tools' ? 'default' : cap === 'vision' ? 'secondary' : 'outline'}
-                                      className="text-xs"
-                                    >
-                                      {cap}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <div className="text-sm text-muted-foreground mb-1">{model.description}</div>
-                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                              <span>Size: {model.size}</span>
-                              {model.pulls && <span>Downloads: {model.pulls}</span>}
-                              {model.parameters && <span>Params: {model.parameters}</span>}
-                              {model.updated && <span>Updated: {model.updated}</span>}
-                            </div>
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handlePullModel(model.name)}
-                            disabled={isPullingModel === model.name}
-                            className="ml-4"
-                          >
-                            {isPullingModel === model.name ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Download className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </div>
-                        ))
-                      )}
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                      </div>
+                      ))
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+              
+              <div className="mt-4 space-y-2 text-xs text-gray-500 dark:text-gray-400">
+                <p className="flex items-start gap-2">
+                  <span className="text-green-600 dark:text-green-500 shrink-0 mt-0.5">✓</span>
+                  <span>Privacy-focused: Models run on your local infrastructure</span>
+                </p>
+                <p className="flex items-start gap-2">
+                  <span className="text-green-600 dark:text-green-500 shrink-0 mt-0.5">✓</span>
+                  <span>Works offline with no API key required</span>
+                </p>
+                <p className="flex items-start gap-2">
+                  <span className="text-blue-600 dark:text-blue-500 shrink-0 mt-0.5">ℹ</span>
+                  <span>Visit <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-600 dark:hover:text-blue-400">ollama.com/library</a> for more models</span>
+                </p>
               </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-2">
-              <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                Currently installed models ({availableModels.length}):
-              </div>
-              {availableModels.length > 0 ? (
-                <div className="grid gap-2">
-                  {availableModels.map((model) => (
-                    <div key={model} className="flex items-center justify-between p-2 border border-slate-200 dark:border-slate-600 rounded bg-slate-100/20 dark:bg-slate-900/50">
-                      <span className="font-mono text-sm text-gray-900 dark:text-gray-100">{model}</span>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleRemoveModel(model)}
-                        disabled={isRemovingModel === model}
-                        className="text-xs"
-                      >
-                        {isRemovingModel === model ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3 w-3" />
-                        )}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center text-gray-500 dark:text-gray-400 py-3 text-sm">
-                  No models installed. Pull a model to get started.
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Provider-specific information */}
-      {selectedProvider && (
-        <Card className="border border-gray-200 dark:border-gray-700 bg-gray-50/20 dark:bg-gray-950/10">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium capitalize text-gray-900 dark:text-gray-100">{selectedProvider} Information</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-              {selectedProvider === 'gemini' && (
-                <div>
-                  <p>Google's Gemini models offer excellent reasoning and multimodal capabilities.</p>
-                  <p className="text-gray-500 dark:text-gray-500">
-                    API Key required. Get yours at: <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">Google AI Studio</a>
-                  </p>
-                </div>
-              )}
-              {selectedProvider === 'openai' && (
-                <div>
-                  <p>OpenAI's GPT models provide state-of-the-art language understanding and generation.</p>
-                  <p className="text-gray-500 dark:text-gray-500">
-                    API Key required. Get yours at: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">OpenAI Platform</a>
-                  </p>
-                </div>
-              )}
-              {selectedProvider === 'ollama' && (
-                <div>
-                  <p>Ollama runs models locally for privacy and offline use.</p>
-                  <p className="text-gray-500 dark:text-gray-500">
-                    Models are downloaded and run on your local infrastructure. No API key required.
-                  </p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

@@ -205,7 +205,7 @@ export default function AnnotationRunnerPage() {
   const isProcessing = isLoadingResults || activeRun?.status === 'running' || activeRun?.status === 'pending';
   
   return (
-    <div className="flex flex-col h-full overflow-auto relative">
+    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
       
       <div className="flex-1 relative z-10">
         <AnnotationRunner

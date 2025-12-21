@@ -12,7 +12,7 @@ import { debounce } from 'lodash';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, Globe, Map as MapIcon, MapPin, FileText, Calendar, Tag, X, ExternalLink, Info, ChevronDown, Eye } from 'lucide-react';
+import { Loader2, Globe, Map as MapIcon, MapPin, FileText, Calendar, Tag, X, ExternalLink, Info, ChevronDown, Eye, Sun, Moon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import { cn } from '@/lib/utils';
@@ -547,7 +547,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [isGlobeView, setIsGlobeView] = useState(false);
-  const { theme } = useTheme();
+  const { theme, setTheme } = useTheme();
 
   const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoiamltdnciLCJhIjoiY20xd2U3Z2pqMGprdDJqczV2OXJtMTBoayJ9.hlSx0Nc19j_Z1NRgyX7HHg';
 
@@ -655,6 +655,10 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       setIsGlobeView(!isGlobeView);
     }
   }, [isGlobeView, mapLoaded]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  }, [theme, setTheme]);
 
   // Handle point click - always show side panel for consistent UX
   const handlePointClick = useCallback((point: MapPoint) => {
@@ -1075,30 +1079,26 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         const map = mapRef.current;
         const targetStyleUrl = theme === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11';
 
-        const updateStyleIfNeeded = () => {
+        const updateStyle = () => {
             if (!map.isStyleLoaded()) return;
             
-            // Get current style URL safely
             try {
-                const styleObject = map.getStyle();
-                const currentStyleUrl = styleObject?.sprite?.toString().split('/sprites')[0] ?? '';
-
-                if (currentStyleUrl !== targetStyleUrl) {
-                    map.setStyle(targetStyleUrl);
-                    // The style.load event will trigger and other useEffects will handle re-adding sources/layers
-                }
+                // Simply set the style - Mapbox will handle this efficiently
+                // All sources and layers will be re-added by their respective useEffects
+                // when the 'style.load' event fires
+                map.setStyle(targetStyleUrl);
             } catch (error) {
-                console.warn('Error checking map style:', error);
+                console.warn('Error updating map style:', error);
             }
         };
 
-        // Ensure the map's style is loaded before attempting to get or set it
+        // Ensure the map's style is loaded before attempting to set it
         if (map.isStyleLoaded()) {
-            updateStyleIfNeeded();
+            updateStyle();
         } else {
             // If the style isn't loaded yet, wait for it to load first
             map.once('style.load', () => {
-                updateStyleIfNeeded();
+                updateStyle();
             });
         }
      }
@@ -1196,8 +1196,24 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         }} 
       />
       
-      {/* Projection Toggle Button */}
-      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-10">
+      {/* Theme & Projection Toggle Buttons */}
+      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-10 flex gap-2">
+        {/* Theme Toggle Button */}
+        <Button
+          onClick={toggleTheme}
+          variant="secondary"
+          size="icon"
+          className="bg-background/80 backdrop-blur-sm border shadow-lg hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9"
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        >
+          {theme === 'dark' ? (
+            <Sun className="h-4 w-4" />
+          ) : (
+            <Moon className="h-4 w-4" />
+          )}
+        </Button>
+        
+        {/* Projection Toggle Button */}
         <Button
           onClick={toggleProjection}
           variant="secondary"

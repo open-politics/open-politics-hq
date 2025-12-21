@@ -559,6 +559,11 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   }, [toggleSelected]);
 
   // Handle asset viewing
+  // Navigation flow:
+  // - Clicking bundle -> shows bundle detail view
+  // - Clicking asset with parent -> shows parent asset detail with child highlighted
+  // - Clicking top-level asset -> shows asset detail view
+  // - Back button -> returns to feed (sets activeDetail to null)
   const handleItemView = useCallback((item: AssetTreeItem) => {
     if (item.type === 'folder' && item.bundle) {
         setActiveDetail({ type: 'bundle', id: item.bundle.id });
@@ -838,7 +843,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
         <DropdownMenuItem onClick={() => handleItemView(item)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
         {item.type === 'folder' && item.bundle && (
           <>
-            <DropdownMenuItem onClick={() => handleItemView(item)}><View className="mr-2 h-4 w-4" /> Bundle Details</DropdownMenuItem>
+            {/* redundant */}
+            {/* <DropdownMenuItem onClick={() => setActiveDetail({ type: 'bundle', id: item.bundle!.id })}><View className="mr-2 h-4 w-4" /> Bundle Details</DropdownMenuItem> */}
             <DropdownMenuItem onClick={() => handleUploadToBundle(item.bundle!)}><Upload className="mr-2 h-4 w-4" /> Add Files</DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEditBundle(item.bundle!)}><Settings className="mr-2 h-4 w-4" /> Edit Details</DropdownMenuItem>
           </>
@@ -876,7 +882,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
   return (
     <TextSpanHighlightProvider>
-      <div className="flex flex-col h-full w-full min-w-0 px-1 sm:px-2 overflow-y-auto scrollbar-hide">
+      <div className="flex flex-col h-full w-full min-w-0 px-1 sm:px-2 scrollbar-hide">
         <div className="flex items-center hidden sm:flex justify-between mb-3 px-2">
           
         </div>
@@ -1127,7 +1133,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
           {isMobile ? (
             /* Mobile Layout - Tree view with side sheet for details */
             <>
-              <div className="h-full w-full min-w-0 overflow-hidden">
+              <div className="h-full w-full min-w-0 overflow-hidden mb-4 md:mb-0">
                 <AssetSelector
                   selectedItems={selectedItems}
                   onSelectionChange={setSelectedItems}
@@ -1165,6 +1171,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                         items={semanticSearchEnabled && semanticFeedItems.length > 0 ? semanticFeedItems : undefined}
                         infospaceId={semanticSearchEnabled && semanticFeedItems.length > 0 ? undefined : activeInfospace?.id}
                         availableKinds={assetKinds}
+                        layout="list"
                         onAssetClick={(asset) => {
                           setActiveDetail({ type: 'asset', id: asset.id });
                         }}
@@ -1211,14 +1218,19 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   {activeDetail?.type === 'asset' ? (
                     <>
                       {/* Back to Feed button */}
-                      <div className="flex-none px-4 py-2 flex items-center gap-2">
+                      <div className="flex-none px-4 py-2 flex items-center gap-2 border-b">
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           size="sm"
-                          onClick={() => setActiveDetail(null)}
+                          onClick={() => {
+                            setActiveDetail(null);
+                            setHighlightAssetId(null);
+                          }}
                           className="h-7 px-2 text-xs gap-1"
+                          title="Back to Home Feed View"
                         >
                           <ChevronLeft className="h-4 w-4" />
+                          <span className="hidden sm:inline">Back to Home Feed</span>
                         </Button>
                       </div>
                       <div className="flex-1 overflow-hidden">
@@ -1234,14 +1246,20 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   ) : activeDetail?.type === 'bundle' ? (
                     <>
                       {/* Back to Feed button */}
-                      <div className="flex-none px-4 py-2 flex items-center gap-2">
+                      <div className="flex-none px-4 py-2 flex items-center gap-2 border-b">
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           size="sm"
-                          onClick={() => setActiveDetail(null)}
+                          onClick={() => {
+                            setActiveDetail(null);
+                            setSelectedAssetInBundle(null);
+                            setHighlightAssetId(null);
+                          }}
                           className="h-7 px-2 text-xs gap-1"
+                          title="Back to Home Feed View"
                         >
                           <ChevronLeft className="h-4 w-4" />
+                          <span className="hidden sm:inline">Back to Home Feed</span>
                         </Button>
                       </div>
                       <div className="flex-1 overflow-hidden">

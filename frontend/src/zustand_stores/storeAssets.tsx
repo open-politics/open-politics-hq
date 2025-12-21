@@ -333,6 +333,23 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       return false;
     }
 
+    // First try: reprocess with /reprocess endpoint
+    // For CSV assets first try: we use /materialize-csv endpoint
+    // Via the sdk
+
+    const asset = await AssetsService.getAsset({
+      infospaceId: activeInfospace.id,
+      assetId: assetId,
+    });
+
+    if (asset.kind.toLowerCase() === 'csv') {
+      const response = await AssetsService.materializeCsvFromRows({
+        infospaceId: activeInfospace.id,
+        assetId: assetId,
+      });
+      return true;
+    }
+
     set({ isLoading: true, error: null });
     try {
       // Build query parameters

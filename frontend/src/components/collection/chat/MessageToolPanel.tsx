@@ -43,6 +43,16 @@ export function MessageToolPanel({
     return { completedTools: completed, runningTools: running, failedTools: failed }
   }, [toolExecutions])
 
+  // Find the last completed execution (most recent one with results)
+  const lastCompletedIndex = useMemo(() => {
+    return toolExecutions.reduce((lastIdx, exec, currentIdx) => {
+      if (exec.status === 'completed' && (exec.structured_content || exec.result)) {
+        return currentIdx
+      }
+      return lastIdx
+    }, -1)
+  }, [toolExecutions])
+
   if (toolExecutions.length === 0) return null
 
   return (
@@ -78,13 +88,14 @@ export function MessageToolPanel({
       {/* Content */}
       {isExpanded && (
         <div className="p-2 space-y-2 max-h-[60vh] overflow-y-auto">
-          {toolExecutions.map(execution => (
+          {toolExecutions.map((execution, index) => (
             <ToolExecutionIndicator
               key={execution.id}
               execution={execution}
               compact={false}
               onAssetClick={onAssetClick}
               onBundleClick={onBundleClick}
+              defaultExpanded={index === lastCompletedIndex}
             />
           ))}
         </div>

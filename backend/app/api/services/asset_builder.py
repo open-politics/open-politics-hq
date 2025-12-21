@@ -314,6 +314,41 @@ class AssetBuilder:
         
         return self
     
+    def for_csv_container(
+        self,
+        title: str,
+        columns: List[str],
+        description: Optional[str] = None
+    ) -> 'AssetBuilder':
+        """
+        Build a CSV parent container asset for organizing tabular data.
+        
+        Args:
+            title: Name of the dataset
+            columns: List of column names/headers
+            description: Optional description of the dataset
+        """
+        self.blueprint.kind = AssetKind.CSV
+        self.blueprint.title = title
+        self.blueprint.stub = False
+        
+        # Store column schema in source_metadata
+        self.blueprint.source_metadata = {
+            'columns': columns,
+            'column_count': len(columns),
+            'row_count': 0,  # Will be updated as rows are added
+            'created_via': 'mcp_chat'
+        }
+        
+        if description:
+            self.blueprint.source_metadata['description'] = description
+        
+        # Initialize empty text_content (will be built from rows)
+        self.blueprint.text_content = ",".join(columns)  # Just the header
+        
+        self.blueprint.processing_status = ProcessingStatus.READY
+        return self
+
     def for_csv_row(
         self,
         row_data: Dict[str, Any],
@@ -571,6 +606,11 @@ class AssetBuilder:
         self.blueprint.part_index = part_index
         return self
     
+    def with_part_index(self, part_index: int) -> 'AssetBuilder':
+        """Set the part index for this asset."""
+        self.blueprint.part_index = part_index
+        return self
+
     def with_metadata(self, **kwargs) -> 'AssetBuilder':
         """Add arbitrary metadata."""
         self.blueprint.source_metadata.update(kwargs)
@@ -657,6 +697,9 @@ class AssetBuilder:
     
     def _blueprint_to_asset_create(self) -> AssetCreate:
         """Convert blueprint to AssetCreate schema."""
+        # Generate content hash for deduplication
+        content_hash = self._generate_content_hash()
+        
         return AssetCreate(
             title=self.blueprint.title,
             kind=self.blueprint.kind,
@@ -670,8 +713,37 @@ class AssetBuilder:
             event_timestamp=self.blueprint.event_timestamp,
             parent_asset_id=self.blueprint.parent_asset_id,
             part_index=self.blueprint.part_index,
-            processing_status=self.blueprint.processing_status
+            processing_status=self.blueprint.processing_status,
+            content_hash=content_hash
         )
+    
+    def _generate_content_hash(self) -> Optional[str]:
+        """
+        Generate a content hash for deduplication.
+        
+        Uses source_identifier (URL) + text content to create a stable hash.
+        This ensures that the same content from the same source is deduplicated.
+        """
+        import hashlib
+        
+        # For deduplication, we primarily use source_identifier (URL)
+        # combined with a sample of the text content
+        if not self.blueprint.source_identifier and not self.blueprint.text_content:
+            return None
+        
+        # Build hash components
+        hash_parts = []
+        
+        if self.blueprint.source_identifier:
+            hash_parts.append(self.blueprint.source_identifier)
+        
+        # Use first 1000 chars of text content for hash (enough to detect changes)
+        if self.blueprint.text_content:
+            hash_parts.append(self.blueprint.text_content[:1000])
+        
+        # Combine and hash
+        content_for_hash = "|".join(hash_parts)
+        return hashlib.md5(content_for_hash.encode('utf-8', errors='ignore')).hexdigest()
     
     def _clone(self) -> 'AssetBuilder':
         """Clone this builder (shallow copy of blueprint)."""

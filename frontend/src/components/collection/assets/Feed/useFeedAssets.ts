@@ -28,7 +28,7 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
     infospaceId,
     limit = DEFAULT_LIMIT,
     kinds,
-    sortBy = 'updated_at',
+    sortBy = 'name',
     sortOrder = 'desc',
   } = options;
 

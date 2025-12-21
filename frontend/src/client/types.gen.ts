@@ -301,6 +301,7 @@ export type AssetCreate = {
 } | null);
     event_timestamp?: (string | null);
     processing_status?: (ProcessingStatus | null);
+    content_hash?: (string | null);
 };
 
 export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | 'csv' | 'csv_row' | 'mbox' | 'email' | 'pdf_page' | 'text_chunk' | 'image_region' | 'video_scene' | 'audio_segment' | 'article' | 'rss_feed' | 'file';
@@ -1625,9 +1626,9 @@ export type SourceRead = {
     is_active: boolean;
     poll_interval_seconds: number;
     output_bundle_id?: (number | null);
-    cursor_state?: {
-        [key: string]: unknown;
-    };
+    cursor_state?: ({
+    [key: string]: unknown;
+} | null);
     last_poll_at?: (string | null);
     next_poll_at?: (string | null);
     items_last_poll?: number;
@@ -1715,6 +1716,35 @@ export type TaskUpdate = {
 } | null);
     status?: (TaskStatus | null);
     is_enabled?: (boolean | null);
+};
+
+/**
+ * Response from text search.
+ */
+export type TextSearchResponse = {
+    query: string;
+    results: Array<TextSearchResult>;
+    total_found: number;
+    infospace_id: number;
+};
+
+/**
+ * Single text search result with relevance score.
+ */
+export type TextSearchResult = {
+    asset: AssetRead;
+    /**
+     * Relevance score (0-1, higher is better)
+     */
+    score: number;
+    /**
+     * Where the match was found: 'title', 'content', or 'bundle'
+     */
+    match_type: string;
+    /**
+     * Snippet of matching content
+     */
+    match_context?: (string | null);
 };
 
 export type Token = {
@@ -2538,6 +2568,20 @@ export type IngestSearchResults1Data = {
 };
 
 export type IngestSearchResults1Response = (Array<AssetRead>);
+
+export type MaterializeCsvFromRowsData = {
+    assetId: number;
+    infospaceId: number;
+};
+
+export type MaterializeCsvFromRowsResponse = (AssetRead);
+
+export type MaterializeCsvFromRows1Data = {
+    assetId: number;
+    infospaceId: number;
+};
+
+export type MaterializeCsvFromRows1Response = (AssetRead);
 
 export type ReprocessAssetData = {
     assetId: number;
@@ -4359,6 +4403,28 @@ export type BatchGetAssetsData = {
 };
 
 export type BatchGetAssetsResponse = (Array<AssetRead>);
+
+export type TextSearchAssetsData = {
+    /**
+     * Filter by asset types
+     */
+    assetKinds?: (Array<AssetKind> | null);
+    /**
+     * Search within specific bundle
+     */
+    bundleId?: (number | null);
+    infospaceId: number;
+    /**
+     * Maximum number of results
+     */
+    limit?: number;
+    /**
+     * Search query
+     */
+    query: string;
+};
+
+export type TextSearchAssetsResponse = (TextSearchResponse);
 
 export type CreateUserBackupData = {
     requestBody: UserBackupCreate;

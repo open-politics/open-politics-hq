@@ -47,6 +47,8 @@ export function initializeToolRenderers(): void {
   // Operation tools (minimal, confirmatory)
   toolResultRegistry.register(OrganizeRenderer);
   toolResultRegistry.register(AssetCrudRenderer);
+  // Also register AssetCrudRenderer for library_hub operations
+  toolResultRegistry.register({ ...AssetCrudRenderer, toolName: 'library_hub' });
   toolResultRegistry.register(IngestRenderer);
   
   // Memory and context tools

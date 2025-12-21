@@ -4,7 +4,7 @@ import AnnotationSchemaManager from '@/components/collection/annotation/Annotati
   
 export default function AnnotationSchemesPage() {
   return (
-    <div className="h-full w-full">
+    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
       <AnnotationSchemaManager />
     </div>
   );

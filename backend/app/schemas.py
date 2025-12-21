@@ -345,7 +345,7 @@ class SourceRead(SourceBase):
     is_active: bool
     poll_interval_seconds: int
     output_bundle_id: Optional[int] = None
-    cursor_state: Dict[str, Any] = {}
+    cursor_state: Optional[Dict[str, Any]] = {}
     last_poll_at: Optional[datetime] = None
     next_poll_at: Optional[datetime] = None
     items_last_poll: int = 0
@@ -408,6 +408,7 @@ class AssetCreate(AssetBase):
     source_metadata: Optional[Dict[str, Any]] = None
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
+    content_hash: Optional[str] = None  # For deduplication
 
 class AssetUpdate(SQLModel):
     title: Optional[str] = None

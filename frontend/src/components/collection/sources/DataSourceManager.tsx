@@ -264,7 +264,7 @@ export default function DataSourceManager({ onClose }: DataSourceManagerProps = 
                       </CardContent>
                     </Card>
                   ) : (
-                    <div className="space-y-4 sm:space-y-6">
+                    <div className="space-y-4 h-full flex flex-col min-h-[70svh] md:min-h-[72.75svh] max-h-[76.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
                       {/* Aggregate Stats */}
                       {aggregateStats.activeCount > 0 && (
                         <Card className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">

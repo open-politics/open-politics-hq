@@ -2911,6 +2911,64 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/assets/{asset_id}/materialize-csv": {
+      "post": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Materialize Csv From Rows",
+        "description": "Materialize a chat-generated CSV container into a real CSV file.\n\nGenerates a CSV file from the row assets and uploads it to storage,\nthen updates the parent asset with the blob_path.",
+        "operationId": "materialize_csv_from_rows",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/assets/{asset_id}/reprocess": {
       "post": {
         "tags": [
@@ -11371,7 +11429,7 @@
           "Sources"
         ],
         "summary": "Create Source",
-        "description": "Create a new source. If monitoring is enabled, a corresponding ingestion task\nand a destination bundle will also be created.",
+        "description": "Create a new source with optional streaming configuration.\n\nIf streaming is enabled (is_active=True), the source will automatically poll\nfor new content at the specified interval. Content will be routed to the\noutput_bundle_id or a newly created bundle.",
         "operationId": "create_source",
         "security": [
           {
@@ -11509,7 +11567,7 @@
           "Sources"
         ],
         "summary": "Create Source",
-        "description": "Create a new source. If monitoring is enabled, a corresponding ingestion task\nand a destination bundle will also be created.",
+        "description": "Create a new source with optional streaming configuration.\n\nIf streaming is enabled (is_active=True), the source will automatically poll\nfor new content at the specified interval. Content will be routed to the\noutput_bundle_id or a newly created bundle.",
         "operationId": "create_source",
         "security": [
           {
@@ -13590,6 +13648,119 @@
                     "$ref": "#/components/schemas/AssetRead"
                   },
                   "title": "Response Tree Navigation-Batch Get Assets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/tree/text-search": {
+      "get": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Text Search Assets",
+        "description": "Comprehensive text search across all assets in an infospace.\n\nSearch strategy (prioritized):\n1. **Title matches** - Exact and partial matches in asset titles (highest priority)\n2. **Bundle members** - Assets in bundles with matching names\n3. **Fulltext content** - Searches text_content field (fallback)\n\nThis searches ALL assets regardless of bundle membership or tree visibility,\nmaking it much more useful than the client-side filtering.\n\nReturns assets with relevance scores based on match quality.",
+        "operationId": "text_search_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Search query",
+              "title": "Query"
+            },
+            "description": "Search query"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Maximum number of results",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of results"
+          },
+          {
+            "name": "asset_kinds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AssetKind"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by asset types",
+              "title": "Asset Kinds"
+            },
+            "description": "Filter by asset types"
+          },
+          {
+            "name": "bundle_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Search within specific bundle",
+              "title": "Bundle Id"
+            },
+            "description": "Search within specific bundle"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TextSearchResponse"
                 }
               }
             }
@@ -19071,6 +19242,17 @@
                 "type": "null"
               }
             ]
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
           }
         },
         "type": "object",
@@ -25332,8 +25514,15 @@
             "title": "Output Bundle Id"
           },
           "cursor_state": {
-            "additionalProperties": true,
-            "type": "object",
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Cursor State",
             "default": {}
           },
@@ -25782,6 +25971,75 @@
           "count"
         ],
         "title": "TasksOut"
+      },
+      "TextSearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TextSearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "total_found": {
+            "type": "integer",
+            "title": "Total Found"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "results",
+          "total_found",
+          "infospace_id"
+        ],
+        "title": "TextSearchResponse",
+        "description": "Response from text search."
+      },
+      "TextSearchResult": {
+        "properties": {
+          "asset": {
+            "$ref": "#/components/schemas/AssetRead"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Relevance score (0-1, higher is better)"
+          },
+          "match_type": {
+            "type": "string",
+            "title": "Match Type",
+            "description": "Where the match was found: 'title', 'content', or 'bundle'"
+          },
+          "match_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Context",
+            "description": "Snippet of matching content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset",
+          "score",
+          "match_type"
+        ],
+        "title": "TextSearchResult",
+        "description": "Single text search result with relevance score."
       },
       "Token": {
         "properties": {

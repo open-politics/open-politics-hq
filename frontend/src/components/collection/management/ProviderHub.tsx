@@ -354,10 +354,10 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                 <div className="space-y-1.5">
                   {/* Stored Key */}
                   {hasStoredKey && (
-                    <div className="flex items-center justify-between gap-2 px-2 py-1.5 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded">
-                      <div className="flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400 min-w-0">
-                        <Lock className="w-3 h-3 shrink-0" />
-                        <span className="truncate font-medium">Encrypted for scheduled tasks</span>
+                    <div className="flex items-center justify-between gap-2 px-2 py-1.5 border border-gray-200 dark:border-gray-700 rounded bg-gray-50/30 dark:bg-gray-900/30">
+                      <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 min-w-0">
+                        <Lock className="w-3.5 h-3.5 shrink-0 text-green-600 dark:text-green-500" />
+                        <span className="truncate">Encrypted for scheduled tasks</span>
                       </div>
                       <Button
                         variant="ghost"
@@ -373,10 +373,10 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                   {/* Runtime Key */}
                   {hasRuntimeKey && (
                     <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 px-2 py-1.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
-                        <div className="flex items-center gap-1.5 text-xs text-blue-700 dark:text-blue-400 min-w-0">
-                          <CheckCircle className="w-3 h-3 shrink-0" />
-                          <span className="truncate font-medium">Runtime key (this session)</span>
+                      <div className="flex items-center justify-between gap-2 px-2 py-1.5 border border-gray-200 dark:border-gray-700 rounded bg-gray-50/30 dark:bg-gray-900/30">
+                        <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 min-w-0">
+                          <CheckCircle className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-500" />
+                          <span className="truncate">Runtime key (this session)</span>
                         </div>
                         <Button
                           variant="ghost"
@@ -479,7 +479,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
   return (
     <div className={`space-y-4 w-full ${className}`}>
       {/* Action Buttons */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col md:flex-row items-center justify-between gap-2">
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -504,7 +504,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
           </Tooltip>
         </TooltipProvider>
 
-        <div className="flex gap-2 shrink-0">
+        <div className="flex flex-col md:flex-row gap-2 shrink-0">
           {hasRuntimeKeysToTransfer && (
             <Button
               variant="default"
@@ -568,7 +568,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
               </Badge>
             </div>
 
-            <div className="grid gap-4 w-full">
+            <div className="grid gap-4 w-full grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
               {providers[capability].map((provider) => renderProviderCard(provider, capability))}
             </div>
           </TabsContent>

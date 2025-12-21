@@ -11,6 +11,13 @@ import { Loader2, Sparkles, Database, RefreshCw, Play, Info, Trash2, Settings, K
 import { InfospaceRead, InfospacesService, EmbeddingsService } from '@/client';
 import { toast } from 'sonner';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
+import { ButtonGroup } from "@/components/ui/button-group";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -354,22 +361,23 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5" />
+    <div className="border rounded-lg bg-card">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row p-4 border-b">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 md:gap-0">
+          <div className="flex items-center gap-3">
+            <Sparkles className="h-5 w-5 text-muted-foreground" />
             <div>
-              <CardTitle>Semantic Search (Embeddings)</CardTitle>
-              <CardDescription>
+              <h3 className="text-lg font-semibold">Semantic Search (Embeddings)</h3>
+              <p className="text-sm text-muted-foreground">
                 Enable AI-powered semantic search for your content
-              </CardDescription>
+              </p>
             </div>
           </div>
           {!isEnabled ? (
             <Dialog open={showConfigDialog} onOpenChange={setShowConfigDialog}>
               <DialogTrigger asChild>
-                <Button variant="outline">
+                <Button variant="outline" size="sm">
                   <Database className="mr-2 h-4 w-4" />
                   Enable
                 </Button>
@@ -622,51 +630,83 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
               </DialogContent>
             </Dialog>
           ) : (
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowChangeModelDialog(true)}
-                disabled={isEnabling}
-                title="Change embedding model"
-              >
-                <Settings className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadStats}
-                disabled={isLoadingStats}
-                title="Refresh statistics"
-              >
-                {isLoadingStats ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleRegenerateEmbeddings}
-                disabled={isGenerating}
-                title="Regenerate all embeddings"
-              >
-                {isGenerating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleClearEmbeddings}
-                disabled={isGenerating}
-                title="Clear all embeddings"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+            <ButtonGroup>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowChangeModelDialog(true)}
+                      disabled={isEnabling}
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Change embedding model</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={loadStats}
+                      disabled={isLoadingStats}
+                    >
+                      {isLoadingStats ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Refresh statistics</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRegenerateEmbeddings}
+                      disabled={isGenerating}
+                    >
+                      {isGenerating ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Regenerate all embeddings</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleClearEmbeddings}
+                      disabled={isGenerating}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Clear all embeddings</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <Button
                 variant="destructive"
                 size="sm"
@@ -675,70 +715,69 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
               >
                 Disable
               </Button>
-            </div>
+            </ButtonGroup>
           )}
         </div>
-      </CardHeader>
+      </div>
       
+      {/* Content Section */}
       {isEnabled && (
-        <CardContent>
-          <div className="space-y-4">
-            {/* Current Configuration */}
-            <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-              <div>
-                <div className="text-sm font-medium">Current Model</div>
-                <div className="text-xs text-muted-foreground">{infospace.embedding_model}</div>
-              </div>
-              <Badge variant="default">Active</Badge>
+        <div className="p-4 space-y-4 ">
+          {/* Current Configuration */}
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <div>
+              <div className="text-sm font-medium">Current Model</div>
+              <div className="text-xs text-muted-foreground">{infospace.embedding_model}</div>
             </div>
-
-            {/* Statistics */}
-            {stats && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Embedding Coverage</span>
-                  <span className="text-sm text-muted-foreground">
-                    {stats.embedded_chunks} / {stats.total_chunks} chunks
-                  </span>
-                </div>
-                <Progress value={stats.coverage_percentage} className="h-2" />
-                <div className="text-xs text-center text-muted-foreground">
-                  {stats.coverage_percentage.toFixed(1)}% of assets embedded
-                </div>
-
-                <div className="grid grid-cols-3 gap-4 pt-2">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold">{stats.total_assets}</div>
-                    <div className="text-xs text-muted-foreground">Assets</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold">{stats.total_chunks}</div>
-                    <div className="text-xs text-muted-foreground">Chunks</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold">{stats.embedded_chunks}</div>
-                    <div className="text-xs text-muted-foreground">Embedded</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {isLoadingStats && (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-6 w-6 animate-spin" />
-              </div>
-            )}
-
-            {/* Info Alert */}
-            <Alert>
-              <Sparkles className="h-4 w-4" />
-              <AlertTitle>Auto-embedding Active</AlertTitle>
-              <AlertDescription>
-                All new assets will be automatically embedded for semantic search. You can regenerate embeddings anytime.
-              </AlertDescription>
-            </Alert>
+            <Badge variant="default">Active</Badge>
           </div>
-        </CardContent>
+
+          {/* Statistics */}
+          {stats && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Embedding Coverage</span>
+                <span className="text-sm text-muted-foreground">
+                  {stats.embedded_chunks} / {stats.total_chunks} chunks
+                </span>
+              </div>
+              <Progress value={stats.coverage_percentage} className="h-2" />
+              <div className="text-xs text-center text-muted-foreground">
+                {stats.coverage_percentage.toFixed(1)}% of assets embedded
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 pt-2">
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{stats.total_assets}</div>
+                  <div className="text-xs text-muted-foreground">Assets</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{stats.total_chunks}</div>
+                  <div className="text-xs text-muted-foreground">Chunks</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{stats.embedded_chunks}</div>
+                  <div className="text-xs text-muted-foreground">Embedded</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isLoadingStats && (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+          )}
+
+          {/* Info Alert */}
+          <Alert>
+            <Sparkles className="h-4 w-4" />
+            <AlertTitle>Auto-embedding Active</AlertTitle>
+            <AlertDescription>
+              All new assets will be automatically embedded for semantic search. You can regenerate embeddings anytime.
+            </AlertDescription>
+          </Alert>
+        </div>
       )}
 
       {/* Change Model Dialog */}
@@ -884,7 +923,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   );
 }
 

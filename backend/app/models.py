@@ -380,10 +380,9 @@ class SourcePollHistory(SQLModel, table=True):
     items_found: int = Field(default=0)
     items_ingested: int = Field(default=0)
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
-    triggered_run_id: Optional[int] = Field(default=None, foreign_key="annotationrun.id")  # DEPRECATED
     cursor_before: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     cursor_after: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    
+
     source: Optional["Source"] = Relationship(back_populates="poll_history")
 
 # ─────────────────────────────────────────────────────────────── Assets ──── #

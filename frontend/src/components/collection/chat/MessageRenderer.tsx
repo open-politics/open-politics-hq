@@ -215,6 +215,17 @@ export function AssistantMessageRenderer({
   // Check if any tool is currently running
   const hasRunningTool = normalizedToolExecutions.some(exec => exec.status === 'running')
 
+  // Find the last completed tool execution for default expansion
+  const lastCompletedToolId = useMemo(() => {
+    let lastId: string | null = null
+    normalizedToolExecutions.forEach(exec => {
+      if (exec.status === 'completed' && (exec.structured_content || exec.result)) {
+        lastId = exec.id
+      }
+    })
+    return lastId
+  }, [normalizedToolExecutions])
+
   return (
     <div className="space-y-3 min-w-0 w-full overflow-hidden">
       {/* Minimal Summary - Just show tools used */}
@@ -323,6 +334,7 @@ export function AssistantMessageRenderer({
                         compact={!isOperatorTool || isTaskTool}
                         onAssetClick={onAssetClick}
                         onBundleClick={onBundleClick}
+                        defaultExpanded={section.toolExecution.id === lastCompletedToolId}
                       />
                     </div>
                     {/* Wide container: Show Temporal Anchor */}
@@ -340,6 +352,7 @@ export function AssistantMessageRenderer({
                     compact={!isOperatorTool || isTaskTool}
                     onAssetClick={onAssetClick}
                     onBundleClick={onBundleClick}
+                    defaultExpanded={section.toolExecution.id === lastCompletedToolId}
                   />
                 </div>
               )
@@ -382,6 +395,7 @@ export function AssistantMessageRenderer({
                   compact={true}
                   onAssetClick={onAssetClick}
                   onBundleClick={onBundleClick}
+                  defaultExpanded={execution.id === lastCompletedToolId}
                 />
               ))}
           </div>
