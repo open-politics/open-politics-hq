@@ -121,6 +121,66 @@ def init_db(session: Session) -> None:
         infospace = super_user_infospace
         logger.info(f"Default infospace for user {user.email} already exists.")
 
+    # --- Create Initial Annotation Schemas from initial_data.py ---
+    for schema_data in INITIAL_SCHEMAS:
+        existing_schema = session.exec(
+            select(AnnotationSchema).where(
+                AnnotationSchema.infospace_id == infospace.id,
+                AnnotationSchema.name == schema_data.name,
+                AnnotationSchema.version == schema_data.version
+            )
+        ).first()
+        
+        if not existing_schema:
+            # Convert FieldJustificationConfig Pydantic models to dicts for JSON serialization
+            justification_configs = {}
+            if schema_data.field_specific_justification_configs:
+                for field_name, config in schema_data.field_specific_justification_configs.items():
+                    if hasattr(config, 'model_dump'):
+                        justification_configs[field_name] = config.model_dump()
+                    elif hasattr(config, 'dict'):
+                        justification_configs[field_name] = config.dict()
+                    else:
+                        justification_configs[field_name] = config
+            
+            new_schema = AnnotationSchema(
+                name=schema_data.name,
+                description=schema_data.description or "",
+                instructions=schema_data.instructions,
+                output_contract=schema_data.output_contract,
+                field_specific_justification_configs=justification_configs,
+                version=schema_data.version or "1.0",
+                infospace_id=infospace.id,
+                user_id=user.id,
+                is_active=True
+            )
+            session.add(new_schema)
+            logger.info(f"Creating initial schema: {new_schema.name}")
+        else:
+            logger.info(f"Initial schema '{schema_data.name}' already exists.")
+    session.commit()
+
+    # --- Register Analysis Adapters ---
+    # Register graph_aggregator adapter
+    graph_adapter = session.exec(
+        select(AnalysisAdapter).where(AnalysisAdapter.name == "graph_aggregator")
+    ).first()
+    if not graph_adapter:
+        graph_adapter = AnalysisAdapter(
+            name="graph_aggregator",
+            description="Aggregates graph entities and triplets from annotation results into a unified knowledge graph for visualization",
+            module_path="app.api.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
+            adapter_type="graph",
+            is_public=True,
+            creator_user_id=user.id,
+        )
+        session.add(graph_adapter)
+        logger.info("Registered graph_aggregator adapter")
+    else:
+        logger.info("graph_aggregator adapter already registered")
+
+    session.commit()
+
     # --- Create Initial Assets from initial_data.py (Only for the default infospace)---
     for asset_data in INITIAL_ASSETS:
         try:
