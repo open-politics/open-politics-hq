@@ -88,11 +88,11 @@ const nextConfig = {
     config.resolve.alias['@'] = resolve(__dirname, 'src');
     return config;
   },
-  // turbopack: {
-  //   resolveAlias: {
-  //     '@': './src',
-  //   },
-  // },
+  turbopack: {
+    resolveAlias: {
+      '@': './src',
+    },
+  },
   experimental: {
     serverComponentsHmrCache: true,
     optimizePackageImports: [
