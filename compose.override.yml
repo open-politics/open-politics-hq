@@ -16,10 +16,8 @@ services:
     volumes:
       - ./backend/:/app
       - ./backend/openapi.json:/app/openapi.json
-      - ~/fullstack/opol/opol/python-client/opol:/app/opol
     environment:
       - PORT=${BACKEND_PORT}
-      - OPOL_DEV_MODE=true
     command: ["bash", "/app/start-reload.sh"]
     build:
       context: ./backend
