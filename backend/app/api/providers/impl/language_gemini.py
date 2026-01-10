@@ -8,8 +8,8 @@ import re
 from typing import Dict, List, Optional, AsyncIterator, Union, Any, Type
 from pydantic import BaseModel
 
-import google.generativeai as genai
-from google.generativeai import types as genai_types
+import google.genai as genai
+from google.genai import types as genai_types
 
 from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationResponse
 
