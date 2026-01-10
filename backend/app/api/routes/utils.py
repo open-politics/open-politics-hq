@@ -456,7 +456,8 @@ async def pull_ollama_model(
         import httpx
         from app.core.config import settings
         
-        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+        # Use host.docker.internal for Docker containers to reach host machine's Ollama
+        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://host.docker.internal:11434')
         
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for model pulling
             response = await client.post(
@@ -674,7 +675,8 @@ async def remove_ollama_model(
         import httpx
         from app.core.config import settings
         
-        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+        # Use host.docker.internal for Docker containers to reach host machine's Ollama
+        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://host.docker.internal:11434')
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.delete(

@@ -16,7 +16,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
     Uses Ollama's /api/embed endpoint for generating embeddings.
     """
     
-    def __init__(self, base_url: str = "http://ollama:11434"):
+    def __init__(self, base_url: str = "http://host.docker.internal:11434"):
         self.base_url = base_url.rstrip('/')
         self.client = httpx.AsyncClient(timeout=120.0)
         self._model_cache = {}

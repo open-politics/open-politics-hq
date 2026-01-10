@@ -108,7 +108,8 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     logger.info("Configured Anthropic provider (requires runtime API key from frontend)")
     
     # Configure Ollama provider - uses base URL, no API key needed
-    ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+    # Use host.docker.internal for Docker containers to reach host machine's Ollama
+    ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://host.docker.internal:11434')
     registry.configure_provider(
         name="ollama", 
         provider_class=OllamaLanguageModelProvider,
@@ -191,7 +192,8 @@ def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
     logger.info(f"Factory: Creating embedding provider of type: {provider_type}")
 
     if provider_type == "ollama":
-        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
+        # Use host.docker.internal for Docker containers to reach host machine's Ollama
+        ollama_base_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://host.docker.internal:11434')
         return OllamaEmbeddingProvider(base_url=ollama_base_url)
     
     elif provider_type == "jina":

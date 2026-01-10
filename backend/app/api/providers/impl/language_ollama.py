@@ -18,7 +18,7 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
     Handles chat, structured output, tool calls, and streaming with Ollama-specific edge cases.
     """
     
-    def __init__(self, base_url: str = "http://ollama:11434"):
+    def __init__(self, base_url: str = "http://host.docker.internal:11434"):
         self.base_url = base_url.rstrip('/')
         # Increased timeout for thinking models and complex tool chains
         self.client = httpx.AsyncClient(timeout=900.0)  # 15 minutes

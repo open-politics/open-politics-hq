@@ -848,14 +848,15 @@ async def process_single_asset_schema(
         logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
         # Call the model registry for structured classification
-        # Get the model name from run config (frontend sends as ai_model) or use default
+        # Get the model name and provider from run config (frontend sends as ai_model and ai_provider)
         model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+        provider_name = run_config.get("ai_provider")  # Optional: if specified, use this provider directly
         thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
         
         # Extract runtime API keys from run configuration (passed from frontend)
         runtime_api_keys = run_config.get("api_keys")
         
-        logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
+        logger.info(f"Task: Using model '{model_name}' from provider '{provider_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
         
         # Acquire semaphore ONLY for the actual API call to limit concurrent external requests.
         # Critical optimization: We hold the semaphore ONLY during the API call, not during
@@ -869,6 +870,7 @@ async def process_single_asset_schema(
                 text_content=text_content_for_provider,
                 schema=OutputModelClass.model_json_schema(),
                 model_name=model_name,
+                provider_name=provider_name,  # Pass provider name if specified
                 instructions=final_schema_instructions,
                 thinking_enabled=thinking_enabled,
                 runtime_api_keys=runtime_api_keys,
@@ -1141,19 +1143,21 @@ async def process_assets_sequential(
                 logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
                 # Call the model registry for structured classification
-                # Get the model name from run config (frontend sends as ai_model) or use default
+                # Get the model name and provider from run config (frontend sends as ai_model and ai_provider)
                 model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+                provider_name = run_config.get("ai_provider")  # Optional: if specified, use this provider directly
                 thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
                 
                 # Extract runtime API keys from run configuration (passed from frontend)
                 runtime_api_keys = run_config.get("api_keys")
                 
-                logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
+                logger.info(f"Task: Using model '{model_name}' from provider '{provider_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
                 
                 provider_response = await model_registry.classify(
                     text_content=text_content_for_provider,
                     schema=OutputModelClass.model_json_schema(),
                     model_name=model_name,
+                    provider_name=provider_name,  # Pass provider name if specified
                     instructions=final_schema_instructions,
                     thinking_enabled=thinking_enabled,
                     runtime_api_keys=runtime_api_keys,

@@ -57,7 +57,8 @@ class EmbeddingProviderRegistryService:
             name="ollama",
             provider_class=OllamaEmbeddingProvider,
             default_config={
-                "base_url": getattr(settings, 'OLLAMA_BASE_URL', 'http://ollama:11434')
+                # Use host.docker.internal for Docker containers to reach host machine's Ollama
+                "base_url": getattr(settings, 'OLLAMA_BASE_URL', 'http://host.docker.internal:11434')
             },
             requires_api_key=False,
             enabled=True

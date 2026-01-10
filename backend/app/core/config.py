@@ -177,7 +177,8 @@ class AppSettings(BaseSettings):
     OPOL_MODE: Optional[Literal["remote", "local", "container"]] = Field(default="remote", env="OPOL_MODE")
     OPOL_API_KEY: Optional[str] = Field(default=None, env="OPOL_API_KEY")
     # Ollama specific (if OPOL uses it, or if you add a native Ollama provider)
-    OLLAMA_BASE_URL: Optional[str] = Field(default="http://ollama:11434", env="OLLAMA_BASE_URL")
+    # Use host.docker.internal for Docker containers to reach host machine's Ollama
+    OLLAMA_BASE_URL: Optional[str] = Field(default="http://host.docker.internal:11434", env="OLLAMA_BASE_URL")
     OLLAMA_DEFAULT_MODEL: Optional[str] = Field(default="llama3", env="OLLAMA_DEFAULT_MODEL")
 
     # --- Scraping Provider ---

@@ -132,32 +132,60 @@ class ModelRegistryService:
         # First, try to find model in cache
         model_info = await self.get_model_info(model_name)
         
-        # If not found and we have runtime API keys, try to discover from runtime providers
-        if not model_info and runtime_api_keys:
-            logger.info(f"Model '{model_name}' not in cache, attempting discovery with runtime API keys")
+        # If not found, try to discover from available providers
+        if not model_info:
+            logger.info(f"Model '{model_name}' not in cache, attempting runtime discovery")
             
-            # Try each provider in runtime_api_keys
-            for provider_name, api_key in runtime_api_keys.items():
-                if provider_name in ["openai", "anthropic", "gemini"] and api_key and api_key != "placeholder":
-                    logger.info(f"Attempting to discover models from runtime provider: {provider_name}")
-                    try:
-                        runtime_provider = await self._create_runtime_provider(provider_name, api_key)
-                        # After discovery, try to find the model again
-                        model_info = await self.get_model_info(model_name)
-                        if model_info:
-                            logger.info(f"Found model '{model_name}' in provider '{provider_name}' after runtime discovery")
-                            return runtime_provider, provider_name
-                    except Exception as e:
-                        logger.error(f"Failed to create runtime provider {provider_name}: {e}")
+            # First, try Ollama (no API key needed) if it's initialized
+            if "ollama" in self.providers:
+                logger.info(f"Attempting to rediscover models from Ollama provider")
+                try:
+                    ollama_provider = self.providers["ollama"]
+                    models = await ollama_provider.discover_models()
+                    for model in models:
+                        self.models_cache[model.name] = model
+                    logger.info(f"Rediscovered {len(models)} models from Ollama")
+                    
+                    # Check if our model is now available
+                    model_info = self.models_cache.get(model_name)
+                    if model_info:
+                        logger.info(f"Found model '{model_name}' in Ollama after rediscovery")
+                        return ollama_provider, "ollama"
+                except Exception as e:
+                    logger.error(f"Failed to rediscover models from Ollama: {e}")
             
-            # If still not found after trying all runtime providers
+            # Try API-based providers if we have runtime API keys
+            if runtime_api_keys:
+                for provider_name, api_key in runtime_api_keys.items():
+                    if provider_name in ["openai", "anthropic", "gemini"] and api_key and api_key != "placeholder":
+                        logger.info(f"Attempting to discover models from runtime provider: {provider_name}")
+                        try:
+                            runtime_provider = await self._create_runtime_provider(provider_name, api_key)
+                            # After discovery, try to find the model again
+                            model_info = await self.get_model_info(model_name)
+                            if model_info:
+                                logger.info(f"Found model '{model_name}' in provider '{provider_name}' after runtime discovery")
+                                return runtime_provider, provider_name
+                        except Exception as e:
+                            logger.error(f"Failed to create runtime provider {provider_name}: {e}")
+            
+            # If still not found after trying all providers
             if not model_info:
-                logger.error(f"Model '{model_name}' not found after trying all runtime providers")
+                logger.error(f"Model '{model_name}' not found after trying all available providers")
                 return None, None
         
         # If we found the model info
         if model_info:
             provider_name = model_info.provider
+            
+            # For Ollama (no API key needed), use initialized provider
+            if provider_name == "ollama":
+                provider = self.providers.get(provider_name)
+                if provider:
+                    return provider, provider_name
+                else:
+                    logger.error(f"Ollama provider not initialized")
+                    return None, None
             
             # For providers that need API keys, create runtime provider
             if provider_name in ["openai", "anthropic", "gemini"]:
@@ -174,9 +202,10 @@ class ModelRegistryService:
                 runtime_provider = await self._create_runtime_provider(provider_name, api_key)
                 return runtime_provider, provider_name
             
-            # For Ollama (no API key needed), use initialized provider
+            # For other providers, try to get from initialized providers
             provider = self.providers.get(provider_name)
-            return provider, provider_name
+            if provider:
+                return provider, provider_name
         
         # Model not found at all
         return None, None
@@ -223,6 +252,38 @@ class ModelRegistryService:
             logger.warning(f"Runtime provider creation not supported for: {provider_name}")
             return None
     
+    async def _get_provider_by_name(self, provider_name: str, runtime_api_keys: Optional[Dict[str, str]] = None) -> Optional[LanguageModelProvider]:
+        """Get a provider instance by name, creating it with runtime API keys if needed."""
+        # For Ollama (no API key needed), use initialized provider
+        if provider_name == "ollama":
+            provider = self.providers.get("ollama")
+            if not provider:
+                logger.error(f"Ollama provider not initialized")
+                return None
+            return provider
+        
+        # For API-based providers, need runtime API keys
+        if provider_name in ["openai", "anthropic", "gemini"]:
+            if not runtime_api_keys or provider_name not in runtime_api_keys:
+                logger.error(f"Provider '{provider_name}' requires API key from frontend")
+                return None
+            
+            api_key = runtime_api_keys[provider_name]
+            if not api_key or api_key == "placeholder":
+                logger.error(f"Invalid API key for provider '{provider_name}'")
+                return None
+            
+            # Create runtime provider with frontend API key
+            return await self._create_runtime_provider(provider_name, api_key)
+        
+        # For other providers, try to get from initialized providers
+        provider = self.providers.get(provider_name)
+        if provider:
+            return provider
+        
+        logger.error(f"Provider '{provider_name}' not found")
+        return None
+    
     async def generate(self, 
                       model_name: str,
                       messages: List[Dict[str, str]],
@@ -232,6 +293,7 @@ class ModelRegistryService:
                       thinking_enabled: bool = False,
                       tool_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]] = None,
                       runtime_api_keys: Optional[Dict[str, str]] = None,
+                      provider_name: Optional[str] = None,
                       **kwargs) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Generate response using the appropriate provider for the model.
@@ -239,12 +301,21 @@ class ModelRegistryService:
         This is the main entry point for all language model interactions.
         
         Args:
+            model_name: Name of the model to use
+            provider_name: Optional provider name (if specified, use this provider directly)
             runtime_api_keys: Optional runtime API keys (e.g., {"openai": "sk-...", "anthropic": "sk-ant-..."})
         """
-        provider, provider_name = await self.get_provider_for_model(model_name, runtime_api_keys)
-        
-        if not provider:
-            raise ValueError(f"Model '{model_name}' not found in any provider")
+        # If provider is explicitly specified, use it directly
+        if provider_name:
+            logger.info(f"Using explicitly specified provider '{provider_name}' for model '{model_name}'")
+            provider = await self._get_provider_by_name(provider_name, runtime_api_keys)
+            if not provider:
+                raise ValueError(f"Provider '{provider_name}' not available")
+        else:
+            # Otherwise, discover which provider has this model
+            provider, provider_name = await self.get_provider_for_model(model_name, runtime_api_keys)
+            if not provider:
+                raise ValueError(f"Model '{model_name}' not found in any provider")
         
         logger.debug(f"Routing model '{model_name}' to provider '{provider_name}'")
         
@@ -314,11 +385,15 @@ class ModelRegistryService:
                       schema: Dict,
                       model_name: str,
                       instructions: Optional[str] = None,
+                      provider_name: Optional[str] = None,
                       **kwargs) -> GenerationResponse:
         """
         Convenience method for structured classification/extraction.
         
         This replaces the old ClassificationProvider.classify() method.
+        
+        Args:
+            provider_name: Optional provider name (if specified, use this provider directly)
         """
         messages = []
         
@@ -331,6 +406,7 @@ class ModelRegistryService:
             model_name=model_name,
             messages=messages,
             response_format=schema,
+            provider_name=provider_name,
             **kwargs
         )
     

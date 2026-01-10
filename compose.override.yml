@@ -28,6 +28,11 @@ services:
     networks:
       - default
   
+  celery_worker:
+    restart: "no"
+    volumes:
+      - ./backend/:/app
+  
   frontend:
     restart: "no"
     build:
@@ -51,9 +56,6 @@ services:
 
   minio:
     image: minio/minio:latest
-    ports:
-      - "9000:9000" 
-      - "9001:9001"  
     env_file:
       - .env
     command: ["minio", "server", "/data", "--console-address", ":9001"]
@@ -62,19 +64,19 @@ services:
     networks:
       - default
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434" 
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_MAX_LOADED_MODELS=2
-    restart: unless-stopped
-    networks:
-      - default
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   ports:
+  #     - "11434:11434" 
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   environment:
+  #     - OLLAMA_NUM_PARALLEL=2
+  #     - OLLAMA_MAX_LOADED_MODELS=2
+  #   restart: unless-stopped
+  #   networks:
+  #     - default
 
 networks:
   default:

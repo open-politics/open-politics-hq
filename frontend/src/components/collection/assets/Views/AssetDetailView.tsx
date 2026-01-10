@@ -2276,4 +2276,5 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
   );
 };
 
+
 export default AssetDetailView;
