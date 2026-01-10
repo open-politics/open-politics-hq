@@ -35,7 +35,6 @@ fastmcp
 pre-commit
 types-passlib
 minio
-bson
 python-multipart
 pymupdf
 celery

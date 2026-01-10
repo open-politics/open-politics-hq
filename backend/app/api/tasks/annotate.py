@@ -5,10 +5,8 @@ from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
 from sqlmodel import Session, select
 from sqlalchemy import func
-import asyncio # Added for running async functions
-import traceback # Added for exception handling
-import imghdr  # For detecting image MIME types from bytes
-
+import asyncio 
+import traceback
 from app.models import (
     Annotation,
     AnnotationSchema,
@@ -337,18 +335,7 @@ def detect_image_mime_type(image_bytes: bytes, fallback: str = "image/png") -> s
     elif image_bytes.startswith(b'BM'):
         return "image/bmp"  # Not supported by Anthropic, but we detect it
     
-    # Try imghdr as fallback
-    try:
-        detected = imghdr.what(None, h=image_bytes)
-        if detected == 'jpeg':
-            return "image/jpeg"
-        elif detected == 'png':
-            return "image/png"
-        elif detected == 'gif':
-            return "image/gif"
-    except Exception:
-        pass
-    
+    # If no format detected, use fallback
     return fallback
 
 async def assemble_multimodal_context(
