@@ -671,4 +671,369 @@ export const groupFieldsByModality = (
       modality,
       fields: groups[modality]
     }));
-}; 
+};
+
+// =============================================================================
+// KNOWLEDGE GRAPH UTILITIES
+// =============================================================================
+
+/**
+ * Knowledge Graph entity type
+ */
+export interface KGEntity {
+  id: number;
+  name: string;
+  type: string;
+}
+
+/**
+ * Knowledge Graph triplet (relationship) type
+ */
+export interface KGTriplet {
+  source_id: number;
+  target_id: number;
+  predicate: string;
+  description?: string;
+}
+
+/**
+ * Determines if a field contains Knowledge Graph data
+ */
+export function isKnowledgeGraphField(fieldKey: string, fieldValue: any): boolean {
+  // Check if this is an entities or triplets field with array data
+  const isEntitiesField = (fieldKey === 'entities' || fieldKey.endsWith('.entities')) && Array.isArray(fieldValue);
+  const isTripletsField = (fieldKey === 'triplets' || fieldKey.endsWith('.triplets')) && Array.isArray(fieldValue);
+  
+  if (!isEntitiesField && !isTripletsField) return false;
+  
+  // Validate structure if array has items
+  if (isEntitiesField && fieldValue.length > 0) {
+    const firstEntity = fieldValue[0];
+    return typeof firstEntity === 'object' && 
+           'id' in firstEntity && 
+           'name' in firstEntity && 
+           'type' in firstEntity;
+  }
+  
+  if (isTripletsField && fieldValue.length > 0) {
+    const firstTriplet = fieldValue[0];
+    return typeof firstTriplet === 'object' && 
+           'source_id' in firstTriplet && 
+           'target_id' in firstTriplet && 
+           'predicate' in firstTriplet;
+  }
+  
+  // Empty arrays are valid KG fields
+  return true;
+}
+
+/**
+ * Extract entities from an annotation value
+ */
+export function extractEntities(annotationValue: any): KGEntity[] {
+  // Try document.entities first (standard location)
+  let entities = getAnnotationFieldValue(annotationValue, 'document.entities');
+  
+  // Fallback to top-level entities
+  if (!entities || !Array.isArray(entities)) {
+    entities = getAnnotationFieldValue(annotationValue, 'entities');
+  }
+  
+  if (!Array.isArray(entities)) {
+    return [];
+  }
+  
+  // Validate and filter entities
+  return entities.filter((e: any) => 
+    e && typeof e === 'object' && 
+    typeof e.id === 'number' && 
+    typeof e.name === 'string' && 
+    typeof e.type === 'string'
+  );
+}
+
+/**
+ * Extract triplets from an annotation value
+ */
+export function extractTriplets(annotationValue: any): KGTriplet[] {
+  // Try document.triplets first (standard location)
+  let triplets = getAnnotationFieldValue(annotationValue, 'document.triplets');
+  
+  // Fallback to top-level triplets
+  if (!triplets || !Array.isArray(triplets)) {
+    triplets = getAnnotationFieldValue(annotationValue, 'triplets');
+  }
+  
+  if (!Array.isArray(triplets)) {
+    return [];
+  }
+  
+  // Validate and filter triplets
+  return triplets.filter((t: any) => 
+    t && typeof t === 'object' && 
+    typeof t.source_id === 'number' && 
+    typeof t.target_id === 'number' && 
+    typeof t.predicate === 'string'
+  );
+}
+
+/**
+ * Get entity by ID from an entities array
+ */
+export function getEntityById(entities: KGEntity[], entityId: number): KGEntity | null {
+  return entities.find(e => e.id === entityId) || null;
+}
+
+/**
+ * Format a triplet as a human-readable string
+ * Example: "Apple Inc → founded by → Steve Jobs"
+ */
+export function formatTriplet(triplet: KGTriplet, entities: KGEntity[]): string {
+  const source = getEntityById(entities, triplet.source_id);
+  const target = getEntityById(entities, triplet.target_id);
+  
+  if (!source || !target) {
+    return `Invalid triplet (source: ${triplet.source_id}, target: ${triplet.target_id})`;
+  }
+  
+  return `${source.name} → ${triplet.predicate} → ${target.name}`;
+}
+
+/**
+ * Format a triplet with full details including entity types
+ * Example: "Apple Inc (COMPANY) → founded by → Steve Jobs (PERSON)"
+ */
+export function formatTripletDetailed(triplet: KGTriplet, entities: KGEntity[]): string {
+  const source = getEntityById(entities, triplet.source_id);
+  const target = getEntityById(entities, triplet.target_id);
+  
+  if (!source || !target) {
+    return formatTriplet(triplet, entities);
+  }
+  
+  return `${source.name} (${source.type}) → ${triplet.predicate} → ${target.name} (${target.type})`;
+}
+
+/**
+ * Check if an annotation result contains Knowledge Graph data
+ */
+export function hasKnowledgeGraphData(annotationValue: any): boolean {
+  const entities = extractEntities(annotationValue);
+  const triplets = extractTriplets(annotationValue);
+  
+  return entities.length > 0 || triplets.length > 0;
+}
+
+/**
+ * Get statistics about a Knowledge Graph
+ */
+export function getKGStats(annotationValue: any): {
+  entityCount: number;
+  tripletCount: number;
+  entityTypes: string[];
+  predicates: string[];
+} {
+  const entities = extractEntities(annotationValue);
+  const triplets = extractTriplets(annotationValue);
+  
+  const entityTypes = [...new Set(entities.map(e => e.type))];
+  const predicates = [...new Set(triplets.map(t => t.predicate))];
+  
+  return {
+    entityCount: entities.length,
+    tripletCount: triplets.length,
+    entityTypes,
+    predicates
+  };
+}
+
+// =============================================================================
+// GRAPH EDITING UTILITIES
+// =============================================================================
+
+import type { GraphEdits, MergedNode, DeletedNode, DeletedEdge, CustomEdge, NodeLabelOverride } from './types';
+
+/**
+ * React-flow compatible node type
+ */
+export interface ReactFlowNode {
+  id: string;
+  data: {
+    label: string;
+    type?: string;
+    frequency?: number;
+    source_asset_count?: number;
+    [key: string]: any;
+  };
+  position: { x: number; y: number };
+}
+
+/**
+ * React-flow compatible edge type (flexible to match ReactFlow's Edge type)
+ */
+export interface ReactFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  label?: any;  // ReactNode in ReactFlow, but we'll keep it flexible
+  data?: any;
+  style?: any;
+  animated?: boolean;
+  [key: string]: any;  // Allow other ReactFlow edge properties
+}
+
+/**
+ * Apply graph edits to raw graph data from the aggregator
+ * Returns modified nodes and edges
+ */
+export function applyGraphEdits(
+  nodes: ReactFlowNode[],
+  edges: any[],  // Accept any edge type for flexibility
+  edits: GraphEdits | null | undefined
+): { nodes: ReactFlowNode[]; edges: any[] } {
+  if (!edits) {
+    return { nodes, edges };
+  }
+  
+  let processedNodes = [...nodes];
+  let processedEdges = [...edges];
+  
+  // 1. Apply node deletions
+  const deletedNodeIds = new Set(edits.deletedNodes.map(dn => dn.nodeId));
+  processedNodes = processedNodes.filter(node => !deletedNodeIds.has(node.id));
+  
+  // 2. Apply node merges
+  const mergeTargetMap = new Map<string, string>(); // mergedNodeId -> targetNodeId
+  edits.mergedNodes.forEach(merge => {
+    merge.mergedNodeIds.forEach(mergedId => {
+      mergeTargetMap.set(mergedId, merge.targetNodeId);
+    });
+  });
+  
+  // Filter out merged nodes and update target node data
+  processedNodes = processedNodes.filter(node => !mergeTargetMap.has(node.id));
+  
+  // Update target nodes to reflect merged data
+  edits.mergedNodes.forEach(merge => {
+    const targetNode = processedNodes.find(n => n.id === merge.targetNodeId);
+    if (targetNode) {
+      // Combine frequencies from merged nodes
+      const mergedNodes = nodes.filter(n => merge.mergedNodeIds.includes(n.id));
+      const additionalFrequency = mergedNodes.reduce((sum, n) => sum + (n.data.frequency || 0), 0);
+      const additionalAssetCount = mergedNodes.reduce((sum, n) => sum + (n.data.source_asset_count || 0), 0);
+      
+      targetNode.data = {
+        ...targetNode.data,
+        frequency: (targetNode.data.frequency || 0) + additionalFrequency,
+        source_asset_count: (targetNode.data.source_asset_count || 0) + additionalAssetCount,
+        merged_from: merge.mergedNodeIds, // Track what was merged
+      };
+    }
+  });
+  
+  // 3. Remap edges for merged nodes
+  processedEdges = processedEdges.map(edge => {
+    const newSource = mergeTargetMap.get(edge.source) || edge.source;
+    const newTarget = mergeTargetMap.get(edge.target) || edge.target;
+    
+    if (newSource !== edge.source || newTarget !== edge.target) {
+      return {
+        ...edge,
+        id: `${newSource}-${edge.label || 'to'}-${newTarget}`, // Generate new ID
+        source: newSource,
+        target: newTarget,
+      };
+    }
+    return edge;
+  });
+  
+  // 4. Remove edges connected to deleted nodes
+  processedEdges = processedEdges.filter(edge => 
+    !deletedNodeIds.has(edge.source) && !deletedNodeIds.has(edge.target)
+  );
+  
+  // 5. Apply edge deletions
+  const deletedEdgeIds = new Set(edits.deletedEdges.map(de => de.edgeId));
+  processedEdges = processedEdges.filter(edge => !deletedEdgeIds.has(edge.id));
+  
+  // 6. Add custom edges
+  processedEdges = [
+    ...processedEdges,
+    ...edits.customEdges.map(ce => ({
+      id: ce.id,
+      source: ce.source,
+      target: ce.target,
+      label: ce.label,
+      data: {
+        custom: true,
+        description: ce.description,
+        createdAt: ce.createdAt
+      }
+    }))
+  ];
+  
+  // 7. Apply node label overrides
+  edits.nodeLabels.forEach(labelOverride => {
+    const node = processedNodes.find(n => n.id === labelOverride.nodeId);
+    if (node) {
+      node.data = {
+        ...node.data,
+        label: labelOverride.customLabel,
+        originalLabel: labelOverride.originalLabel,
+        labelOverridden: true
+      };
+    }
+  });
+  
+  // 8. Deduplicate edges (after merging, we might have duplicates)
+  const uniqueEdges = new Map<string, ReactFlowEdge>();
+  processedEdges.forEach(edge => {
+    const key = `${edge.source}-${edge.label}-${edge.target}`;
+    if (!uniqueEdges.has(key)) {
+      uniqueEdges.set(key, edge);
+    }
+  });
+  processedEdges = Array.from(uniqueEdges.values());
+  
+  return { nodes: processedNodes, edges: processedEdges };
+}
+
+/**
+ * Create an empty graph edits object
+ */
+export function createEmptyGraphEdits(): GraphEdits {
+  return {
+    mergedNodes: [],
+    deletedNodes: [],
+    deletedEdges: [],
+    customEdges: [],
+    nodeLabels: [],
+    version: '1.0'
+  };
+}
+
+/**
+ * Check if graph edits contain any modifications
+ */
+export function hasGraphEdits(edits: GraphEdits | null | undefined): boolean {
+  if (!edits) return false;
+  
+  return edits.mergedNodes.length > 0 ||
+         edits.deletedNodes.length > 0 ||
+         edits.deletedEdges.length > 0 ||
+         edits.customEdges.length > 0 ||
+         edits.nodeLabels.length > 0;
+}
+
+/**
+ * Get count of all edits
+ */
+export function getGraphEditsCount(edits: GraphEdits | null | undefined): number {
+  if (!edits) return 0;
+  
+  return edits.mergedNodes.length +
+         edits.deletedNodes.length +
+         edits.deletedEdges.length +
+         edits.customEdges.length +
+         edits.nodeLabels.length;
+} 

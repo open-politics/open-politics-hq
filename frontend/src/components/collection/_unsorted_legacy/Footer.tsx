@@ -11,7 +11,7 @@ const Footer = () => {
               <Link href="/hq">✨</Link>
             </h3>
             <p className="text-sm">
-              Open Source Political Intelligence.
+              Open Source Public Intelligence.
             </p>
             <div className="flex space-x-4 mt-4">
               <a href="https://www.ngisearch.eu/view/Main/"><Image src="/logos/ngi-logo.svg" alt="NGI Logo" width={60} height={60} /></a>

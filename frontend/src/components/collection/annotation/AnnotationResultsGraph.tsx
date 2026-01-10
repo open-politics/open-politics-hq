@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { AnalysisAdaptersService } from '@/client';
@@ -30,7 +30,16 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
-import { getAnnotationFieldValue } from '@/lib/annotations/utils';
+import { 
+  getAnnotationFieldValue,
+  applyGraphEdits,
+  createEmptyGraphEdits,
+  hasGraphEdits,
+  getGraphEditsCount,
+  type ReactFlowNode,
+  type ReactFlowEdge
+} from '@/lib/annotations/utils';
+import type { GraphEdits } from '@/lib/annotations/types';
 
 // Time filtering utility function (copied from AnnotationResultsChart.tsx)
 const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
@@ -122,6 +131,9 @@ interface AnnotationResultsGraphProps {
   initialSettings?: any;
   // NEW: Result selection callback
   onResultSelect?: (result: FormattedAnnotation) => void;
+  // NEW: Graph editing support
+  graphEdits?: GraphEdits | null;
+  onGraphEditsChange?: (edits: GraphEdits) => void;
 }
 
 // Custom node component for entities
@@ -198,6 +210,8 @@ function AnnotationResultsGraphInner({
   onSettingsChange,
   initialSettings,
   onResultSelect,
+  graphEdits = null,
+  onGraphEditsChange,
 }: AnnotationResultsGraphProps) {
   const { activeInfospace } = useInfospaceStore();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -572,17 +586,26 @@ function AnnotationResultsGraphInner({
           return true;
         });
 
+        // Apply graph edits if they exist
+        const editedGraph = graphEdits 
+          ? applyGraphEdits(reactFlowNodes, validEdges, graphEdits)
+          : { nodes: reactFlowNodes, edges: validEdges };
+        
         // Clear existing nodes and edges first to prevent duplication
         setNodes([]);
         setEdges([]);
         
         // Use setTimeout to ensure clearing happens before setting new data
         setTimeout(() => {
-          setNodes(reactFlowNodes);
-          setEdges(validEdges);
+          setNodes(editedGraph.nodes);
+          setEdges(editedGraph.edges);
         }, 0);
         
-        toast.success(`Graph loaded: ${graphData.metadata.total_nodes} nodes, ${graphData.metadata.total_edges} edges`);
+        const editCount = graphEdits ? getGraphEditsCount(graphEdits) : 0;
+        const message = editCount > 0 
+          ? `Graph loaded: ${editedGraph.nodes.length} nodes, ${editedGraph.edges.length} edges (${editCount} edits applied)`
+          : `Graph loaded: ${graphData.metadata.total_nodes} nodes, ${graphData.metadata.total_edges} edges`;
+        toast.success(message);
       } else {
         setError('Invalid response format from graph aggregator: missing graph_data.nodes or graph_data.edges');
       }
@@ -592,7 +615,7 @@ function AnnotationResultsGraphInner({
     } finally {
       setIsLoading(false);
     }
-  }, [activeRunId, selectedSchemaId, schemas, setNodes, setEdges]);
+  }, [activeRunId, selectedSchemaId, schemas, setNodes, setEdges, graphEdits]);
 
   // Auto-load when schema is selected
   useEffect(() => {
@@ -811,6 +834,75 @@ function AnnotationResultsGraphInner({
                   <div>• Animated lines = frequent</div>
                 </div>
               </Panel>
+              
+              {/* Graph Editing Controls */}
+              {selectedNodeId && onGraphEditsChange && (
+                <Panel position="top-left" className="bg-white/95 p-3 rounded-lg shadow-lg border">
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-muted-foreground mb-2">
+                      Edit Graph
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="w-full text-xs"
+                      onClick={() => {
+                        const currentEdits = graphEdits || createEmptyGraphEdits();
+                        const updatedEdits: GraphEdits = {
+                          ...currentEdits,
+                          deletedNodes: [
+                            ...currentEdits.deletedNodes,
+                            {
+                              nodeId: selectedNodeId,
+                              deletedAt: new Date().toISOString(),
+                              reason: 'User deleted'
+                            }
+                          ]
+                        };
+                        onGraphEditsChange(updatedEdits);
+                        setSelectedNodeId(null);
+                        setShowDetailPanel(false);
+                        toast.success('Node deleted');
+                        // Re-aggregate to apply changes
+                        aggregateGraph();
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      Delete Node
+                    </Button>
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      Removes node and connected edges
+                    </div>
+                  </div>
+                </Panel>
+              )}
+              
+              {/* Graph Edit Status */}
+              {hasGraphEdits(graphEdits) && (
+                <Panel position="bottom-right" className="bg-blue-50/95 px-3 py-2 rounded-lg shadow border border-blue-200">
+                  <div className="flex items-center gap-2">
+                    <Settings2 className="h-3 w-3 text-blue-600" />
+                    <span className="text-xs font-medium text-blue-700">
+                      {getGraphEditsCount(graphEdits)} edits applied
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 w-5 p-0 text-blue-600 hover:text-blue-700"
+                      onClick={() => {
+                        if (confirm('Clear all graph edits? This cannot be undone.')) {
+                          onGraphEditsChange?.(createEmptyGraphEdits());
+                          toast.success('Graph edits cleared');
+                          aggregateGraph();
+                        }
+                      }}
+                      title="Clear all edits"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </Panel>
+              )}
             </ReactFlow>
           </div>
 
@@ -948,6 +1040,8 @@ export default function AnnotationResultsGraph({
   onSettingsChange,
   initialSettings,
   onResultSelect,
+  graphEdits = null,
+  onGraphEditsChange,
 }: AnnotationResultsGraphProps) {
   return (
     <ReactFlowProvider>
@@ -963,6 +1057,8 @@ export default function AnnotationResultsGraph({
         onSettingsChange={onSettingsChange}
         initialSettings={initialSettings}
         onResultSelect={onResultSelect}
+        graphEdits={graphEdits}
+        onGraphEditsChange={onGraphEditsChange}
       />
     </ReactFlowProvider>
   );

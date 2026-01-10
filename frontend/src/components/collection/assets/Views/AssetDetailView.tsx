@@ -358,8 +358,9 @@ const AssetDetailView = ({
     };
   }, []); // Remove mediaBlobUrls from dependencies to avoid recreating the cleanup function
 
-  // Authenticated media components
-  const AuthenticatedImage = ({ blobPath, alt, className }: { blobPath: string; alt: string; className?: string }) => {
+  // Authenticated media components - Memoized to prevent recreation on every render
+  const AuthenticatedImage = useMemo(() => {
+    return ({ blobPath, alt, className }: { blobPath: string; alt: string; className?: string }) => {
     const [imageSrc, setImageSrc] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
@@ -403,10 +404,12 @@ const AssetDetailView = ({
       );
     }
 
-    return <img src={imageSrc} alt={alt} className={className} />;
-  };
+      return <img src={imageSrc} alt={alt} className={className} />;
+    };
+  }, [fetchMediaBlob]);
 
-  const AuthenticatedPDF = ({ blobPath, title, className, pageNumber }: { blobPath: string; title: string; className?: string; pageNumber?: number }) => {
+  const AuthenticatedPDF = useMemo(() => {
+    return ({ blobPath, title, className, pageNumber }: { blobPath: string; title: string; className?: string; pageNumber?: number }) => {
     const [pdfSrc, setPdfSrc] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
@@ -451,9 +454,10 @@ const AssetDetailView = ({
         loadPDF();
       }
       
-      // Cleanup function to revoke blob URL - moved to a separate effect to avoid stale closure
-      // The cleanup is now handled properly when the component unmounts
-    }, [blobPath, pageNumber, fetchMediaBlob]); // Include fetchMediaBlob to ensure proper dependency tracking
+      // Note: fetchMediaBlob is intentionally omitted from deps to prevent excessive re-renders
+      // It's wrapped in useCallback with stable deps (activeInfospace?.id) so it's safe to use
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blobPath, pageNumber]); // Removed fetchMediaBlob to prevent unnecessary effect runs
 
     // Separate effect for cleanup to avoid stale closure issues
     useEffect(() => {
@@ -526,9 +530,11 @@ const AssetDetailView = ({
         </div>
       </div>
     );
-  };
+    };
+  }, [fetchMediaBlob]);
 
-  const AuthenticatedVideo = ({ blobPath, className }: { blobPath: string; className?: string }) => {
+  const AuthenticatedVideo = useMemo(() => {
+    return ({ blobPath, className }: { blobPath: string; className?: string }) => {
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
@@ -572,15 +578,17 @@ const AssetDetailView = ({
       );
     }
 
-    return (
-      <video controls className={className} preload="metadata">
-        <source src={videoSrc} />
-        Your browser does not support the video tag.
-      </video>
-    );
-  };
+      return (
+        <video controls className={className} preload="metadata">
+          <source src={videoSrc} />
+          Your browser does not support the video tag.
+        </video>
+      );
+    };
+  }, [fetchMediaBlob]);
 
-  const AuthenticatedAudio = ({ blobPath, className }: { blobPath: string; className?: string }) => {
+  const AuthenticatedAudio = useMemo(() => {
+    return ({ blobPath, className }: { blobPath: string; className?: string }) => {
     const [audioSrc, setAudioSrc] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
@@ -624,15 +632,14 @@ const AssetDetailView = ({
       );
     }
 
-    return (
-      <audio controls className={className}>
-        <source src={audioSrc} />
-        Your browser does not support the audio tag.
-      </audio>
-    );
-  };
-
-  console.log(`[AssetDetailView] Asset ${asset?.id} (${asset?.kind}): hasChildren=${hasChildren}, childAssets.length=${childAssets.length}, isHierarchicalAsset=${isHierarchicalAsset}`);
+      return (
+        <audio controls className={className}>
+          <source src={audioSrc} />
+          Your browser does not support the audio tag.
+        </audio>
+      );
+    };
+  }, [fetchMediaBlob]);
 
   // --- Helper functions ---
   const getFormattedTimestamp = (isoString: string | null | undefined): string => {
@@ -1854,19 +1861,6 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
 
     // Sort pages by part_index to ensure correct order
     const sortedPages = [...filteredChildAssets].sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
-    
-    // Debug logging
-    console.log('[PDF Pages] Child assets data:', {
-      total: childAssets.length,
-      filtered: filteredChildAssets.length,
-      sorted: sortedPages.length,
-      pageData: sortedPages.map(page => ({
-        id: page.id,
-        title: page.title,
-        part_index: page.part_index,
-        calculated_page: (page.part_index || 0) + 1
-      }))
-    });
 
     return (
       <div className="space-y-4">
@@ -2277,7 +2271,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+        </Dialog>
     </div>
   );
 };

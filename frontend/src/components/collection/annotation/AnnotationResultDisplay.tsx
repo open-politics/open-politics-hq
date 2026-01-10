@@ -37,7 +37,17 @@ import {
   parseTimestampValue, 
   parseLocationValue 
 } from '@/lib/annotations/fieldDetection';
-import { Calendar, MapPin } from 'lucide-react';
+import { Calendar, MapPin, Network } from 'lucide-react';
+// NEW: Knowledge Graph utilities
+import {
+  isKnowledgeGraphField,
+  extractEntities,
+  extractTriplets,
+  formatTriplet,
+  getEntityById,
+  type KGEntity,
+  type KGTriplet
+} from '@/lib/annotations/utils';
 
 // Local interface for schema fields
 interface SchemaField {
@@ -575,6 +585,92 @@ function SingleAnnotationResult({
           case "array":
               if (Array.isArray(valueForField)) {
                   if (valueForField.length === 0) return <span className="text-muted-foreground italic text-xs">empty</span>;
+                  
+                  // NEW: Special handling for Knowledge Graph arrays
+                  const fieldName = (field as any).name || '';
+                  if (isKnowledgeGraphField(fieldName, valueForField)) {
+                    // Check if this is entities or triplets
+                    const isEntitiesField = fieldName === 'entities' || fieldName.endsWith('.entities');
+                    const isTripletsField = fieldName === 'triplets' || fieldName.endsWith('.triplets');
+                    
+                    if (isEntitiesField) {
+                      // Render entities as colored badges with type
+                      const entityColors: Record<string, string> = {
+                        'PERSON': 'bg-purple-100 border-purple-300 text-purple-700',
+                        'ORGANIZATION': 'bg-blue-100 border-blue-300 text-blue-700',
+                        'COMPANY': 'bg-blue-100 border-blue-300 text-blue-700',
+                        'LOCATION': 'bg-green-100 border-green-300 text-green-700',
+                        'EVENT': 'bg-orange-100 border-orange-300 text-orange-700',
+                        'DATE': 'bg-yellow-100 border-yellow-300 text-yellow-700',
+                        'OTHER': 'bg-gray-100 border-gray-300 text-gray-700',
+                      };
+                      
+                      const kgContent = (
+                        <div className="w-full">
+                          <div className="flex flex-wrap gap-1 items-center">
+                            {(valueForField as KGEntity[]).map((entity, i) => {
+                              const color = entityColors[entity.type] || entityColors['OTHER'];
+                              return (
+                                <Badge 
+                                  key={i} 
+                                  variant="outline"
+                                  className={cn(
+                                    "text-xs px-2 py-0.5 font-medium whitespace-nowrap",
+                                    color
+                                  )}
+                                  title={`${entity.name} (${entity.type}) - ID: ${entity.id}`}
+                                >
+                                  <Network className="h-3 w-3 mr-1 inline" />
+                                  {entity.name}
+                                  <span className="ml-1 text-[10px] opacity-70">({entity.type})</span>
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                      return wrapWithTooltipIfNeeded(kgContent, field, justificationValue, showIntegratedTooltip);
+                    }
+                    
+                    if (isTripletsField) {
+                      // Extract entities from the annotation for formatting triplets
+                      const entities = extractEntities(rawValueObject);
+                      
+                      const tripletsContent = (
+                        <div className="w-full space-y-1">
+                          {(valueForField as KGTriplet[]).map((triplet, i) => {
+                            const formatted = formatTriplet(triplet, entities);
+                            const source = getEntityById(entities, triplet.source_id);
+                            const target = getEntityById(entities, triplet.target_id);
+                            
+                            return (
+                              <div 
+                                key={i}
+                                className={cn(
+                                  "flex items-center gap-1.5 text-xs p-1.5 rounded border bg-background/50",
+                                  "hover:bg-accent/50 transition-colors"
+                                )}
+                                title={triplet.description || formatted}
+                              >
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-medium shrink-0">
+                                  {source?.name || `ID:${triplet.source_id}`}
+                                </Badge>
+                                <span className="text-[10px] text-muted-foreground shrink-0">→</span>
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal shrink-0">
+                                  {triplet.predicate}
+                                </Badge>
+                                <span className="text-[10px] text-muted-foreground shrink-0">→</span>
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-medium shrink-0">
+                                  {target?.name || `ID:${triplet.target_id}`}
+                                </Badge>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                      return wrapWithTooltipIfNeeded(tripletsContent, field, justificationValue, showIntegratedTooltip);
+                    }
+                  }
                   
                   let arrayContent: React.ReactNode;
                   // In table context, break arrays to new line like long strings

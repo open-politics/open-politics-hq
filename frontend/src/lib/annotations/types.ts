@@ -188,4 +188,70 @@ export const ADVANCED_SCHEME_TYPE_OPTIONS = [
   { value: 'array_number', label: 'List of Numbers' },
   { value: 'array_object', label: 'List of Objects' },
   { value: 'object', label: 'Object (Nested Fields)' },
-]; 
+];
+
+// =============================================================================
+// KNOWLEDGE GRAPH EDITING TYPES
+// =============================================================================
+
+/**
+ * Represents a merged node operation where multiple nodes are consolidated into one
+ */
+export interface MergedNode {
+  targetNodeId: string;      // The node ID to keep
+  mergedNodeIds: string[];   // Node IDs that were merged into the target
+  mergedAt: string;          // ISO timestamp of when the merge occurred
+  reason?: string;           // Optional reason for the merge (e.g., "duplicate entity")
+}
+
+/**
+ * Represents a deleted node operation
+ */
+export interface DeletedNode {
+  nodeId: string;
+  deletedAt: string;
+  reason?: string;  // Optional reason (e.g., "noise", "irrelevant")
+}
+
+/**
+ * Represents a deleted edge operation
+ */
+export interface DeletedEdge {
+  edgeId: string;
+  deletedAt: string;
+  reason?: string;  // Optional reason
+}
+
+/**
+ * Represents a custom edge added manually
+ */
+export interface CustomEdge {
+  id: string;
+  source: string;     // Source node ID
+  target: string;     // Target node ID
+  label: string;      // Edge label/predicate
+  createdAt: string;
+  description?: string;  // Optional context
+}
+
+/**
+ * Represents a custom label override for a node
+ */
+export interface NodeLabelOverride {
+  nodeId: string;
+  customLabel: string;
+  originalLabel: string;  // Keep track of original for undo
+}
+
+/**
+ * Complete graph editing state stored in panel.settings.graphEdits
+ * This follows the same pattern as geocodedPointsCache in map panels
+ */
+export interface GraphEdits {
+  mergedNodes: MergedNode[];
+  deletedNodes: DeletedNode[];
+  deletedEdges: DeletedEdge[];
+  customEdges: CustomEdge[];
+  nodeLabels: NodeLabelOverride[];
+  version: string;  // For future migrations if structure changes
+} 

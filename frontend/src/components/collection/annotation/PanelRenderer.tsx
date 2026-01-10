@@ -1188,6 +1188,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
                   // NEW: Result selection callback
                   onResultSelect={onResultSelect}
+                  // NEW: Graph editing support
+                  graphEdits={panel.settings?.graphEdits || null}
+                  onGraphEditsChange={(edits) => {
+                    handlePanelSettingsUpdate({ graphEdits: edits });
+                  }}
                 />
               </AssetDetailProvider>
             </div>

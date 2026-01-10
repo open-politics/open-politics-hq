@@ -26,6 +26,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { nanoid } from 'nanoid';
+import { Badge } from "@/components/ui/badge";
 import {
   Accordion,
   AccordionContent,
@@ -877,14 +878,15 @@ const PropertyInspector: React.FC<{
                   {(field.type === 'object' || (field.type === 'array' && field.items?.type === 'object')) && (
                     <AccordionItem value="object-config" className="border rounded-lg px-3">
                       <AccordionTrigger className="text-sm font-semibold py-3">
-                        Object Structure
+                        {field.type === 'array' ? 'Array Item Properties' : 'Object Properties'}
                       </AccordionTrigger>
                       <AccordionContent className="pb-3">
-                        <div className="p-4 bg-muted/30 border border-dashed rounded-lg text-center">
-                          <p className="text-sm text-muted-foreground">
-                            Nested object configuration is coming soon.
-                          </p>
-                        </div>
+                        <NestedPropertyEditor
+                          field={field}
+                          section={section}
+                          disabled={disabled}
+                          onFieldUpdate={handleFieldUpdate}
+                        />
                       </AccordionContent>
                     </AccordionItem>
                   )}
@@ -972,5 +974,190 @@ const PropertyInspector: React.FC<{
 
     return null;
 }
+
+// --- Nested Property Editor Component ---
+const NestedPropertyEditor: React.FC<{
+    field: AdvancedSchemeField;
+    section: SchemaSection;
+    disabled: boolean;
+    onFieldUpdate: (update: Partial<AdvancedSchemeField>) => void;
+}> = ({ field, section, disabled, onFieldUpdate }) => {
+    
+    const isArrayOfObjects = field.type === 'array' && field.items?.type === 'object';
+    const properties = isArrayOfObjects ? (field.items?.properties || []) : (field.properties || []);
+    
+    const handleAddProperty = () => {
+        const newProperty: AdvancedSchemeField = {
+            id: nanoid(),
+            name: `property_${nanoid(4)}`,
+            type: 'string',
+            required: false
+        };
+        
+        if (isArrayOfObjects) {
+            onFieldUpdate({
+                items: {
+                    ...field.items!,
+                    properties: [...properties, newProperty]
+                }
+            });
+        } else {
+            onFieldUpdate({
+                properties: [...properties, newProperty]
+            });
+        }
+    };
+    
+    const handleUpdateProperty = (propertyId: string, update: Partial<AdvancedSchemeField>) => {
+        const updatedProperties = properties.map(prop => 
+            prop.id === propertyId ? { ...prop, ...update } : prop
+        );
+        
+        if (isArrayOfObjects) {
+            onFieldUpdate({
+                items: {
+                    ...field.items!,
+                    properties: updatedProperties
+                }
+            });
+        } else {
+            onFieldUpdate({
+                properties: updatedProperties
+            });
+        }
+    };
+    
+    const handleRemoveProperty = (propertyId: string) => {
+        const updatedProperties = properties.filter(prop => prop.id !== propertyId);
+        
+        if (isArrayOfObjects) {
+            onFieldUpdate({
+                items: {
+                    ...field.items!,
+                    properties: updatedProperties
+                }
+            });
+        } else {
+            onFieldUpdate({
+                properties: updatedProperties
+            });
+        }
+    };
+    
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center justify-between p-2 bg-muted/20 rounded-md">
+                <div className="text-xs text-muted-foreground">
+                    {isArrayOfObjects 
+                        ? `Define properties for each item in the "${field.name}" array`
+                        : `Define properties for the "${field.name}" object`}
+                </div>
+                <Badge variant="secondary" className="text-xs">
+                    {properties.length} {properties.length === 1 ? 'property' : 'properties'}
+                </Badge>
+            </div>
+            
+            {properties.length === 0 ? (
+                <div className="p-4 bg-muted/30 border border-dashed rounded-lg text-center">
+                    <p className="text-sm text-muted-foreground">
+                        No properties defined yet.
+                    </p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {properties.map((prop, index) => (
+                        <div key={prop.id} className="border rounded-md p-3 space-y-2 bg-background">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-muted-foreground w-6">#{index + 1}</span>
+                                <Input
+                                    value={prop.name}
+                                    onChange={(e) => handleUpdateProperty(prop.id, { name: e.target.value })}
+                                    placeholder="property_name"
+                                    disabled={disabled}
+                                    className="h-8 text-sm flex-1"
+                                />
+                                <Select
+                                    value={prop.type}
+                                    onValueChange={(value) => handleUpdateProperty(prop.id, { type: value as JsonSchemaType })}
+                                    disabled={disabled}
+                                >
+                                    <SelectTrigger className="h-8 w-[110px] text-xs">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="string" className="text-xs">String</SelectItem>
+                                        <SelectItem value="integer" className="text-xs">Integer</SelectItem>
+                                        <SelectItem value="number" className="text-xs">Number</SelectItem>
+                                        <SelectItem value="boolean" className="text-xs">Boolean</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <div className="flex items-center gap-1">
+                                    <Checkbox
+                                        id={`nested-required-${prop.id}`}
+                                        checked={prop.required}
+                                        onCheckedChange={(checked) => handleUpdateProperty(prop.id, { required: !!checked })}
+                                        disabled={disabled}
+                                    />
+                                    <Label htmlFor={`nested-required-${prop.id}`} className="text-xs cursor-pointer">
+                                        Req
+                                    </Label>
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                    onClick={() => handleRemoveProperty(prop.id)}
+                                    disabled={disabled}
+                                    title="Remove property"
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                            </div>
+                            
+                            {prop.description !== undefined && (
+                                <Textarea
+                                    value={prop.description || ''}
+                                    onChange={(e) => handleUpdateProperty(prop.id, { description: e.target.value })}
+                                    placeholder="Property description (optional)"
+                                    rows={2}
+                                    disabled={disabled}
+                                    className="text-xs resize-none"
+                                />
+                            )}
+                            
+                            {!prop.description && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-full text-xs"
+                                    onClick={() => handleUpdateProperty(prop.id, { description: '' })}
+                                    disabled={disabled}
+                                >
+                                    <PlusCircle className="h-3 w-3 mr-1" />
+                                    Add Description
+                                </Button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+            
+            {!disabled && (
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full border-dashed hover:border-solid hover:bg-primary/5"
+                    onClick={handleAddProperty}
+                >
+                    <PlusCircle className="h-4 w-4 mr-2" />
+                    Add Property
+                </Button>
+            )}
+        </div>
+    );
+};
 
 export default AnnotationSchemaEditor; 

@@ -278,7 +278,7 @@ export default function PricingPage() {
           <div className="text-xl">
             <p>Choose the plan that's right for you and start leveraging the power of</p>
             <FadeIn delay={0.4}>
-              <h2 className="mt-4">Open Source Political Intelligence.</h2>
+              <h2 className="mt-4">Open Source Public Intelligence.</h2>
             </FadeIn>
           </div>
         </motion.div>
