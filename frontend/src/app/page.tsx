@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { RippleButton } from '@/components/ui/ripple-button';
 import LandingLayout from './landing_layout';
 import { Announcement } from '@/components/collection/_unsorted_legacy/announcement';
-import { Play } from 'lucide-react';
+import { Play, Heart, AlertTriangle, Users, FileText, GitCommitHorizontal, Waypoints } from 'lucide-react';
+import announcements from './announcements.json';
 
 import useAuth from '@/hooks/useAuth';
 
@@ -24,30 +25,37 @@ const TypeAsync: React.FC<TypeAsyncProps> = ({ words = [], className = '' }) => 
   const [typing, setTyping] = useState(true);
 
   useEffect(() => {
+    let isCancelled = false;
+
     const type = async (word: string) => {
       for (let i = 0; i <= word.length; i++) {
+        if (isCancelled) return;
         setText(word.slice(0, i));
-        await sleep(100); // Set your typing interval here
+        await sleep(120);
       }
     };
 
     const del = async (word: string) => {
       for (let i = word.length; i >= 0; i--) {
+        if (isCancelled) return;
         setText(word.slice(0, i));
-        await sleep(50); // Set your deleting interval here
+        await sleep(50);
       }
     };
 
     const runTypeAsync = async () => {
       for (let i = 0; i < words.length; i++) {
+        if (isCancelled) return;
         const word = words[i];
         setTyping(true);
         await type(word);
-        await sleep(2000); // Pause after typing the word
+        if (isCancelled) return;
+        await sleep(2000);
         setTyping(false);
         if (i < words.length - 1) {
           await del(word);
-          await sleep(500); // Pause after deleting the word
+          if (isCancelled) return;
+          await sleep(500);
         }
       }
     };
@@ -55,6 +63,10 @@ const TypeAsync: React.FC<TypeAsyncProps> = ({ words = [], className = '' }) => 
     if (words.length > 0) {
       runTypeAsync();
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [words]);
 
   return <span className={className} style={{ letterSpacing: '0.1em' }} dangerouslySetInnerHTML={{ __html: text }} />;
@@ -71,11 +83,48 @@ interface HiProps {
 
 const HomePage: React.FC<HiProps> = () => {
   const { user, isLoggedIn } = useAuth();
-  const words = ['looking', 'researching', 'rooting', 'developing', 'asking', '']; 
+  const words = ['looking', 'researching', 'rooting', 'developing', 'asking', 'proving it', '']; 
   const router = useRouter();
+
+  // Icon mapping
+  const iconMap: Record<string, React.ReactNode> = {
+    Play: <Play className="ml-1 h-4 w-4" />,
+    Heart: <Heart className="ml-1 h-4 w-4" />,
+    AlertTriangle: <AlertTriangle className="ml-1 h-4 w-4" />,
+    Users: <Users className="ml-1 h-4 w-4" />,
+    FileText: <FileText className="ml-1 h-4 w-4" />,
+    Waypoints: <Waypoints className="ml-1 h-4 w-4" />,
+    CCC: <span className="ml-1 text-lg font-bold">C</span>,
+  };
+
+  // Separate announcements by position
+  const topAnnouncements = announcements.filter(a => a.position === 'top');
+  const regularAnnouncements = announcements.filter(a => a.position !== 'top');
   return (
     <LandingLayout>
-      <div className="flex flex-col mt-16 md:mt-0 md:min-h-screen justify-between">
+      <div className="flex flex-col mt-16 md:min-h-screen justify-between">
+        {/* Top Announcements */}
+        {topAnnouncements.length > 0 && (
+          <section className="p-4 bg-transparent max-w-screen-md mx-auto w-full">
+            <div className="grid grid-cols-1 gap-4">
+              {topAnnouncements.map((announcement) => (
+                <div 
+                  key={announcement.id}
+                  className="rounded-lg shadow-sm bg-secondary/60 hover:bg-secondary/70 transition-all duration-300 hover:cursor-pointer"
+                >
+                  <Announcement 
+                    title={`${announcement.date}: ${announcement.title}`}
+                    main_icon={iconMap[announcement.icon]}
+                    text={announcement.text}
+                    href={announcement.href}
+                    hide_arrow={true}
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Main Content Section */}
         <section className="flex flex-col items-center justify-center flex-grow p-8">
           <div className="text-center mb-8">
@@ -94,7 +143,7 @@ const HomePage: React.FC<HiProps> = () => {
          {/* Main Buttons */}
          {!isLoggedIn ? (
           <div className="mt-2 text-center">
-            <p className="text-blue-500 font-bold mb-3">Open Source Political Intelligence.</p>
+            <p className="text-blue-500 font-bold mb-3">Open Source Public Intelligence.</p>
             <div className="space-x-2">
               <Button asChild variant="outline" className="border border-blue-500">
                 <Link href="https://github.com/JimVincentW/open-politics">
@@ -102,8 +151,8 @@ const HomePage: React.FC<HiProps> = () => {
                 </Link>
               </Button>
               <Button asChild>
-                <Link href="https://zu61ygkfc3v.typeform.com/to/KHZeedk3">
-                  Join the waitlist
+                <Link href="/accounts/register">
+                Check out HQ
                 </Link>
               </Button>
             </div>
@@ -122,7 +171,7 @@ const HomePage: React.FC<HiProps> = () => {
                 rippleColor="#3b82f6"
                 className="h-10 font-bold"
               >
-                <span className="mr-2">Enter HQ</span>
+                <span className="mr-2">Check out HQ</span>
               </RippleButton>
             </div>
           </div>
@@ -130,36 +179,25 @@ const HomePage: React.FC<HiProps> = () => {
         </section>
 
         {/* Announcements Section */}
-        {/* <section className="p-8 bg-transparent max-w-screen-md mx-auto">
-            <span className="text-xl font-bold mb-4 block">What's new?</span>
+        <section className="p-8 bg-transparent max-w-screen-md mx-auto">
+            <span className="text-xl font-bold mb-4 block">Updates</span>
             <div className="grid grid-cols-1 gap-4">
-              <div className=" rounded-lg shadow-md bg-secondary/80 hover:bg-secondary/60 transition-all duration-300 hover:cursor-pointer hover:shadow-md">
-                <Announcement 
-                  title="01.02.2025: We are (slowly) coming online !" 
-                  main_icon={<Play className="ml-1 h-4 w-4" />}
-                  text="Preparations in full swing. Our public beta geospatial (Globe UI) and search modules are launching soon. Stay tuned."
-                  href="https://github.com/open-politics/opol"
-                  hide_arrow={true}
-                  // links={[
-                  //   { href: 'https://github.com/open-politics/open-politics', title: 'Read more', event_icon: <FileText className="ml-1 h-4 w-4" /> },
-                  // ]}
-                />
-              </div>
-              {/* <div className=" rounded-lg shadow-md bg-secondary/80 hover:bg-secondary/60 transition-all duration-300 hover:cursor-pointer hover:shadow-md">
-                <Announcement 
-                  title="05.02.2025: Open Politics @ Chaos Computer Club Berlin" 
-                  text="We are inviting you to a talk on Open Politics at the Chaos Computer Club Berlin on February 05th, 2025."
-                  href="https://berlin.ccc.de/datengarten/111/"
-                  main_icon={<FaMicrophone className="ml-1 h-4 w-4" />}
-                  hide_arrow={true}
-                  orientation="left"
-                  events={[
-                    { name: 'Open Politics @ Chaos Computer Club Berlin, Datengarten #111', location: 'Marienstraße 11, Berlin', dateTime: 'February 05th, 2025' },
-                  ]}
-                />
-              </div> */}
-            {/* </div> */}
-        {/* </section> */}
+              {regularAnnouncements.map((announcement) => (
+                <div 
+                  key={announcement.id}
+                  className="rounded-lg shadow-md bg-secondary/80 hover:bg-secondary/60 transition-all duration-300 hover:cursor-pointer hover:shadow-md"
+                >
+                  <Announcement 
+                    title={`${announcement.date}: ${announcement.title}`}
+                    main_icon={iconMap[announcement.icon]}
+                    text={announcement.text}
+                    href={announcement.href}
+                    hide_arrow={true}
+                  />
+                </div>
+              ))}
+            </div>
+        </section>
       </div>
 
       <style jsx>{`
@@ -181,4 +219,4 @@ const HomePage: React.FC<HiProps> = () => {
   );
 };
 
-export default HomePage;
+export default HomePage;  

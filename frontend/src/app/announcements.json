@@ -1,0 +1,58 @@
+[
+  {
+    "id": "funding-notice",
+    "date": "09.01.2026",
+    "title": "Hosted instance will shut down",
+    "text": "Due to a lack of funding we have to shut down the hosted HQ instance. If you want to help keep this running or have ideas, hit us up at engage@open-politics.org. Code stays open, infrastructure needs resources. We thus currently recommend to self-host.",
+    "href": "mailto:engage@open-politics.org",
+    "icon": "AlertTriangle",
+    "style": "warning",
+    "position": "top"
+  },
+  {
+    "id": "39c3-thanks",
+    "date": "30.12.2025",
+    "title": "Thanks 39c3",
+    "text": "We did a spontaneous workshop at 39c3. More people showed up than expected. Many interesting and egaged discussions - thank you! - Writing up a blogpost with the shared dashboard from our analysis togetyher + picking up threads from the workshop. Thanks creatures! <3 ",
+    "href": "https://events.ccc.de/congress/2025/hub/en/event/detail/osint-with-open-politics-hq-practical-exploration-",
+    "icon": "CCC",
+    "style": "default"
+  },
+  {
+    "id": "registration-open",
+    "date": "11.2025",
+    "title": "Registration now open",
+    "text": "You can now register for an account. Sign up and start using HQ for your research and analysis workflows.",
+    "href": "/webpages/accounts/register",
+    "icon": "Users",
+    "style": "default"
+  },
+  {
+    "id": "docs-online",
+    "date": "01.10.2025",
+    "title": "Documentation online",
+    "text": "Docs are live at docs.open-politics.org. Still in beta testing. Feedback welcome.",
+    "href": "https://docs.open-politics.org",
+    "icon": "FileText",
+    "style": "default"
+  },
+  {
+    "id": "cccb-talk",
+    "date": "06.02.2025",
+    "title": "Talk at CCCB Datengarten",
+    "text": "Open Source Public Intelligence presentation at Chaos Computer Club Berlin. Video recording available.",
+    "href": "https://media.ccc.de/v/dg-111",
+    "icon": "Play",
+    "style": "default"
+  },
+  {
+    "id": "coming-online",
+    "date": "01.02.2025",
+    "title": "Coming online",
+    "text": "Public beta for geospatial (Globe UI) and search modules launching soon.",
+    "href": "https://github.com/open-politics/opol",
+    "icon": "Waypoints",
+    "style": "default"
+  }
+]
+
