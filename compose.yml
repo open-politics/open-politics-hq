@@ -30,7 +30,6 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/app/alembic/versions:/app/app/alembic/versions
-      - ~/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
       
   redis:
     image: redis:alpine
