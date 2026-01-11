@@ -141,6 +141,7 @@ class SourceType(str, enum.Enum):
     SITE_DISCOVERY = "site_discovery"
     FILE_UPLOAD = "file_upload"
     TEXT_CONTENT = "text_content"
+    ARCHIVE_DATASET = "archive_dataset"  # Large remote archive/dataset ingestion
 
 class SourceStatus(str, enum.Enum):
     PENDING = "pending"
@@ -1182,6 +1183,83 @@ class Package(SQLModel, table=True):
     run_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# ─────────────────────────────────────────────── Dataset Ingestion Jobs ──── #
+
+class IngestionStatus(str, enum.Enum):
+    """Status for long-running dataset ingestion jobs."""
+    PENDING = "pending"
+    DOWNLOADING = "downloading"
+    EXTRACTING = "extracting"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DatasetIngestionJob(SQLModel, table=True):
+    """
+    Track long-running archive/dataset ingestion operations.
+    
+    Similar to Source but for one-time bulk dataset ingestion.
+    Follows Source model patterns: cursor_state for progress, status for lifecycle.
+    Enables progress monitoring and error recovery for large remote datasets.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    
+    # Core identifiers
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+    
+    # Source and destination (aligned with Source model pattern)
+    source_url: str = Field(index=True)  # Archive URL
+    kind: str = Field(default="archive_zip")  # archive_zip, archive_tar, etc. (aligned with Source.kind)
+    root_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")
+    
+    # Progress tracking
+    status: IngestionStatus = Field(default=IngestionStatus.PENDING, index=True)
+    total_files: int = Field(default=0)
+    processed_files: int = Field(default=0)
+    failed_files: int = Field(default=0)
+    total_bytes: Optional[int] = Field(default=None)  # Archive size
+    downloaded_bytes: Optional[int] = Field(default=None)  # Download progress
+    
+    # Cursor state for resume capability (aligned with Source.cursor_state pattern)
+    # Structure: {
+    #   "stage": "downloading" | "extracting" | "processing",
+    #   "message": "Processing files...",
+    #   "progress_pct": 45,
+    #   "downloaded_bytes": 12345,
+    #   "extracted_path": "/tmp/...",
+    #   "processed_file_ids": [1, 2, 3],
+    #   "current_directory": "VOL00001/IMAGES"
+    # }
+    cursor_state: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    # Task tracking
+    task_id: Optional[str] = Field(default=None, index=True)  # Celery task ID
+    
+    # Error handling (aligned with Source.consecutive_failures pattern)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    retry_count: int = Field(default=0)
+    last_error_at: Optional[datetime] = Field(default=None)
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    
+    # Relationships
+    infospace: Optional[Infospace] = Relationship()
+    user: Optional[User] = Relationship()
+    root_bundle: Optional["Bundle"] = Relationship()
+    
+    __table_args__ = (
+        Index("ix_datasetingestionjob_status_infospace", "status", "infospace_id"),
+        Index("ix_datasetingestionjob_user_status", "user_id", "status"),
+    )
 
 # ─────────────────────────────────────────────────────── Shareable Links ──── #
 

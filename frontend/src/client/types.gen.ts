@@ -825,6 +825,49 @@ export type DatasetCreate = {
     asset_ids?: Array<number>;
 };
 
+/**
+ * Request to create a dataset ingestion job.
+ */
+export type DatasetIngestionJobCreate = {
+    source_url: string;
+    title?: (string | null);
+    options?: ({
+    [key: string]: unknown;
+} | null);
+};
+
+/**
+ * Response model for DatasetIngestionJob.
+ */
+export type DatasetIngestionJobRead = {
+    id: number;
+    uuid: string;
+    infospace_id: number;
+    user_id: number;
+    source_url: string;
+    kind: string;
+    root_bundle_id: (number | null);
+    status: IngestionStatus;
+    total_files: number;
+    processed_files: number;
+    failed_files: number;
+    total_bytes: (number | null);
+    downloaded_bytes: (number | null);
+    cursor_state: {
+        [key: string]: unknown;
+    };
+    task_id: (string | null);
+    error_message: (string | null);
+    retry_count: number;
+    last_error_at: (string | null);
+    created_at: string;
+    updated_at: string;
+    started_at: (string | null);
+    completed_at: (string | null);
+    progress_pct?: number;
+    stage_message?: string;
+};
+
 export type DatasetPackageEntitySummary = {
     entity_uuid?: (string | null);
     name?: (string | null);
@@ -1267,6 +1310,11 @@ export type InfospaceUpdate = {
     chunk_strategy?: (string | null);
     icon?: (string | null);
 };
+
+/**
+ * Status for long-running dataset ingestion jobs.
+ */
+export type IngestionStatus = 'pending' | 'downloading' | 'extracting' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export type Message = {
     message: string;
@@ -3142,6 +3190,48 @@ export type GetChunkingStatisticsData = {
 };
 
 export type GetChunkingStatisticsResponse = (ChunkingStatsResponse);
+
+export type ListDatasetJobsData = {
+    infospaceId: number;
+    limit?: number;
+    /**
+     * Filter by status
+     */
+    status?: (IngestionStatus | null);
+};
+
+export type ListDatasetJobsResponse = (Array<DatasetIngestionJobRead>);
+
+export type GetDatasetJobStatusData = {
+    jobId: number;
+};
+
+export type GetDatasetJobStatusResponse = (DatasetIngestionJobRead);
+
+export type DeleteDatasetJobData = {
+    jobId: number;
+};
+
+export type DeleteDatasetJobResponse = (Message);
+
+export type GetDatasetJobByUuidData = {
+    jobUuid: string;
+};
+
+export type GetDatasetJobByUuidResponse = (DatasetIngestionJobRead);
+
+export type CreateArchiveIngestionJobData = {
+    infospaceId: number;
+    requestBody: DatasetIngestionJobCreate;
+};
+
+export type CreateArchiveIngestionJobResponse = (DatasetIngestionJobRead);
+
+export type CancelDatasetJobData = {
+    jobId: number;
+};
+
+export type CancelDatasetJobResponse = (Message);
 
 export type CreateDatasetData = {
     infospaceId: number;

@@ -11,6 +11,7 @@ from app.api.routes import (
     chat,  # Intelligence chat routes
     chat_history,  # Chat conversation history routes
     chunking,
+    dataset_jobs,  # Dataset ingestion job tracking
     datasets,
     embeddings,
     filestorage,
@@ -51,6 +52,7 @@ api_router.include_router(bundles.router, tags=["Bundles"])
 api_router.include_router(chat.router, prefix="/chat", tags=["Intelligence Chat"])  # NEW
 api_router.include_router(chat_history.router, prefix="/chat/conversations", tags=["Chat History"])  # NEW
 api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
+api_router.include_router(dataset_jobs.router, tags=["Dataset Jobs"])  # Archive ingestion tracking
 api_router.include_router(datasets.router, tags=["datasets"])
 api_router.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
 api_router.include_router(filestorage.router, prefix="/files", tags=["filestorage"])

@@ -130,21 +130,24 @@ class ContentIngestionService:
         )
         from app.api.services.bundle_service import BundleService
         
+        # Create context for handlers that need full dependencies
+        # (FileHandler, ArchiveHandler)
+        context = IngestionContext(
+            session=self.session,
+            storage_provider=self.storage_provider,
+            scraping_provider=self.scraping_provider,
+            search_provider=self.search_provider,
+            asset_service=self.asset_service,
+            bundle_service=BundleService(self.session),
+            user_id=user_id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options=options
+        )
+        
         # Detect type and delegate
         if isinstance(locator, UploadFile):
             # FileHandler needs full context (for processing decisions)
-            context = IngestionContext(
-                session=self.session,
-                storage_provider=self.storage_provider,
-                scraping_provider=self.scraping_provider,
-                search_provider=self.search_provider,
-                asset_service=self.asset_service,
-                bundle_service=BundleService(self.session),
-                user_id=user_id,
-                infospace_id=infospace_id,
-                settings=settings,
-                options=options
-            )
             handler = FileHandler(context)
             assets = await handler.handle(locator, title, options)
             
@@ -161,10 +164,24 @@ class ContentIngestionService:
             
         elif isinstance(locator, str):
             if locator.startswith(('http://', 'https://')):
-                # Check if it's an RSS feed using centralized detection
-                from app.api.processors import is_rss_feed_url
+                # Check if it's an archive file (ZIP, TAR, etc.) using centralized detection
+                from app.api.processors import is_archive_url, is_rss_feed_url
                 
-                if is_rss_feed_url(locator):
+                if is_archive_url(locator):
+                    # Route to ArchiveHandler for ZIP/TAR extraction and directory mirroring
+                    from app.api.handlers import ArchiveHandler
+                    handler = ArchiveHandler(context)
+                    # Pass browser's user agent if available in options
+                    user_agent = options.get('user_agent')
+                    assets = await handler.handle(
+                        archive_url=locator,
+                        infospace_id=infospace_id,
+                        user_id=user_id,
+                        title=title,
+                        options=options,
+                        user_agent=user_agent
+                    )
+                elif is_rss_feed_url(locator):
                     # Route to RSSHandler
                     from app.api.handlers import RSSHandler
                     handler = RSSHandler(self.session)

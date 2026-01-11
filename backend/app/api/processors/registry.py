@@ -145,6 +145,34 @@ def is_rss_feed_url(url: str) -> bool:
     return any(pattern in url_lower for pattern in rss_patterns)
 
 
+def is_archive_url(url: str) -> bool:
+    """
+    Detect if a URL points to a downloadable archive file.
+    
+    This is used to route archive URLs to ArchiveHandler instead of WebHandler,
+    enabling proper extraction and directory structure preservation.
+    
+    Args:
+        url: URL to check
+        
+    Returns:
+        True if URL ends with common archive extensions
+    """
+    if not url:
+        return False
+    
+    # Remove query parameters and fragments for extension check
+    url_path = url.lower().split('?')[0].split('#')[0]
+    
+    # Common archive extensions
+    archive_extensions = (
+        '.zip', '.tar', '.gz', '.tgz', '.tar.gz', 
+        '.bz2', '.tar.bz2', '.7z', '.rar'
+    )
+    
+    return url_path.endswith(archive_extensions)
+
+
 class ProcessorRegistry:
     """
     Registry for content processors.

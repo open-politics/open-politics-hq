@@ -6641,6 +6641,336 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/dataset-jobs": {
+      "get": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "List Dataset Jobs",
+        "description": "List dataset ingestion jobs for an infospace.\n\nUseful for showing user their ongoing/completed dataset imports.",
+        "operationId": "list_dataset_jobs",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/IngestionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status",
+              "title": "Status"
+            },
+            "description": "Filter by status"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                  },
+                  "title": "Response Dataset Jobs-List Dataset Jobs"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dataset-jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Get Dataset Job Status",
+        "description": "Get status of a specific dataset ingestion job.\n\nFrontend polls this endpoint to show real-time progress.",
+        "operationId": "get_dataset_job_status",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Delete Dataset Job",
+        "description": "Delete a dataset ingestion job record.\n\nNote: This only deletes the job tracking record, not the created assets/bundles.",
+        "operationId": "delete_dataset_job",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dataset-jobs/by-uuid/{job_uuid}": {
+      "get": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Get Dataset Job By Uuid",
+        "description": "Get job status by UUID (useful when only UUID is known).",
+        "operationId": "get_dataset_job_by_uuid",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/dataset-jobs/ingest-archive": {
+      "post": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Create Archive Ingestion Job",
+        "description": "Create a new archive ingestion job.\n\nAlternative endpoint to /assets/ingest-url that explicitly creates a job\nand returns job details for frontend progress tracking.",
+        "operationId": "create_archive_ingestion_job",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetIngestionJobCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dataset-jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Cancel Dataset Job",
+        "description": "Cancel a running dataset ingestion job.",
+        "operationId": "cancel_dataset_job",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/datasets/": {
       "post": {
         "tags": [
@@ -21799,6 +22129,228 @@
         ],
         "title": "DatasetCreate"
       },
+      "DatasetIngestionJobCreate": {
+        "properties": {
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_url"
+        ],
+        "title": "DatasetIngestionJobCreate",
+        "description": "Request to create a dataset ingestion job."
+      },
+      "DatasetIngestionJobRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "root_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Bundle Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IngestionStatus"
+          },
+          "total_files": {
+            "type": "integer",
+            "title": "Total Files"
+          },
+          "processed_files": {
+            "type": "integer",
+            "title": "Processed Files"
+          },
+          "failed_files": {
+            "type": "integer",
+            "title": "Failed Files"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "downloaded_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloaded Bytes"
+          },
+          "cursor_state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Cursor State"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "retry_count": {
+            "type": "integer",
+            "title": "Retry Count"
+          },
+          "last_error_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "progress_pct": {
+            "type": "number",
+            "title": "Progress Pct",
+            "default": 0.0
+          },
+          "stage_message": {
+            "type": "string",
+            "title": "Stage Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uuid",
+          "infospace_id",
+          "user_id",
+          "source_url",
+          "kind",
+          "root_bundle_id",
+          "status",
+          "total_files",
+          "processed_files",
+          "failed_files",
+          "total_bytes",
+          "downloaded_bytes",
+          "cursor_state",
+          "task_id",
+          "error_message",
+          "retry_count",
+          "last_error_at",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "DatasetIngestionJobRead",
+        "description": "Response model for DatasetIngestionJob."
+      },
       "DatasetPackageEntitySummary": {
         "properties": {
           "entity_uuid": {
@@ -23971,6 +24523,20 @@
           "count"
         ],
         "title": "InfospacesOut"
+      },
+      "IngestionStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "downloading",
+          "extracting",
+          "processing",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "IngestionStatus",
+        "description": "Status for long-running dataset ingestion jobs."
       },
       "Message": {
         "properties": {

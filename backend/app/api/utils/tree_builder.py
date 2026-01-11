@@ -8,7 +8,7 @@ No service class needed - just pure functions for formatting data.
 
 from typing import List, Dict, Set, Optional, Any
 from sqlmodel import Session, select
-from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus
+from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, DatasetIngestionJob, IngestionStatus
 from app.schemas import TreeNode, TreeNodeType
 from collections import Counter
 from datetime import datetime
@@ -81,6 +81,32 @@ def build_tree_node_from_bundle(bundle: Bundle, session: Optional[Session] = Non
         
         node.is_pipeline_output = len(matching_output_flows) > 0
         node.pipeline_output_count = len(matching_output_flows)
+        
+        # Query active DatasetIngestionJobs populating this bundle
+        active_jobs = session.exec(
+            select(DatasetIngestionJob)
+            .where(DatasetIngestionJob.root_bundle_id == bundle.id)
+            .where(DatasetIngestionJob.status.in_([
+                IngestionStatus.PENDING,
+                IngestionStatus.DOWNLOADING,
+                IngestionStatus.EXTRACTING,
+                IngestionStatus.PROCESSING
+            ]))
+        ).all()
+        node.has_active_jobs = len(active_jobs) > 0
+        node.active_job_count = len(active_jobs)
+        
+        # If there's an active job, add its progress to node metadata
+        if active_jobs:
+            job = active_jobs[0]  # Show first active job
+            node.job_status = {
+                'status': job.status.value,
+                'stage': job.cursor_state.get('stage', 'processing'),
+                'message': job.cursor_state.get('message', 'Processing...'),
+                'progress_pct': job.cursor_state.get('progress_pct', 0),
+                'processed_files': job.processed_files,
+                'total_files': job.total_files
+            }
     
     return node
 

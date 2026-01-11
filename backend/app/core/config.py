@@ -152,8 +152,11 @@ class AppSettings(BaseSettings):
     # Default provider for geocoding - can be overridden per-request from frontend
     GEOCODING_PROVIDER_TYPE: Literal["local", "nominatim_api", "mapbox"] = Field(default="local", env="GEOCODING_PROVIDER_TYPE")
     NOMINATIM_BASE_URL: str = Field(default="http://nominatim:8080", env="NOMINATIM_BASE_URL")
-    # User agent for API requests (Nominatim requires this per usage policy)
-    GEOCODING_USER_AGENT: str = Field(default="OpenPoliticsHQ/1.0", env="GEOCODING_USER_AGENT")
+    # User agent for API requests (Nominatim requires this per usage policy, also used for archive downloads)
+    GEOCODING_USER_AGENT: str = Field(
+        default="Mozilla/5.0 (compatible; OpenPoliticsHQ/1.0; +https://open-politics.org)", 
+        env="GEOCODING_USER_AGENT"
+    )
     # Optional: Mapbox token as fallback (prefer runtime from frontend)
     MAPBOX_ACCESS_TOKEN: Optional[str] = Field(default=None, env="MAPBOX_ACCESS_TOKEN")
 

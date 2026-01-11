@@ -45,6 +45,7 @@ import useAuth from '@/hooks/useAuth';
 import { Textarea } from "@/components/ui/textarea"
 import Link from 'next/link';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
+import { useMediaBlobStore } from '@/zustand_stores/storeMediaBlobs';
 import { toast } from 'sonner';
 import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -55,6 +56,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import AssetDetailViewCsv from './AssetDetailViewCsv';
 import AssetDetailViewPdf from './AssetDetailViewPdf';
 import AssetDetailViewTextBlock from './AssetDetailViewTextBlock';
+import { PdfAssetContent } from './PdfAssetContent';
 import ComposedArticleView from '../Composer/ComposedArticleView';
 import { ArticleView } from './Articles';
 import TextContentRenderer from './Articles/TextContentRenderer';
@@ -113,12 +115,7 @@ const AssetDetailView = ({
   // Text span highlighting 
   const { getHighlightsForAsset, hasHighlights } = useTextSpanHighlight();
 
-  // Media blob URLs for authenticated access
-  const [mediaBlobUrls, setMediaBlobUrls] = useState<Map<string, string>>(new Map());
-  const [isLoadingMedia, setIsLoadingMedia] = useState<Set<string>>(new Set());
-  
-  // Promise cache for ongoing fetch operations
-  const fetchPromiseCache = useRef<Map<string, Promise<string | null>>>(new Map());
+  // Media blob URLs are now managed by Zustand store (storeMediaBlobs)
   
   // Tab state
   const [activeTab, setActiveTab] = useState<'content' | 'children'>('content');
@@ -244,61 +241,8 @@ const AssetDetailView = ({
     }
   }, [fetchChildAssets]);
 
-  // Function to fetch authenticated media files and create blob URLs
-  const fetchMediaBlob = useCallback(async (blobPath: string): Promise<string | null> => {
-    if (!blobPath || !activeInfospace?.id) return null;
-
-    // Check if we already have a blob URL for this path (use current state without dependency)
-    const currentCache = mediaBlobUrls;
-    if (currentCache.has(blobPath)) {
-      return currentCache.get(blobPath)!;
-    }
-
-    // Check if we already have a pending promise for this path
-    if (fetchPromiseCache.current.has(blobPath)) {
-      return fetchPromiseCache.current.get(blobPath)!;
-    }
-
-    // Create and cache the fetch promise
-    const fetchPromise = (async (): Promise<string | null> => {
-      setIsLoadingMedia(prev => new Set([...prev, blobPath]));
-
-      try {
-        const response = await fetch(`/api/v1/files/stream/${encodeURIComponent(blobPath)}`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch media: ${response.status} ${response.statusText}`);
-        }
-
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-
-        // Update the cache with the successful result
-        setMediaBlobUrls(prev => new Map(prev.set(blobPath, blobUrl)));
-        return blobUrl;
-      } catch (error) {
-        console.error('Error fetching media blob:', error);
-        toast.error(`Failed to load media: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        return null;
-      } finally {
-        setIsLoadingMedia(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(blobPath);
-          return newSet;
-        });
-        // Remove the promise from cache when done
-        fetchPromiseCache.current.delete(blobPath);
-      }
-    })();
-
-    // Cache the promise so other callers can wait for the same result
-    fetchPromiseCache.current.set(blobPath, fetchPromise);
-    return fetchPromise;
-  }, [activeInfospace?.id]); // Remove mediaBlobUrls from dependencies to prevent infinite re-renders
+  // fetchMediaBlob is now handled by Zustand store (storeMediaBlobs)
+  // Access via: useMediaBlobStore.getState().getBlobUrl(blobPath)
 
   // --- Computed values ---
   const filteredChildAssets = useMemo(() => {
@@ -345,20 +289,14 @@ const AssetDetailView = ({
     // REMOVED: The automatic switch back to content tab that was preventing manual tab switching
   }, [highlightAssetIdOnOpen, childAssets]); // REMOVED: activeTab dependency to prevent loops
 
-  // Cleanup blob URLs on unmount
-  useEffect(() => {
-    return () => {
-      // Cleanup all blob URLs
-      mediaBlobUrls.forEach(url => {
-        URL.revokeObjectURL(url);
-      });
-      
-      // Clear the promise cache
-      fetchPromiseCache.current.clear();
-    };
-  }, []); // Remove mediaBlobUrls from dependencies to avoid recreating the cleanup function
+  // Blob URL cleanup is now handled by Zustand store
 
-  // Authenticated media components - Memoized to prevent recreation on every render
+  // Authenticated media components - Now using extracted components from Viewers/
+  // Import AuthenticatedPDF from '../Viewers/AuthenticatedPDF' instead
+  // Import AuthenticatedImage, AuthenticatedVideo, AuthenticatedAudio similarly when needed
+  
+  // Temporary: Keep AuthenticatedImage/Video/Audio using old pattern for now
+  // TODO: Extract these to use Zustand store as well
   const AuthenticatedImage = useMemo(() => {
     return ({ blobPath, alt, className }: { blobPath: string; alt: string; className?: string }) => {
     const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -370,7 +308,8 @@ const AssetDetailView = ({
         setIsLoading(true);
         setHasError(false);
         try {
-          const blobUrl = await fetchMediaBlob(blobPath);
+          const { getBlobUrl } = useMediaBlobStore.getState();
+          const blobUrl = await getBlobUrl(blobPath);
           if (blobUrl) {
             setImageSrc(blobUrl);
           } else {
@@ -400,138 +339,13 @@ const AssetDetailView = ({
         <div className="text-center text-muted-foreground p-8">
           <ImageIcon className="h-12 w-12 mx-auto mb-2 opacity-50" />
           <p>Image could not be loaded</p>
-        </div>
+              </div>
       );
     }
 
       return <img src={imageSrc} alt={alt} className={className} />;
     };
-  }, [fetchMediaBlob]);
-
-  const AuthenticatedPDF = useMemo(() => {
-    return ({ blobPath, title, className, pageNumber }: { blobPath: string; title: string; className?: string; pageNumber?: number }) => {
-    const [pdfSrc, setPdfSrc] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [hasError, setHasError] = useState(false);
-    const [errorMessage, setErrorMessage] = useState<string>('');
-
-    useEffect(() => {
-      const loadPDF = async () => {
-        console.log(`[AuthenticatedPDF] Loading PDF from blobPath: ${blobPath}${pageNumber ? ` (page ${pageNumber})` : ''}`);
-        setIsLoading(true);
-        setHasError(false);
-        setErrorMessage('');
-        
-        try {
-          const blobUrl = await fetchMediaBlob(blobPath);
-          if (blobUrl) {
-            // Add page fragment if pageNumber is specified
-            const pdfUrlWithPage = pageNumber ? `${blobUrl}#page=${pageNumber}` : blobUrl;
-            console.log(`[AuthenticatedPDF] Successfully created blob URL: ${pdfUrlWithPage}`);
-            
-            // Force reload of iframe when page changes
-            if (pageNumber) {
-              console.log(`[AuthenticatedPDF] Navigating to page ${pageNumber} in PDF`);
-            }
-            
-            setPdfSrc(pdfUrlWithPage);
-          } else {
-            console.error(`[AuthenticatedPDF] Failed to create blob URL for: ${blobPath}`);
-            setHasError(true);
-            setErrorMessage('Failed to load PDF content');
-          }
-        } catch (error) {
-          console.error(`[AuthenticatedPDF] Error loading PDF:`, error);
-          setHasError(true);
-          setErrorMessage(error instanceof Error ? error.message : 'Unknown error loading PDF');
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      
-      // Only load if we don't already have the PDF URL, to prevent infinite reloading
-      if (!pdfSrc || (pageNumber && !pdfSrc.includes(`#page=${pageNumber}`))) {
-        loadPDF();
-      }
-      
-      // Note: fetchMediaBlob is intentionally omitted from deps to prevent excessive re-renders
-      // It's wrapped in useCallback with stable deps (activeInfospace?.id) so it's safe to use
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [blobPath, pageNumber]); // Removed fetchMediaBlob to prevent unnecessary effect runs
-
-    // Separate effect for cleanup to avoid stale closure issues
-    useEffect(() => {
-      return () => {
-        // Cleanup current PDF source when component unmounts or blobPath changes
-        if (pdfSrc) {
-          console.log(`[AuthenticatedPDF] Cleaning up blob URL: ${pdfSrc}`);
-          URL.revokeObjectURL(pdfSrc.split('#')[0]); // Remove fragment before revoking
-        }
-      };
-    }, [pdfSrc]);
-
-    if (isLoading) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
-          <Loader2 className="h-8 w-8 animate-spin mb-4" />
-          <span className="text-sm">Loading PDF...</span>
-          <span className="text-xs mt-1 opacity-70">{title}</span>
-        </div>
-      );
-    }
-
-    if (hasError || !pdfSrc) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
-          <FileText className="h-16 w-16 opacity-50 mb-4" />
-          <p className="text-center mb-2">PDF could not be loaded</p>
-          {errorMessage && <p className="text-xs text-red-600 text-center">{errorMessage}</p>}
-          <p className="text-xs text-center opacity-70 mt-2">File: {title}</p>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="mt-4"
-            onClick={() => window.location.reload()}
-          >
-            Retry
-          </Button>
-        </div>
-      );
-    }
-
-    return (
-      <div className={cn("relative w-full h-full", className)}>
-        <iframe 
-          key={`pdf-${blobPath}-${pageNumber || 'default'}`}
-          src={pdfSrc} 
-          title={title}
-          className="w-full h-full border-0"
-          style={{ minHeight: '400px' }}
-          onLoad={() => console.log(`[AuthenticatedPDF] PDF iframe loaded successfully${pageNumber ? ` for page ${pageNumber}` : ''}`)}
-          onError={(e) => {
-            console.error(`[AuthenticatedPDF] PDF iframe error:`, e);
-            setHasError(true);
-            setErrorMessage('PDF viewer failed to load');
-          }}
-        />
-        {/* Fallback for browsers that don't support PDF viewing */}
-        <div className="absolute top-2 right-2">
-          <Button
-            variant="outline"
-            size="sm"
-            asChild
-            className="bg-background/80 hover:bg-background"
-          >
-            <a href={pdfSrc} target="_blank" rel="noopener noreferrer">
-              <Download className="h-4 w-4 mr-2" />
-              Download PDF
-            </a>
-          </Button>
-        </div>
-      </div>
-    );
-    };
-  }, [fetchMediaBlob]);
+  }, []);
 
   const AuthenticatedVideo = useMemo(() => {
     return ({ blobPath, className }: { blobPath: string; className?: string }) => {
@@ -544,7 +358,8 @@ const AssetDetailView = ({
         setIsLoading(true);
         setHasError(false);
         try {
-          const blobUrl = await fetchMediaBlob(blobPath);
+          const { getBlobUrl } = useMediaBlobStore.getState();
+          const blobUrl = await getBlobUrl(blobPath);
           if (blobUrl) {
             setVideoSrc(blobUrl);
           } else {
@@ -585,7 +400,7 @@ const AssetDetailView = ({
         </video>
       );
     };
-  }, [fetchMediaBlob]);
+  }, []);
 
   const AuthenticatedAudio = useMemo(() => {
     return ({ blobPath, className }: { blobPath: string; className?: string }) => {
@@ -598,7 +413,8 @@ const AssetDetailView = ({
         setIsLoading(true);
         setHasError(false);
         try {
-          const blobUrl = await fetchMediaBlob(blobPath);
+          const { getBlobUrl } = useMediaBlobStore.getState();
+          const blobUrl = await getBlobUrl(blobPath);
           if (blobUrl) {
             setAudioSrc(blobUrl);
           } else {
@@ -639,7 +455,7 @@ const AssetDetailView = ({
         </audio>
       );
     };
-  }, [fetchMediaBlob]);
+  }, []);
 
   // --- Helper functions ---
   const getFormattedTimestamp = (isoString: string | null | undefined): string => {
@@ -956,30 +772,7 @@ const AssetDetailView = ({
       );
   };
 
-  const PdfAssetContent = ({ asset, renderEditableField, AuthenticatedPDF, hasChildren, childAssets, setActiveTab, handleChildAssetClick }: { asset: AssetRead, renderEditableField: any, AuthenticatedPDF: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any }) => (
-  <div className="p-4 h-full flex flex-col">
-    {/* Prominent Title */}
-    <div className="mb-4">
-      {renderEditableField(asset, 'title')}
-    </div>
-    <div className="flex-1 bg-muted/20 rounded overflow-hidden">
-      {asset.blob_path && <AuthenticatedPDF blobPath={asset.blob_path} title={asset.title || 'PDF Document'} className="w-full h-full border-0" />}
-        </div>
-    {hasChildren && (
-      <div className="mt-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <Badge variant="secondary" className="text-xs">
-            <Layers className="h-3 w-3 mr-1" />
-            {childAssets.length} PDF Pages
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            Click a page preview or use the "PDF Pages" tab to view details
-          </span>
-        </div>
-      </div>
-    )}
-      </div>
-    );
+  // PdfAssetContent is now imported from './PdfAssetContent'
 
 const VideoAssetContent = ({ asset, renderEditableField, AuthenticatedVideo }: { asset: AssetRead, renderEditableField: any, AuthenticatedVideo: any }) => (
     <div className="p-4 h-full flex flex-col">
@@ -1257,7 +1050,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
   );
 };
 
-const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren, childAssets, isReprocessing, handleReprocessAsset, setIsReprocessDialogOpen, setSelectedChildAsset, isLoadingChildren, childrenError, isHierarchicalAsset, fetchChildren, renderTextDisplay, setActiveTab, fetchMediaBlob, activeInfospace, getAssetById }: any) => {
+const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren, childAssets, isReprocessing, handleReprocessAsset, setIsReprocessDialogOpen, setSelectedChildAsset, isLoadingChildren, childrenError, isHierarchicalAsset, fetchChildren, renderTextDisplay, setActiveTab, activeInfospace, getAssetById }: any) => {
     const handleRowSelect = (childAsset: AssetRead) => {
       setSelectedChildAsset(childAsset);
       setActiveTab('children');
@@ -1299,7 +1092,7 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
                     infospaceId={activeInfospace.id}
                     className="w-full h-full border-0 max-w-full"
                     onSaveSuccess={handleSaveSuccess}
-                    fetchMediaBlob={fetchMediaBlob}
+                    fetchMediaBlob={(blobPath: string) => useMediaBlobStore.getState().getBlobUrl(blobPath)}
                   />
               </div>
           ) : (
@@ -1478,7 +1271,16 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
       case 'image':
         return <ImageAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedImage={AuthenticatedImage} />;
       case 'pdf':
-        return <PdfAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedPDF={AuthenticatedPDF} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} />;
+        return (
+          <PdfAssetContent
+            asset={asset}
+            renderEditableField={renderEditableField}
+            hasChildren={hasChildren}
+            childAssets={childAssets}
+            setActiveTab={setActiveTab}
+            handleChildAssetClick={handleChildAssetClick}
+          />
+        );
       case 'video':
         return <VideoAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedVideo={AuthenticatedVideo} />;
       case 'audio':
@@ -1486,7 +1288,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
       case 'web':
         return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} />;
       case 'csv':
-        return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} fetchMediaBlob={fetchMediaBlob} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
+        return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
       case 'csv_row':
         return <CsvRowContent asset={asset} renderEditableField={renderEditableField} />;
       default:

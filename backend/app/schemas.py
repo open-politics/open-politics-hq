@@ -1611,6 +1611,11 @@ class TreeNode(SQLModel):
     pipeline_input_count: Optional[int] = None  # Number of pipelines using as input
     is_pipeline_output: Optional[bool] = None  # Receives routed assets from pipelines
     pipeline_output_count: Optional[int] = None  # Number of pipelines routing to this
+    
+    # Dataset ingestion job status (for bundles being populated by archive extraction)
+    has_active_jobs: Optional[bool] = None  # Bundle is being populated by dataset ingestion
+    active_job_count: Optional[int] = None  # Number of active ingestion jobs
+    job_status: Optional[Dict[str, Any]] = None  # Current job progress details
 
 class TreeResponse(SQLModel):
     """Response containing tree structure."""

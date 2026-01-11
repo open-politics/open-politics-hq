@@ -24,6 +24,7 @@ from .web_handler import WebHandler
 from .search_handler import SearchHandler
 from .rss_handler import RSSHandler
 from .text_handler import TextHandler
+from .archive_handler import ArchiveHandler
 
 __all__ = [
     "BaseHandler",
@@ -34,5 +35,6 @@ __all__ = [
     "SearchHandler",
     "RSSHandler",
     "TextHandler",
+    "ArchiveHandler",
 ]
 
